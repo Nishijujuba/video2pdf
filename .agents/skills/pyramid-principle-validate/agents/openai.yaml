@@ -1,0 +1,6 @@
+version: 1
+agents:
+  - name: pyramid-principle-validate
+    display_name: "Pyramid Principle Validate"
+    description: "Validate conclusion-first hierarchy, grouped support, and teaching-document pyramid structure."
+    default_prompt: "Use this skill to review an outline, section draft, or integrated document for Pyramid Principle structure and write the required gate report."

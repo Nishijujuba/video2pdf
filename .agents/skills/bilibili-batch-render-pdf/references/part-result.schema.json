@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/bilibili-batch-render-pdf/part-result.schema.json",
+  "title": "Bilibili Batch Part Result",
+  "type": "object",
+  "required": [
+    "part_index",
+    "part_title",
+    "status",
+    "output_dir",
+    "tex_path",
+    "pdf_path",
+    "subtitle_source",
+    "figure_count",
+    "independent_review_result",
+    "unresolved_issues",
+    "summary",
+    "failure_class",
+    "error_message"
+  ],
+  "properties": {
+    "part_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "part_title": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["succeeded", "failed", "blocked"]
+    },
+    "output_dir": {
+      "type": "string"
+    },
+    "tex_path": {
+      "type": "string"
+    },
+    "pdf_path": {
+      "type": "string"
+    },
+    "subtitle_source": {
+      "type": "string",
+      "description": "The subtitle or transcription source used, such as English CC, Chinese CC, Whisper, or visual-only."
+    },
+    "figure_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "independent_review_result": {
+      "type": "string",
+      "description": "A concise statement of whether the independent review judged the TeX content complete enough."
+    },
+    "unresolved_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "summary": {
+      "type": "string"
+    },
+    "failure_class": {
+      "type": "string",
+      "enum": ["none", "auth", "network", "codex_cli", "schema", "download", "whisper", "latex", "verification", "timeout", "unknown"]
+    },
+    "error_message": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

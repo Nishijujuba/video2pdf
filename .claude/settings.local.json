@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/juju/.claude/skills/bilibili-render-pdf/**)",
+      "Edit(~/.claude/skills/bilibili-render-pdf/**)"
+    ],
+    "additionalDirectories": [
+      "D:\\Project\\video2pdf\\kimi\\tools",
+      "C:\\Users\\juju\\.claude\\skills\\bilibili-render-pdf-workspace\\iteration-1\\eval-whisper-command\\with_skill",
+      "D:\\Project\\video2pdf\\newskill-kimi",
+      "D:\\Project\\video2pdf\\newskill-kimi\\.claude\\skills\\bilibili-render-pdf\\assets"
+    ]
+  }
+}

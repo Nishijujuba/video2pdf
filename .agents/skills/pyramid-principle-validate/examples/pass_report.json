@@ -1,0 +1,40 @@
+{
+  "target": "outline_contract.md",
+  "artifact_type": "outline_contract",
+  "context_label": "outline",
+  "status": "pass",
+  "score": 0.88,
+  "dimensions": {
+    "top_down_clarity": 0.9,
+    "support_hierarchy": 0.88,
+    "grouping_mece": 0.86,
+    "teaching_progression": 0.88,
+    "title_body_alignment": 0.9
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "section 3",
+      "issue": "The mechanism claim is present, but the supporting examples could be ordered from simple to complex.",
+      "recommendation": "Place the simplest example first, then use the more technical example to deepen the same parent claim."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "input_size_chars": 18420,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF outline checkpoint supplied by the video workflow.",
+    "generated_at": "2026-06-30T09:15:00Z"
+  }
+}

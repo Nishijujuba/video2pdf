@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pyramid Principle Semantic Evaluation Output",
+  "type": "object",
+  "required": [
+    "status",
+    "score",
+    "dimensions",
+    "findings",
+    "required_revisions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "needs_revision", "blocked"]
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dimensions": {
+      "type": "object",
+      "required": [
+        "top_down_clarity",
+        "support_hierarchy",
+        "grouping_mece",
+        "teaching_progression",
+        "title_body_alignment"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "top_down_clarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "support_hierarchy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "grouping_mece": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "teaching_progression": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "title_body_alignment": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "location", "issue", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["info", "minor", "major", "critical"]
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "issue": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "required_revisions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

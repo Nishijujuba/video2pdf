@@ -1,0 +1,160 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 520] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Length 2844 >>
+stream
+q 0.965 0.965 0.94 rg 0 0 842 520 re f Q
+BT /F2 24 Tf 40 476 Td (Adaptive test-time compute: action sequence) Tj ET
+BT /F1 11 Tf 42 452 Td (Thinking, tool calls, and text are scheduled as task actions under effort and budget controls.) Tj ET
+q
+USER rg task + context RG 1 w
+62 356 130 54 re B
+Q
+BT /F2 13 Tf 83.32 388 Td (0.86 0.86 0.82) Tj ET
+
+BT /F1 9 Tf 96.76 370 Td (0.45 0.45 0.42) Tj ET
+
+q
+TEXT rg clarify or answer RG 1 w
+235 356 130 54 re B
+Q
+BT /F2 13 Tf 256.32 388 Td (0.78 0.79 0.90) Tj ET
+
+BT /F1 9 Tf 269.76 370 Td (0.43 0.44 0.60) Tj ET
+
+q
+TOOL CALL rg search / files / MCP RG 1 w
+408 356 130 54 re B
+Q
+BT /F2 13 Tf 429.32 388 Td (0.74 0.87 0.81) Tj ET
+
+BT /F1 9 Tf 442.76 370 Td (0.35 0.58 0.48) Tj ET
+
+q
+THINKING rg plan next move RG 1 w
+581 356 130 54 re B
+Q
+BT /F2 13 Tf 602.32 388 Td (0.92 0.80 0.74) Tj ET
+
+BT /F1 9 Tf 615.76 370 Td (0.64 0.43 0.35) Tj ET
+
+q
+TOOL RESULT rg new evidence RG 1 w
+235 232 130 54 re B
+Q
+BT /F2 13 Tf 256.32 264 Td (0.86 0.86 0.82) Tj ET
+
+BT /F1 9 Tf 269.76 246 Td (0.45 0.45 0.42) Tj ET
+
+q
+THINKING rg revise plan RG 1 w
+408 232 130 54 re B
+Q
+BT /F2 13 Tf 429.32 264 Td (0.92 0.80 0.74) Tj ET
+
+BT /F1 9 Tf 442.76 246 Td (0.64 0.43 0.35) Tj ET
+
+q
+TEXT rg final response RG 1 w
+581 232 130 54 re B
+Q
+BT /F2 13 Tf 602.32 264 Td (0.78 0.79 0.90) Tj ET
+
+BT /F1 9 Tf 615.76 246 Td (0.43 0.44 0.60) Tj ET
+
+q
+0.25 0.25 0.25 RG 1.4 w
+192 383 m 235 383 l S
+235 383 m 227.8 386.5 l S
+235 383 m 227.8 379.5 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+365 383 m 408 383 l S
+408 383 m 400.8 386.5 l S
+408 383 m 400.8 379.5 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+538 383 m 581 383 l S
+581 383 m 573.8 386.5 l S
+581 383 m 573.8 379.5 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+646 356 m 646 286 l S
+646 286 m 649.5 293.2 l S
+646 286 m 642.5 293.2 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+581 259 m 538 259 l S
+538 259 m 545.2 255.5 l S
+538 259 m 545.2 262.5 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+408 259 m 365 259 l S
+365 259 m 372.2 255.5 l S
+365 259 m 372.2 262.5 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+365 259 m 408 356 l S
+408 356 m 401.9 350.8 l S
+408 356 m 408.3 348.0 l S
+Q
+q
+0.25 0.25 0.25 RG 1.4 w
+538 259 m 581 259 l S
+581 259 m 573.8 262.5 l S
+581 259 m 573.8 255.5 l S
+Q
+q
+0.45 0.45 0.45 RG 1 w [4 4] 0 d
+126 342 m 126 304 l S
+Q
+BT /F1 9 Tf 134 301 Td (Budget caps total work) Tj ET
+
+q
+0.45 0.45 0.45 RG 1 w [4 4] 0 d
+646 342 m 720 304 l S
+Q
+BT /F1 9 Tf 728 301 Td (Effort biases how often to think) Tj ET
+
+q 0.98 0.98 0.96 rg 0.55 0.55 0.50 RG 1 w 52 58 736 110 re B Q
+BT /F2 13 Tf 72 140 Td (Control interpretation) Tj ET
+BT /F1 11 Tf 72 118 Td (Effort: a soft tendency that changes how much reasoning the model chooses to spend.) Tj ET
+BT /F1 11 Tf 72 96 Td (Budget: a hard envelope over tokens, tool calls, time, or task cost.) Tj ET
+BT /F1 11 Tf 72 74 Td (Adaptive thinking: any useful mix of thinking, tool calls, and text, in any order.) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000327 00000 n 
+0000000402 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+3297
+%%EOF

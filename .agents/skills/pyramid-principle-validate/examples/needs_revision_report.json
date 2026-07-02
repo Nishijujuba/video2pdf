@@ -1,0 +1,42 @@
+{
+  "target": "section_01.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_01",
+  "status": "needs_revision",
+  "score": 0.72,
+  "dimensions": {
+    "top_down_clarity": 0.7,
+    "support_hierarchy": 0.7,
+    "grouping_mece": 0.72,
+    "teaching_progression": 0.74,
+    "title_body_alignment": 0.76
+  },
+  "findings": [
+    {
+      "severity": "major",
+      "location": "section 1 opening",
+      "issue": "The section opens with a chronological recap before stating the teaching claim.",
+      "recommendation": "Start with the section's controlling claim, then place the chronological details under supporting subsections."
+    }
+  ],
+  "required_revisions": [
+    "Rewrite the section opening so the controlling claim appears before the subtitle-derived details."
+  ],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "input_size_chars": 32680,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint supplied by the video workflow.",
+    "generated_at": "2026-06-30T09:20:00Z"
+  }
+}

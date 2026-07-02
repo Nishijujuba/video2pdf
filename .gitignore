@@ -1,0 +1,31 @@
+# temporary artifacts
+待删除/
+work/
+.cache/
+.venvs/
+.uv-cache-qwen3-asr/
+
+# LaTeX build junk
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# raw media and intermediate heavy files
+*.mp4
+*.mkv
+*.webm
+*.wav
+*.mp3
+
+# PDF tracking policy:
+# ignore PDFs by default, and track only PDFs under workspace/
+*.pdf
+workspace/**
+!workspace/
+!workspace/**/
+!workspace/*.pdf
+!workspace/**/*.pdf

@@ -42,7 +42,7 @@ Every child task must also run the mandatory Pyramid Gate from `.agents/skills/p
 
 Project constants:
 
-- Output root: `D:\Project\video2pdf\newskill-kimi`
+- Output root: `D:\Project\video2pdf\newskill-kimi\workspace`
 - Bilibili cookies: `C:\Users\juju\Downloads\www.bilibili.com_cookies.txt`
 - Skill venv: `D:/Project/video2pdf/kimi/.venv/`
 - Skill tools: `D:\Project\video2pdf\kimi\tools`
@@ -56,7 +56,7 @@ Hard rules:
 - Use English for collection, reasoning, planning, and intermediate organization.
 - Use Chinese for the final PDF content.
 - For English teaching or IELTS content, preserve useful original English and make the note bilingual where helpful.
-- Output directories are named from the original video or part title plus the task start timestamp in local machine time: `normalized_title_yyyyMMdd_HHmmss`.
+- Output directories are created under `D:\Project\video2pdf\newskill-kimi\workspace` and named from the original video or part title plus the task start timestamp in local machine time: `normalized_title_yyyyMMdd_HHmmss`.
 - Directory and final PDF basenames share the same whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`.
 - The final delivered PDF basename comes from the PDF article title when one exists, or the original video title when no separate article title exists.
 - Every part output directory must contain `待删除`.
@@ -83,7 +83,7 @@ Run or resume a planned batch:
 
 ```powershell
 python .agents\skills\bilibili-batch-render-pdf\scripts\run_batch.py `
-  --manifest "D:\Project\video2pdf\newskill-kimi\<batch>\batch-control\manifest.json" `
+  --manifest "D:\Project\video2pdf\newskill-kimi\workspace\<batch>\batch-control\manifest.json" `
   --mode run
 ```
 
@@ -91,7 +91,7 @@ Use manual mode when the current Codex desktop/app-server environment has alread
 
 ```powershell
 python .agents\skills\bilibili-batch-render-pdf\scripts\run_batch.py `
-  --manifest "D:\Project\video2pdf\newskill-kimi\<batch>\batch-control\manifest.json" `
+  --manifest "D:\Project\video2pdf\newskill-kimi\workspace\<batch>\batch-control\manifest.json" `
   --mode manual `
   --part 5
 ```
@@ -100,7 +100,7 @@ After manually completing that part in the current session, reconcile the manife
 
 ```powershell
 python .agents\skills\bilibili-batch-render-pdf\scripts\run_batch.py `
-  --manifest "D:\Project\video2pdf\newskill-kimi\<batch>\batch-control\manifest.json" `
+  --manifest "D:\Project\video2pdf\newskill-kimi\workspace\<batch>\batch-control\manifest.json" `
   --mode reconcile `
   --part 5
 ```

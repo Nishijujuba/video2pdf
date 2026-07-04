@@ -1,0 +1,64 @@
+{
+  "target": "1_长程对话中的交互式记忆评测_Jiayang Cheng_20260702_234408\\section_03.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_03",
+  "status": "pass",
+  "score": 0.876,
+  "dimensions": {
+    "top_down_clarity": 0.91,
+    "support_hierarchy": 0.88,
+    "grouping_mece": 0.84,
+    "teaching_progression": 0.86,
+    "title_body_alignment": 0.88
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "section openings and subsection sequence",
+      "issue": "The controlling claims are stated early and each subsection supports them, but the artifact contains two full experimental sections under the same checkpoint, which slightly weakens the single-section focus expected for a section_03 validation unit.",
+      "recommendation": "If this checkpoint is meant to validate only one chapter section, split the two experimental findings into separate artifacts or add an explicit bridge explaining why both belong to one larger section."
+    },
+    {
+      "severity": "minor",
+      "location": "实验发现一 / 后期 period 暴露真实记忆退化",
+      "issue": "The memory degradation argument is clear, but the causal relation between static evaluation and masked degradation is implied more than explicitly demonstrated. The section title promises that static evaluation both changes ranking and masks memory degradation, while the body treats ranking distortion and late-period degradation as two related findings.",
+      "recommendation": "Add one sentence that directly links the two: static/off-policy evaluation can over-rely on surface answer quality or fixed trajectories, thereby hiding late-period memory collapse measured by normalized memory score."
+    },
+    {
+      "severity": "minor",
+      "location": "实验发现二 / write、read、utilization 的失败转移",
+      "issue": "The three failure categories are distinct and learner-facing, but the optimization implications could be more tightly grouped. The paragraph mixes update frequency, retained local messages, noise, and top-k without explicitly mapping each knob to write, read, or utilization failure.",
+      "recommendation": "Group the tuning knobs by failure stage, for example write/update frequency under write policy, retained local messages and top-k under read behavior, and utilization failure under answer-use behavior."
+    },
+    {
+      "severity": "info",
+      "location": "figure references throughout",
+      "issue": "Figures are well integrated as evidence and captions state the intended reading. The artifact also avoids false precision by warning against over-reading small screenshot values.",
+      "recommendation": "Keep this pattern. It supports source faithfulness and prevents transcript-like or screenshot-dump writing."
+    },
+    {
+      "severity": "info",
+      "location": "source faithfulness",
+      "issue": "The artifact repeatedly marks claims as video-derived, adds timestamps, and flags ASR corrections, but the supplied artifact alone does not include the inspected subtitles, so semantic faithfulness to subtitles cannot be independently verified here.",
+      "recommendation": "For stricter validation, provide the relevant subtitle excerpt or source notes alongside the TeX section."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "a38f82a74b73a4aa428f827f228078d8a3d5f57b991d41d3a643ca2aa4ceb021",
+    "input_size_chars": 6048,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate Pyramid Principle structure, source faithfulness to inspected subtitles, terminology consistency, learner-facing progression, figure support, and no chronological transcript dump.",
+    "generated_at": "2026-07-03T01:46:36Z"
+  }
+}

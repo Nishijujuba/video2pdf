@@ -1,0 +1,58 @@
+{
+  "target": "1_面向高效长程推理的版面感知视觉记忆机制_Yaorui Shi_哔哩哔哩_20260702_234531\\section_07.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_07",
+  "status": "pass",
+  "score": 0.897,
+  "dimensions": {
+    "top_down_clarity": 0.93,
+    "support_hierarchy": 0.9,
+    "grouping_mece": 0.86,
+    "teaching_progression": 0.9,
+    "title_body_alignment": 0.87
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "section opening and importantbox",
+      "issue": "The controlling claim appears early and frames the chapter around a single mechanism: MemOCR's strength and risk both come from salience allocation under visual capacity limits.",
+      "recommendation": "Keep this opening structure because it gives readers the governing idea before the failure modes."
+    },
+    {
+      "severity": "minor",
+      "location": "Failure Mode A and Failure Mode B subsections",
+      "issue": "The two same-level failure modes are meaningfully distinct, but their relationship could be made slightly more explicit as two orthogonal axes: value-estimation error versus capacity-overflow error.",
+      "recommendation": "Add one bridging sentence before or after the two subsections stating that Mode A is about choosing the wrong information to emphasize, while Mode B is about exceeding readable capacity even when the right information is present."
+    },
+    {
+      "severity": "minor",
+      "location": "source-grounded examples",
+      "issue": "The examples are plausible and tied to the lecture, especially the date example with a figure timestamp, but the professional-comparison example has less explicit source anchoring than the date example.",
+      "recommendation": "Add a timestamp footnote or brief reference for the professional-comparison example if the source material supports it."
+    },
+    {
+      "severity": "info",
+      "location": "本章小结",
+      "issue": "The takeaway is reader-facing and integrates both mechanisms into practical usage boundaries: relationship protection, capacity constraints, and readability checks.",
+      "recommendation": "No required change."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "33c896b2c3a7a05f029c6b3f84c918bb22a0a7df8c2f6a60104a2db73b70cec5",
+    "input_size_chars": 3407,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration.",
+    "generated_at": "2026-07-03T01:30:16Z"
+  }
+}

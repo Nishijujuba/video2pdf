@@ -86,11 +86,13 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ## Output Naming
 
-Create the video output directory under `D:\Project\video2pdf\newskill-kimi` using the original YouTube title plus the task start timestamp from the local machine timezone:
+Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original YouTube title plus the task start timestamp from the local machine timezone:
 
 ```text
-D:\Project\video2pdf\newskill-kimi\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
+D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
 ```
+
+The `workspace` directory is the default parent for new YouTube PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 

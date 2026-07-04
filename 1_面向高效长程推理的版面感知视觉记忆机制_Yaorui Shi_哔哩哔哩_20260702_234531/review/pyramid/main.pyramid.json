@@ -1,0 +1,52 @@
+{
+  "target": "1_面向高效长程推理的版面感知视觉记忆机制_Yaorui Shi_哔哩哔哩_20260702_234531\\main.tex",
+  "artifact_type": "tex_document",
+  "context_label": "main",
+  "status": "pass",
+  "score": 0.912,
+  "dimensions": {
+    "top_down_clarity": 0.9,
+    "support_hierarchy": 0.93,
+    "grouping_mece": 0.89,
+    "teaching_progression": 0.92,
+    "title_body_alignment": 0.92
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "Document opening after table of contents",
+      "issue": "The document states strong chapter-level conclusions early, but it lacks a compact whole-document controlling claim before the chapter sequence begins. The global thesis emerges clearly across chapters and in the final synthesis, yet a reader must infer the full answer from the section progression.",
+      "recommendation": "Add a short preface or overview before Section 1 that states the whole-document answer: MemOCR improves long-horizon agent memory by using layout-aware visual memory to allocate compression pressure according to evidence value, with limits from visual readability and relation preservation."
+    },
+    {
+      "severity": "minor",
+      "location": "Sections 4-5",
+      "issue": "The boundary between main experiment evidence and learned layout behavior is mostly clear, but both chapters repeat the same mechanism claim about crucial area placement improving low-budget robustness.",
+      "recommendation": "Keep Section 4 focused on outcome evidence and oracle diagnosis, and make Section 5 explicitly about learned policy emergence and concrete case behavior to reduce overlap."
+    },
+    {
+      "severity": "info",
+      "location": "Sections 6 and 8",
+      "issue": "The artifact responsibly flags uncertain subtitle-derived terms and deployment caveats. This improves source discipline, though some model-name and table-value uncertainty remains unresolved within the supplied text.",
+      "recommendation": "Where possible in the final PDF workflow, verify uncertain names, numeric values, and table claims against the original paper or video frame before final delivery."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "376b62f09e83e9471e469339682a5c3ec160456e16ff304a5292997cc1d9f533",
+    "input_size_chars": 2955,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF main checkpoint: validate the integrated Bilibili PDF TeX as a complete Chinese teaching note. Enforce a clear top-level answer, coherent chapter hierarchy, MECE support, source-grounded figures and examples, consistent terminology, reader-facing progression, and a final synthesis rather than a transcript dump.",
+    "generated_at": "2026-07-03T01:31:46Z"
+  }
+}

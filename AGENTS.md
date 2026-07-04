@@ -45,8 +45,10 @@ Use the relevant cookie file first. If the cookie is expired or rejected, stop a
 All produced files for a video must be placed under:
 
 ```text
-D:\Project\video2pdf\newskill-kimi\{video-name}_{task-start-timestamp}
+D:\Project\video2pdf\newskill-kimi\workspace\{video-name}_{task-start-timestamp}
 ```
+
+`D:\Project\video2pdf\newskill-kimi\workspace` is the default parent for all new video output directories. Root-level video output directories under `D:\Project\video2pdf\newskill-kimi\` are legacy or pre-migration directories only, not the target location for new work.
 
 The `{video-name}` directory must be derived from the original video title. Use the task start time in the local machine timezone for `{task-start-timestamp}`, formatted as `yyyyMMdd_HHmmss`.
 
@@ -78,7 +80,7 @@ python scripts\normalize_video_workspace.py --root D:\Project\video2pdf\newskill
 
 The script defaults to a dry run and writes `workspace\migration-plan.csv` and `workspace\migration-plan.json`. It only moves directories when `--apply` is passed.
 
-For this historical migration, high-confidence directories move as whole directories into `workspace\<normalized-video-documentation-name>`. Low-confidence directories move as whole directories into `workspace\低置信目录\<original-directory-name>`. A directory is a valid video output only when internal final-delivery identity evidence exists, such as a delivered video name, article title, `main.pdf`, `notes.pdf`, or a direct `build\*.pdf` delivered PDF. Directory `CreationTime` is not authoritative for the migration date; infer the date from durable artifacts, with PDF time as a fallback.
+For this historical migration, high-confidence legacy root-level directories move as whole directories into `workspace\<normalized-video-documentation-name>`. Low-confidence directories move as whole directories into `workspace\低置信目录\<original-directory-name>`. A directory is a valid video output only when internal final-delivery identity evidence exists, such as a delivered video name, article title, `main.pdf`, `notes.pdf`, or a direct `build\*.pdf` delivered PDF. Directory `CreationTime` is not authoritative for the migration date; infer the date from durable artifacts, with PDF time as a fallback.
 
 ## Language and Writing Requirements
 
@@ -101,6 +103,31 @@ English teaching and IELTS videos:
 - Avoid producing an all-Chinese PDF for these videos; the PDF should function as a bilingual learning note with the English source language treated as primary evidence.
 
 The final PDF should be comprehensive, technically precise, and faithful to the original subtitle content.
+
+### Formula Information-Gain Gate
+
+For important terms and concepts, provide necessary explanations using clear prose first. Use analogies, comparisons, contrasts, examples, tables, or diagrams when they improve understanding.
+
+Use LaTeX mathematical notation or formulas only when one of these conditions is met:
+
+1. the source material itself contains a formula, equation, algorithm, statistical relation, or quantitative model;
+2. the concept is inherently mathematical, computational, algorithmic, statistical, or physically quantitative;
+3. the formula adds reasoning value that prose cannot express as clearly, such as a constraint, trade-off, threshold, dependency, proportional relation, or reusable decision rule.
+
+Avoid inventing ad hoc formulas for qualitative life experience, business discussion, management reflection, creator growth, personal biography, or interview narratives when the formula only renames ideas already stated in prose.
+
+Before adding an invented teaching formula, apply this information-gain test:
+
+- What new relationship does the formula reveal beyond the previous sentence?
+- Can the reader use it to reason, compare, estimate, or make a decision?
+- Will the symbol definitions reduce cognitive load compared with a short sentence, list, or table?
+- Does the formula avoid repeating the same semantic content twice?
+
+If the answer is weak, use concise prose, a bullet list, or a table instead of a formula.
+
+When an invented formula is still useful, label it as an interpretive teaching model, keep variables minimal, define symbols only once, and avoid restating the same idea immediately after the formula.
+
+A formula is allowed only when it earns its cognitive cost.
 
 ## Agent skills
 

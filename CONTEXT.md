@@ -38,6 +38,118 @@ The general-purpose Gate Report identifies the reviewed content with an `artifac
 
 A Gate Report also carries audit metadata that ties the judgment to the exact reviewed input and evaluation context. This includes the applicable standard, evaluation backend, prompt version, input fingerprint, input size, large-input approval state, and generation time, so a report can be recognized as stale when the reviewed text changes.
 
+## Acceptance Criteria File
+
+A user-authored, read-only JSON artifact that defines the acceptance standard for a final artifact or workflow checkpoint. The reviewer uses it as the acceptance ruler and must not rewrite it during review.
+
+## Acceptance Standards Directory
+
+The project documentation directory for acceptance criteria templates and related acceptance contract examples: `docs/acceptance/`.
+
+## Acceptance Criteria Schema
+
+The minimal JSON contract for an Acceptance Criteria File. It identifies the schema version, criteria name, acceptance scope, review context policy, evaluation policy, and the blocking criteria list.
+
+The first-version criteria category set is limited to `style`, `figure_visual_integrity`, `table_layout_integrity`, and `credibility_disclosure_placement`.
+
+## Acceptance Criterion
+
+A single delivery-blocking rule inside the criteria list of an Acceptance Criteria File. For style review, it carries a stable id, category, rule text, violation patterns, allowed exceptions, scan policy, pass condition, and fail condition.
+
+## Acceptance Scope
+
+The explicit artifact boundary declared by an Acceptance Criteria File. It lists which final delivered artifacts the Acceptance Reviewer may inspect and which artifacts are excluded from acceptance review.
+
+## Acceptance Report
+
+A reviewer-authored JSON artifact that records the acceptance result against an Acceptance Criteria File. It must carry the pass/fail decision, evidence, and unresolved gaps separately from the criteria being applied.
+
+## Acceptance Report Schema
+
+The minimal JSON contract for an Acceptance Report. It records the criteria file, overall status, decision source, review context used, artifact fingerprints, criterion results, visual scan evidence, failed criteria, and whether revision is required.
+
+## Acceptance Decision Source
+
+The Acceptance Report JSON is the only machine-readable source of truth for whether an artifact passes acceptance. Human-readable Markdown summaries may explain the result, but they cannot override the JSON decision.
+
+## Acceptance Must Gate
+
+A mandatory acceptance criterion whose failure blocks delivery regardless of any aggregate score. Aggregate scores may summarize quality, but they cannot override a failed must gate.
+
+## Blocking-Only Acceptance Criteria
+
+The rule that an Acceptance Criteria File contains only delivery-blocking criteria. Advisory, nice-to-have, scoring-only, or non-blocking improvement checks are outside this acceptance flow.
+
+Every entry in the criteria list is implicitly delivery-blocking, so the Acceptance Criteria File does not need a severity field.
+
+## Complete Acceptance Evaluation
+
+The rule that an Acceptance Reviewer must evaluate every criterion in the Acceptance Criteria File even after finding a failure. The Acceptance Report lists all failed criteria so the artifact can be revised in one pass.
+
+## Acceptance Revision Guidance
+
+Required repair direction recorded for each failed criterion in an Acceptance Report. It tells the writer what must change and what fix types are allowed, while preserving the Acceptance Reviewer's read-only role.
+
+## Style Acceptance Criterion
+
+An acceptance criterion that checks the final artifact's writing style, structure, tone, redundancy, reader experience, or forbidden content patterns. It does not require source-faithfulness evidence, but its pass or fail judgment must still cite concrete locations in the final artifact.
+
+## Figure Visual Integrity Criterion
+
+A delivery-blocking acceptance criterion that checks whether final figures, diagrams, charts, and visual explanations are readable, aligned, complete, and professionally laid out. It treats text overflow, text-arrow collisions, broken alignment, confusing callout relationships, mismatched font and container sizes, and draft-like visual polish as acceptance failures.
+
+## Table Layout Integrity Criterion
+
+A delivery-blocking acceptance criterion that checks whether final tables are readable, contained within page boundaries, and professionally laid out. It treats clipped columns, text running past the page edge, broken wrapping, unreadable density, ambiguous table structure, and caption-table mismatch as acceptance failures.
+
+## Credibility Disclosure Placement Criterion
+
+A delivery-blocking acceptance criterion that checks whether credibility caveats, such as ASR noise, OCR uncertainty, source limitations, or reviewer methodology notes, are placed without disrupting the main reading flow. Such caveats may appear in footnotes, captions, appendices, or source notes when needed, but should not interrupt the body as meta-process exposition.
+
+## Final Delivery Quality Criterion
+
+A delivery-blocking acceptance criterion that protects the final PDF's readability, professional finish, and credibility. It covers writing style, visual integrity, table layout, and credibility disclosure placement when defects would make the delivered PDF feel unreliable or unfinished.
+
+## Rendered PDF Visual Review
+
+The required review mode for visual and final-delivery quality acceptance criteria. The Acceptance Reviewer must inspect rendered PDF pages, not only source TeX, before passing figure visual integrity, table layout integrity, or credibility disclosure placement criteria.
+
+## Full Rendered PDF Visual Scan
+
+The required visual scan policy for final-delivery quality acceptance. An independent Acceptance Reviewer must inspect every rendered PDF page with Codex visual capability and report all detected delivery-blocking visual failures, without relying on a human manual review stage.
+
+## Visual Scan Evidence
+
+Coverage proof recorded in an Acceptance Report for a Full Rendered PDF Visual Scan. It lists the reviewed PDF, total page count, and one result entry for every rendered page so the page coverage can be verified.
+
+## Style Violation Pattern
+
+A concrete textual pattern that tells an Acceptance Reviewer what a Style Acceptance Criterion treats as a violation. Style criteria also define allowed exceptions so the reviewer can distinguish genuine style failures from valid topic-driven usage.
+
+## Full Artifact Style Scan
+
+The required scan policy for a must-level Style Acceptance Criterion. The Acceptance Reviewer must inspect the full final text artifact for the declared style violation patterns before reporting a pass.
+
+## Scan Evidence
+
+Coverage proof recorded in an Acceptance Report for a Full Artifact Style Scan. It identifies the scanned final artifacts, scan range, and artifact fingerprint so a pass decision can be recognized as stale after the artifact changes.
+
+## Acceptance Report Freshness
+
+The rule that an Acceptance Report is valid only for the exact artifact fingerprints it reviewed. If any in-scope final artifact changes after review, the old report is stale and the artifact must be accepted again.
+
+## Acceptance Evidence
+
+Artifact-grounded proof used by an Acceptance Report to justify a pass or fail decision. For must gates, evidence must point to concrete artifact locations, such as files, pages, sections, timestamps, images, or source snippets, so the judgment can be independently checked.
+
+## Acceptance Review Context
+
+The only information an acceptance reviewer is allowed to use: the final delivered artifacts and the Acceptance Criteria File. Generation process records, chat history, writer notes, and intermediate drafts are outside the review context.
+
+## Acceptance Reviewer
+
+A read-only reviewer that evaluates final delivered artifacts against an Acceptance Criteria File. The reviewer may write the Acceptance Report and optional human summary, but must not modify final artifacts, source materials, criteria files, generation records, or intermediate drafts.
+
 ## Pyramid Review Directory
 
 The persistent evidence directory for Pyramid Gate outputs inside each video output folder: `review/pyramid/`. It stores stage reports such as `outline.pyramid.json`, `section_01.pyramid.json`, `main.pyramid.json`, and a human-readable `summary.md`. Disposable drafts and temporary attempts belong under `待删除`.

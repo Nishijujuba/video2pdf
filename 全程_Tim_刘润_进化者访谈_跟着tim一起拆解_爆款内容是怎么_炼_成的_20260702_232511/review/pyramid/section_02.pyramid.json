@@ -1,0 +1,64 @@
+{
+  "target": "D:\\Project\\video2pdf\\newskill-kimi\\全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511\\section_02.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_02",
+  "status": "pass",
+  "score": 0.9,
+  "dimensions": {
+    "top_down_clarity": 0.93,
+    "support_hierarchy": 0.9,
+    "grouping_mece": 0.86,
+    "teaching_progression": 0.91,
+    "title_body_alignment": 0.92
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "opening paragraphs and importantbox",
+      "issue": "The controlling claim appears early and is stated in teachable form:爆款的深层价值 is channel height, audience radius, commercial bargaining power, and team confidence, supported by the formula and main-claim box.",
+      "recommendation": "Keep the conclusion-first opening; it gives the reader a clear lens before the cases begin."
+    },
+    {
+      "severity": "minor",
+      "location": "subsection sequence",
+      "issue": "The hierarchy is generally coherent, but the six subsections mix dimensions of analysis and chronological cases. For example, “卫星案例：先同步，再引领” is a case-specific subsection at the same level as abstract lenses such as “题材策略” and “商业协同”.",
+      "recommendation": "Consider making the satellite case explicitly a worked example under the four-traits model, or add one bridging sentence that explains why it deserves same-level status."
+    },
+    {
+      "severity": "minor",
+      "location": "same-level grouping",
+      "issue": "The same-level groups are mostly distinct, yet “生产策略：把长期沉淀压缩成高密度故事” and “商业协同：甲方买的是共同追梦的过程” both discuss resource assembly for high-investment projects, so their boundary could blur for readers.",
+      "recommendation": "Sharpen the distinction: production strategy explains where story density comes from; commercial synergy explains how sponsor resources enter without damaging trust."
+    },
+    {
+      "severity": "info",
+      "location": "examples and footnotes throughout",
+      "issue": "Examples are source-grounded with timestamps and concrete facts, including follower growth, income structure, iPhone public-topic logic, high-altitude balloon, blacksmithing sparks, helicopter filming, and satellite video rhythm.",
+      "recommendation": "Preserve timestamped sourcing; it materially strengthens teaching credibility."
+    },
+    {
+      "severity": "info",
+      "location": "本章小结",
+      "issue": "The takeaway is reader-facing and successfully compresses the chapter into six usable principles, then transitions to the next chapter on organizational replication.",
+      "recommendation": "No major revision needed; the summary aligns well with the chapter claim and prepares integration."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "382c15cb8ba5026da8553a6c859c6989617d5143bf289df73e47609408ed314f",
+    "input_size_chars": 7879,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration.",
+    "generated_at": "2026-07-03T01:14:53Z"
+  }
+}

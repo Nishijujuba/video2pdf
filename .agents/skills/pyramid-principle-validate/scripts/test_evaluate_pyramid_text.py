@@ -259,6 +259,37 @@ class EvaluatePyramidTextTests(unittest.TestCase):
         self.assertTrue(any(expected_scratch.glob("*.candidate-report.json")))
         self.assertFalse((Path.cwd() / "待删除" / "pyramid-evaluator" / semantic_output.name).exists())
 
+    def test_tex_document_expands_inputs_and_recomputes_weighted_score(self) -> None:
+        evaluator = load_evaluator_module()
+        video_dir = self.run_dir / "video-output"
+        input_path = video_dir / "main.tex"
+        output_path = video_dir / "review" / "pyramid" / "main.pyramid.json"
+        section_path = video_dir / "section_01.tex"
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        input_path.write_text("\\section{Wrapper}\n\\input{section_01.tex}\n", encoding="utf-8")
+        section_path.write_text("\\section{Expanded claim}\nThis is the real body content.\n", encoding="utf-8")
+
+        semantic = self.semantic_result()
+        semantic["score"] = 0.1
+        calls, fake_runner = self.successful_runner(semantic)
+
+        evaluator.evaluate_file(
+            input_path=input_path,
+            output_path=output_path,
+            artifact_type="tex_document",
+            context_label="main",
+            evaluation_context="Teaching-PDF main checkpoint.",
+            runner=fake_runner,
+            now=lambda: datetime(2026, 6, 30, 9, 15, tzinfo=timezone.utc),
+        )
+
+        prompt = calls[0]["kwargs"]["input"]
+        self.assertIsInstance(prompt, str)
+        assert isinstance(prompt, str)
+        self.assertIn("Expanded claim", prompt)
+        report = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["score"], 0.9)
+
     def test_writes_caller_owned_explicit_waiver_without_changing_semantic_status(self) -> None:
         evaluator = load_evaluator_module()
         input_text = self.write_input()

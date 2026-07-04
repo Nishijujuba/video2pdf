@@ -1,0 +1,58 @@
+{
+  "target": "1_面向高效长程推理的版面感知视觉记忆机制_Yaorui Shi_哔哩哔哩_20260702_234531\\section_05.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_05",
+  "status": "pass",
+  "score": 0.894,
+  "dimensions": {
+    "top_down_clarity": 0.93,
+    "support_hierarchy": 0.88,
+    "grouping_mece": 0.84,
+    "teaching_progression": 0.91,
+    "title_body_alignment": 0.91
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "subsection '为什么显著区域像一个可读索引'",
+      "issue": "The subsection mainly explains the analogy and engineering implication, but the final paragraph introduces statistical testing evidence that is only loosely connected to the heading's promise.",
+      "recommendation": "Either move the statistical-test sentence into the earlier training/evidence subsection or rename the subsection to signal that it covers both the index analogy and evidence robustness."
+    },
+    {
+      "severity": "minor",
+      "location": "same-level subsection structure",
+      "issue": "The first and third subsections both discuss why crucial-area placement works under compression, creating a small amount of conceptual overlap between mechanism evidence and mechanism explanation.",
+      "recommendation": "Sharpen the distinction: make the first subsection strictly about observed training behavior, and make the third subsection strictly about the reader-facing interpretation and engineering implication."
+    },
+    {
+      "severity": "info",
+      "location": "section opening",
+      "issue": "The controlling claim is explicit and early: MemOCR's gain comes from the combination of visual representation and post-training layout strategy, especially evidence placement into crucial and detail areas.",
+      "recommendation": "Keep this conclusion-first opening because it gives the reader a clear frame for the chapter."
+    },
+    {
+      "severity": "info",
+      "location": "case study subsection",
+      "issue": "The example is source-grounded and explains the causal difference among truncation, uniform visual memory, and MemOCR under a 16-token budget.",
+      "recommendation": "No required change; this is the strongest support for the chapter's teaching objective."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "4d7a7cebd875e56e9f12c26050a34da6b0da19601c7684c12dcc321e21c60387",
+    "input_size_chars": 4323,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration.",
+    "generated_at": "2026-07-03T01:29:31Z"
+  }
+}

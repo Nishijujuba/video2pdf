@@ -1,0 +1,58 @@
+{
+  "target": "1_面向高效长程推理的版面感知视觉记忆机制_Yaorui Shi_哔哩哔哩_20260702_234531\\outline_contract.md",
+  "artifact_type": "outline_contract",
+  "context_label": "outline",
+  "status": "pass",
+  "score": 0.92,
+  "dimensions": {
+    "top_down_clarity": 0.9,
+    "support_hierarchy": 0.94,
+    "grouping_mece": 0.88,
+    "teaching_progression": 0.92,
+    "title_body_alignment": 0.95
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "Section 1 before Section 2",
+      "issue": "The artifact opens with evidence boundaries before the controlling teaching claim, so the top answer is strong but slightly delayed for a strict conclusion-first standard.",
+      "recommendation": "Move or briefly preview the top-level MemOCR claim in the opening paragraph before listing source materials."
+    },
+    {
+      "severity": "minor",
+      "location": "Sections 03-05 and Symbol Table",
+      "issue": "The symbol table includes symbols such as Q, A, I_c, I_d, s_i, and rho_i, but the chapter-level formula plans do not clearly require all of them. This may create notation overhead for writer agents.",
+      "recommendation": "Either add the planned formula or prose use for each symbol, or mark optional symbols as optional to keep notation lean."
+    },
+    {
+      "severity": "minor",
+      "location": "Chapter grouping: Sections 04 and 05",
+      "issue": "The distinction between experimental performance evidence and mechanism evidence is mostly clear, but both sections discuss layout control and evidence placement, creating a small overlap risk.",
+      "recommendation": "Make Section 04 explicitly about outcome metrics and Section 05 explicitly about learned behavior and causal interpretation."
+    },
+    {
+      "severity": "info",
+      "location": "Section 9 Cross-Chapter Writing Convention",
+      "issue": "The reader progression is well specified through problem, mechanism, evidence, implication, and summary, and it gives writer agents a usable local structure.",
+      "recommendation": "Preserve this convention during drafting and validate each section against it."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "b9c8a0cb82cf64a8f157367b434211385d36770f38998ac282374bdb56096b05",
+    "input_size_chars": 17539,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF outline checkpoint: validate that the Bilibili note outline states the teaching goal, chapter hierarchy, terminology contract, figure plan, and reader progression before writer agents start.",
+    "generated_at": "2026-07-02T22:41:34Z"
+  }
+}

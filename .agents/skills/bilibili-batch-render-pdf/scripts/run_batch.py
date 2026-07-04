@@ -21,7 +21,8 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-DEFAULT_OUTPUT_ROOT = Path(r"D:\Project\video2pdf\newskill-kimi")
+DEFAULT_PROJECT_ROOT = Path(r"D:\Project\video2pdf\newskill-kimi")
+DEFAULT_OUTPUT_ROOT = DEFAULT_PROJECT_ROOT / "workspace"
 DEFAULT_COOKIE_FILE = Path(r"C:\Users\juju\Downloads\www.bilibili.com_cookies.txt")
 DEFAULT_VENV_PYTHON = Path(r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe")
 DEFAULT_TOOLS_DIR = Path(r"D:\Project\video2pdf\kimi\tools")
@@ -865,7 +866,7 @@ def run_one_item(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                cwd=str(Path(manifest.get("output_root") or args.out_root)),
+                cwd=str(DEFAULT_PROJECT_ROOT),
             )
         except OSError as exc:
             duration_ms = int((time.perf_counter() - started_perf) * 1000)
@@ -1088,7 +1089,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="plan",
         help="Generate prompts, show manual instructions, run codex exec, or reconcile manually completed artifacts.",
     )
-    parser.add_argument("--out-root", type=Path, default=DEFAULT_OUTPUT_ROOT, help="Workspace/output root.")
+    parser.add_argument("--out-root", type=Path, default=DEFAULT_OUTPUT_ROOT, help="Video output root.")
     parser.add_argument("--batch-name", help="Override the batch folder name.")
     parser.add_argument("--cookie-file", type=Path, default=DEFAULT_COOKIE_FILE, help="Bilibili Netscape cookie file.")
     parser.add_argument("--venv-python", type=Path, default=DEFAULT_VENV_PYTHON, help="Python executable with yt-dlp installed.")

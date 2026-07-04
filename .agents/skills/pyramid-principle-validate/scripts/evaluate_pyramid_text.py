@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,7 +23,7 @@ SKILL_DIR = SCRIPT_DIR.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from validate_report import ValidationError, validate_report
+from validate_report import DIMENSION_WEIGHTS, ValidationError, validate_report
 
 
 DEFAULT_MAX_INPUT_CHARS = 160000
@@ -40,6 +41,7 @@ DIMENSION_KEYS = {
 }
 STATUSES = {"pass", "needs_revision", "blocked"}
 SEVERITIES = {"info", "minor", "major", "critical"}
+TEX_INPUT_RE = re.compile(r"(?m)^(?P<indent>[ \t]*)\\input\{(?P<target>[^}]+)\}")
 
 
 class EvaluationError(Exception):
@@ -90,6 +92,60 @@ def _read_input(input_path: Path) -> tuple[bytes, str]:
         return raw, raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise EvaluationError(f"input artifact must be UTF-8 text: {input_path}") from exc
+
+
+def _resolve_tex_input(input_path: Path, target: str) -> Path:
+    normalized = target.replace("/", os.sep).replace("\\", os.sep)
+    candidate = Path(normalized)
+    if not candidate.is_absolute():
+        candidate = input_path.parent / candidate
+    if candidate.suffix == "":
+        candidate = candidate.with_suffix(".tex")
+    return candidate
+
+
+def _expand_tex_inputs_once(artifact_text: str, input_path: Path) -> tuple[str, bool]:
+    changed = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        target = match.group("target").strip()
+        include_path = _resolve_tex_input(input_path, target)
+        if not include_path.exists() or include_path.resolve(strict=False) == input_path.resolve(strict=False):
+            return match.group(0)
+        try:
+            included = include_path.read_text(encoding="utf-8")
+        except OSError:
+            return match.group(0)
+        changed = True
+        return (
+            f"% --- expanded from \\input{{{target}}} ---\n"
+            f"{included}\n"
+            f"% --- end expanded \\input{{{target}}} ---"
+        )
+
+    return TEX_INPUT_RE.sub(replace, artifact_text), changed
+
+
+def _semantic_review_text(artifact_text: str, input_path: Path, artifact_type: str) -> str:
+    if artifact_type != "tex_document":
+        return artifact_text
+    expanded = artifact_text
+    for _ in range(8):
+        expanded, changed = _expand_tex_inputs_once(expanded, input_path)
+        if not changed:
+            break
+    return expanded
+
+
+def _normalize_semantic_score(result: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(result)
+    dimensions = normalized["dimensions"]
+    normalized["score"] = round(
+        sum(float(dimensions[name]) * weight for name, weight in DIMENSION_WEIGHTS.items()),
+        3,
+    )
+    return normalized
 
 
 def build_prompt(
@@ -396,12 +452,15 @@ def evaluate_file(
 
     raw, artifact_text = _read_input(input_path)
     input_size_chars = len(artifact_text)
-    if input_size_chars > max_input_chars and not allow_large_input:
+    semantic_text = _semantic_review_text(artifact_text, input_path, artifact_type)
+    semantic_size_chars = len(semantic_text)
+    review_size_chars = max(input_size_chars, semantic_size_chars)
+    if review_size_chars > max_input_chars and not allow_large_input:
         raise EvaluationError(
-            f"input artifact has {input_size_chars} characters, exceeding --max-input-chars {max_input_chars}; "
+            f"input artifact has {review_size_chars} review characters, exceeding --max-input-chars {max_input_chars}; "
             "rerun with --allow-large-input after explicit approval"
         )
-    large_input_approval_state = "approved" if input_size_chars > max_input_chars else "not_required"
+    large_input_approval_state = "approved" if review_size_chars > max_input_chars else "not_required"
     input_sha256 = hashlib.sha256(raw).hexdigest()
     generated_at = _format_timestamp(now())
     waiver = _build_waiver_metadata(
@@ -419,7 +478,7 @@ def evaluate_file(
         raise EvaluationError(f"missing semantic output schema: {schema_path}")
 
     prompt = build_prompt(
-        artifact_text=artifact_text,
+        artifact_text=semantic_text,
         artifact_type=artifact_type,
         context_label=context_label,
         evaluation_context=evaluation_context,
@@ -439,6 +498,7 @@ def evaluate_file(
     _run_codex(command, prompt, runner)
     semantic_result = _load_semantic_output(semantic_output_path)
     _validate_semantic_result(semantic_result)
+    semantic_result = _normalize_semantic_score(semantic_result)
     report = _build_report(
         semantic_result=semantic_result,
         input_path=input_path,

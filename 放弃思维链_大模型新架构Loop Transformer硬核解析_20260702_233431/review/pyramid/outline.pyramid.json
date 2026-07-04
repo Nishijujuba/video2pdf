@@ -1,0 +1,64 @@
+{
+  "target": "放弃思维链_大模型新架构Loop Transformer硬核解析_20260702_233431\\outline_contract.md",
+  "artifact_type": "outline_contract",
+  "context_label": "outline",
+  "status": "pass",
+  "score": 0.93,
+  "dimensions": {
+    "top_down_clarity": 0.96,
+    "support_hierarchy": 0.94,
+    "grouping_mece": 0.91,
+    "teaching_progression": 0.94,
+    "title_body_alignment": 0.91
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "0. 金字塔顶层答案",
+      "issue": "The artifact states the controlling claim early and gives a clear teaching judgment: Loop Transformer is a research and engineering route centered on hidden-state recursion, with unresolved limits around stability, supervision, cache cost, and deployment.",
+      "recommendation": "Keep this top-level answer as the governing claim for all writer agents and require each section draft to connect back to it."
+    },
+    {
+      "severity": "info",
+      "location": "6. 章节边界与写作契约",
+      "issue": "The chapter sequence follows a strong teaching progression: motivation from CoT, core mechanism, empirical evidence, stability mechanism, interpretability evidence, adaptive compute, systems cost, boundaries, and synthesis.",
+      "recommendation": "Preserve this order during drafting because it moves from why the problem matters to how the mechanism works, what evidence supports it, and where the limits remain."
+    },
+    {
+      "severity": "minor",
+      "location": "6. section_03 and section_05",
+      "issue": "The two evidence chapters are meaningfully placed, though their labels could make the evidence hierarchy slightly clearer. section_03 covers performance and generalization evidence, while section_05 covers mechanistic observation evidence.",
+      "recommendation": "Consider naming or introducing them as two evidence types: behavioral evidence and mechanistic evidence. This would make the parent-child support structure even more explicit."
+    },
+    {
+      "severity": "minor",
+      "location": "7. 图像计划",
+      "issue": "The figure plan is comprehensive and aligned to chapters, though it includes many candidate figures. Without prioritization, figure agents may overproduce visuals and dilute the teaching flow.",
+      "recommendation": "Mark a smaller set of mandatory figures, such as CoT pipeline, hidden-state loop, dynamic-system stability, PCA trajectory, MoR routing, KV cache tradeoff, and final deployment matrix."
+    },
+    {
+      "severity": "minor",
+      "location": "10. 风险、假设与待复核项",
+      "issue": "The risk table is strong, but several risks also affect chapter claims directly, especially routing names, numerical metrics, and paper metadata. Writer agents may miss where each risk must be resolved before making assertions.",
+      "recommendation": "Add per-section verification gates for section_03, section_06, and section_07 so unresolved evidence cannot become an unqualified claim."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "abd474ed7dcb42534f986c659e9505211c1d8f3fc60fac5d6058f115c944db03",
+    "input_size_chars": 15751,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF outline checkpoint: validate that the Bilibili note outline states the teaching goal, chapter hierarchy, terminology contract, figure plan, and reader progression before writer agents start.",
+    "generated_at": "2026-07-02T22:41:23Z"
+  }
+}

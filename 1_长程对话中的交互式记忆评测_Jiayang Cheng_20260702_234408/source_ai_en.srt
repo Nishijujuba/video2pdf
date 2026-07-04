@@ -1,0 +1,2020 @@
+1
+00:00:00,100 --> 00:00:00,580
+Hello everyone.
+
+2
+00:00:00,580 --> 00:00:02,850
+I'm Cheng Jiayang, uh...
+
+3
+00:00:02,850 --> 00:00:05,590
+So today, I'll be presenting some of our recent work.
+
+4
+00:00:05,590 --> 00:00:06,530
+MMGM.
+
+5
+00:00:06,530 --> 00:00:11,350
+This is a framework designed for, um, long conversation scenarios.
+
+6
+00:00:11,350 --> 00:00:18,330
+an interactive evaluation framework for AI assistant memory, uh...
+
+7
+00:00:18,330 --> 00:00:19,810
+Today's presentation will be divided into four parts.
+
+8
+00:00:19,810 --> 00:00:22,410
+First, let's talk about the motivation.
+
+9
+00:00:22,410 --> 00:00:24,090
+In this section, we will introduce... uh...
+
+10
+00:00:24,090 --> 00:00:26,910
+So, why is memory evaluation such an important topic?
+
+11
+00:00:26,910 --> 00:00:30,040
+as well as some of the shortcomings in existing work.
+
+12
+00:00:30,200 --> 00:00:34,050
+The second part is the framework of MMGM.
+
+13
+00:00:34,410 --> 00:00:36,210
+And then, uh, we'll move on to...
+
+14
+00:00:36,210 --> 00:00:38,750
+Let's talk about this interactive evaluation framework.
+
+15
+00:00:38,750 --> 00:00:41,380
+So, with MMGM, our experiments revealed that...
+
+16
+00:00:41,380 --> 00:00:44,560
+Finally, let's go over some key takeaways.
+
+17
+00:00:45,980 --> 00:00:50,390
+So, why is memory evaluation such an important area of research?
+
+18
+00:00:50,390 --> 00:00:52,250
+So, let's paint a picture here.
+
+19
+00:00:52,250 --> 00:00:55,200
+Nowadays, pretty much everyone uses an AI assistant.
+
+20
+00:00:55,200 --> 00:00:59,460
+Imagine you're having a conversation with an AI assistant for, say, 500 turns.
+
+21
+00:00:59,460 --> 00:01:01,880
+Let's say you mentioned something about yourself back in the third round.
+
+22
+00:01:01,880 --> 00:01:04,300
+or say, a food allergy, after hundreds of turns in the conversation.
+
+23
+00:01:04,300 --> 00:01:06,520
+does it still remember that key piece of information?
+
+24
+00:01:06,520 --> 00:01:08,770
+So, this is actually about, uh...
+
+25
+00:01:08,770 --> 00:01:12,950
+is a very critical dimension of the user experience in agent interaction.
+
+26
+00:01:14,120 --> 00:01:18,100
+In other words, an agent needs to, throughout a long-term interaction,
+
+27
+00:01:18,100 --> 00:01:20,980
+to consistently maintain accurate information.
+
+28
+00:01:20,980 --> 00:01:22,920
+And if the memory fails,
+
+29
+00:01:22,920 --> 00:01:25,550
+users will run into inconsistencies,
+
+30
+00:01:25,550 --> 00:01:27,690
+and keep asking questions like these.
+
+31
+00:01:27,690 --> 00:01:30,870
+and ultimately, lose all trust in the agent.
+
+32
+00:01:30,870 --> 00:01:35,040
+Mmm, and this is especially true for personal assistants and customer service.
+
+33
+00:01:35,040 --> 00:01:38,460
+And other dimensions, like collaborative coding, for instance.
+
+34
+00:01:38,460 --> 00:01:41,940
+In these scenarios, this is actually a critical issue.
+
+35
+00:01:43,680 --> 00:01:47,240
+Mmm, but the question is, how should we properly evaluate this?
+
+36
+00:01:47,240 --> 00:01:48,680
+An ability like this,
+
+37
+00:01:49,000 --> 00:01:51,800
+existing memory evaluation frameworks
+
+38
+00:01:51,800 --> 00:01:53,920
+these memory benchmarks,
+
+39
+00:01:53,920 --> 00:01:56,160
+Take MSC, for example.
+
+40
+00:01:56,160 --> 00:01:57,900
+or LOCOMO,
+
+41
+00:01:57,900 --> 00:02:03,850
+They all rely on a static, off-policy evaluation dataset.
+
+42
+00:02:03,850 --> 00:02:04,930
+The problem with this is that...
+
+43
+00:02:04,930 --> 00:02:08,750
+The thing is, they just can't capture the kind of...
+
+44
+00:02:08,750 --> 00:02:13,350
+interactive and ever-evolving characteristics.
+
+45
+00:02:13,350 --> 00:02:16,090
+...these characteristics of how information flows, you see.
+
+46
+00:02:16,090 --> 00:02:17,310
+In a real-world deployment,
+
+47
+00:02:17,310 --> 00:02:19,290
+the agent's own evaluation, uh,
+
+48
+00:02:19,290 --> 00:02:23,050
+its own responses will feed back into the conversation,
+
+49
+00:02:23,050 --> 00:02:25,430
+and in shaping the context.
+
+50
+00:02:25,430 --> 00:02:31,150
+But traditional evaluations, this kind of static, off-policy assessment,
+
+51
+00:02:31,150 --> 00:02:34,470
+It completely ignores this interactive aspect.
+
+52
+00:02:34,470 --> 00:02:36,010
+this coupled relationship.
+
+53
+00:02:36,010 --> 00:02:39,030
+And this, in turn, leads to memory evaluations...
+
+54
+00:02:39,030 --> 00:02:42,590
+in essence, it's an evaluation result that deviates from real-world scenarios.
+
+55
+00:02:44,250 --> 00:02:46,410
+We can use this table to compare them.
+
+56
+00:02:46,410 --> 00:02:48,940
+So, to elaborate on this... uh...
+
+57
+00:02:48,940 --> 00:02:52,540
+All the previous benchmarks share two key, fundamental flaws.
+
+58
+00:02:52,540 --> 00:02:57,850
+First of all, they all use a static, off-policy evaluation.
+
+59
+00:02:57,850 --> 00:03:02,710
+So, by 'static off-policy,' we mean the agent is given a piece of text to read through,
+
+60
+00:03:02,710 --> 00:03:04,450
+a pre-written conversation.
+
+61
+00:03:04,450 --> 00:03:06,350
+a pre-written conversation.
+
+62
+00:03:07,010 --> 00:03:10,209
+and then answer questions based on that static conversation.
+
+63
+00:03:11,149 --> 00:03:13,289
+So, what this is actually testing is the entire...
+
+64
+00:03:13,289 --> 00:03:15,229
+reading comprehension of a given dialogue.
+
+65
+00:03:15,229 --> 00:03:19,150
+rather than a truly dynamic, interactive process, you know, as we'd normally think of it.
+
+66
+00:03:19,150 --> 00:03:22,200
+the ability to evaluate memory.
+
+67
+00:03:22,880 --> 00:03:24,520
+And the second point is...
+
+68
+00:03:24,520 --> 00:03:29,900
+None of these evaluation frameworks provide feedback for optimization.
+
+69
+00:03:29,900 --> 00:03:32,180
+what we call 'optimization feedback'.
+
+70
+00:03:32,180 --> 00:03:36,260
+In other words, uh, it can tell you what score the model got.
+
+71
+00:03:36,260 --> 00:03:37,600
+Let's say it gets a score of 60.
+
+72
+00:03:37,600 --> 00:03:39,860
+But the problem is, we don't know why.
+
+73
+00:03:39,860 --> 00:03:41,040
+But behind that score,
+
+74
+00:03:41,040 --> 00:03:43,300
+what exactly are the model's problem areas,
+
+75
+00:03:43,300 --> 00:03:47,980
+and how to make targeted improvements to these problem areas.
+
+76
+00:03:48,220 --> 00:03:48,620
+Uh...
+
+77
+00:03:48,620 --> 00:03:49,760
+In our work,
+
+78
+00:03:49,760 --> 00:03:52,220
+So, in our work, MMGM...
+
+79
+00:03:52,220 --> 00:03:54,960
+And we've managed to tackle the issues in both of these dimensions at the same time.
+
+80
+00:03:55,200 --> 00:03:59,560
+First, we switched the evaluation mode to a, uh...
+
+81
+00:03:59,560 --> 00:04:03,080
+an interactive and dynamic evaluation, uh...
+
+82
+00:04:03,080 --> 00:04:05,499
+um, under this framework, uh...
+
+83
+00:04:05,499 --> 00:04:08,419
+The second point is about the optimization feedback.
+
+84
+00:04:08,419 --> 00:04:10,899
+We've provided a series of diagnostic tools.
+
+85
+00:04:10,899 --> 00:04:14,200
+So, in addition to the traditional overall metrics,
+
+86
+00:04:14,200 --> 00:04:17,260
+We also provide a set of diagnostic metrics.
+
+87
+00:04:17,260 --> 00:04:19,360
+So, based on these diagnostic metrics, developers...
+
+88
+00:04:19,360 --> 00:04:20,798
+And there's more.
+
+89
+00:04:20,798 --> 00:04:24,719
+the agent's developers can make targeted improvements.
+
+90
+00:04:24,719 --> 00:04:27,180
+the corresponding framework.
+
+91
+00:04:27,180 --> 00:04:28,980
+And our framework has some other features as well.
+
+92
+00:04:28,980 --> 00:04:33,730
+For instance, it allows for configurable dialogue lengths.
+
+93
+00:04:33,730 --> 00:04:38,390
+So, in theory, it can be extended to cover pretty long conversations.
+
+94
+00:04:38,390 --> 00:04:40,990
+And it also takes diversity into account.
+
+95
+00:04:40,990 --> 00:04:45,670
+You can find the corresponding details in the original paper.
+
+96
+00:04:45,670 --> 00:04:48,910
+Let's use a concrete example to illustrate this.
+
+97
+00:04:48,910 --> 00:04:52,840
+So, for instance, uh, let's consider a scenario where a user is talking to an assistant.
+
+98
+00:04:52,840 --> 00:04:54,660
+So, the user mentions that...
+
+99
+00:04:54,660 --> 00:04:59,000
+I switched from doing yoga to swimming last month.
+
+100
+00:04:59,640 --> 00:05:02,480
+Under the current methods used in existing work,
+
+101
+00:05:02,480 --> 00:05:05,380
+So, under this kind of off-policy evaluation framework,
+
+102
+00:05:05,380 --> 00:05:09,500
+All agents are reading from the exact same pre-written dialogue.
+
+103
+00:05:09,500 --> 00:05:10,300
+In other words,
+
+104
+00:05:10,300 --> 00:05:14,120
+So, if we're evaluating two different agents, say Agent A and Agent B,
+
+105
+00:05:14,120 --> 00:05:17,990
+So, the context they're actually seeing is exactly the same.
+
+106
+00:05:17,990 --> 00:05:19,210
+And that's exactly why I was saying...
+
+107
+00:05:19,210 --> 00:05:21,730
+Essentially, you're just testing the agent's reading comprehension,
+
+108
+00:05:21,730 --> 00:05:24,350
+rather than its actual memory capabilities.
+
+109
+00:05:24,350 --> 00:05:26,510
+or, in other words, its memory capabilities.
+
+110
+00:05:27,540 --> 00:05:30,100
+Uh, now let's look at our on-policy setting.
+
+111
+00:05:30,100 --> 00:05:33,540
+So, A in AWE remembered that the user likes, uh...
+
+112
+00:05:33,540 --> 00:05:35,840
+Oh, sorry, the user likes sports.
+
+113
+00:05:35,840 --> 00:05:37,780
+So it naturally replied, 'Okay.'
+
+114
+00:05:37,780 --> 00:05:39,420
+I've switched to swimming now.
+
+115
+00:05:39,740 --> 00:05:43,180
+But Agent B completely forgot what was said before.
+
+116
+00:05:43,180 --> 00:05:47,420
+This might be, uh, due to some flaws in the design of its memory mechanism.
+
+117
+00:05:47,420 --> 00:05:49,960
+So, it forgot the information from before.
+
+118
+00:05:49,960 --> 00:05:53,280
+and instead asks, "So, what kind of sports have you been playing?"
+
+119
+00:05:53,460 --> 00:05:57,400
+So, these kinds of differences in memory mechanism design...
+
+120
+00:05:57,400 --> 00:06:01,659
+And that's going to lead to a completely different trajectory for the conversation.
+
+121
+00:06:02,099 --> 00:06:04,559
+So, here's the key takeaway.
+
+122
+00:06:04,559 --> 00:06:07,379
+The design of the memory system affects the agent's response,
+
+123
+00:06:07,379 --> 00:06:10,710
+And in turn, these responses shape the entire trajectory of the conversation.
+
+124
+00:06:10,710 --> 00:06:15,030
+And the evaluation of memory is, in fact, coupled with the direction of the entire conversation.
+
+125
+00:06:15,030 --> 00:06:18,020
+The traditional, uh, evaluation frameworks...
+
+126
+00:06:18,020 --> 00:06:22,180
+This kind of off-policy evaluation framework, however, actually breaks this coupling.
+
+127
+00:06:22,180 --> 00:06:25,600
+This, in turn, leads to an unrealistic evaluation result.
+
+128
+00:06:27,120 --> 00:06:29,720
+This diagram summarizes the differences between the two.
+
+129
+00:06:29,720 --> 00:06:30,840
+On the left, we have the 'of policy' method.
+
+130
+00:06:30,840 --> 00:06:33,380
+The agent will read a fixed piece of dialogue.
+
+131
+00:06:33,380 --> 00:06:35,520
+and then generate answers to questions.
+
+132
+00:06:35,520 --> 00:06:36,950
+and answer questions.
+
+133
+00:06:36,950 --> 00:06:40,390
+The agent being evaluated has never actually participated in this conversation.
+
+134
+00:06:40,390 --> 00:06:42,410
+And on the right, we have the on-policy method.
+
+135
+00:06:42,410 --> 00:06:44,310
+This means the agent is participating in the conversation in real-time.
+
+136
+00:06:44,310 --> 00:06:46,380
+and generates its own replies.
+
+137
+00:06:46,380 --> 00:06:50,340
+Next, we test its... uh... its own...
+
+138
+00:06:50,340 --> 00:06:54,570
+and its ability to remember the content from this exchange.
+
+139
+00:06:54,570 --> 00:06:56,170
+And this 'on-policy' approach on the right,
+
+140
+00:06:56,170 --> 00:06:59,430
+In fact, it also reflects a condition of real-world deployment.
+
+141
+00:06:59,430 --> 00:07:00,980
+So, in other words,
+
+142
+00:07:00,980 --> 00:07:05,220
+The agent's own response becomes part of the context.
+
+143
+00:07:06,720 --> 00:07:09,840
+So, this is the overall framework of MMGM.
+
+144
+00:07:09,840 --> 00:07:10,800
+This diagram might be a little small.
+
+145
+00:07:10,800 --> 00:07:12,960
+You can check out our project website for more details.
+
+146
+00:07:12,960 --> 00:07:14,800
+or, you can check out the full paper itself.
+
+147
+00:07:15,700 --> 00:07:18,960
+So, overall, this is a three-stage process.
+
+148
+00:07:18,960 --> 00:07:19,800
+pipeline.
+
+149
+00:07:19,800 --> 00:07:23,520
+In the first stage, we'll generate some structured data.
+
+150
+00:07:23,520 --> 00:07:27,530
+based on a, uh, predefined state schema.
+
+151
+00:07:27,530 --> 00:07:29,930
+to simulate the evolution of the state.
+
+152
+00:07:29,930 --> 00:07:30,710
+In the second stage,
+
+153
+00:07:30,710 --> 00:07:33,190
+In other words, on-policy interaction.
+
+154
+00:07:33,190 --> 00:07:37,090
+the agent will interact with an in-framework user simulator,
+
+155
+00:07:37,090 --> 00:07:40,000
+to engage in a real conversation with the user simulator.
+
+156
+00:07:40,000 --> 00:07:41,800
+And in the third stage,
+
+157
+00:07:41,800 --> 00:07:46,210
+We will then take the collected on-policy compositional traces,
+
+158
+00:07:46,210 --> 00:07:47,630
+to conduct...
+
+159
+00:07:47,630 --> 00:07:50,919
+a series of fine-grained evaluations.
+
+160
+00:07:50,919 --> 00:07:56,460
+And at each of these multiple checkpoints, we use personalized Q&A.
+
+161
+00:07:56,460 --> 00:08:00,140
+to evaluate the memory capabilities of the model or the agent.
+
+162
+00:08:02,300 --> 00:08:04,420
+Alright, let's dive into the details of data generation.
+
+163
+00:08:04,420 --> 00:08:06,340
+We define this as the entity schema.
+
+164
+00:08:06,340 --> 00:08:10,169
+This includes both attributes and relationships.
+
+165
+00:08:10,629 --> 00:08:14,850
+And these states will continuously evolve as the conversation progresses.
+
+166
+00:08:14,850 --> 00:08:19,980
+For example, they can be updated, added, or deleted.
+
+167
+00:08:24,300 --> 00:08:27,120
+So, in period one, uh...
+
+168
+00:08:27,120 --> 00:08:30,640
+The age range of the participants is mostly in their fifties.
+
+169
+00:08:30,640 --> 00:08:34,000
+And by period three, it's changed to...
+
+170
+00:08:34,000 --> 00:08:36,250
+mixed the ages with young adults.
+
+171
+00:08:36,380 --> 00:08:36,940
+Uh...
+
+172
+00:08:36,940 --> 00:08:37,940
+So, in these conversations,
+
+173
+00:08:37,940 --> 00:08:39,120
+These changes in information
+
+174
+00:08:39,120 --> 00:08:42,500
+In fact, this is a very common phenomenon that happens during conversations.
+
+175
+00:08:42,500 --> 00:08:45,750
+And that's why we use a schema-based approach like this.
+
+176
+00:08:45,750 --> 00:08:48,609
+to reflect this phenomenon through state evolution.
+
+177
+00:08:48,609 --> 00:08:54,489
+And the agent, in fact, must be able to accurately track these changes.
+
+178
+00:08:54,489 --> 00:08:57,620
+so that it can answer the questions in our subsequent evaluation.
+
+179
+00:08:57,940 --> 00:08:59,320
+So, why design it this way?
+
+180
+00:08:59,320 --> 00:09:02,460
+Well, the first is this schema-based method.
+
+181
+00:09:02,460 --> 00:09:05,020
+It's, uh, highly controllable.
+
+182
+00:09:05,020 --> 00:09:08,060
+In other words, there's a precise ground truth at every single point in time.
+
+183
+00:09:08,060 --> 00:09:09,480
+truth.
+
+184
+00:09:09,480 --> 00:09:10,600
+The second point is authenticity.
+
+185
+00:09:10,600 --> 00:09:12,880
+So, this scenario can actually be designed to be...
+
+186
+00:09:12,880 --> 00:09:16,620
+an information flow that's quite close to a real conversation.
+
+187
+00:09:16,620 --> 00:09:18,140
+And the last point is scalability.
+
+188
+00:09:18,140 --> 00:09:22,820
+In other words, the length of the dialogue can be extended indefinitely.
+
+189
+00:09:25,040 --> 00:09:27,760
+Uh, so, in the interaction phase, uh...
+
+190
+00:09:27,760 --> 00:09:31,560
+A user simulator is then used to gradually...
+
+191
+00:09:31,560 --> 00:09:35,300
+to convey this kind of information we just mentioned throughout our multi-turn conversations.
+
+192
+00:09:35,300 --> 00:09:37,700
+the information about state evolution, um.
+
+193
+00:09:37,700 --> 00:09:39,660
+at a predefined checkpoint.
+
+194
+00:09:39,660 --> 00:09:44,640
+We'll then inject a memory query to test its recall of that specific information.
+
+195
+00:09:44,640 --> 00:09:45,000
+point.
+
+196
+00:09:45,000 --> 00:09:47,960
+The agent needs to retrieve from the dialogue history it has participated in,
+
+197
+00:09:47,960 --> 00:09:49,040
+to recall this information.
+
+198
+00:09:49,040 --> 00:09:51,550
+and answer questions.
+
+199
+00:09:51,550 --> 00:09:52,630
+Now, in terms of evaluation,
+
+200
+00:09:52,630 --> 00:09:56,530
+We provide, uh, both the end-to-end QA accuracy,
+
+201
+00:09:56,530 --> 00:09:58,710
+as an overall score.
+
+202
+00:09:58,710 --> 00:10:02,710
+In addition, we also provide some scores related to memory capabilities.
+
+203
+00:10:04,690 --> 00:10:07,770
+This score is, uh, based on the overall score.
+
+204
+00:10:07,770 --> 00:10:09,110
+we performed a normalization.
+
+205
+00:10:09,110 --> 00:10:13,120
+So, we're starting with a random baseline.
+
+206
+00:10:13,120 --> 00:10:17,580
+and a baseline calculated from the upper bound of memory capacity with a perfect memory.
+
+207
+00:10:17,580 --> 00:10:19,320
+and devised a plan within that framework.
+
+208
+00:10:19,320 --> 00:10:23,870
+to decouple the memory ability from the reasoning ability.
+
+209
+00:10:23,870 --> 00:10:29,410
+to get a more realistic score for its memory performance, uh...
+
+210
+00:10:29,410 --> 00:10:31,750
+And last but not least, a crucial point is that...
+
+211
+00:10:31,750 --> 00:10:34,550
+We provide a set of diagnostic metrics.
+
+212
+00:10:34,550 --> 00:10:36,330
+In other words, a diagnostic matrix.
+
+213
+00:10:36,330 --> 00:10:40,030
+Here, we provide a breakdown across three stages.
+
+214
+00:10:40,030 --> 00:10:45,240
+namely, memory writing, reading, and utilization.
+
+215
+00:10:45,240 --> 00:10:49,210
+So, for these three stages,
+
+216
+00:10:49,210 --> 00:10:52,430
+we've broken down the agent's failure rate.
+
+217
+00:10:52,430 --> 00:10:56,560
+This allows us to precisely pinpoint the agent's memory capabilities.
+
+218
+00:10:56,560 --> 00:11:01,200
+So, where exactly does the problem lie? Hmm.
+
+219
+00:11:02,920 --> 00:11:06,840
+Okay, so let's move on to the experimental results.
+
+220
+00:11:06,840 --> 00:11:10,280
+Alright, so the first question is about our...
+
+221
+00:11:10,280 --> 00:11:12,460
+So, what's the main purpose of this entire framework?
+
+222
+00:11:12,460 --> 00:11:17,180
+So, the question is, can off-policy evaluation really be misleading?
+
+223
+00:11:17,560 --> 00:11:19,680
+On the left, we have the different...
+
+224
+00:11:19,680 --> 00:11:22,220
+Alright, let's look at the comparison of memory agent configurations.
+
+225
+00:11:22,220 --> 00:11:23,880
+Here, you can see the change in the ranking.
+
+226
+00:11:23,880 --> 00:11:27,500
+So, these are the scores for on-policy and off-policy.
+
+227
+00:11:27,500 --> 00:11:31,090
+In fact, there's a clear difference in the rankings.
+
+228
+00:11:32,410 --> 00:11:37,690
+For example, AWE, which stands for, uh, Agent's Write to External memory.
+
+229
+00:11:37,690 --> 00:11:38,950
+Right to external memory.
+
+230
+00:11:38,950 --> 00:11:41,730
+So, writing is, uh, this kind of thing.
+
+231
+00:11:41,730 --> 00:11:45,040
+The agent autonomously decides what information
+
+232
+00:11:45,040 --> 00:11:46,540
+and write it to an external storage.
+
+233
+00:11:46,540 --> 00:11:49,240
+So, this is the baseline, uh...
+
+234
+00:11:49,240 --> 00:11:51,760
+Under the on-policy setting, it actually ranked first.
+
+235
+00:11:51,760 --> 00:11:56,080
+But under the off-policy setting, it dropped to third place.
+
+236
+00:11:56,080 --> 00:11:58,660
+This could be because, in the off-policy phase,
+
+237
+00:11:58,660 --> 00:12:00,870
+we don't actually allow it to.
+
+238
+00:12:00,870 --> 00:12:04,830
+for the agent to generate a response that is consistent with its own memory content.
+
+239
+00:12:04,830 --> 00:12:09,330
+So this, uh, this kind of limits the agent's performance.
+
+240
+00:12:10,530 --> 00:12:12,910
+The table on the right shows the results for the native LM.
+
+241
+00:12:12,910 --> 00:12:15,700
+This is a result from the native large model.
+
+242
+00:12:15,700 --> 00:12:18,340
+The rankings here are relatively stable.
+
+243
+00:12:18,340 --> 00:12:21,720
+But there are still some subtle differences.
+
+244
+00:12:22,040 --> 00:12:24,920
+So, we can see from these two results that...
+
+245
+00:12:24,920 --> 00:12:26,600
+This is what we call an off-policy evaluation.
+
+246
+00:12:26,600 --> 00:12:30,290
+This introduces what's called a 'reuse bias'.
+
+247
+00:12:30,290 --> 00:12:33,530
+So, when you're trying to optimize your... uh...
+
+248
+00:12:33,530 --> 00:12:36,069
+memory agent or memory system,
+
+249
+00:12:36,069 --> 00:12:37,669
+can actually be detrimental.
+
+250
+00:12:37,669 --> 00:12:39,869
+On the other hand, for a native large model,
+
+251
+00:12:39,869 --> 00:12:42,029
+For example, when it comes to evaluating long-form text,
+
+252
+00:12:42,029 --> 00:12:46,370
+Perhaps the drawbacks of off-policy methods aren't that obvious, huh?
+
+253
+00:12:46,370 --> 00:12:47,470
+As for the agent side,
+
+254
+00:12:47,470 --> 00:12:50,710
+This is a design that is quite obviously detrimental.
+
+255
+00:12:52,360 --> 00:12:53,820
+So, the second question is...
+
+256
+00:12:53,820 --> 00:12:55,140
+So, what about the current large models?
+
+257
+00:12:55,140 --> 00:12:58,560
+So, how good is their memory really in long conversations?
+
+258
+00:12:58,560 --> 00:13:01,280
+We've provided heatmaps for two matrices.
+
+259
+00:13:01,280 --> 00:13:03,320
+One is the overall score.
+
+260
+00:13:03,320 --> 00:13:07,110
+and the other is the normalized memory score.
+
+261
+00:13:07,110 --> 00:13:11,930
+If we just focus on the memory score, um, we'll find that...
+
+262
+00:13:13,880 --> 00:13:15,640
+And we made two key discoveries.
+
+263
+00:13:15,640 --> 00:13:19,120
+The first point is that as the conversation gets longer,
+
+264
+00:13:19,120 --> 00:13:22,530
+Now, the horizontal axis for both of these heatmaps...
+
+265
+00:13:22,530 --> 00:13:25,550
+the different periods of the conversation,
+
+266
+00:13:25,550 --> 00:13:27,850
+For example, from period zero to period ten.
+
+267
+00:13:27,850 --> 00:13:31,589
+indicating different turns in the conversation, from light to dark, uh...
+
+268
+00:13:31,589 --> 00:13:32,489
+As the conversation gets longer,
+
+269
+00:13:32,489 --> 00:13:36,430
+we'll find that the model and the agent... uh...
+
+270
+00:13:36,430 --> 00:13:36,770
+Sorry.
+
+271
+00:13:36,770 --> 00:13:39,830
+And it's only when we test the models that we see their performance plummet.
+
+272
+00:13:39,830 --> 00:13:43,060
+For most models, in the middle to later stages of the conversation,
+
+273
+00:13:43,060 --> 00:13:48,200
+Its performance dropped to below 50% of its initial capability.
+
+274
+00:13:48,200 --> 00:13:50,220
+Sometimes, it even drops below the random score.
+
+275
+00:13:51,300 --> 00:13:56,320
+Second, the memory score is significantly lower than the 'abroad' score.
+
+276
+00:13:56,320 --> 00:13:59,260
+In other words, as you can see in the chart, the score for the one on the right is lower than the one on the left.
+
+277
+00:13:59,260 --> 00:14:01,640
+And this is also pretty intuitive.
+
+278
+00:14:01,640 --> 00:14:02,560
+This is quite intuitive.
+
+279
+00:14:02,560 --> 00:14:07,480
+Because that just reflects the model's surface-level fluency in its responses.
+
+280
+00:14:07,480 --> 00:14:11,530
+This actually masks the failure of its underlying memory mechanism.
+
+281
+00:14:11,530 --> 00:14:13,250
+So, the model might sound very confident,
+
+282
+00:14:13,250 --> 00:14:16,330
+But in reality, it's already forgotten some key information.
+
+283
+00:14:17,510 --> 00:14:21,210
+Alright, so the third question we're interested in is...
+
+284
+00:14:21,210 --> 00:14:24,190
+So, can the external memory mechanism actually help?
+
+285
+00:14:24,190 --> 00:14:27,090
+And by 'external memory', we mean something that exists outside of the model itself.
+
+286
+00:14:27,090 --> 00:14:29,410
+We hooked up some external frameworks to assist the model.
+
+287
+00:14:29,410 --> 00:14:31,420
+used to store memory information.
+
+288
+00:14:31,780 --> 00:14:33,320
+We tested three different implementations.
+
+289
+00:14:33,320 --> 00:14:36,900
+Right, and you can see this implementation in the diagram on the right.
+
+290
+00:14:36,900 --> 00:14:39,340
+The first is the traditional RAG.
+
+291
+00:14:39,340 --> 00:14:41,520
+In other words, we store the entire conversation history.
+
+292
+00:14:41,520 --> 00:14:43,910
+into an external vector store.
+
+293
+00:14:43,910 --> 00:14:46,890
+and retrieves the relevant information when answering questions.
+
+294
+00:14:46,890 --> 00:14:48,830
+to use as context.
+
+295
+00:14:48,830 --> 00:14:51,249
+And then there's also AWE.
+
+296
+00:14:51,249 --> 00:14:53,309
+Agent-based External Memory.
+
+297
+00:14:53,309 --> 00:14:56,789
+This means we let the agent decide for itself what information...
+
+298
+00:14:56,789 --> 00:14:58,000
+what to store and what not to store.
+
+299
+00:14:58,000 --> 00:15:01,840
+and let it decide autonomously what gets stored in an external memory bank. Okay,
+
+300
+00:15:01,840 --> 00:15:03,520
+And there's another type, which is AWI.
+
+301
+00:15:03,520 --> 00:15:06,790
+That's right. It's the energetic memory in context.
+
+302
+00:15:06,790 --> 00:15:09,270
+This part is somewhat similar to AWE.
+
+303
+00:15:09,270 --> 00:15:10,150
+The difference is that...
+
+304
+00:15:10,150 --> 00:15:14,230
+It just compresses the information into the large model's context.
+
+305
+00:15:14,230 --> 00:15:16,590
+into the buffer, um...
+
+306
+00:15:18,910 --> 00:15:20,710
+So, we've made a few discoveries here.
+
+307
+00:15:20,710 --> 00:15:25,470
+First off, the AWE approach delivered the best performance.
+
+308
+00:15:25,470 --> 00:15:30,590
+This means letting the model autonomously decide what information to filter and remember.
+
+309
+00:15:30,590 --> 00:15:34,230
+This is more efficient than just storing everything.
+
+310
+00:15:34,840 --> 00:15:38,380
+The second finding is that, uh, while RAG is very simple,
+
+311
+00:15:38,380 --> 00:15:40,860
+not selective enough, hmm.
+
+312
+00:15:41,260 --> 00:15:44,100
+Uh, but... but it's not selective enough.
+
+313
+00:15:44,100 --> 00:15:46,580
+So that's what leads to this, uh...
+
+314
+00:15:46,580 --> 00:15:49,400
+the results of retrieval are quite noisy.
+
+315
+00:15:49,400 --> 00:15:54,120
+And this would lead to, uh, a... a... compared to AWE,
+
+316
+00:15:54,120 --> 00:15:56,710
+a lower score, uh...
+
+317
+00:15:56,710 --> 00:15:58,130
+What was surprising, though, was that...
+
+318
+00:15:58,130 --> 00:16:01,790
+We found that the implementation of this memory mechanism, AWI...
+
+319
+00:16:01,790 --> 00:16:05,249
+In other words, the model takes this memory content
+
+320
+00:16:05,249 --> 00:16:08,820
+writes it into its own context.
+
+321
+00:16:08,820 --> 00:16:11,020
+And in our tests, this strategy...
+
+322
+00:16:11,020 --> 00:16:13,460
+It might even perform worse than the native one,
+
+323
+00:16:13,460 --> 00:16:17,440
+The performance of large models actually gets worse with long contexts.
+
+324
+00:16:17,440 --> 00:16:20,260
+This could mean compressing information into a buffer,
+
+325
+00:16:20,260 --> 00:16:24,400
+it might actually lose some key details,
+
+326
+00:16:24,400 --> 00:16:27,780
+It might even be more harmful than not compressing the information at all.
+
+327
+00:16:29,260 --> 00:16:34,570
+And finally, we looked into the reasons why the models failed.
+
+328
+00:16:34,570 --> 00:16:37,079
+and conducted a series of diagnostic analyses.
+
+329
+00:16:37,859 --> 00:16:39,319
+Let's break it down into a few dimensions.
+
+330
+00:16:39,319 --> 00:16:41,919
+First, let's look at the strategy dimension.
+
+331
+00:16:41,919 --> 00:16:44,840
+As we just saw, there's also AGENTIC RISE.
+
+332
+00:16:44,840 --> 00:16:46,640
+Its overall score is pretty good.
+
+333
+00:16:46,640 --> 00:16:48,520
+Through a more detailed diagnostic analysis,
+
+334
+00:16:48,520 --> 00:16:52,250
+We found that it actually did improve...
+
+335
+00:16:52,250 --> 00:16:57,220
+its ability to actually utilize the information it has stored.
+
+336
+00:16:57,220 --> 00:17:00,400
+But the trade-off is that it sacrifices some of its read performance.
+
+337
+00:17:00,400 --> 00:17:03,690
+This could be because, uh, in the compressed information...
+
+338
+00:17:03,690 --> 00:17:07,710
+during the process of compressing information into this external knowledge base.
+
+339
+00:17:07,710 --> 00:17:10,650
+This compression process results in information loss.
+
+340
+00:17:11,010 --> 00:17:13,630
+The second dimension is the update frequency.
+
+341
+00:17:13,630 --> 00:17:15,920
+And here, we found that...
+
+342
+00:17:15,920 --> 00:17:19,060
+The lower the frequency at which the agent writes to its memory,
+
+343
+00:17:19,060 --> 00:17:20,680
+The lower this update frequency is,
+
+344
+00:17:20,680 --> 00:17:23,430
+the higher its read failure rate becomes.
+
+345
+00:17:23,430 --> 00:17:26,310
+This could be because it's retaining too many local messages.
+
+346
+00:17:26,310 --> 00:17:28,830
+This can cause some confusion.
+
+347
+00:17:29,160 --> 00:17:32,640
+Uh, also, there are some other factors like noise and top-k.
+
+348
+00:17:32,640 --> 00:17:35,190
+I won't go into too much detail on that.
+
+349
+00:17:35,190 --> 00:17:38,890
+So, these diagnostic metrics allow us to do a few things.
+
+350
+00:17:38,890 --> 00:17:40,850
+and make targeted optimizations.
+
+351
+00:17:40,850 --> 00:17:43,870
+for the memory design of our agent.
+
+352
+00:17:43,870 --> 00:17:45,750
+rather than just blindly trial-and-erroring.
+
+353
+00:17:45,750 --> 00:17:47,410
+or making blind improvements.
+
+354
+00:17:50,539 --> 00:17:53,359
+Ah, this chart here is also a table.
+
+355
+00:17:53,359 --> 00:17:57,979
+So, this is about those diagnostic metrics we just mentioned.
+
+356
+00:17:57,979 --> 00:17:59,259
+Explanation.
+
+357
+00:18:00,310 --> 00:18:05,490
+Uh, and we also found that, uh, if we look at it from an overall metric...
+
+358
+00:18:05,490 --> 00:18:07,410
+we found that, uh,
+
+359
+00:18:07,410 --> 00:18:10,710
+Both RAG and AWE saw a significant reduction.
+
+360
+00:18:10,710 --> 00:18:13,150
+Specifically, the utilization failure...
+
+361
+00:18:13,150 --> 00:18:15,750
+In other words, the failure rate of utilization.
+
+362
+00:18:15,750 --> 00:18:20,360
+dropping from 24% to around 7%.
+
+363
+00:18:20,360 --> 00:18:26,380
+But at the same time, the errors for both write and read operations increased.
+
+364
+00:18:26,820 --> 00:18:28,800
+In contrast, for a strategy like AWI,
+
+365
+00:18:28,800 --> 00:18:31,020
+its write failure rate,
+
+366
+00:18:31,020 --> 00:18:33,660
+the write failure remains relatively low.
+
+367
+00:18:33,660 --> 00:18:36,330
+But its read failure rate is extremely high.
+
+368
+00:18:36,330 --> 00:18:40,390
+This might be because it's trying to compress its own information into... uh...
+
+369
+00:18:40,390 --> 00:18:42,390
+in the process of managing its own context,
+
+370
+00:18:42,390 --> 00:18:44,449
+and a lot of important information is lost.
+
+371
+00:18:44,729 --> 00:18:45,049
+Uh...
+
+372
+00:18:45,049 --> 00:18:47,469
+What we've found so far is that there isn't a single method,
+
+373
+00:18:47,469 --> 00:18:50,970
+that can perform well in these three...
+
+374
+00:18:50,970 --> 00:18:54,310
+perform well across the three types of failure rates.
+
+375
+00:18:54,310 --> 00:18:57,370
+This trade-off might be one of the fundamental challenges in memory system design.
+
+376
+00:18:57,370 --> 00:18:59,290
+a rather fundamental challenge.
+
+377
+00:19:00,520 --> 00:19:02,600
+Alright, let's wrap things up.
+
+378
+00:19:02,600 --> 00:19:03,500
+Take a look.
+
+379
+00:19:03,500 --> 00:19:08,740
+First of all, on-policy evaluation reveals issues with off-policy...
+
+380
+00:19:08,740 --> 00:19:12,140
+certain memory-related issues that benchmarks tend to掩盖.
+
+381
+00:19:12,140 --> 00:19:14,840
+If you continue to evaluate memory using static data,
+
+382
+00:19:14,840 --> 00:19:17,300
+you're very likely to get some misleading results.
+
+383
+00:19:17,300 --> 00:19:19,840
+This is especially true for the evaluation of agents.
+
+384
+00:19:20,670 --> 00:19:23,910
+The second point is that all current models...
+
+385
+00:19:23,910 --> 00:19:25,390
+Even the most powerful ones,
+
+386
+00:19:25,390 --> 00:19:27,490
+in long-context conversations,
+
+387
+00:19:27,490 --> 00:19:31,340
+all have a significant limitation when it comes to memory.
+
+388
+00:19:31,340 --> 00:19:32,840
+It's just superficial fluency.
+
+389
+00:19:32,840 --> 00:19:36,720
+This might all be masking their actual memory failures.
+
+390
+00:19:37,850 --> 00:19:42,170
+Third, external memory is helpful.
+
+391
+00:19:42,170 --> 00:19:45,020
+But it's not perfect, um.
+
+392
+00:19:45,020 --> 00:19:49,460
+And we found that among the several types we just mentioned...
+
+393
+00:19:49,460 --> 00:19:50,000
+failure.
+
+394
+00:19:50,000 --> 00:19:51,620
+Writing, reading, and utilization.
+
+395
+00:19:51,620 --> 00:19:55,190
+And there's a fundamental trade-off among these three types of failures.
+
+396
+00:19:55,190 --> 00:19:57,030
+But right now, there isn't a single one.
+
+397
+00:19:57,030 --> 00:19:59,950
+method that can effectively solve this problem.
+
+398
+00:20:00,510 --> 00:20:01,990
+And for the fourth point...
+
+399
+00:20:01,990 --> 00:20:05,150
+So, self-evolution might be a pretty promising direction.
+
+400
+00:20:05,150 --> 00:20:07,190
+For the agent, we also conducted a pilot study.
+
+401
+00:20:07,190 --> 00:20:10,820
+We found that AASIENT can leverage the feedback from MMGM.
+
+402
+00:20:10,820 --> 00:20:13,620
+to iteratively optimize its own memory strategies.
+
+403
+00:20:13,620 --> 00:20:18,130
+Right, this is something that might come up in its future self-evolution.
+
+404
+00:20:18,130 --> 00:20:22,309
+Yeah, that's a pretty interesting insight, I'd say.
+
+405
+00:20:22,309 --> 00:20:25,269
+So, it might use some other mechanisms to iterate on that.
+
+406
+00:20:25,269 --> 00:20:27,009
+to optimize the memory strategies of Agent A itself.
+
+407
+00:20:27,009 --> 00:20:29,790
+This could be a potential topic for future work.
+
+408
+00:20:30,810 --> 00:20:32,110
+So, to sum it up,
+
+409
+00:20:32,110 --> 00:20:35,930
+MMGM is a framework that evaluates the conditional agent memory,
+
+410
+00:20:35,930 --> 00:20:38,730
+a reliable benchmarking diagnostic tool,
+
+411
+00:20:38,730 --> 00:20:42,890
+and it also provides potential directions for optimization.
+
+412
+00:20:43,330 --> 00:20:46,980
+Uh, alright, thank you all for your participation.
+
+413
+00:20:46,980 --> 00:20:50,680
+And this is the QR code for our project website.
+
+414
+00:20:50,680 --> 00:20:54,580
+And of course, feel free to scan this QR code to visit our project page.
+
+415
+00:20:54,580 --> 00:20:57,300
+
+
+416
+00:20:57,300 --> 00:20:59,850
+Thank you all. Alright.
+
+417
+00:20:59,850 --> 00:21:01,170
+Thank you, Jiayang.
+
+418
+00:21:01,170 --> 00:21:03,450
+I was just looking through the comment sections on a few platforms,
+
+419
+00:21:03,450 --> 00:21:06,460
+And also, um, I saw it in our internal group chat.
+
+420
+00:21:06,460 --> 00:21:07,380
+I have two questions.
+
+421
+00:21:07,380 --> 00:21:09,020
+Let me help ask the questions.
+
+422
+00:21:09,020 --> 00:21:11,240
+Alright, so the first question is...
+
+423
+00:21:11,240 --> 00:21:14,540
+So, how does MMGM compare to traditional static benchmarks?
+
+424
+00:21:14,540 --> 00:21:17,900
+So, what's the fundamental difference in the evaluation approach?
+
+425
+00:21:17,900 --> 00:21:22,460
+So, what are the advantages of this on-policy evaluation?
+
+426
+00:21:24,080 --> 00:21:29,680
+Well, the most fundamental difference here is that...
+
+427
+00:21:29,680 --> 00:21:32,580
+The evaluation mode, uh, is basically the mode of evaluation.
+
+428
+00:21:32,580 --> 00:21:34,220
+We found that traditional benchmarks,
+
+429
+00:21:34,220 --> 00:21:36,840
+For example, LOCOMO, NOMEMO, and EMO.
+
+430
+00:21:36,840 --> 00:21:38,740
+They are all 'off-policy' evaluations.
+
+431
+00:21:38,740 --> 00:21:42,330
+In other words, you give the agent a pre-written script for a conversation.
+
+432
+00:21:42,330 --> 00:21:43,790
+and then ask it a question.
+
+433
+00:21:43,790 --> 00:21:49,460
+But this approach, uh, doesn't really reflect the agent's own memory capabilities, hmm.
+
+434
+00:21:49,460 --> 00:21:51,380
+So, what's the difference?
+
+435
+00:21:51,380 --> 00:21:52,860
+Or, to put it another way, if it has a memory deficiency,
+
+436
+00:21:52,860 --> 00:21:54,920
+In fact, it influences the direction of the conversation.
+
+437
+00:21:54,920 --> 00:21:58,660
+And this, in turn, will affect the content of its subsequent memory.
+
+438
+00:21:58,660 --> 00:22:00,440
+So, our on-policy...
+
+439
+00:22:00,440 --> 00:22:02,200
+So, it solves this issue of coupling.
+
+440
+00:22:02,200 --> 00:22:04,960
+And then we conduct the evaluation under a more realistic setting.
+
+441
+00:22:04,960 --> 00:22:10,470
+So, the evolution mode is actually the most fundamental difference.
+
+442
+00:22:10,470 --> 00:22:11,670
+And it comes with some other advantages as well.
+
+443
+00:22:11,670 --> 00:22:13,790
+For instance, uh, our on-policy evaluation...
+
+444
+00:22:13,790 --> 00:22:17,960
+can provide some additional, uh, diagnostic feedback,
+
+445
+00:22:17,960 --> 00:22:19,140
+or optimization signals,
+
+446
+00:22:19,140 --> 00:22:22,800
+This could also potentially guide the improvement of the agent's own memory strategy.
+
+447
+00:22:22,800 --> 00:22:23,850
+optimization.
+
+448
+00:22:23,850 --> 00:22:27,030
+And this is also something that traditional off-policy benchmarks can't do.
+
+449
+00:22:27,030 --> 00:22:30,180
+So, that's basically the two main points.
+
+450
+00:22:30,180 --> 00:22:30,900
+Alright.
+
+451
+00:22:30,900 --> 00:22:36,000
+Another question is about the comparison in the experiment with RNG's long context.
+
+452
+00:22:36,000 --> 00:22:40,629
+the three types of methods: LLMs, agents, and memory.
+
+453
+00:22:40,629 --> 00:22:42,789
+So, what are the core bottlenecks for each of them?
+
+454
+00:22:42,789 --> 00:22:45,889
+So, when it comes to actual implementation, which one would you choose?
+
+455
+00:22:47,680 --> 00:22:50,640
+Right, so for this part, uh...
+
+456
+00:22:50,640 --> 00:22:55,480
+The core bottlenecks for these three approaches are actually quite clear.
+
+457
+00:22:55,480 --> 00:22:58,480
+First, we have the native VLM.
+
+458
+00:22:58,480 --> 00:22:59,920
+we'll find that its bottleneck...
+
+459
+00:22:59,920 --> 00:23:02,980
+The real issue is actually with how it utilizes the stored information.
+
+460
+00:23:02,980 --> 00:23:06,240
+So, what this means is that even though all the information is right there in its context,
+
+461
+00:23:06,240 --> 00:23:07,840
+in its context.
+
+462
+00:23:07,840 --> 00:23:10,410
+But its... uh... reading...
+
+463
+00:23:10,410 --> 00:23:12,730
+Uh, and this also leads to its... uh... its reading...
+
+464
+00:23:12,730 --> 00:23:14,790
+has the lowest failure rate for reading.
+
+465
+00:23:14,790 --> 00:23:15,830
+It doesn't need to retrieve information.
+
+466
+00:23:15,830 --> 00:23:18,000
+But as the conversation gets longer,
+
+467
+00:23:18,000 --> 00:23:19,520
+it can't effectively search through massive amounts of context
+
+468
+00:23:19,520 --> 00:23:22,270
+to effectively use this information.
+
+469
+00:23:22,270 --> 00:23:24,370
+The second point is about RAG.
+
+470
+00:23:24,370 --> 00:23:26,690
+Its real bottleneck is actually in the write phase.
+
+471
+00:23:26,690 --> 00:23:29,010
+This is because RAG doesn't perform any filtering.
+
+472
+00:23:29,010 --> 00:23:30,200
+to store the original dialogue.
+
+473
+00:23:30,200 --> 00:23:33,890
+This can lead to some information being lost, hmm.
+
+474
+00:23:33,890 --> 00:23:34,630
+The third category.
+
+475
+00:23:34,630 --> 00:23:38,590
+In AWE, the 'A' stands for 'autonomous', meaning it decides for itself how to write information.
+
+476
+00:23:38,590 --> 00:23:40,710
+Overall, it's actually the most balanced baseline.
+
+477
+00:23:40,710 --> 00:23:42,470
+And we can also see that its...
+
+478
+00:23:42,470 --> 00:23:44,290
+Its overall score is the best.
+
+479
+00:23:44,290 --> 00:23:46,200
+Yeah, that's right.
+
+480
+00:23:46,200 --> 00:23:49,000
+And then, uh, its write failure...
+
+481
+00:23:49,000 --> 00:23:50,840
+is lower than that of INGD.
+
+482
+00:23:50,840 --> 00:23:55,440
+And then, uh, its read and utilization performance is close to LG's.
+
+483
+00:23:55,440 --> 00:23:56,560
+The last category is AWI.
+
+484
+00:23:56,560 --> 00:23:58,560
+So, for its LM,
+
+485
+00:23:58,560 --> 00:24:01,210
+writes the content into its own context buffer.
+
+486
+00:24:01,210 --> 00:24:01,550
+Uh...
+
+487
+00:24:01,550 --> 00:24:05,570
+So for this base-fine-tuning approach, the bottleneck is actually in the reading part.
+
+488
+00:24:05,570 --> 00:24:07,910
+So, what this means is that it compresses the information into a fixed-size...
+
+489
+00:24:07,910 --> 00:24:10,010
+After it's in the in-context buffer,
+
+490
+00:24:10,010 --> 00:24:12,470
+This compression process inevitably leads to a loss of detail.
+
+491
+00:24:12,470 --> 00:24:14,170
+And that leads to its... uh...
+
+492
+00:24:14,170 --> 00:24:15,050
+has the lowest read failure rate,
+
+493
+00:24:15,050 --> 00:24:18,840
+But the read failure rate goes up. Yeah, that's about right.
+
+494
+00:24:18,840 --> 00:24:21,160
+Each of them has its own pros and cons.
+
+495
+00:24:22,640 --> 00:24:27,280
+Right, and then, regarding this... for the last small point, which is about practical application...
+
+496
+00:24:27,280 --> 00:24:28,720
+So, as for our recommendation...
+
+497
+00:24:28,720 --> 00:24:30,040
+Because, all things considered,
+
+498
+00:24:30,040 --> 00:24:34,310
+So, it seems that AWE still performs the best.
+
+499
+00:24:34,310 --> 00:24:36,150
+So, my advice is, if the conversation isn't too long,
+
+500
+00:24:36,150 --> 00:24:40,100
+you can just use the native VLLM for its long-context capabilities.
+
+501
+00:24:40,100 --> 00:24:42,580
+In fact, there's already been a pretty significant improvement.
+
+502
+00:24:42,580 --> 00:24:43,400
+So you can just use this directly.
+
+503
+00:24:43,400 --> 00:24:44,620
+And when the conversation gets longer,
+
+504
+00:24:44,620 --> 00:24:46,530
+We can use AWE to do it.
+
+505
+00:24:46,730 --> 00:24:49,300
+Just to add to what this guy said,
+

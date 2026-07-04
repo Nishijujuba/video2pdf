@@ -1,0 +1,52 @@
+{
+  "target": "D:\\Project\\video2pdf\\newskill-kimi\\全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511\\section_06.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_06",
+  "status": "pass",
+  "score": 0.91,
+  "dimensions": {
+    "top_down_clarity": 0.95,
+    "support_hierarchy": 0.91,
+    "grouping_mece": 0.88,
+    "teaching_progression": 0.92,
+    "title_body_alignment": 0.9
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "Opening formula and chapter framing",
+      "issue": "The controlling claim is stated early and clearly, but the formula introduces four variables while later subsections do not map one-to-one to M, I, S, and B. This creates a small gap between the teaching model and the chapter's actual organization.",
+      "recommendation": "Add a brief sentence after the formula that previews how the following subsections correspond to mission, iteration, organization/talent, and business-mode carrying capacity."
+    },
+    {
+      "severity": "minor",
+      "location": "Subsections at same level",
+      "issue": "The same-level groups are meaningfully distinct, but '公司使命' and '愿景' partially overlap around mission, iteration, business model, and '打动人心'. The distinction is understandable yet could be sharper.",
+      "recommendation": "Clarify that '公司使命' answers why the company exists and who it energizes, while '愿景' answers what kind of output the company wants to sustain across changing media."
+    },
+    {
+      "severity": "info",
+      "location": "2028 奥斯卡目标 subsection",
+      "issue": "The section handles uncertainty responsibly by distinguishing target, probability, and system-building. It is source-grounded and avoids overstating future plans.",
+      "recommendation": "Keep the cautionary framing; it strengthens credibility and prevents vision language from turning into unsupported prediction."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "11c296c41b8be75fe6bdecbd268e492a5bbe9834deea8f7071227836e1ca2a6c",
+    "input_size_chars": 6005,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration.",
+    "generated_at": "2026-07-02T23:19:58Z"
+  }
+}

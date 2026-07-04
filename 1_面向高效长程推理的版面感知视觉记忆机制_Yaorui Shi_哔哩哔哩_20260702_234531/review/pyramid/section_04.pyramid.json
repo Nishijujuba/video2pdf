@@ -1,0 +1,52 @@
+{
+  "target": "1_面向高效长程推理的版面感知视觉记忆机制_Yaorui Shi_哔哩哔哩_20260702_234531\\section_04.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_04",
+  "status": "pass",
+  "score": 0.916,
+  "dimensions": {
+    "top_down_clarity": 0.95,
+    "support_hierarchy": 0.92,
+    "grouping_mece": 0.88,
+    "teaching_progression": 0.9,
+    "title_body_alignment": 0.92
+  },
+  "findings": [
+    {
+      "severity": "minor",
+      "location": "\\subsection{实验设置：上下文长度与记忆预算}",
+      "issue": "实验设置部分清楚解释了任务、预算和保持率，但公式 \\text{Retention}(B) 引入的是教学性指标，正文没有说明它是否来自原实验指标还是作者用于解释的归纳指标。",
+      "recommendation": "明确标注该公式是本章用于理解压缩鲁棒性的解释性表达，而非论文或视频中直接报告的实验指标，避免读者误以为它是原始评价协议。"
+    },
+    {
+      "severity": "minor",
+      "location": "\\subsection{主结果：极低预算下的性能保持}",
+      "issue": "文本引用了 $16$ 个视觉记忆 token、$80\\%+$ 保持率和文本基线 $50\\%--60\\%$ 下降等关键数字，支撑力度强，但缺少对这些数字适用范围的边界说明。",
+      "recommendation": "补一句说明这些数值对应字幕和图表中讨论的低预算主实验语境，若并非所有数据集逐项成立，应避免读者把它理解为无条件全局结论。"
+    },
+    {
+      "severity": "info",
+      "location": "\\subsection{从结果反推机制：layout control 是压缩率分配器}",
+      "issue": "机制链条清晰，类比有效，能够把主结果和 oracle analysis 合并成读者可迁移的解释框架。",
+      "recommendation": "可保留该段作为本章的教学核心，因为它承担了从实验现象到机制理解的过渡功能。"
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "1d97a6e71be6eec879bf468acc49121f0d86fd65193afaf3457eda5cd283e07e",
+    "input_size_chars": 4505,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint refresh: validate that this edited Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before final output gate.",
+    "generated_at": "2026-07-03T01:33:48Z"
+  }
+}

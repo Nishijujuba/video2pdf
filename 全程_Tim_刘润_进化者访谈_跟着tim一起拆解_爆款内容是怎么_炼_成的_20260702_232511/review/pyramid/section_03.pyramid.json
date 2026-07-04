@@ -1,0 +1,64 @@
+{
+  "target": "D:\\Project\\video2pdf\\newskill-kimi\\全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511\\section_03.tex",
+  "artifact_type": "tex_section",
+  "context_label": "section_03",
+  "status": "pass",
+  "score": 0.89,
+  "dimensions": {
+    "top_down_clarity": 0.93,
+    "support_hierarchy": 0.89,
+    "grouping_mece": 0.86,
+    "teaching_progression": 0.9,
+    "title_body_alignment": 0.87
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "location": "Opening paragraph",
+      "issue": "The section states its controlling claim early: team replication depends on decomposing judgment into collaborative structures while preserving expert creative checkpoints.",
+      "recommendation": "Keep this conclusion-first opening during integration because it gives later subsections a clear governing claim."
+    },
+    {
+      "severity": "minor",
+      "location": "Subsections: 内容矩阵, 产品团队与公司内创业",
+      "issue": "The matrix and product-team material are relevant to organizational scaling, but their relationship to the central claim could be made more explicit at subsection starts. The current text explains this later, which slightly weakens top-down hierarchy.",
+      "recommendation": "Add one sentence near each subsection opening that names which part of the controlling claim it supports, such as resource allocation, revenue constraint, or organizational replication."
+    },
+    {
+      "severity": "minor",
+      "location": "Subsection: 工业化协作",
+      "issue": "The formula and variable list clarify the teaching model, but the transition from source-grounded interview content to authorial abstraction is somewhat dense. The text does disclose that the formula is a teaching abstraction, which is good.",
+      "recommendation": "Before the formula, add a brief reader-facing sentence explaining that the model is a simplification for diagnosing where team replication fails."
+    },
+    {
+      "severity": "info",
+      "location": "Subsection: 冰岛火山案例",
+      "issue": "The case is source-grounded and concretely supports the need for specialized roles, risk planning, and domain expertise.",
+      "recommendation": "Preserve this example because it gives the abstract industrial-collaboration claim a vivid mechanism and evidence base."
+    },
+    {
+      "severity": "minor",
+      "location": "Title and final summary",
+      "issue": "The title promises industrialized collaboration, while parts of the body also cover business model expansion and internal entrepreneurship. These topics are defensible as resource conditions for team replication, but the title under-signals that organizational growth and revenue engines are part of the chapter scope.",
+      "recommendation": "Either slightly broaden the title or make the product-team subsection more explicitly subordinate to industrialized collaboration and resource constraints."
+    }
+  ],
+  "required_revisions": [],
+  "waiver": {
+    "state": "none",
+    "approved_by": null,
+    "reason": null,
+    "approved_at": null
+  },
+  "audit": {
+    "standard_name": "Pyramid Principle Text Standard",
+    "backend": "codex-exec",
+    "prompt_version": "pyramid-principle-text-v1",
+    "input_sha256": "f170fd7066d5ec7e706cabe97b636ecfc82d2fdc8061f80fd2f5f0507c364fe1",
+    "input_size_chars": 5901,
+    "max_input_size_chars": 160000,
+    "large_input_approval_state": "not_required",
+    "evaluation_context": "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration.",
+    "generated_at": "2026-07-03T01:15:13Z"
+  }
+}

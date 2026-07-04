@@ -1,0 +1,112 @@
+{
+  "schema_version": "1.0",
+  "name": "final_delivery_quality_acceptance",
+  "scope": {
+    "final_artifacts": [
+      "main.tex",
+      "final.pdf"
+    ],
+    "excluded_artifacts": [
+      "generation_notes",
+      "writer_drafts",
+      "chat_history",
+      "intermediate_files"
+    ]
+  },
+  "review_context_policy": {
+    "final_artifacts_and_criteria_only": true,
+    "forbid_generation_process": true
+  },
+  "evaluation_policy": {
+    "blocking_only": true,
+    "fail_fast": false,
+    "report_all_failures": true,
+    "allowed_categories": [
+      "style",
+      "figure_visual_integrity",
+      "table_layout_integrity",
+      "credibility_disclosure_placement"
+    ]
+  },
+  "criteria": [
+    {
+      "id": "no_meta_writing_content",
+      "category": "style",
+      "rule": "正文不得出现解释写作选择、提示词约束、改写原因、审稿策略等元写作内容，除非文章主题本身就是写作方法。",
+      "violation_patterns": [
+        "解释为什么本文这样写、为什么采用某种结构、为什么删改某段内容",
+        "提到提示词、指令、agent 设置、审稿策略、改写原因或生成约束",
+        "说明作者为了满足某个生成要求、验收标准或模型偏好而调整表达",
+        "把本应面向读者的正文写成对生成过程、写作过程或审稿过程的说明"
+      ],
+      "allowed_exceptions": [
+        "文章主题本身就是写作方法、提示词工程、编辑流程或审稿策略",
+        "正文正在分析某个真实写作策略案例，且该分析是文章主题的一部分",
+        "相关说明出现在脚注、附录、来源说明或方法说明区，且不会打断正文阅读流"
+      ],
+      "scan_policy": "full_artifact_style_scan",
+      "pass_condition": "全文未发现 violation_patterns，或命中的内容全部落入 allowed_exceptions。",
+      "fail_condition": "发现任意不属于 allowed_exceptions 的 violation_patterns。"
+    },
+    {
+      "id": "figure_visual_integrity",
+      "category": "figure_visual_integrity",
+      "rule": "最终交付物中的图像、图表、流程图、示意图必须视觉完整、排版清晰、元素关系明确，不得呈现未完成草稿感。",
+      "violation_patterns": [
+        "文字超出文本框或容器边界",
+        "文字与连线、箭头、节点或其他元素发生碰撞",
+        "同级元素没有对齐，导致流程、层级或对应关系难以阅读",
+        "说明条、标注、箭头、重点文字之间关系混乱",
+        "字号与容器尺寸不匹配，导致文字拥挤、压线、遮挡或不可读",
+        "图像整体看起来像未完成草稿，无法支撑专业交付"
+      ],
+      "allowed_exceptions": [
+        "源视频原始截图本身存在排版问题，并且正文明确说明该图来自原始画面",
+        "低清晰度、遮挡或透视变形来自源材料限制，且该图仍是唯一必要证据"
+      ],
+      "scan_policy": "full_rendered_pdf_visual_scan",
+      "pass_condition": "所有最终交付图像和图表均未出现 violation_patterns，或命中的问题全部属于 allowed_exceptions。",
+      "fail_condition": "任意最终交付图像或图表出现不属于 allowed_exceptions 的视觉完整性问题。"
+    },
+    {
+      "id": "table_layout_integrity",
+      "category": "table_layout_integrity",
+      "rule": "最终交付物中的表格必须完整显示、边界清晰、列宽合理、内容可读，不得出现截断、溢出或专业排版失败。",
+      "violation_patterns": [
+        "表格内容超出页面边界或被 PDF 页面裁切",
+        "列宽过窄导致文本严重挤压、重叠或不可读",
+        "长文本未换行，导致右侧内容消失或压到页边",
+        "表格线、表头、列关系混乱，读者无法判断单元格归属",
+        "表题与表格内容不匹配，或表格位置破坏正文阅读流",
+        "表格密度过高，看起来像未整理的草稿或导出残留"
+      ],
+      "allowed_exceptions": [
+        "表格是源材料截图，且正文明确说明保留原始截图状态",
+        "表格缺陷来自源材料本身，且已有脚注、图注或正文说明其限制"
+      ],
+      "scan_policy": "full_rendered_pdf_visual_scan",
+      "pass_condition": "所有最终交付表格均完整显示、可读、未出现 violation_patterns，或命中的问题全部属于 allowed_exceptions。",
+      "fail_condition": "任意最终交付表格出现不属于 allowed_exceptions 的排版完整性问题。"
+    },
+    {
+      "id": "credibility_disclosure_placement",
+      "category": "credibility_disclosure_placement",
+      "rule": "ASR 噪声、OCR 不确定性、来源限制、审阅范围、方法说明等可信度 caveat 不得以大段正文方式打断主阅读流；需要保留时应放入脚注、图注、表注、附录或来源说明。",
+      "violation_patterns": [
+        "正文主段落中大段解释 ASR、OCR、字幕噪声、识别错误或审稿方法",
+        "在章节开头或核心论述前插入过程性说明，打断读者进入主题",
+        "把内部文件路径、segment 文件名、生成过程或检查过程写入正文",
+        "可信度说明的篇幅、位置或语气让最终 PDF 看起来像工作草稿",
+        "来源限制说明与正文论点混在一起，降低专业感和可信度"
+      ],
+      "allowed_exceptions": [
+        "文章主题本身是 ASR、OCR、字幕处理、数据质量或方法论说明",
+        "可信度说明以脚注、图注、表注、附录或来源说明方式呈现，且不打断正文阅读流",
+        "正文中一句短说明是理解后续内容的必要前提，且没有暴露生成过程或内部审稿过程"
+      ],
+      "scan_policy": "full_rendered_pdf_visual_scan",
+      "pass_condition": "最终 PDF 未出现打断主阅读流的可信度说明，或命中的内容全部落入 allowed_exceptions。",
+      "fail_condition": "任意可信度说明以不属于 allowed_exceptions 的方式破坏正文阅读流、专业感或可信度。"
+    }
+  ]
+}

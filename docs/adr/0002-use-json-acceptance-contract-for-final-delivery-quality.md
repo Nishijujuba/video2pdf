@@ -1,0 +1,11 @@
+# Use JSON acceptance contract for final delivery quality
+
+The final-delivery acceptance flow will use a user-authored `acceptance_criteria.json` as the read-only acceptance standard and a reviewer-authored `acceptance_report.json` as the only machine-readable decision source. The acceptance reviewer is an independent, read-only subagent that may inspect only final delivered artifacts and the criteria file; it must not read generation process records, chat history, writer notes, or intermediate drafts.
+
+The first-version criteria file contains only delivery-blocking checks. It does not support advisory severity levels, scoring-only recommendations, or fail-fast review: every criterion must be evaluated, all failures must be reported, and each failed criterion must include artifact-grounded evidence plus revision guidance.
+
+The first-version categories are `style`, `figure_visual_integrity`, `table_layout_integrity`, and `credibility_disclosure_placement`. These categories protect the final PDF's readability, professional finish, and credibility, including failures such as meta-writing in body text, draft-like diagrams, text overflow, table clipping, and ASR/OCR uncertainty notes interrupting the main reading flow.
+
+Visual acceptance must inspect rendered PDF pages rather than only TeX source. The independent acceptance reviewer must perform a full rendered PDF visual scan with Codex visual capability, record one result entry for every page, and bind the report to artifact fingerprints so old reports become stale after any in-scope final artifact changes.
+
+The main rejected alternatives are a total-score quality report, a mixed standard/result JSON file, generation-process-assisted review, and manual spot-check visual review. Those alternatives are easier to run, but they let weak passes hide blocking defects, allow reviewer self-justification, or miss visual failures that appear only in the rendered PDF.

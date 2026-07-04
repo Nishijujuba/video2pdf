@@ -176,11 +176,13 @@ Skip subtitles entirely and rely on dense frame sampling to extract teaching con
 
 ## Output Naming
 
-Create the video output directory under `D:\Project\video2pdf\newskill-kimi` using the original Bilibili title plus the task start timestamp from the local machine timezone:
+Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
 
 ```text
-D:\Project\video2pdf\newskill-kimi\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
+D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
 ```
+
+The `workspace` directory is the default parent for new Bilibili PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 
@@ -539,7 +541,7 @@ On Windows, prefer the bundled ASCII staging compiler for final XeLaTeX builds:
 
 ```powershell
 D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
-  "D:\Project\video2pdf\newskill-kimi\<video>\final.tex" `
+  "D:\Project\video2pdf\newskill-kimi\workspace\<video>\final.tex" `
   --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe"
 ```
 

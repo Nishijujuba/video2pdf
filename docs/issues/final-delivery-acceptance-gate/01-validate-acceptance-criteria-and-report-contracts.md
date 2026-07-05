@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on: []
 blocks:
@@ -14,12 +14,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 01 - Validate acceptance criteria and report contracts
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -75,15 +75,16 @@ Known source mismatch: `docs/acceptance/acceptance_criteria.v1.json` currently l
 
 ## Acceptance Criteria
 
-- [ ] The criteria schema and validator enforce the PRD's minimum criteria JSON contract, including `criteria_version`.
-- [ ] The report schema and validator enforce the PRD's minimum Acceptance Report JSON contract.
-- [ ] The validators fail closed for malformed, incomplete, stale, or context-violating evidence.
-- [ ] The default criteria file validates against the new criteria schema.
-- [ ] Test coverage demonstrates all acceptance-test cases listed above.
-- [ ] Skill documentation identifies `acceptance_report.json` as the only machine-readable delivery decision source.
+- [x] The criteria schema and validator enforce the PRD's minimum criteria JSON contract, including `criteria_version`.
+- [x] The report schema and validator enforce the PRD's minimum Acceptance Report JSON contract.
+- [x] The validators fail closed for malformed, incomplete, stale, or context-violating evidence.
+- [x] The default criteria file validates against the new criteria schema.
+- [x] Test coverage demonstrates all acceptance-test cases listed above.
+- [x] Skill documentation identifies `acceptance_report.json` as the only machine-readable delivery decision source.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Implemented criteria/report schemas and validators under `.agents/skills/final-delivery-acceptance/`; verified with final-delivery-acceptance unittest discovery.
 
 ## Comments

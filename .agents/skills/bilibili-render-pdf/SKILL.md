@@ -557,12 +557,37 @@ If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Ad
 
 When using Python to render a PDF whose path contains Chinese characters, pass the PDF path and output directory as command-line arguments or environment variables. This avoids stdin script encoding loss on Windows.
 
+## Final Delivery Acceptance Gate
+
+After PDF rendering and PDF verification, run the Final Delivery Acceptance Gate before delivery.
+
+Required evidence paths:
+
+- `docs/acceptance/acceptance_criteria.v1.json`
+- `review/acceptance/allowed_artifacts_manifest.json`
+- `review/acceptance/rendered_pages/`
+- `review/acceptance/acceptance_report.json`
+- optional `review/acceptance/acceptance_summary.md`
+
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, and rendered page evidence.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+
+Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
+
 ## Final Checklist
 
 Before delivery, verify all of the following:
 
 - `check_output_gate.py "<video-name>" --enforce-gate` has passed, or `--allow-waivers` has passed with explicit waiver evidence in the relevant JSON reports
 - `<video-name>\review\pyramid\summary.md` is current, and the matching JSON reports remain the machine decision source
+- `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
+- `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
+- `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
+- `acceptance_report.json is the only machine-readable acceptance decision`; `acceptance_summary.md` is optional explanatory text
+- missing, failed, malformed, stale, or forbidden-context report blocks final delivery
 - no important teaching content has been dropped, and no concrete but critical detail has been lost during condensation, restructuring, or summarization
 - the text and figures are aligned: each inserted frame supports the surrounding explanation, necessary crops have been applied, and the chosen frame shows the fullest relevant information rather than a transitional or incomplete state
 - the document is visually rich enough for teaching: check whether more high-information key frames should be added, and whether additional LaTeX-native or Python-script-generated illustrations would improve clarity

@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
   - "[[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]"
@@ -13,12 +13,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 05 - Define acceptance repair rerun loop
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -71,14 +71,15 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Revision Guidance, A
 
 ## Acceptance Criteria
 
-- [ ] The final-delivery acceptance skill documents the repair brief shape and rerun sequence.
-- [ ] Project instructions separate Acceptance Reviewer judgment from repair subagent mutation.
-- [ ] Workflow documentation states that old reports remain evidence but cannot approve changed artifacts.
-- [ ] Tests or validation fixtures demonstrate failed report, repair, stale old report, fresh reviewer rerun, and final pass.
-- [ ] The repair loop states how affected upstream evidence is refreshed when repairs invalidate it.
+- [x] The final-delivery acceptance skill documents the repair brief shape and rerun sequence.
+- [x] Project instructions separate Acceptance Reviewer judgment from repair subagent mutation.
+- [x] Workflow documentation states that old reports remain evidence but cannot approve changed artifacts.
+- [x] Tests or validation fixtures demonstrate failed report, repair, stale old report, fresh reviewer rerun, and final pass.
+- [x] The repair loop states how affected upstream evidence is refreshed when repairs invalidate it.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Documented repair brief and rerun sequence in the acceptance skill and render workflow skills; report tests cover failed, stale, and fresh-pass behavior.
 
 ## Comments

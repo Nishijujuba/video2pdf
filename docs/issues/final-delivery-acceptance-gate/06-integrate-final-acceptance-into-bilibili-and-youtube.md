@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
   - "[[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]"
@@ -13,12 +13,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 06 - Integrate final acceptance into Bilibili and YouTube
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -73,15 +73,16 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Evidence, Acceptance
 
 ## Acceptance Criteria
 
-- [ ] `.agents/skills/bilibili-render-pdf/SKILL.md` adds the Final Delivery Acceptance Gate to the post-render delivery flow and Final Checklist.
-- [ ] `.agents/skills/youtube-render-pdf/SKILL.md` adds the same gate to the post-render delivery flow and Final Checklist.
-- [ ] Both workflows document the required acceptance evidence paths under `review/acceptance/`.
-- [ ] Both workflows state that `acceptance_report.json` is the only machine-readable acceptance decision.
-- [ ] Skill validation or tests prove the gate is documented after render and before delivery.
-- [ ] The integration preserves separation from Pyramid Gate and independent subtitle/content review.
+- [x] `.agents/skills/bilibili-render-pdf/SKILL.md` adds the Final Delivery Acceptance Gate to the post-render delivery flow and Final Checklist.
+- [x] `.agents/skills/youtube-render-pdf/SKILL.md` adds the same gate to the post-render delivery flow and Final Checklist.
+- [x] Both workflows document the required acceptance evidence paths under `review/acceptance/`.
+- [x] Both workflows state that `acceptance_report.json` is the only machine-readable acceptance decision.
+- [x] Skill validation or tests prove the gate is documented after render and before delivery.
+- [x] The integration preserves separation from Pyramid Gate and independent subtitle/content review.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Integrated the gate into Bilibili and YouTube render skill docs after rendering and before delivery; verified ordering and required evidence strings with `test_skill_contracts.py`.
 
 ## Comments

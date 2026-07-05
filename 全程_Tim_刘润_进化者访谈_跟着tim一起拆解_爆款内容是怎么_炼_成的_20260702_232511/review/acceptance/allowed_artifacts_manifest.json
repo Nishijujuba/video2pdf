@@ -1,0 +1,23 @@
+{
+  "criteria_file": "docs/acceptance/acceptance_criteria.v1.json",
+  "review_output_dir": "review/acceptance",
+  "final_artifacts": [
+    {
+      "role": "tex",
+      "path": "main_formula_reduced.tex"
+    },
+    {
+      "role": "pdf",
+      "path": "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf"
+    }
+  ],
+  "forbidden_artifacts": [
+    "generation_notes",
+    "writer_drafts",
+    "chat_history",
+    "intermediate_files",
+    "work/",
+    "review/consistency/",
+    "review/pyramid/"
+  ]
+}

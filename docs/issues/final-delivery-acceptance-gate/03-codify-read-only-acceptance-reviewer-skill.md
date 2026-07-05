@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
   - "[[issues/final-delivery-acceptance-gate/01-validate-acceptance-criteria-and-report-contracts]]"
@@ -16,12 +16,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 03 - Codify read-only Acceptance Reviewer skill
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -73,14 +73,15 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Reviewer, Acceptance
 
 ## Acceptance Criteria
 
-- [ ] `.agents/skills/final-delivery-acceptance/SKILL.md` defines the reviewer inputs, forbidden context, outputs, and report duties.
-- [ ] `AGENTS.md` records the Acceptance Reviewer as a required final role for `/bilibili-render-pdf` and `/youtube-render-pdf` delivery.
-- [ ] The reviewer instructions require complete criteria evaluation and complete rendered page visual coverage.
-- [ ] The reviewer instructions preserve read-only review and forbid artifact modification.
-- [ ] Validation or tests prove the skill instructions contain the required context isolation and report-shape obligations.
+- [x] `.agents/skills/final-delivery-acceptance/SKILL.md` defines the reviewer inputs, forbidden context, outputs, and report duties.
+- [x] `AGENTS.md` records the Acceptance Reviewer as a required final role for `/bilibili-render-pdf` and `/youtube-render-pdf` delivery.
+- [x] The reviewer instructions require complete criteria evaluation and complete rendered page visual coverage.
+- [x] The reviewer instructions preserve read-only review and forbid artifact modification.
+- [x] Validation or tests prove the skill instructions contain the required context isolation and report-shape obligations.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Added `final-delivery-acceptance` skill instructions plus AGENTS/CLAUDE role requirements; verified with `test_skill_contracts.py` and skill quick validation.
 
 ## Comments

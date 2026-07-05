@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
   - "[[issues/final-delivery-acceptance-gate/01-validate-acceptance-criteria-and-report-contracts]]"
@@ -14,12 +14,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 02 - Generate rendered PDF page evidence
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -71,14 +71,15 @@ Relevant domain concepts from root `CONTEXT.md`: Rendered PDF Visual Review, Ful
 
 ## Acceptance Criteria
 
-- [ ] `render_pdf_pages.py` creates `review/acceptance/rendered_pages/` and writes all pages with the required `page_0001.png` naming pattern.
-- [ ] The renderer exposes the final PDF page count for downstream validation.
-- [ ] Report validation enforces complete one-entry-per-page visual scan coverage.
-- [ ] Tests cover valid rendering and all visual coverage rejection cases listed above.
-- [ ] Documentation states that rendered page evidence is required for figure, table, and credibility disclosure placement checks.
+- [x] `render_pdf_pages.py` creates `review/acceptance/rendered_pages/` and writes all pages with the required `page_0001.png` naming pattern.
+- [x] The renderer exposes the final PDF page count for downstream validation.
+- [x] Report validation enforces complete one-entry-per-page visual scan coverage.
+- [x] Tests cover valid rendering and all visual coverage rejection cases listed above.
+- [x] Documentation states that rendered page evidence is required for figure, table, and credibility disclosure placement checks.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Implemented `render_pdf_pages.py` and validator visual coverage checks; rendered the Tim/Liu Run formula-reduced PDF into 32 page images for end-to-end evidence.
 
 ## Comments

@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
   - "[[issues/final-delivery-acceptance-gate/01-validate-acceptance-criteria-and-report-contracts]]"
@@ -16,12 +16,12 @@ created: 2026-07-04
 updated: 2026-07-04
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 04 - Enforce acceptance manifests, fingerprints, and decisions
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -75,14 +75,15 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Review Context, Acce
 
 ## Acceptance Criteria
 
-- [ ] The acceptance flow creates `allowed_artifacts_manifest.json` before reviewer launch.
-- [ ] The validator compares report context and evidence paths against the manifest.
-- [ ] The validator compares report fingerprints against current final artifacts.
-- [ ] Delivery automation can rely on validator exit status or equivalent result without parsing Markdown prose.
-- [ ] Test coverage proves missing, malformed, failed, stale, and forbidden-context reports all block delivery.
+- [x] The acceptance flow creates `allowed_artifacts_manifest.json` before reviewer launch.
+- [x] The validator compares report context and evidence paths against the manifest.
+- [x] The validator compares report fingerprints against current final artifacts.
+- [x] Delivery automation can rely on validator exit status or equivalent result without parsing Markdown prose.
+- [x] Test coverage proves missing, malformed, failed, stale, and forbidden-context reports all block delivery.
 
 ## Execution Log
 
 - 2026-07-04: Created from [[prd/final-delivery-acceptance-gate]].
+- 2026-07-04: Implemented manifest creation, fingerprint freshness checks, context/evidence boundary checks, and JSON decision enforcement in `validate_acceptance_report.py`.
 
 ## Comments

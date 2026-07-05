@@ -1,5 +1,6 @@
 {
   "schema_version": "1.0",
+  "criteria_version": "1.0",
   "name": "final_delivery_quality_acceptance",
   "scope": {
     "final_artifacts": [

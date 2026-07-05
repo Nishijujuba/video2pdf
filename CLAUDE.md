@@ -21,7 +21,20 @@ Required subagent roles:
 - **Consistency agent**: check for duplicate definitions, inconsistent terminology, broken transitions between chapters, missing cross-references, and unclear notation.
 - **Independent review agent**: after the first PDF is delivered, spawn an independent review agent. This agent must compare the draft against the original subtitle files and check for missing important details or subtle information. The workflow must continue through interaction and revision until the review agent judges that the TeX content is complete enough.
 - **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, and a fresh Acceptance Reviewer run decides delivery.
-- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, and a fresh Acceptance Reviewer run decides delivery.
+
+## Final Delivery Guard
+
+Every render workflow must bind final delivery to `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+
+Before final delivery, run `delivery_guard.py check`. Final delivery is allowed only after a fresh passing guard report exists. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+
+When acceptance fails, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, `attempt_02/`, and `attempt_03/` as needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md` and set the target stage to `blocked`.
+
+The project Stop hook calls `delivery_guard.py hook-stop`, which may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
 ## Required Tool Paths
 

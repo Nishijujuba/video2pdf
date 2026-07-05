@@ -439,6 +439,20 @@ If acceptance fails, use repair subagents to revise the affected TeX, figures, t
 
 Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
 
+### Guarded Target Lifecycle
+
+The render workflow must create `.codex/delivery-targets/current.json` at `generating`, then create the video-level `review/acceptance/delivery_target.json` before final delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+
+After rendering the final PDF, set the active target to `ready_for_delivery`, run the Acceptance Reviewer in a separate read-only role, and set the stage to `accepted` only after acceptance passes. If acceptance fails, run bounded repair with repair subagents, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, rerender or regenerate changed final artifacts, refresh rendered page evidence, and rerun a fresh Acceptance Reviewer. Continue through `attempt_02/` and `attempt_03/` only when needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md`, set the target to `blocked`, and stop delivery.
+
+Before the final response, run `delivery_guard.py check`. Do not deliver this PDF until delivery_guard.py records a fresh pass. After successful delivery, clear `.codex/delivery-targets/current.json` so stale `delivered` state cannot affect later work.
+
+The project Stop hook calls `delivery_guard.py hook-stop`, which may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+
 ## Final Checklist
 
 Before delivery, verify all of the following:

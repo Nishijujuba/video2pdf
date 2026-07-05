@@ -19,6 +19,7 @@ Keeping issues, PRDs, and ADRs under the same `docs/` root lets Obsidian Graph V
 - Implementation issues are `docs/issues/<feature-slug>/<NN>-<slug>.md`, numbered from `01`
 - Each issue must link to its PRD with an Obsidian internal link, such as `[[prd/pyramid-principle-codex-exec-gate]]`
 - Dependencies, blockers, related ADRs, and follow-up issues must use Obsidian internal links so Graph View can draw edges
+- Execution dependency order is authoritative in `depends_on`; `blocks` is a redundant reverse index and should be checked against the inverse of `depends_on`
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
 ## Issue Status
@@ -102,9 +103,23 @@ Link the relevant PRD, ADRs, source files, or earlier issues.
 
 - Link every issue to its PRD through the `feature` field and, when helpful, again in the `## Context` section.
 - Link dependency edges explicitly with `depends_on` and `blocks`.
+- Treat `depends_on` as the source of truth for generated dependency views.
+- Treat `blocks` as a human-readable reverse index. If `blocks` disagrees with the inverse of `depends_on`, fix the issue metadata before trusting the dependency view.
 - Link architectural decisions with `related_adrs`.
 - Use `#status/needs-triage`, `#status/needs-info`, `#status/ready-for-agent`, `#status/ready-for-human`, `#status/in-progress`, `#status/blocked`, `#status/in-review`, `#status/done`, and `#status/wontfix` as Graph View groups.
 - When an issue changes state, update `status`, the matching `status/<state>` tag, the body `Status:` line, and the `updated` date in the same edit.
+
+## Dependency View Rules
+
+Obsidian Graph View shows all wiki links, so it is useful for document context but too noisy for issue execution order. Use a generated dependency view when the question is which issue must happen before another issue.
+
+- A dependency view is scoped to one Feature Issue Set, meaning one `docs/issues/<feature-slug>/` directory.
+- The dependency view reads only issue files in that directory.
+- The dependency view draws execution edges from `depends_on`.
+- PRDs, ADRs, status tags, and general context links may be shown as metadata or surrounding context, but they should not create execution edges.
+- The primary generated view is `docs/issues/_views/<feature-slug>-dependencies.md`, using a Mermaid graph inside Markdown.
+- A generated Obsidian Canvas view may also be stored as `docs/issues/_views/<feature-slug>.canvas` when spatial layout helps review the batch.
+- The Markdown Mermaid view is the reviewable dependency-view artifact. The Canvas view is a secondary browsing artifact and must be regenerated from the same issue metadata.
 
 ## When A Skill Says "Publish To The Issue Tracker"
 

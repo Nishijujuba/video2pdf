@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "status": "fail",
+  "checked_at": "2026-07-05T10:01:45+08:00",
+  "stage": "ready_for_delivery",
+  "video_output_dir": "全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511",
+  "final_pdf": "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
+  "validated_by": "delivery_guard.py",
+  "acceptance_report_status": "fail",
+  "artifact_fingerprints": [],
+  "checked_conditions": [
+    {
+      "condition": "target_resolved",
+      "status": "pass"
+    },
+    {
+      "condition": "allowed_artifacts_manifest_loaded",
+      "status": "pass"
+    },
+    {
+      "condition": "final_pdf_in_manifest",
+      "status": "pass"
+    },
+    {
+      "condition": "delivery_guard",
+      "status": "fail",
+      "message": "acceptance report status 'fail' blocks delivery"
+    }
+  ],
+  "blocking_message": "Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents to run the Final Delivery Acceptance workflow for 全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511. Do not deliver this PDF until delivery_guard.py records a fresh pass. Reason: acceptance report status 'fail' blocks delivery"
+}

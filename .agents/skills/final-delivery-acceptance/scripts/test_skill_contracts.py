@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 from pathlib import Path
 
 
@@ -85,6 +86,50 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 ]
                 for item in required:
                     self.assertIn(item, text)
+
+    def test_guard_and_bounded_repair_contracts_are_synchronized(self) -> None:
+        common_phrases = [
+            ".codex/delivery-targets/current.json",
+            "review/acceptance/delivery_target.json",
+            "review/acceptance/delivery_guard_report.json",
+            "delivery_guard.py check",
+            "generating",
+            "ready_for_delivery",
+            "accepted",
+            "delivered",
+            "blocked",
+            "attempt_limit: 3",
+            "review/acceptance/attempts/attempt_01/",
+            "review/acceptance/manual_repair_brief.md",
+            "delivery_guard_report.json is a mechanical proof of freshness and contract validity",
+            "Do not deliver this PDF until delivery_guard.py records a fresh pass",
+            "UserPromptSubmit remains out of scope",
+        ]
+        for relative in (
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".agents/skills/final-delivery-acceptance/SKILL.md",
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".agents/skills/youtube-render-pdf/SKILL.md",
+        ):
+            with self.subTest(relative=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in common_phrases:
+                    self.assertIn(phrase, text)
+
+        final_delivery = read(REPO_ROOT / ".agents/skills/final-delivery-acceptance" / "SKILL.md")
+        self.assertIn("Old-PDF repair requires an explicit video_output_dir unless the PDF is already inside one valid video output directory", final_delivery)
+        self.assertIn("Repair subagents may inspect and modify only files inside that video output directory", final_delivery)
+        self.assertIn("Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents", final_delivery)
+        self.assertIn("The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation", final_delivery)
+
+        hooks = json.loads(read(REPO_ROOT / ".codex" / "hooks.json"))
+        self.assertIn("Stop", hooks["hooks"])
+        self.assertNotIn("UserPromptSubmit", hooks["hooks"])
+        stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
+        command = stop_hooks[0].get("commandWindows") or stop_hooks[0]["command"]
+        self.assertIn("delivery_guard.py", command)
+        self.assertIn("hook-stop", command)
 
 
 if __name__ == "__main__":

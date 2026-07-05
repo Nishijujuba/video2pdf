@@ -1,5 +1,23 @@
 # Project Glossary
 
+## Feature Issue Set
+
+A batch of implementation issues that belong to one feature-level planning unit. In this repo, a Feature Issue Set is represented by one `docs/issues/<feature-slug>/` directory, and its issue files normally come from the same PRD.
+
+The Feature Issue Set boundary is used for execution planning and dependency visualization. PRDs, ADRs, status tags, and general documentation links may provide context, while execution dependency order is read from issue metadata such as `depends_on` and `blocks`.
+
+## Issue Dependency Edge
+
+An execution-order relationship between two issue files in the same Feature Issue Set. The authoritative direction is read from the downstream issue's `depends_on` metadata: if issue B depends on issue A, then A must be ready before B can be completed.
+
+The `blocks` metadata is a redundant reverse index for human reading and graph browsing. It should match the inverse of `depends_on`, and dependency-view generators should treat mismatches as tracker consistency errors.
+
+## Issue Dependency View
+
+A generated view that makes the execution order of one Feature Issue Set readable without the noise of general documentation links. Its primary artifact is a Markdown file containing a Mermaid graph, because that form is reviewable in Git and easy to regenerate.
+
+An Obsidian Canvas version may be generated as a secondary browsing artifact when spatial layout helps the user inspect the batch. The Canvas view must not become a separate source of truth for dependency order.
+
 ## Pyramid Principle Validation Skill
 
 A review skill that evaluates whether a generated PDF note, document, or long-form writing artifact follows the Pyramid Principle. It focuses on reasoning structure: conclusion first, grouped support, clear hierarchy, and coherent progression from top-level claim to supporting sections.

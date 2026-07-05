@@ -178,6 +178,12 @@
   },
   "active": "28722e8b99e134ec",
   "lastOpenFiles": [
+    "issues/final-delivery-guard-and-bounded-repair/06-add-end-to-end-guard-fixture-tests-and-doc-sync.md",
+    "issues/final-delivery-guard-and-bounded-repair/05-integrate-guard-and-repair-into-render-skills.md",
+    "issues/final-delivery-guard-and-bounded-repair/04-add-bounded-old-pdf-repair-mode.md",
+    "issues/final-delivery-guard-and-bounded-repair/03-enforce-delivery-guard-with-stop-hook.md",
+    "issues/final-delivery-guard-and-bounded-repair/02-implement-delivery-guard-cli.md",
+    "issues/final-delivery-guard-and-bounded-repair/01-establish-delivery-target-contracts.md",
     "未命名.canvas",
     "prd/pyramid-principle-codex-exec-gate.md",
     "adr/0001-use-codex-exec-for-pyramid-semantic-evaluation.md"

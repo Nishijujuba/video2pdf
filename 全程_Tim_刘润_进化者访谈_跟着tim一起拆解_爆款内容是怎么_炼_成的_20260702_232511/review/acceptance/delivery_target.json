@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "stage": "ready_for_delivery",
+  "video_output_dir": ".",
+  "final_pdf": "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
+  "main_tex": "main_formula_reduced.tex",
+  "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
+  "acceptance_report": "review/acceptance/acceptance_report.json",
+  "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
+  "attempt_limit": 3
+}

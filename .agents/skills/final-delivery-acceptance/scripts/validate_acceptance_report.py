@@ -49,6 +49,8 @@ REVISION_GUIDANCE_KEYS = {"required_change", "allowed_fix_types"}
 VISUAL_SCAN_KEYS = {"pdf", "page_count", "rendered_pages_dir", "pages_checked"}
 PAGE_CHECK_KEYS = {"page", "rendered_page_image", "status", "criteria_checked", "failures"}
 PAGE_FAILURE_KEYS = {"criterion_id", "category", "visible_defect", "rendered_page_image", "pdf_page"}
+FORMULA_SCAN_KEYS = {"scan_policy", "scanned_artifacts", "formulas_checked", "no_body_formula_found"}
+FORMULA_CHECK_KEYS = {"location", "formula_excerpt", "source_type", "status", "information_gain_summary"}
 MANIFEST_KEYS = {"criteria_file", "review_output_dir", "final_artifacts", "forbidden_artifacts"}
 MANIFEST_ARTIFACT_KEYS = {"role", "path"}
 FORBIDDEN_ARTIFACTS = [
@@ -60,6 +62,14 @@ FORBIDDEN_ARTIFACTS = [
     "review/consistency/",
     "review/pyramid/",
 ]
+TEXT_CATEGORIES = {"style", "logic_readability"}
+FORMULA_CATEGORIES = {"formula_information_gain"}
+FORMULA_SOURCE_TYPES = {"source_material", "inherent_quantitative", "interpretive_teaching_model"}
+VISUAL_CATEGORIES = {
+    "figure_visual_integrity",
+    "table_layout_integrity",
+    "credibility_disclosure_placement",
+}
 OVERALL_STATUSES = {"pass", "fail"}
 RESULT_STATUSES = {"pass", "fail"}
 EXIT_VALID = 0
@@ -330,6 +340,47 @@ def _validate_revision_guidance(value: Any, label: str) -> None:
     _require_string_array(guidance["allowed_fix_types"], f"{label}.allowed_fix_types", allow_empty=False)
 
 
+def _validate_formula_scan_evidence(value: Any, label: str, *, result_status: str) -> None:
+    scan = _require_object(value, label)
+    _validate_keys(scan, FORMULA_SCAN_KEYS, "formula scan evidence")
+    scan_policy = _require_string(scan["scan_policy"], f"{label}.scan_policy")
+    if scan_policy != "full_artifact_formula_scan":
+        raise ValidationError(f"{label}.scan_policy must be 'full_artifact_formula_scan'")
+    _require_string_array(scan["scanned_artifacts"], f"{label}.scanned_artifacts", allow_empty=False)
+    no_body_formula_found = _require_bool(scan["no_body_formula_found"], f"{label}.no_body_formula_found")
+    formulas = scan["formulas_checked"]
+    if not isinstance(formulas, list):
+        raise ValidationError(f"{label}.formulas_checked must be an array")
+    if no_body_formula_found and formulas:
+        raise ValidationError("no_body_formula_found must be false when formulas_checked is non-empty")
+    if not no_body_formula_found and not formulas:
+        raise ValidationError("formulas_checked must not be empty when no_body_formula_found is false")
+
+    formula_statuses: list[str] = []
+    for index, formula in enumerate(formulas):
+        formula_obj = _require_object(formula, f"{label}.formulas_checked[{index}]")
+        _validate_keys(formula_obj, FORMULA_CHECK_KEYS, f"{label}.formulas_checked[{index}]")
+        _require_string(formula_obj["location"], f"{label}.formulas_checked[{index}].location")
+        _require_string(formula_obj["formula_excerpt"], f"{label}.formulas_checked[{index}].formula_excerpt")
+        source_type = _require_string(formula_obj["source_type"], f"{label}.formulas_checked[{index}].source_type")
+        if source_type not in FORMULA_SOURCE_TYPES:
+            raise ValidationError(f"{label}.formulas_checked[{index}].source_type is invalid")
+        status = _require_string(formula_obj["status"], f"{label}.formulas_checked[{index}].status")
+        if status not in RESULT_STATUSES:
+            raise ValidationError(f"{label}.formulas_checked[{index}].status is invalid")
+        formula_statuses.append(status)
+        _require_string(
+            formula_obj["information_gain_summary"],
+            f"{label}.formulas_checked[{index}].information_gain_summary",
+        )
+
+    failed_formula_count = sum(1 for status in formula_statuses if status == "fail")
+    if result_status == "pass" and failed_formula_count:
+        raise ValidationError("passing formula criterion cannot include failed formula checks")
+    if result_status == "fail" and failed_formula_count == 0:
+        raise ValidationError("failed formula criterion requires at least one failed formula check")
+
+
 def _validate_criterion_results(
     report: dict[str, Any],
     criteria_by_id: dict[str, dict[str, Any]],
@@ -376,6 +427,12 @@ def _validate_criterion_results(
             _validate_revision_guidance(result["revision_guidance"], f"criterion_results[{index}].revision_guidance")
         elif result["revision_guidance"] is not None:
             raise ValidationError("pass criterion revision_guidance must be null")
+        if category in FORMULA_CATEGORIES:
+            _validate_formula_scan_evidence(
+                result["scan_evidence"],
+                f"criterion_results[{index}].scan_evidence",
+                result_status=status,
+            )
 
     if seen_ids != expected_ids:
         missing = expected_ids - seen_ids
@@ -417,7 +474,7 @@ def _validate_page_failure(
     category = _require_string(failure["category"], f"{label}.category")
     if category != criteria_by_id[criterion_id]["category"]:
         raise ValidationError(f"{label}.category does not match criterion")
-    if category == "style":
+    if category not in VISUAL_CATEGORIES:
         raise ValidationError(f"{label}.category must be a visual category")
     _require_string(failure["visible_defect"], f"{label}.visible_defect")
     if _normalize_relative_path(failure["rendered_page_image"], f"{label}.rendered_page_image") != rendered_image:
@@ -436,13 +493,13 @@ def _validate_visual_scan(
     video_output_dir: Path,
 ) -> None:
     visual_criterion_ids = {
-        criterion_id for criterion_id, item in criteria_by_id.items() if item["category"] != "style"
+        criterion_id for criterion_id, item in criteria_by_id.items() if item["category"] in VISUAL_CATEGORIES
     }
-    visual_categories = {item["category"] for item in criteria_by_id.values() if item["category"] != "style"}
+    visual_categories = {item["category"] for item in criteria_by_id.values() if item["category"] in VISUAL_CATEGORIES}
     failed_visual_criterion_ids = {
         criterion_id
         for criterion_id in failed_criterion_ids
-        if criteria_by_id[criterion_id]["category"] != "style"
+        if criteria_by_id[criterion_id]["category"] in VISUAL_CATEGORIES
     }
     page_failure_criterion_ids: set[str] = set()
     visual = report["visual_scan_evidence"]

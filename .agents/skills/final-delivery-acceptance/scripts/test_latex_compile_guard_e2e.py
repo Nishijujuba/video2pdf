@@ -20,6 +20,12 @@ from validate_acceptance_report import compute_artifact_fingerprint, create_allo
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
+TEXT_ARTIFACT_CATEGORIES = {"style", "logic_readability", "formula_information_gain"}
+VISUAL_CATEGORIES = {
+    "figure_visual_integrity",
+    "table_layout_integrity",
+    "credibility_disclosure_placement",
+}
 WRAPPER_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
 PRETOOLUSE_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "latex_compile_pretooluse_guard.py"
 DELIVERY_GUARD_SCRIPT = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
@@ -203,15 +209,24 @@ class LatexCompileGuardE2ETests(unittest.TestCase):
                     "status": "pass",
                     "evidence": [
                         {
-                            "artifact_path": "main.tex" if item["category"] == "style" else pdf_relative,
+                            "artifact_path": "main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else pdf_relative,
                             "location": "full artifact",
                             "summary": "No blocking defect detected.",
                         }
                     ],
-                    "scan_evidence": {
-                        "scan_policy": item["scan_policy"],
-                        "scanned_artifacts": ["main.tex" if item["category"] == "style" else pdf_relative],
-                    },
+                    "scan_evidence": (
+                        {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex"],
+                            "formulas_checked": [],
+                            "no_body_formula_found": True,
+                        }
+                        if item["category"] == "formula_information_gain"
+                        else {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else pdf_relative],
+                        }
+                    ),
                     "revision_guidance": None,
                 }
                 for item in criteria_items

@@ -62,14 +62,18 @@ The Acceptance Reviewer must:
 
 - evaluate every criterion from the criteria file, even after finding a failure
 - run a full final text scan for style criteria
+- run a full final formula scan for `formula_information_gain`
 - inspect every rendered PDF page image for visual criteria
 - write one `criterion_results[]` entry for every configured criterion
 - write one `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page
+- write `scan_evidence.formulas_checked[]` for the formula criterion, with one entry for every reader-facing body formula
 - include artifact-grounded evidence for each failed criterion
 - include revision guidance for each failed criterion
 - declare `generation_process_used: false`
 - keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file
 - bind the report to current artifact fingerprints
+
+For `formula_information_gain`, the reviewer must classify every body formula as `source_material`, `inherent_quantitative`, or `interpretive_teaching_model`. Each entry in `scan_evidence.formulas_checked[]` must include `location`, `formula_excerpt`, `source_type`, `status`, and `information_gain_summary`. If the final text contains no body formulas, the reviewer must write `formulas_checked: []` and `no_body_formula_found: true`. A formula fails when it only restates adjacent prose, wraps a list as `Y = f(...)` without a decision boundary, or adds symbols without lowering reader cognitive load.
 
 ## Failure And Repair Loop
 
@@ -90,7 +94,7 @@ After repair, the workflow must rerender affected final artifacts, refresh rende
 
 Every active delivery workflow is represented by `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
-The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. It must record `attempt_limit: 3`.
+The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. Compile provenance binds current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments. It must record `attempt_limit: 3`.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The guard proves freshness, manifest membership, rendered page coverage, path boundaries, compile provenance for newly generated video PDFs, and enforced Acceptance Report decision. It does not replace the Acceptance Reviewer.
 

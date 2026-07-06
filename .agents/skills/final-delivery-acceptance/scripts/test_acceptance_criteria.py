@@ -64,6 +64,118 @@ class AcceptanceCriteriaValidationTests(unittest.TestCase):
         score_only["criteria"] = [criterion]
         self.assert_invalid(score_only, "criteria\\[0\\] has forbidden keys: score", "score-only.json")
 
+    def test_requires_argument_chain_integrity_logic_readability_criterion(self) -> None:
+        criteria = default_criteria()
+        criteria["criteria"] = [
+            {**item, "id": "renamed_argument_chain"} if isinstance(item, dict) and item.get("id") == "argument_chain_integrity" else item
+            for item in criteria["criteria"]
+        ]
+
+        self.assert_invalid(
+            criteria,
+            "criteria must include argument_chain_integrity in category logic_readability",
+            "missing-argument-chain-integrity.json",
+        )
+
+    def test_requires_formula_information_gain_criterion(self) -> None:
+        criteria = default_criteria()
+        criteria["criteria"] = [
+            {**item, "id": "renamed_formula_gate"} if isinstance(item, dict) and item.get("id") == "formula_information_gain" else item
+            for item in criteria["criteria"]
+        ]
+
+        self.assert_invalid(
+            criteria,
+            "criteria must include formula_information_gain in category formula_information_gain",
+            "missing-formula-information-gain.json",
+        )
+
+    def test_rejects_missing_allowed_category_criterion(self) -> None:
+        criteria = default_criteria()
+        criteria["criteria"] = [
+            item
+            for item in criteria["criteria"]
+            if not isinstance(item, dict) or item.get("category") != "table_layout_integrity"
+        ]
+
+        self.assert_invalid(
+            criteria,
+            "criteria must include at least one criterion for each allowed category",
+            "missing-table-layout-category.json",
+        )
+
+    def test_formula_information_gain_uses_full_formula_scan(self) -> None:
+        criteria = default_criteria()
+        formula_gate = next(
+            item
+            for item in criteria["criteria"]
+            if isinstance(item, dict) and item.get("id") == "formula_information_gain"
+        )
+        wrong_policy = default_criteria()
+        wrong_policy_item = deepcopy(formula_gate)
+        assert isinstance(wrong_policy_item, dict)
+        wrong_policy_item["scan_policy"] = "full_artifact_style_scan"
+        wrong_policy["criteria"] = [
+            wrong_policy_item if isinstance(item, dict) and item.get("id") == "formula_information_gain" else item
+            for item in wrong_policy["criteria"]
+        ]
+
+        self.assert_invalid(
+            wrong_policy,
+            "criteria\\[\\d+\\].scan_policy must be 'full_artifact_formula_scan'",
+            "wrong-formula-scan-policy.json",
+        )
+
+    def test_triggered_structural_scan_requires_boundary_fields_and_examples(self) -> None:
+        criteria = default_criteria()
+        argument_chain = next(
+            item
+            for item in criteria["criteria"]
+            if isinstance(item, dict) and item.get("id") == "argument_chain_integrity"
+        )
+
+        missing_trigger = default_criteria()
+        missing_item = deepcopy(argument_chain)
+        assert isinstance(missing_item, dict)
+        missing_item.pop("trigger_condition", None)
+        missing_trigger["criteria"] = [
+            missing_item if isinstance(item, dict) and item.get("id") == "argument_chain_integrity" else item
+            for item in missing_trigger["criteria"]
+        ]
+        self.assert_invalid(
+            missing_trigger,
+            "criteria\\[\\d+\\] missing keys: trigger_condition",
+            "missing-trigger-condition.json",
+        )
+
+        malformed_examples = default_criteria()
+        malformed_item = deepcopy(argument_chain)
+        assert isinstance(malformed_item, dict)
+        malformed_item["examples"] = {"fail": {"text": "bad", "reason": "missing pass"}}
+        malformed_examples["criteria"] = [
+            malformed_item if isinstance(item, dict) and item.get("id") == "argument_chain_integrity" else item
+            for item in malformed_examples["criteria"]
+        ]
+        self.assert_invalid(
+            malformed_examples,
+            "criteria\\[\\d+\\].examples missing keys: pass",
+            "malformed-examples.json",
+        )
+
+        wrong_policy = default_criteria()
+        wrong_policy_item = deepcopy(argument_chain)
+        assert isinstance(wrong_policy_item, dict)
+        wrong_policy_item["scan_policy"] = "full_rendered_pdf_visual_scan"
+        wrong_policy["criteria"] = [
+            wrong_policy_item if isinstance(item, dict) and item.get("id") == "argument_chain_integrity" else item
+            for item in wrong_policy["criteria"]
+        ]
+        self.assert_invalid(
+            wrong_policy,
+            "criteria\\[\\d+\\].scan_policy must be 'triggered_structural_expression_scan'",
+            "wrong-argument-chain-scan-policy.json",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,13 @@ from validate_acceptance_report import (
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
+TEXT_CATEGORIES = {"style", "logic_readability"}
+FORMULA_CATEGORIES = {"formula_information_gain"}
+VISUAL_CATEGORIES = {
+    "figure_visual_integrity",
+    "table_layout_integrity",
+    "credibility_disclosure_placement",
+}
 
 
 def load_criteria() -> dict[str, object]:
@@ -94,15 +101,24 @@ class AcceptanceReportValidationTests(unittest.TestCase):
                     "status": "pass",
                     "evidence": [
                         {
-                            "artifact_path": "main.tex" if item["category"] == "style" else "final.pdf",
+                            "artifact_path": "main.tex" if item["category"] in TEXT_CATEGORIES | FORMULA_CATEGORIES else "final.pdf",
                             "location": "full artifact",
                             "summary": "No blocking defect detected.",
                         }
                     ],
-                    "scan_evidence": {
-                        "scan_policy": item["scan_policy"],
-                        "scanned_artifacts": ["main.tex" if item["category"] == "style" else "final.pdf"],
-                    },
+                    "scan_evidence": (
+                        {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex"],
+                            "formulas_checked": [],
+                            "no_body_formula_found": True,
+                        }
+                        if item["category"] in FORMULA_CATEGORIES
+                        else {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex" if item["category"] in TEXT_CATEGORIES else "final.pdf"],
+                        }
+                    ),
                     "revision_guidance": None,
                 }
                 for item in criteria_items
@@ -230,7 +246,7 @@ class AcceptanceReportValidationTests(unittest.TestCase):
         duplicate_result["criterion_results"] = duplicate_result["criterion_results"] + [
             deepcopy(duplicate_result["criterion_results"][0])
         ]
-        with self.assertRaisesRegex(ValidationError, "criterion_results\\[4\\].criterion_id is duplicated"):
+        with self.assertRaisesRegex(ValidationError, "criterion_results\\[\\d+\\].criterion_id is duplicated"):
             self.validate(duplicate_result)
 
         mismatch = self.valid_report()
@@ -270,14 +286,25 @@ class AcceptanceReportValidationTests(unittest.TestCase):
         visual_failure_without_page_failure = self.valid_report()
         visual_failure_without_page_failure["overall_status"] = "fail"
         visual_failure_without_page_failure["revision_required"] = True
-        result = deepcopy(visual_failure_without_page_failure["criterion_results"][1])
+        result = deepcopy(
+            next(
+                item
+                for item in visual_failure_without_page_failure["criterion_results"]
+                if isinstance(item, dict) and item.get("category") in VISUAL_CATEGORIES
+            )
+        )
         assert isinstance(result, dict)
         result["status"] = "fail"
         result["revision_guidance"] = {
             "required_change": "Repair the visible figure defect.",
             "allowed_fix_types": ["redraw"],
         }
-        visual_failure_without_page_failure["criterion_results"][1] = result
+        visual_failure_without_page_failure["criterion_results"] = [
+            result
+            if isinstance(item, dict) and item.get("criterion_id") == result["criterion_id"]
+            else item
+            for item in visual_failure_without_page_failure["criterion_results"]
+        ]
         visual_failure_without_page_failure["failed_criteria"] = [result["criterion_id"]]
         with self.assertRaisesRegex(ValidationError, "failed visual criteria require page failure evidence"):
             self.validate(visual_failure_without_page_failure)
@@ -300,6 +327,154 @@ class AcceptanceReportValidationTests(unittest.TestCase):
             "allowed_fix_types": ["rewrite"],
         }
         failed["criterion_results"][0] = result
+        with self.assertRaisesRegex(GateBlockedError, "acceptance report status 'fail' blocks delivery"):
+            self.validate(failed)
+
+    def test_logic_readability_failure_does_not_require_page_failure(self) -> None:
+        failed = self.valid_report()
+        failed["overall_status"] = "fail"
+        failed["revision_required"] = True
+        result = deepcopy(
+            next(
+                item
+                for item in failed["criterion_results"]
+                if isinstance(item, dict) and item.get("criterion_id") == "argument_chain_integrity"
+            )
+        )
+        assert isinstance(result, dict)
+        result["status"] = "fail"
+        result["evidence"] = [
+            {
+                "artifact_path": "main.tex",
+                "location": "section 2 paragraph 3",
+                "summary": "A structural label list lacks an explicit causal chain and evidence role.",
+            }
+        ]
+        result["scan_evidence"] = {
+            "scan_policy": "triggered_structural_expression_scan",
+            "scanned_artifacts": ["main.tex"],
+            "trigger_count": 1,
+            "failed_trigger_count": 1,
+        }
+        result["revision_guidance"] = {
+            "required_change": "Rewrite the structural label list into an explicit argument chain.",
+            "allowed_fix_types": ["rewrite", "expand explanation"],
+        }
+        failed["criterion_results"] = [
+            result
+            if isinstance(item, dict) and item.get("criterion_id") == "argument_chain_integrity"
+            else item
+            for item in failed["criterion_results"]
+        ]
+        failed["failed_criteria"] = ["argument_chain_integrity"]
+
+        with self.assertRaisesRegex(GateBlockedError, "acceptance report status 'fail' blocks delivery"):
+            self.validate(failed)
+
+    def test_rejects_missing_formula_scan_evidence_for_formula_gate(self) -> None:
+        missing_scan = self.valid_report()
+        result = deepcopy(
+            next(
+                item
+                for item in missing_scan["criterion_results"]
+                if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            )
+        )
+        assert isinstance(result, dict)
+        result["scan_evidence"] = {
+            "scan_policy": "full_artifact_formula_scan",
+            "scanned_artifacts": ["main.tex"],
+        }
+        missing_scan["criterion_results"] = [
+            result
+            if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            else item
+            for item in missing_scan["criterion_results"]
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "formula scan evidence missing keys: formulas_checked, no_body_formula_found"):
+            self.validate(missing_scan)
+
+    def test_formula_gate_requires_each_body_formula_to_be_checked(self) -> None:
+        report = self.valid_report()
+        result = deepcopy(
+            next(
+                item
+                for item in report["criterion_results"]
+                if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            )
+        )
+        assert isinstance(result, dict)
+        result["scan_evidence"] = {
+            "scan_policy": "full_artifact_formula_scan",
+            "scanned_artifacts": ["main.tex"],
+            "formulas_checked": [
+                {
+                    "location": "section 3 display equation",
+                    "formula_excerpt": "Y = f(a, b, c)",
+                    "source_type": "interpretive_teaching_model",
+                    "status": "pass",
+                    "information_gain_summary": "The formula identifies a veto factor and decision boundary.",
+                }
+            ],
+            "no_body_formula_found": True,
+        }
+        report["criterion_results"] = [
+            result
+            if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            else item
+            for item in report["criterion_results"]
+        ]
+
+        with self.assertRaisesRegex(ValidationError, "no_body_formula_found must be false when formulas_checked is non-empty"):
+            self.validate(report)
+
+    def test_formula_failure_blocks_delivery_without_page_failure(self) -> None:
+        failed = self.valid_report()
+        failed["overall_status"] = "fail"
+        failed["revision_required"] = True
+        result = deepcopy(
+            next(
+                item
+                for item in failed["criterion_results"]
+                if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            )
+        )
+        assert isinstance(result, dict)
+        result["status"] = "fail"
+        result["evidence"] = [
+            {
+                "artifact_path": "main.tex",
+                "location": "section 3 display equation",
+                "summary": "The formula repeats a prose list without adding a decision rule.",
+            }
+        ]
+        result["scan_evidence"] = {
+            "scan_policy": "full_artifact_formula_scan",
+            "scanned_artifacts": ["main.tex"],
+            "formulas_checked": [
+                {
+                    "location": "section 3 display equation",
+                    "formula_excerpt": "Y = f(a, b, c)",
+                    "source_type": "interpretive_teaching_model",
+                    "status": "fail",
+                    "information_gain_summary": "The formula only renames the adjacent prose list.",
+                }
+            ],
+            "no_body_formula_found": False,
+        }
+        result["revision_guidance"] = {
+            "required_change": "Replace the low-gain formula with prose, a list, or a table.",
+            "allowed_fix_types": ["delete formula", "rewrite as prose", "replace with table"],
+        }
+        failed["criterion_results"] = [
+            result
+            if isinstance(item, dict) and item.get("criterion_id") == "formula_information_gain"
+            else item
+            for item in failed["criterion_results"]
+        ]
+        failed["failed_criteria"] = ["formula_information_gain"]
+
         with self.assertRaisesRegex(GateBlockedError, "acceptance report status 'fail' blocks delivery"):
             self.validate(failed)
 

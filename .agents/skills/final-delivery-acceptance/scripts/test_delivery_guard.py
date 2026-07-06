@@ -20,6 +20,12 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
 SCRIPT = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
 WRAPPER_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
+TEXT_ARTIFACT_CATEGORIES = {"style", "logic_readability", "formula_information_gain"}
+VISUAL_CATEGORIES = {
+    "figure_visual_integrity",
+    "table_layout_integrity",
+    "credibility_disclosure_placement",
+}
 
 
 def load_criteria() -> dict[str, object]:
@@ -91,15 +97,24 @@ class DeliveryGuardTests(unittest.TestCase):
                     "status": "pass",
                     "evidence": [
                         {
-                            "artifact_path": "main.tex" if item["category"] == "style" else "final.pdf",
+                            "artifact_path": "main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else "final.pdf",
                             "location": "full artifact",
                             "summary": "No blocking defect detected.",
                         }
                     ],
-                    "scan_evidence": {
-                        "scan_policy": item["scan_policy"],
-                        "scanned_artifacts": ["main.tex" if item["category"] == "style" else "final.pdf"],
-                    },
+                    "scan_evidence": (
+                        {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex"],
+                            "formulas_checked": [],
+                            "no_body_formula_found": True,
+                        }
+                        if item["category"] == "formula_information_gain"
+                        else {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else "final.pdf"],
+                        }
+                    ),
                     "revision_guidance": None,
                 }
                 for item in criteria_items
@@ -510,7 +525,7 @@ class DeliveryGuardTests(unittest.TestCase):
         criterion_results = []
         for result in missing_page_report["criterion_results"]:
             result = dict(result)
-            if result["category"] != "style":
+            if result["category"] in VISUAL_CATEGORIES:
                 result["evidence"] = [
                     {
                         "artifact_path": "final-two-page.pdf",

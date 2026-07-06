@@ -74,6 +74,8 @@
           "category": {
             "enum": [
               "style",
+              "logic_readability",
+              "formula_information_gain",
               "figure_visual_integrity",
               "table_layout_integrity",
               "credibility_disclosure_placement"

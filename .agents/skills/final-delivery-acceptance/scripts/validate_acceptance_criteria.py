@@ -17,6 +17,8 @@ from typing import Any
 
 ALLOWED_CATEGORIES = {
     "style",
+    "logic_readability",
+    "formula_information_gain",
     "figure_visual_integrity",
     "table_layout_integrity",
     "credibility_disclosure_placement",
@@ -43,6 +45,18 @@ CRITERION_KEYS = {
     "pass_condition",
     "fail_condition",
 }
+OPTIONAL_CRITERION_KEYS = {
+    "trigger_condition",
+    "excluded_contexts",
+    "examples",
+}
+TRIGGERED_STRUCTURAL_SCAN_KEYS = {
+    "trigger_condition",
+    "excluded_contexts",
+    "examples",
+}
+EXAMPLES_KEYS = {"fail", "pass"}
+EXAMPLE_KEYS = {"text", "reason"}
 FORBIDDEN_CRITERION_KEYS = {
     "severity",
     "priority",
@@ -144,16 +158,31 @@ def _validate_evaluation_policy(criteria: dict[str, Any]) -> None:
 def _expected_scan_policy(category: str) -> str:
     if category == "style":
         return "full_artifact_style_scan"
+    if category == "logic_readability":
+        return "triggered_structural_expression_scan"
+    if category == "formula_information_gain":
+        return "full_artifact_formula_scan"
     return "full_rendered_pdf_visual_scan"
 
 
-def _validate_criterion(value: Any, index: int, seen_ids: set[str]) -> None:
+def _validate_examples(value: Any, label: str) -> None:
+    examples = _require_object(value, label)
+    _validate_keys(examples, EXAMPLES_KEYS, label)
+    for key in sorted(EXAMPLES_KEYS):
+        example = _require_object(examples[key], f"{label}.{key}")
+        _validate_keys(example, EXAMPLE_KEYS, f"{label}.{key}")
+        _require_string(example["text"], f"{label}.{key}.text")
+        _require_string(example["reason"], f"{label}.{key}.reason")
+
+
+def _validate_criterion(value: Any, index: int, seen_ids: set[str]) -> tuple[str, str]:
     criterion = _require_object(value, f"criteria[{index}]")
-    extra = set(criterion) - CRITERION_KEYS
-    forbidden = extra & FORBIDDEN_CRITERION_KEYS
+    keys = set(criterion)
+    forbidden = keys & FORBIDDEN_CRITERION_KEYS
     if forbidden:
         raise ValidationError(f"criteria[{index}] has forbidden keys: {', '.join(sorted(forbidden))}")
-    missing = CRITERION_KEYS - set(criterion)
+    extra = keys - CRITERION_KEYS - OPTIONAL_CRITERION_KEYS
+    missing = CRITERION_KEYS - keys
     if missing:
         raise ValidationError(f"criteria[{index}] missing keys: {', '.join(sorted(missing))}")
     if extra:
@@ -173,11 +202,23 @@ def _validate_criterion(value: Any, index: int, seen_ids: set[str]) -> None:
     if scan_policy != expected:
         raise ValidationError(f"criteria[{index}].scan_policy must be {expected!r}")
 
+    if scan_policy == "triggered_structural_expression_scan":
+        missing_triggered_keys = TRIGGERED_STRUCTURAL_SCAN_KEYS - keys
+        if missing_triggered_keys:
+            raise ValidationError(f"criteria[{index}] missing keys: {', '.join(sorted(missing_triggered_keys))}")
+
     _require_string(criterion["rule"], f"criteria[{index}].rule")
     _require_string_array(criterion["violation_patterns"], f"criteria[{index}].violation_patterns")
     _require_string_array(criterion["allowed_exceptions"], f"criteria[{index}].allowed_exceptions")
     _require_string(criterion["pass_condition"], f"criteria[{index}].pass_condition")
     _require_string(criterion["fail_condition"], f"criteria[{index}].fail_condition")
+    if "trigger_condition" in criterion:
+        _require_string(criterion["trigger_condition"], f"criteria[{index}].trigger_condition")
+    if "excluded_contexts" in criterion:
+        _require_string_array(criterion["excluded_contexts"], f"criteria[{index}].excluded_contexts", allow_empty=False)
+    if "examples" in criterion:
+        _validate_examples(criterion["examples"], f"criteria[{index}].examples")
+    return criterion_id, category
 
 
 def validate_acceptance_criteria(path: Path) -> list[str]:
@@ -200,8 +241,22 @@ def validate_acceptance_criteria(path: Path) -> list[str]:
     if not criteria_list:
         raise ValidationError("criteria must not be empty")
     seen_ids: set[str] = set()
+    categories_seen: set[str] = set()
+    categories_by_id: dict[str, str] = {}
     for index, criterion in enumerate(criteria_list):
-        _validate_criterion(criterion, index, seen_ids)
+        criterion_id, category = _validate_criterion(criterion, index, seen_ids)
+        categories_seen.add(category)
+        categories_by_id[criterion_id] = category
+    missing_categories = ALLOWED_CATEGORIES - categories_seen
+    if missing_categories:
+        raise ValidationError(
+            "criteria must include at least one criterion for each allowed category: "
+            + ", ".join(sorted(missing_categories))
+        )
+    if categories_by_id.get("argument_chain_integrity") != "logic_readability":
+        raise ValidationError("criteria must include argument_chain_integrity in category logic_readability")
+    if categories_by_id.get("formula_information_gain") != "formula_information_gain":
+        raise ValidationError("criteria must include formula_information_gain in category formula_information_gain")
     return []
 
 

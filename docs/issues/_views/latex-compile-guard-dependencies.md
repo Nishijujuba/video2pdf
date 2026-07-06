@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-05T14:55:10Z
+generated_at: 2026-07-06T10:20:00Z
 source_feature_slug: latex-compile-guard
 source_issue_count: 6
-source_issue_fingerprint: 3e80fa151cc5e1478cd6cf39915c0be8b0b54077670069739b980f79548debd7
+source_issue_fingerprint: 510e05d12a4cc456045d8e7543c14ec2557ae46814e911e9ecafb9aab741b543
 ---
 
 # Issue Dependency View: latex-compile-guard
@@ -13,15 +13,11 @@ None
 
 ## Next executable
 
-- [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]] 01 - Establish guarded compile wrapper quick path
+None
 
 ## Waiting on dependencies
 
-- [[issues/latex-compile-guard/02-add-final-compile-provenance-report]] waits on [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]
-- [[issues/latex-compile-guard/03-enforce-compile-provenance-in-delivery-guard]] waits on [[issues/latex-compile-guard/02-add-final-compile-provenance-report]]
-- [[issues/latex-compile-guard/04-block-unsafe-latex-shell-calls-with-pretooluse]] waits on [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]
-- [[issues/latex-compile-guard/05-integrate-guarded-compile-contract-into-render-skills]] waits on [[issues/latex-compile-guard/02-add-final-compile-provenance-report]], [[issues/latex-compile-guard/03-enforce-compile-provenance-in-delivery-guard]], [[issues/latex-compile-guard/04-block-unsafe-latex-shell-calls-with-pretooluse]]
-- [[issues/latex-compile-guard/06-add-end-to-end-guard-fixture-verification]] waits on [[issues/latex-compile-guard/05-integrate-guarded-compile-contract-into-render-skills]]
+None
 
 ## Mermaid dependency graph
 
@@ -50,12 +46,12 @@ flowchart LR
   n_03_enforce_compile_provenance_in_delivery_guard --> n_05_integrate_guarded_compile_contract_into_render_skills
   n_04_block_unsafe_latex_shell_calls_with_pretooluse --> n_05_integrate_guarded_compile_contract_into_render_skills
   n_05_integrate_guarded_compile_contract_into_render_skills --> n_06_add_end_to_end_guard_fixture_verification
-  class n_01_establish_guarded_compile_wrapper_quick_path ready_for_agent
-  class n_02_add_final_compile_provenance_report ready_for_agent
-  class n_03_enforce_compile_provenance_in_delivery_guard ready_for_agent
-  class n_04_block_unsafe_latex_shell_calls_with_pretooluse ready_for_agent
-  class n_05_integrate_guarded_compile_contract_into_render_skills ready_for_agent
-  class n_06_add_end_to_end_guard_fixture_verification ready_for_agent
+  class n_01_establish_guarded_compile_wrapper_quick_path done
+  class n_02_add_final_compile_provenance_report done
+  class n_03_enforce_compile_provenance_in_delivery_guard done
+  class n_04_block_unsafe_latex_shell_calls_with_pretooluse done
+  class n_05_integrate_guarded_compile_contract_into_render_skills done
+  class n_06_add_end_to_end_guard_fixture_verification done
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff
   classDef ready_for_agent fill:#0969da,stroke:#1f2328,color:#ffffff
   classDef ready_for_human fill:#8250df,stroke:#1f2328,color:#ffffff

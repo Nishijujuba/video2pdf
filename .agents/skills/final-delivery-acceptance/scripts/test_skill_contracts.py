@@ -131,6 +131,59 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         self.assertIn("delivery_guard.py", command)
         self.assertIn("hook-stop", command)
 
+    def test_render_skills_require_guarded_latex_compile_contract(self) -> None:
+        cases = [
+            (
+                ".agents/skills/bilibili-render-pdf/SKILL.md",
+                "bilibili-render-pdf",
+            ),
+            (
+                ".agents/skills/youtube-render-pdf/SKILL.md",
+                "youtube-render-pdf",
+            ),
+        ]
+        required = [
+            "LaTeX Compile Guard",
+            "compile_latex_ascii.py",
+            "--mode quick",
+            "--mode final",
+            "--tex",
+            "--final-pdf",
+            "--engine",
+            "temporary diagnostic compile",
+            "delivery compile",
+            "review\\latex\\compile_report.json",
+            "quick mode",
+            "final mode",
+        ]
+        forbidden = [
+            "Compile twice with `xelatex`",
+            "before calling `xelatex`",
+            "prefer the bundled ASCII staging compiler for final XeLaTeX builds",
+        ]
+        for relative, source_skill in cases:
+            with self.subTest(relative=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in required:
+                    self.assertIn(phrase, text)
+                self.assertIn(f"--source-skill \"{source_skill}\"", text)
+                for phrase in forbidden:
+                    self.assertNotIn(phrase, text)
+
+    def test_project_and_acceptance_docs_separate_compile_provenance_from_quality_decision(self) -> None:
+        for relative in (
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".agents/skills/final-delivery-acceptance/SKILL.md",
+        ):
+            with self.subTest(relative=relative):
+                text = read(REPO_ROOT / relative)
+                self.assertIn("review\\latex\\compile_report.json", text)
+                self.assertIn("compile provenance", text)
+                self.assertIn("compile report cannot replace acceptance_report.json", text)
+                self.assertIn("acceptance_report.json is the only machine-readable delivery decision source", text)
+                self.assertIn("The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on:
   - "[[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]"
@@ -11,15 +11,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 02 - Add final compile provenance report
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -62,13 +62,15 @@ This issue depends on the quick path from [[issues/latex-compile-guard/01-establ
 
 ## Acceptance Criteria
 
-- [ ] Final mode produces a durable LaTeX Compile Report under `review\latex`.
-- [ ] The report records enough provenance for delivery guard freshness checks.
-- [ ] Failed final compiles produce clear failed evidence without a false pass.
-- [ ] Tests verify final-mode success, failure, and fingerprint recording.
+- [x] Final mode produces a durable LaTeX Compile Report under `review\latex`.
+- [x] The report records enough provenance for delivery guard freshness checks.
+- [x] Failed final compiles produce clear failed evidence without a false pass.
+- [x] Tests verify final-mode success, failure, and fingerprint recording.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Added guarded `final` mode, durable `review\latex\compile_report.json`, source skill metadata, current TeX/PDF fingerprints, stale preexisting PDF rejection, and final-mode tests in `test_compile_latex_ascii.py`.
+- 2026-07-06: Strengthened compile report provenance with producer, producer contract, producer mode, guarded wrapper path, wrapper script fingerprint, and wrapper argv fields.
 
 ## Comments

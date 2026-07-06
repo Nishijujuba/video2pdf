@@ -90,9 +90,11 @@ After repair, the workflow must rerender affected final artifacts, refresh rende
 
 Every active delivery workflow is represented by `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
-The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. It must record `attempt_limit: 3`.
+The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. It must record `attempt_limit: 3`.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The guard proves freshness, manifest membership, rendered page coverage, path boundaries, and enforced Acceptance Report decision. It does not replace the Acceptance Reviewer.
+`acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The guard proves freshness, manifest membership, rendered page coverage, path boundaries, compile provenance for newly generated video PDFs, and enforced Acceptance Report decision. It does not replace the Acceptance Reviewer.
+
+The Acceptance Reviewer evaluates delivery quality from final delivered artifacts and rendered page evidence. `review\latex\compile_report.json` is compile provenance for `delivery_guard.py check`. A compile report cannot replace acceptance_report.json, cannot override `overall_status`, and cannot serve as Acceptance Reviewer quality judgment.
 
 Before delivery, run:
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import unittest
@@ -18,6 +19,7 @@ from validate_acceptance_report import compute_artifact_fingerprint, create_allo
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
 SCRIPT = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
+WRAPPER_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
 
 
 def load_criteria() -> dict[str, object]:
@@ -40,10 +42,12 @@ class DeliveryGuardTests(unittest.TestCase):
             CRITERIA_PATH,
             [("tex", "main.tex"), ("pdf", "final.pdf")],
         )
+        self.compile_report_path = self.video_dir / "review" / "latex" / "compile_report.json"
         self.report_path = self.acceptance_dir / "acceptance_report.json"
         self.target_path = self.acceptance_dir / "delivery_target.json"
         self.current_target_path = self.case_dir / ".codex" / "delivery-targets" / "current.json"
         self.current_target_path.parent.mkdir(parents=True, exist_ok=True)
+        self.write_compile_report(self.valid_compile_report())
         self.write_report(self.valid_report())
         self.write_delivery_target()
         self.write_current_target()
@@ -125,6 +129,56 @@ class DeliveryGuardTests(unittest.TestCase):
     def write_report(self, report: dict[str, object]) -> None:
         self.report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def compile_fingerprint(self, path: Path) -> dict[str, object]:
+        raw = path.read_bytes()
+        return {
+            "algorithm": "sha256",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "size_bytes": len(raw),
+        }
+
+    def valid_compile_report(self, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
+        source_tex = self.video_dir / "main.tex"
+        final_pdf = self.video_dir / final_pdf_name
+        return {
+            "schema_version": "latex_compile_report.v1",
+            "mode": "final",
+            "status": "passed",
+            "producer": "compile_latex_ascii.py",
+            "producer_contract": "latex_compile_guard.v1",
+            "producer_mode": "final",
+            "wrapper_script": str(WRAPPER_SCRIPT.resolve()),
+            "wrapper_script_fingerprint": self.compile_fingerprint(WRAPPER_SCRIPT),
+            "argv": [
+                "--tex",
+                str(source_tex.resolve()),
+                "--mode",
+                "final",
+                "--engine",
+                "fake-xelatex",
+                "--final-pdf",
+                str(final_pdf.resolve()),
+            ],
+            "source_tex": str(source_tex.resolve()),
+            "main_tex": str(source_tex.resolve()),
+            "final_pdf": str(final_pdf.resolve()),
+            "source_tex_fingerprint": self.compile_fingerprint(source_tex),
+            "final_pdf_fingerprint": self.compile_fingerprint(final_pdf),
+            "build_directory": str((self.video_dir / "待删除" / "latex-build" / "run").resolve()),
+            "log_paths": [],
+            "source_skill": "test-fixture",
+        }
+
+    def handwritten_compile_report_without_wrapper_producer(self) -> dict[str, object]:
+        report = self.valid_compile_report()
+        for key in ("producer", "producer_contract", "producer_mode", "wrapper_script", "wrapper_script_fingerprint", "argv"):
+            del report[key]
+        return report
+
+    def write_compile_report(self, report: dict[str, object]) -> None:
+        self.compile_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.compile_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def failed_report(self) -> dict[str, object]:
         report = self.valid_report()
         report["overall_status"] = "fail"
@@ -146,7 +200,16 @@ class DeliveryGuardTests(unittest.TestCase):
         report["failed_criteria"] = [first_result["criterion_id"]]
         return report
 
-    def write_delivery_target(self, *, stage: str = "accepted", final_pdf: str = "final.pdf") -> None:
+    def write_delivery_target(
+        self,
+        *,
+        stage: str = "accepted",
+        final_pdf: str = "final.pdf",
+        compile_report: str | None = "review/latex/compile_report.json",
+        compile_provenance_required: bool | None = None,
+        legacy_existing_pdf: bool | None = None,
+        recompiled: bool | None = None,
+    ) -> None:
         target = {
             "schema_version": "1.0",
             "stage": stage,
@@ -158,6 +221,14 @@ class DeliveryGuardTests(unittest.TestCase):
             "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
             "attempt_limit": 3,
         }
+        if compile_report is not None:
+            target["compile_report"] = compile_report
+        if compile_provenance_required is not None:
+            target["compile_provenance_required"] = compile_provenance_required
+        if legacy_existing_pdf is not None:
+            target["legacy_existing_pdf"] = legacy_existing_pdf
+        if recompiled is not None:
+            target["recompiled"] = recompiled
         self.target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def write_current_target(self, *, stage: str = "accepted", video_output_dir: str | None = None) -> None:
@@ -204,11 +275,198 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(report["validated_by"], "delivery_guard.py")
         self.assertEqual(report["acceptance_report_status"], "pass")
         self.assertIsNone(report["blocking_message"])
-        self.assertIn("final.pdf", {item["path"] for item in report["artifact_fingerprints"]})
+        fingerprint_paths = {item["path"] for item in report["artifact_fingerprints"]}
+        self.assertIn("final.pdf", fingerprint_paths)
+        self.assertIn("review/latex/compile_report.json", fingerprint_paths)
         self.assertIn("acceptance_report_enforced", {item["condition"] for item in report["checked_conditions"]})
+
+    def test_check_rejects_missing_final_compile_report_for_new_video_target(self) -> None:
+        self.write_delivery_target(compile_report="review/latex/missing_compile_report.json")
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report is missing", completed.stderr)
+        self.assertIn("review/latex/missing_compile_report.json", completed.stderr)
+
+    def test_check_rejects_quick_mode_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        report["mode"] = "quick"
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report mode must be 'final'", completed.stderr)
+        self.assertIn("quick", completed.stderr)
+
+    def test_check_rejects_failed_final_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        report["status"] = "failed"
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report status must be 'passed'", completed.stderr)
+        self.assertIn("failed", completed.stderr)
+
+    def test_check_rejects_handwritten_compile_report_without_wrapper_producer(self) -> None:
+        self.write_compile_report(self.handwritten_compile_report_without_wrapper_producer())
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("producer", completed.stderr)
+
+    def test_check_rejects_compile_report_with_stale_wrapper_fingerprint(self) -> None:
+        report = self.valid_compile_report()
+        report["wrapper_script_fingerprint"] = {
+            "algorithm": "sha256",
+            "sha256": "0" * 64,
+            "size_bytes": 1,
+        }
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("wrapper_script_fingerprint is stale", completed.stderr)
+
+    def test_check_rejects_compile_report_without_final_mode_argv(self) -> None:
+        report = self.valid_compile_report()
+        report["argv"] = ["--tex", str((self.video_dir / "main.tex").resolve()), "--mode", "quick"]
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("argv must include --mode final", completed.stderr)
+
+    def test_check_rejects_malformed_final_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        del report["final_pdf"]
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("malformed final compile report", completed.stderr)
+        self.assertIn("final_pdf", completed.stderr)
+
+    def test_check_rejects_final_compile_report_with_missing_or_wrong_schema(self) -> None:
+        for label, schema_value in (("missing", None), ("wrong", "1.0")):
+            with self.subTest(label=label):
+                report = self.valid_compile_report()
+                if schema_value is None:
+                    del report["schema_version"]
+                else:
+                    report["schema_version"] = schema_value
+                self.write_compile_report(report)
+
+                completed = self.run_guard("check")
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("schema_version", completed.stderr)
+
+    def test_check_rejects_compile_report_for_wrong_pdf(self) -> None:
+        wrong_pdf = self.video_dir / "wrong.pdf"
+        self.write_pdf(wrong_pdf, pages=1)
+        report = self.valid_compile_report()
+        report["final_pdf"] = str(wrong_pdf.resolve())
+        report["final_pdf_fingerprint"] = self.compile_fingerprint(wrong_pdf)
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report final_pdf does not match delivery_target.final_pdf", completed.stderr)
+
+    def test_check_rejects_compile_report_for_wrong_tex(self) -> None:
+        wrong_tex = self.video_dir / "wrong.tex"
+        wrong_tex.write_text("Wrong TeX source.\n", encoding="utf-8")
+        report = self.valid_compile_report()
+        report["source_tex"] = str(wrong_tex.resolve())
+        report["main_tex"] = str(wrong_tex.resolve())
+        report["source_tex_fingerprint"] = self.compile_fingerprint(wrong_tex)
+        self.write_compile_report(report)
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report source_tex does not match delivery_target.main_tex", completed.stderr)
+
+    def test_check_rejects_stale_compile_report_pdf_fingerprint(self) -> None:
+        with (self.video_dir / "final.pdf").open("ab") as handle:
+            handle.write(b"\nchanged after final compile report")
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report final_pdf_fingerprint is stale", completed.stderr)
+
+    def test_check_rejects_stale_compile_report_tex_fingerprint(self) -> None:
+        (self.video_dir / "main.tex").write_text("Changed after final compile report.\n", encoding="utf-8")
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report source_tex_fingerprint is stale", completed.stderr)
+
+    def test_legacy_existing_pdf_can_explicitly_skip_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_legacy_compile_report.json",
+            compile_provenance_required=False,
+            legacy_existing_pdf=True,
+            recompiled=False,
+        )
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "pass")
+
+    def test_new_video_target_cannot_disable_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_compile_report.json",
+            compile_provenance_required=False,
+        )
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("compile_provenance_required may be false only for legacy_existing_pdf", completed.stderr)
+
+    def test_legacy_skip_requires_explicit_no_recompile_claim(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_legacy_compile_report.json",
+            compile_provenance_required=False,
+            legacy_existing_pdf=True,
+        )
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("recompiled is explicitly false", completed.stderr)
+
+    def test_legacy_recompile_target_requires_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_recompile_compile_report.json",
+            compile_provenance_required=True,
+            legacy_existing_pdf=True,
+            recompiled=True,
+        )
+
+        completed = self.run_guard("check")
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report is missing", completed.stderr)
+        self.assertIn("missing_recompile_compile_report.json", completed.stderr)
 
     def test_check_rejects_stale_acceptance_report(self) -> None:
         (self.video_dir / "main.tex").write_text("Changed after acceptance.\n", encoding="utf-8")
+        self.write_compile_report(self.valid_compile_report())
 
         completed = self.run_guard("check")
 
@@ -236,6 +494,7 @@ class DeliveryGuardTests(unittest.TestCase):
             CRITERIA_PATH,
             [("tex", "main.tex"), ("pdf", "final-two-page.pdf")],
         )
+        self.write_compile_report(self.valid_compile_report(final_pdf_name="final-two-page.pdf"))
         missing_page_report = self.valid_report()
         context = dict(missing_page_report["review_context_used"])
         context["artifacts_read"] = [
@@ -310,11 +569,13 @@ class DeliveryGuardTests(unittest.TestCase):
         cleared = self.run_guard("clear-target", "--video-output-dir", str(self.video_dir))
 
         self.assertEqual(cleared.returncode, 0, cleared.stderr)
-        self.assertFalse(self.current_target_path.exists())
         archived_targets = list((self.video_dir / "待删除" / "delivery-targets").glob("current-*.json"))
         self.assertTrue(archived_targets)
         archived = json.loads(archived_targets[0].read_text(encoding="utf-8"))
         self.assertEqual(archived["stage"], "delivered")
+        if self.current_target_path.exists():
+            active = json.loads(self.current_target_path.read_text(encoding="utf-8"))
+            self.assertEqual(active["stage"], "delivered")
 
     def test_hook_stop_allows_missing_target_and_generating_stage(self) -> None:
         missing_target = self.case_dir / ".codex" / "delivery-targets" / "missing-current.json"
@@ -353,6 +614,9 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(prepared_target["video_output_dir"], ".")
         self.assertEqual(prepared_target["final_pdf"], "final.pdf")
         self.assertEqual(prepared_target["attempt_limit"], 3)
+        self.assertIs(prepared_target["compile_provenance_required"], False)
+        self.assertIs(prepared_target["legacy_existing_pdf"], True)
+        self.assertIs(prepared_target["recompiled"], False)
         self.assertEqual(active_target["stage"], "ready_for_delivery")
         self.assertEqual(active_target["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
 

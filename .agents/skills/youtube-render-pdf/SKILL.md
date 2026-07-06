@@ -31,7 +31,7 @@ When running on this machine, prefer these exact binaries instead of relying on 
 - `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
 - `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
 - ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
-- `xelatex`: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
+- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
 
 Use the shared `kimi` uv environment as the default local runtime for Python-based helper work. If a command is unavailable on PATH, call the absolute path above directly.
 
@@ -193,7 +193,7 @@ Run this after the integrated `<video-name>\main.tex` exists and before PDF comp
   '<video-name>\review\pyramid\main.pyramid.json'
 ```
 
-If the main report is `needs_revision` or `blocked`, stop PDF compilation. Revise `main.tex`, rerun the evaluator, and validate the refreshed JSON before calling `xelatex`.
+If the main report is `needs_revision` or `blocked`, stop PDF compilation. Revise `main.tex`, rerun the evaluator, and validate the refreshed JSON before running the guarded final compile.
 
 ### Waivers
 
@@ -419,6 +419,40 @@ Use visualizations for:
 
 Do not add decorative graphics that do not teach anything.
 
+## PDF Verification
+
+Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
+
+Use quick mode only as the temporary diagnostic compile path for TeX errors, layout investigation, and intermediate PDF inspection. Quick mode leaves its diagnostic `compile_report.json` under `待删除\latex-build\<run-id>\` and cannot satisfy final delivery.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode quick `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe"
+```
+
+Use final mode as the delivery compile path. Final mode writes the durable PDF and the latest final compile provenance report at `review\latex\compile_report.json`; `delivery_guard.py check` verifies that report before delivery.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode final `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --final-pdf "D:\Project\video2pdf\newskill-kimi\workspace\<video>\<normalized-title>.pdf" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe" `
+  --source-skill "youtube-render-pdf"
+```
+
+The wrapper copies TeX, section files, covers, and figure assets into a guarded build directory under the video output directory's `待删除\latex-build\` area, invokes the configured engine through structured arguments, enforces bounded runtime, writes logs, and preserves build evidence for audit. Raw direct engine calls are blocked workflow bypasses.
+
+Use the bundled `scripts/check_pdf_layout.py` for a first pass when PyMuPDF is available:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\check_pdf_layout.py "<final.pdf>" --max-bottom-blank 0.35
+```
+
+If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Adobe-GB1`, treat that renderer as unreliable for Chinese layout checking. Render with PyMuPDF instead, then inspect representative pages with `view_image`, especially pages containing tables, dense bilingual text, TikZ diagrams, video screenshots, and the final page.
+
 ## Final Delivery Acceptance Gate
 
 After the final PDF is rendered and visual verification is complete, run the Final Delivery Acceptance Gate before delivery.
@@ -443,7 +477,7 @@ Pyramid Gate and independent content review remain separate. Their passes never 
 
 The render workflow must create `.codex/delivery-targets/current.json` at `generating`, then create the video-level `review/acceptance/delivery_target.json` before final delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
-The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
 
 After rendering the final PDF, set the active target to `ready_for_delivery`, run the Acceptance Reviewer in a separate read-only role, and set the stage to `accepted` only after acceptance passes. If acceptance fails, run bounded repair with repair subagents, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, rerender or regenerate changed final artifacts, refresh rendered page evidence, and rerun a fresh Acceptance Reviewer. Continue through `attempt_02/` and `attempt_03/` only when needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md`, set the target to `blocked`, and stop delivery.
 
@@ -462,6 +496,7 @@ Before delivery, verify all of the following:
 - `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
 - `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
 - `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
+- `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, and matches the current main TeX and final PDF
 - `acceptance_report.json is the only machine-readable acceptance decision`; `acceptance_summary.md` is optional explanatory text
 - missing, failed, malformed, stale, or forbidden-context report blocks final delivery
 - no important teaching content has been dropped, and no concrete but critical detail has been lost during condensation, restructuring, or summarization
@@ -479,3 +514,5 @@ Deliver all of the following:
 ## Asset
 
 - `assets/notes-template.tex`: default LaTeX template to copy and fill
+- `scripts/compile_latex_ascii.py`: guarded LaTeX Compile Guard wrapper
+- `scripts/check_pdf_layout.py`: post-compile PDF layout checker for blank-page and large-empty-region regressions

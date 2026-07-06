@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on:
   - "[[issues/latex-compile-guard/02-add-final-compile-provenance-report]]"
@@ -12,15 +12,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 05 - Integrate guarded compile contract into render skills
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -67,13 +67,14 @@ This issue depends on the final report, delivery guard enforcement, and PreToolU
 
 ## Acceptance Criteria
 
-- [ ] Bilibili and YouTube render workflows require the LaTeX Compile Guard.
-- [ ] Project and skill docs consistently separate compile provenance from acceptance quality judgment.
-- [ ] Raw direct engine calls are no longer presented as the normal final compile path.
-- [ ] Contract tests cover the updated workflow wording.
+- [x] Bilibili and YouTube render workflows require the LaTeX Compile Guard.
+- [x] Project and skill docs consistently separate compile provenance from acceptance quality judgment.
+- [x] Raw direct engine calls are no longer presented as the normal final compile path.
+- [x] Contract tests cover the updated workflow wording.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Updated `AGENTS.md`, `CLAUDE.md`, Bilibili/YouTube render skill docs, and final-delivery-acceptance docs to require guarded quick/final compile paths and separate compile provenance from acceptance quality judgment; verified with `test_skill_contracts.py`.
 
 ## Comments

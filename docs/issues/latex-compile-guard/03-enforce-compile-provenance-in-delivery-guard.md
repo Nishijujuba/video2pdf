@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on:
   - "[[issues/latex-compile-guard/02-add-final-compile-provenance-report]]"
@@ -10,15 +10,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 03 - Enforce compile provenance in delivery guard
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -65,13 +65,15 @@ This issue depends on final compile reports from [[issues/latex-compile-guard/02
 
 ## Acceptance Criteria
 
-- [ ] `delivery_guard.py check` enforces final compile provenance for new video PDFs.
-- [ ] Compile provenance failures have specific blocking messages.
-- [ ] Legacy external PDF behavior stays explicit and bounded.
-- [ ] Tests cover missing, failed, stale, wrong-artifact, quick-mode, and legacy cases.
+- [x] `delivery_guard.py check` enforces final compile provenance for new video PDFs.
+- [x] Compile provenance failures have specific blocking messages.
+- [x] Legacy external PDF behavior stays explicit and bounded.
+- [x] Tests cover missing, failed, stale, wrong-artifact, quick-mode, and legacy cases.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Extended `delivery_guard.py` to require fresh passing final compile provenance for new and recompiled targets, keep explicit legacy skip policy, and include compile report fingerprints in guard evidence; verified with `test_delivery_guard.py`.
+- 2026-07-06: Added delivery guard checks that reject hand-written minimal reports, stale wrapper fingerprints, and compile reports whose argv does not declare `--mode final`.
 
 ## Comments

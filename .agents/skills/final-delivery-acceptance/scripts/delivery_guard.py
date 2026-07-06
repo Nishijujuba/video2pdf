@@ -8,6 +8,7 @@ import hashlib
 import json
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -27,6 +28,9 @@ DEFAULT_CRITERIA = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.j
 DEFAULT_CURRENT_TARGET = REPO_ROOT / ".codex" / "delivery-targets" / "current.json"
 ALLOWED_STAGES = {"generating", "ready_for_delivery", "accepted", "delivered", "blocked"}
 GUARD_STAGES = {"ready_for_delivery", "accepted"}
+COMPILE_REPORT_PRODUCER = "compile_latex_ascii.py"
+COMPILE_REPORT_PRODUCER_CONTRACT = "latex_compile_guard.v1"
+COMPILE_WRAPPER_RELATIVE = Path(".agents") / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
 EXIT_PASS = 0
 EXIT_INVALID = 1
 EXIT_BLOCKED = 2
@@ -53,6 +57,7 @@ class DeliveryTarget:
     manifest_path: Path
     acceptance_report_path: Path
     guard_report_path: Path
+    compile_report_path: Path
     attempt_limit: int
     stage: str
     final_pdf_relative: str
@@ -60,7 +65,11 @@ class DeliveryTarget:
     manifest_relative: str
     acceptance_report_relative: str
     guard_report_relative: str
+    compile_report_relative: str
     target_file_relative: str
+    compile_provenance_required: bool
+    legacy_existing_pdf: bool
+    recompiled: bool
 
 
 def _now_iso() -> str:
@@ -153,6 +162,30 @@ def _validate_attempt_limit(value: Any) -> int:
     return value
 
 
+def _validate_optional_bool(value: Any, label: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise GuardError(f"{label} must be a boolean")
+    return value
+
+
+def _validate_compile_provenance_policy(
+    *,
+    required: bool,
+    legacy_existing_pdf: bool,
+    recompiled: bool,
+    recompiled_declared: bool,
+) -> None:
+    if not required and not (legacy_existing_pdf and recompiled_declared and not recompiled):
+        raise GuardError(
+            "delivery_target.compile_provenance_required may be false only for legacy_existing_pdf targets "
+            "when recompiled is explicitly false"
+        )
+    if recompiled and not required:
+        raise GuardError("recompiled delivery targets must require final compile provenance")
+
+
 def _require_keys(value: dict[str, Any], keys: set[str], label: str) -> None:
     missing = keys - set(value)
     if missing:
@@ -227,6 +260,32 @@ def resolve_delivery_target(
         video_target["delivery_guard_report"],
         "delivery_target.delivery_guard_report",
     )
+    compile_report_path, compile_report_relative = _resolve_video_path(
+        video_output_dir,
+        video_target.get("compile_report", "review/latex/compile_report.json"),
+        "delivery_target.compile_report",
+    )
+    compile_provenance_required = _validate_optional_bool(
+        video_target.get("compile_provenance_required"),
+        "delivery_target.compile_provenance_required",
+        True,
+    )
+    legacy_existing_pdf = _validate_optional_bool(
+        video_target.get("legacy_existing_pdf"),
+        "delivery_target.legacy_existing_pdf",
+        False,
+    )
+    recompiled = _validate_optional_bool(
+        video_target.get("recompiled"),
+        "delivery_target.recompiled",
+        False,
+    )
+    _validate_compile_provenance_policy(
+        required=compile_provenance_required,
+        legacy_existing_pdf=legacy_existing_pdf,
+        recompiled=recompiled,
+        recompiled_declared="recompiled" in video_target,
+    )
     attempt_limit = _validate_attempt_limit(video_target["attempt_limit"])
 
     return DeliveryTarget(
@@ -241,6 +300,7 @@ def resolve_delivery_target(
         manifest_path=manifest_path,
         acceptance_report_path=acceptance_report_path,
         guard_report_path=guard_report_path,
+        compile_report_path=compile_report_path,
         attempt_limit=attempt_limit,
         stage=stage,
         final_pdf_relative=final_pdf_relative,
@@ -248,7 +308,11 @@ def resolve_delivery_target(
         manifest_relative=manifest_relative,
         acceptance_report_relative=acceptance_report_relative,
         guard_report_relative=guard_report_relative,
+        compile_report_relative=compile_report_relative,
         target_file_relative=target_file.resolve().relative_to(video_output_dir.resolve()).as_posix(),
+        compile_provenance_required=compile_provenance_required,
+        legacy_existing_pdf=legacy_existing_pdf,
+        recompiled=recompiled,
     )
 
 
@@ -314,6 +378,125 @@ def _ensure_rendered_page_coverage(target: DeliveryTarget) -> None:
         raise GuardError(f"rendered page evidence is missing: {', '.join(missing)}")
 
 
+def _require_compile_report_string(report: dict[str, Any], key: str) -> str:
+    value = report.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise GuardError(f"malformed final compile report: {key} must be a non-empty string")
+    return value
+
+
+def _resolve_compile_report_absolute_path(value: str, label: str) -> Path:
+    if not Path(value).is_absolute() and not _looks_windows_absolute(value):
+        raise GuardError(f"malformed final compile report: {label} must be absolute")
+    return Path(value).resolve()
+
+
+def _compile_file_fingerprint(path: Path, label: str) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        raise GuardError(f"final compile report {label} path is missing: {path}")
+    raw = path.read_bytes()
+    return {
+        "algorithm": "sha256",
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+    }
+
+
+def _ensure_compile_fingerprint_current(report: dict[str, Any], path: Path, key: str) -> None:
+    fingerprint = report.get(key)
+    if not isinstance(fingerprint, dict):
+        raise GuardError(f"malformed final compile report: {key} must be an object")
+    current = _compile_file_fingerprint(path, key)
+    algorithm = fingerprint.get("algorithm")
+    if algorithm not in {None, "sha256"}:
+        raise GuardError(f"malformed final compile report: {key}.algorithm must be sha256")
+    sha256 = fingerprint.get("sha256")
+    size_bytes = fingerprint.get("size_bytes")
+    valid_hashes = {current["sha256"], f"sha256:{current['sha256']}"}
+    if not isinstance(sha256, str) or not isinstance(size_bytes, int):
+        raise GuardError(f"malformed final compile report: {key} must include sha256 and size_bytes")
+    if sha256 not in valid_hashes or size_bytes != current["size_bytes"]:
+        raise GuardError(f"final compile report {key} is stale")
+
+
+def _argv_declares_final_mode(argv: list[str]) -> bool:
+    for index, token in enumerate(argv):
+        if token == "--mode" and index + 1 < len(argv) and argv[index + 1] == "final":
+            return True
+        if token == "--mode=final":
+            return True
+    return False
+
+
+def _ensure_compile_report_producer(report: dict[str, Any], target: DeliveryTarget) -> None:
+    producer = _require_string(report.get("producer"), "final compile report.producer")
+    if producer != COMPILE_REPORT_PRODUCER:
+        raise GuardError(f"final compile report producer must be '{COMPILE_REPORT_PRODUCER}', got {producer}")
+    producer_contract = _require_string(report.get("producer_contract"), "final compile report.producer_contract")
+    if producer_contract != COMPILE_REPORT_PRODUCER_CONTRACT:
+        raise GuardError(
+            "final compile report producer_contract must be "
+            f"'{COMPILE_REPORT_PRODUCER_CONTRACT}', got {producer_contract}"
+        )
+    producer_mode = _require_string(report.get("producer_mode"), "final compile report.producer_mode")
+    if producer_mode != "final":
+        raise GuardError(f"final compile report producer_mode must be 'final', got {producer_mode}")
+
+    expected_wrapper = (target.project_root / COMPILE_WRAPPER_RELATIVE).resolve()
+    wrapper_script = _resolve_compile_report_absolute_path(
+        _require_compile_report_string(report, "wrapper_script"),
+        "wrapper_script",
+    )
+    if wrapper_script != expected_wrapper:
+        raise GuardError("final compile report wrapper_script does not match the guarded compile wrapper")
+    _ensure_compile_fingerprint_current(report, expected_wrapper, "wrapper_script_fingerprint")
+
+    argv = report.get("argv")
+    if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+        raise GuardError("malformed final compile report: argv must be a list of strings")
+    if not _argv_declares_final_mode(argv):
+        raise GuardError("final compile report argv must include --mode final")
+
+
+def _ensure_compile_provenance(target: DeliveryTarget) -> None:
+    if not target.compile_provenance_required:
+        return
+    if not target.compile_report_path.exists():
+        raise GuardError(f"final compile report is missing: {target.compile_report_relative}")
+    report = _require_object(_load_json(target.compile_report_path, "final compile report"), "final compile report")
+    schema_version = _require_string(report.get("schema_version"), "final compile report.schema_version")
+    if schema_version != "latex_compile_report.v1":
+        raise GuardError(f"final compile report schema_version must be 'latex_compile_report.v1', got {schema_version}")
+    mode = _require_string(report.get("mode"), "final compile report.mode")
+    if mode != "final":
+        raise GuardError(f"final compile report mode must be 'final', got {mode}")
+    status = _require_string(report.get("status"), "final compile report.status")
+    if status != "passed":
+        raise GuardError(f"final compile report status must be 'passed', got {status}")
+    _ensure_compile_report_producer(report, target)
+    report_final_pdf = _resolve_compile_report_absolute_path(
+        _require_compile_report_string(report, "final_pdf"),
+        "final_pdf",
+    )
+    if report_final_pdf != target.final_pdf.resolve():
+        raise GuardError("final compile report final_pdf does not match delivery_target.final_pdf")
+    _ensure_compile_fingerprint_current(report, target.final_pdf, "final_pdf_fingerprint")
+    report_source_tex = _resolve_compile_report_absolute_path(
+        _require_compile_report_string(report, "source_tex"),
+        "source_tex",
+    )
+    if report_source_tex != target.main_tex.resolve():
+        raise GuardError("final compile report source_tex does not match delivery_target.main_tex")
+    _ensure_compile_fingerprint_current(report, target.main_tex, "source_tex_fingerprint")
+    if "main_tex" in report:
+        report_main_tex = _resolve_compile_report_absolute_path(
+            _require_compile_report_string(report, "main_tex"),
+            "main_tex",
+        )
+        if report_main_tex != target.main_tex.resolve():
+            raise GuardError("final compile report main_tex does not match delivery_target.main_tex")
+
+
 def _fingerprint_file(path: Path, relative_path: str) -> dict[str, Any]:
     if not path.exists():
         raise GuardError(f"guard artifact not found: {relative_path}")
@@ -329,6 +512,7 @@ def guard_fingerprints(target: DeliveryTarget, manifest: dict[str, Any]) -> list
         target.final_pdf_relative,
         target.manifest_relative,
         target.acceptance_report_relative,
+        *([target.compile_report_relative] if target.compile_provenance_required else []),
         target.target_file_relative,
     ]
     ordered_paths.extend(_manifest_paths(manifest))
@@ -453,6 +637,9 @@ def prepare_old_pdf(
             "allowed_artifacts_manifest": manifest_path.relative_to(video_output_dir).as_posix(),
             "acceptance_report": "review/acceptance/acceptance_report.json",
             "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
+            "compile_provenance_required": False,
+            "legacy_existing_pdf": True,
+            "recompiled": False,
             "attempt_limit": 3,
         }
         _write_json(target_path, target)
@@ -609,7 +796,18 @@ def clear_target(*, project_root: Path, current_target_path: Path, video_output_
         archive_dir.mkdir(parents=True, exist_ok=True)
         safe_stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         archive_path = archive_dir / f"current-{safe_stamp}.json"
-        shutil.move(str(current_target_path), str(archive_path))
+        archive_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        last_error: OSError | None = None
+        for _ in range(5):
+            try:
+                current_target_path.replace(archive_path)
+                last_error = None
+                break
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.1)
+        if last_error is not None:
+            return EXIT_PASS, f"CLEARED: {archive_path}; active target retained at delivered stage because archive move was unavailable"
         return EXIT_PASS, f"CLEARED: {archive_path}"
     except GuardError as exc:
         return EXIT_BLOCKED, _blocking_message(str(exc), None)
@@ -665,6 +863,8 @@ def run_check(*, project_root: Path, current_target_path: Path, criteria_path: P
         checked_conditions.append(_condition("allowed_artifacts_manifest_loaded", "pass"))
         _ensure_final_pdf_in_manifest(target, manifest)
         checked_conditions.append(_condition("final_pdf_in_manifest", "pass"))
+        _ensure_compile_provenance(target)
+        checked_conditions.append(_condition("final_compile_provenance_current", "pass"))
 
         try:
             validate_acceptance_report(

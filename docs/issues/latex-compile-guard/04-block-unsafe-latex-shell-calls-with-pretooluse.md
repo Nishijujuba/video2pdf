@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on:
   - "[[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]"
@@ -10,15 +10,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 04 - Block unsafe LaTeX shell calls with PreToolUse
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -63,14 +63,15 @@ This issue depends on the wrapper quick path from [[issues/latex-compile-guard/0
 
 ## Acceptance Criteria
 
-- [ ] Project `PreToolUse` hook configuration invokes the LaTeX compile guard for shell commands.
-- [ ] The hook strongly blocks direct LaTeX engines and dangerous output-directory forms.
-- [ ] The hook allows the guarded wrapper command.
-- [ ] The anomaly scan is read-only, fast, and covered by tests.
-- [ ] Existing Stop hook behavior remains documented and configured.
+- [x] Project `PreToolUse` hook configuration invokes the LaTeX compile guard for shell commands.
+- [x] The hook strongly blocks direct LaTeX engines and dangerous output-directory forms.
+- [x] The hook allows the guarded wrapper command.
+- [x] The anomaly scan is read-only, fast, and covered by tests.
+- [x] Existing Stop hook behavior remains documented and configured.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Added `latex_compile_pretooluse_guard.py`, wired `.codex/hooks.json` PreToolUse `Bash` guard, preserved Stop hook configuration, and verified direct engine blocks, wrapper allows, unsafe output-directory blocks, and read-only anomaly scan with `test_latex_compile_pretooluse_guard.py`.
 
 ## Comments

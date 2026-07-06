@@ -42,7 +42,7 @@ If the reviewer cannot complete this per-page inspection within the allowed wait
 
 Every render workflow must bind final delivery to `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
-The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The compile report cannot replace acceptance_report.json; it only proves guarded compilation provenance for `delivery_guard.py check`.
 
 Before final delivery, run `delivery_guard.py check`. Final delivery is allowed only after a fresh passing guard report exists. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
@@ -60,7 +60,7 @@ Use these local paths:
 
 - Skill virtual environment: `D:/Project/video2pdf/kimi/.venv/`
 - Skill tool directory: `D:\Project\video2pdf\kimi\tools`
-- Working `xelatex` executable: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
+- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
 
 ## Cookies
 

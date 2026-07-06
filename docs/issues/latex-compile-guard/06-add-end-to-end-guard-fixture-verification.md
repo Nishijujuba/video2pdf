@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on:
   - "[[issues/latex-compile-guard/05-integrate-guarded-compile-contract-into-render-skills]]"
@@ -9,15 +9,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 06 - Add end-to-end guard fixture verification
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -64,13 +64,15 @@ This issue closes [[prd/latex-compile-guard]] after [[issues/latex-compile-guard
 
 ## Acceptance Criteria
 
-- [ ] Fixture verification covers wrapper, PreToolUse, delivery guard, and skill contract behavior.
-- [ ] The verification path does not depend on downloading videos or calling models.
-- [ ] Stale compile provenance cannot pass the fixture delivery guard.
-- [ ] Hook configuration and issue dependency metadata validate cleanly.
+- [x] Fixture verification covers wrapper, PreToolUse, delivery guard, and skill contract behavior.
+- [x] The verification path does not depend on downloading videos or calling models.
+- [x] Stale compile provenance cannot pass the fixture delivery guard.
+- [x] Hook configuration and issue dependency metadata validate cleanly.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Added `test_latex_compile_guard_e2e.py` to compile a real one-page PDF through final mode, run delivery guard against the generated compile report, assert stale PDF/TeX and quick-mode blocks, verify PreToolUse decisions, run skill contract checks, parse hook configuration, and validate the latex-compile-guard dependency view.
+- 2026-07-06: Re-reviewed the E2E contract and strengthened producer provenance validation so the passing fixture depends on a wrapper-generated final compile report.
 
 ## Comments

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "stage": "ready_for_delivery",
-  "video_output_dir": "workspace/低置信目录/2026腾讯云AI产业应用大会-AI Agent安全专场/topics/07_张玉峰_企业级Agent风险与整体安全框架",
-  "target_file": "workspace/低置信目录/2026腾讯云AI产业应用大会-AI Agent安全专场/topics/07_张玉峰_企业级Agent风险与整体安全框架/review/acceptance/delivery_target.json",
-  "source_skill": "final-delivery-acceptance-old-pdf-repair",
-  "updated_at": "2026-07-06T11:13:16+08:00"
+  "video_output_dir": "workspace/Know your unknowns HTML Effectiveness_20260706_155115",
+  "target_file": "workspace/Know your unknowns HTML Effectiveness_20260706_155115/review/acceptance/delivery_target.json",
+  "source_skill": "bilibili-render-pdf",
+  "updated_at": "2026-07-06T18:33:52+08:00"
 }

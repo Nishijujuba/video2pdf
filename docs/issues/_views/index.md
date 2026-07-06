@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-06T02:52:57Z
+generated_at: 2026-07-06T10:20:00Z
 source_feature_count: 6
 source_issue_count: 37
-source_issue_fingerprint: 9529e91c7b00dccb7b04320a8641c137b9c5645116e19b2d2b621da730be265c
+source_issue_fingerprint: de180f83ca134e6248d8935f201727ed50b12da9c6ee7b6ebca2137f5ae0ed81
 ---
 
 # Issue Dependency Index
@@ -44,11 +44,11 @@ source_issue_fingerprint: 9529e91c7b00dccb7b04320a8641c137b9c5645116e19b2d2b621d
 
 - View: [[issues/_views/latex-compile-guard-dependencies]]
 - Issue count: 6
-- Status distribution: ready-for-agent=6
+- Status distribution: done=6
 - Root issues: [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]
-- Currently executable: [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]
+- Currently executable: None
 - Status-blocked: None
-- Dependency-blocked: [[issues/latex-compile-guard/02-add-final-compile-provenance-report]] waits on [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]; [[issues/latex-compile-guard/03-enforce-compile-provenance-in-delivery-guard]] waits on [[issues/latex-compile-guard/02-add-final-compile-provenance-report]]; [[issues/latex-compile-guard/04-block-unsafe-latex-shell-calls-with-pretooluse]] waits on [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]; [[issues/latex-compile-guard/05-integrate-guarded-compile-contract-into-render-skills]] waits on [[issues/latex-compile-guard/02-add-final-compile-provenance-report]], [[issues/latex-compile-guard/03-enforce-compile-provenance-in-delivery-guard]], [[issues/latex-compile-guard/04-block-unsafe-latex-shell-calls-with-pretooluse]]; [[issues/latex-compile-guard/06-add-end-to-end-guard-fixture-verification]] waits on [[issues/latex-compile-guard/05-integrate-guarded-compile-contract-into-render-skills]]
+- Dependency-blocked: None
 - Consistency errors: None
 
 ## pyramid-principle-codex-exec-gate

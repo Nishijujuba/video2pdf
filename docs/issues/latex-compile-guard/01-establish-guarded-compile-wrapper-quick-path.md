@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/latex-compile-guard]]"
 depends_on: []
 blocks:
@@ -10,15 +10,15 @@ related_adrs:
   - "[[adr/0003-use-guarded-latex-compile-wrapper]]"
 owner: unassigned
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-06
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 01 - Establish guarded compile wrapper quick path
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -61,13 +61,14 @@ This issue starts [[prd/latex-compile-guard]] and implements the boundary chosen
 
 ## Acceptance Criteria
 
-- [ ] Temporary compilation is available through the guarded wrapper's `quick` mode.
-- [ ] Quick mode never writes delivery evidence under `review\latex`.
-- [ ] Quick mode keeps disposable compile outputs inside the video output boundary.
-- [ ] Tests verify quick-mode output placement, report content, timeout behavior, and failure diagnostics.
+- [x] Temporary compilation is available through the guarded wrapper's `quick` mode.
+- [x] Quick mode never writes delivery evidence under `review\latex`.
+- [x] Quick mode keeps disposable compile outputs inside the video output boundary.
+- [x] Tests verify quick-mode output placement, report content, timeout behavior, and failure diagnostics.
 
 ## Execution Log
 
 - 2026-07-05: Created from [[prd/latex-compile-guard]].
+- 2026-07-06: Implemented guarded `quick` mode in `compile_latex_ascii.py`; verified disposable `待删除\latex-build\<run-id>` reports, timeout handling, missing-input diagnostics, and legacy CLI compatibility with `test_compile_latex_ascii.py`.
 
 ## Comments

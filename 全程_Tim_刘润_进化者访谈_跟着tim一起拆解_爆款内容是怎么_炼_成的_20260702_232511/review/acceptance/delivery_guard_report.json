@@ -1,13 +1,44 @@
 {
   "schema_version": "1.0",
-  "status": "fail",
-  "checked_at": "2026-07-05T10:01:45+08:00",
+  "status": "pass",
+  "checked_at": "2026-07-05T18:50:37+08:00",
   "stage": "ready_for_delivery",
   "video_output_dir": "全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511",
   "final_pdf": "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
   "validated_by": "delivery_guard.py",
-  "acceptance_report_status": "fail",
-  "artifact_fingerprints": [],
+  "acceptance_report_status": "pass",
+  "artifact_fingerprints": [
+    {
+      "path": "main_formula_reduced.tex",
+      "sha256": "sha256:c0326f49aa8a3ea90bce8002ea32b6189d2e7128f6391ca6b4ab48c4745bd4c4",
+      "size_bytes": 95550,
+      "size_chars": 42261
+    },
+    {
+      "path": "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
+      "sha256": "sha256:35ebdb1b94b00d117b47fcc604aba1cf9eeeae800ddd0dc4aea8e8b50dff79ee",
+      "size_bytes": 1486754,
+      "size_chars": null
+    },
+    {
+      "path": "review/acceptance/allowed_artifacts_manifest.json",
+      "sha256": "sha256:223386e4137d1a5e82cad57054bfb0a664654232ece302e64d3545c119209cae",
+      "size_bytes": 582,
+      "size_chars": 516
+    },
+    {
+      "path": "review/acceptance/acceptance_report.json",
+      "sha256": "sha256:27d858625d729c14070d1c445a50989663bee25dc90571cc57d740c62a1aeb46",
+      "size_bytes": 47087,
+      "size_chars": 46541
+    },
+    {
+      "path": "review/acceptance/delivery_target.json",
+      "sha256": "sha256:0784942146ae1b3549b2ff7f2c0a70a8b60c56c5aab01e84fa57536402fa0e2e",
+      "size_bytes": 519,
+      "size_chars": 453
+    }
+  ],
   "checked_conditions": [
     {
       "condition": "target_resolved",
@@ -22,10 +53,17 @@
       "status": "pass"
     },
     {
-      "condition": "delivery_guard",
-      "status": "fail",
-      "message": "acceptance report status 'fail' blocks delivery"
+      "condition": "acceptance_report_enforced",
+      "status": "pass"
+    },
+    {
+      "condition": "rendered_page_evidence_current",
+      "status": "pass"
+    },
+    {
+      "condition": "artifact_fingerprints_current",
+      "status": "pass"
     }
   ],
-  "blocking_message": "Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents to run the Final Delivery Acceptance workflow for 全程_Tim_刘润_进化者访谈_跟着tim一起拆解_爆款内容是怎么_炼_成的_20260702_232511. Do not deliver this PDF until delivery_guard.py records a fresh pass. Reason: acceptance report status 'fail' blocks delivery"
+  "blocking_message": null
 }

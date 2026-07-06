@@ -18,6 +18,100 @@ A generated view that makes the execution order of one Feature Issue Set readabl
 
 An Obsidian Canvas version may be generated as a secondary browsing artifact when spatial layout helps the user inspect the batch. The Canvas view must not become a separate source of truth for dependency order.
 
+The first dependency-view generation scope is the Markdown Mermaid view plus the Issue Dependency Index. Canvas output is an optional later extension.
+
+## Issue Dependency Index
+
+A generated Obsidian entry point that summarizes all Feature Issue Sets and links to each Issue Dependency View. It helps the user see which batches exist, which batches are complete, and which batches still have executable or blocked work.
+
+The index should show each batch's issue count, status distribution, root issues, currently executable issues, and blocked issues.
+
+## Issue Dependency View Generator
+
+A repository script that reads issue metadata and produces Issue Dependency Views plus the Issue Dependency Index. It has a generation mode that writes the generated Markdown files and a validation mode that checks tracker consistency without modifying files.
+
+Validation should catch dependency metadata errors before a user trusts the Obsidian view. Required checks include missing issue links, `depends_on` and `blocks` inverse mismatches, circular dependencies, and generated views that are stale compared with current issue metadata.
+
+By default, the generator processes every Feature Issue Set under `docs/issues/<feature-slug>/` so the Issue Dependency Index remains complete. It should also support a single-feature option for refreshing or validating one Feature Issue Set during active editing.
+
+Generated dependency-view files should record their source metadata in the file header. Required freshness metadata includes generation time, source feature slug, source issue count, and a source issue fingerprint derived from the issue metadata used to build the view.
+
+## Issue Dependency View Freshness
+
+The condition that a generated Issue Dependency View still matches the current issue metadata. A view is fresh when its recorded source issue fingerprint equals the fingerprint recomputed from the current issue files.
+
+Freshness checking is needed because generated Markdown and Mermaid files are static artifacts. When issue frontmatter or dependency metadata changes, the generated view can become stale until the Issue Dependency View Generator is run again.
+
+## Issue Dependency Source Fingerprint
+
+A deterministic digest of the issue metadata used to generate dependency views. The fingerprint covers only metadata that changes dependency-view output: issue relative path, title, `status`, `feature`, `depends_on`, `blocks`, and `related_adrs`.
+
+Issue body prose, execution logs, comments, and unrelated content are outside the fingerprint because they do not change dependency order, status color, or dependency index summaries.
+
+## Issue Dependency Consistency Error
+
+A validation finding that means issue dependency metadata or a generated dependency view cannot be trusted as an execution guide. Examples include a missing issue link, `depends_on` and `blocks` inverse mismatch, circular dependency, unknown status, or stale generated view.
+
+Generated views may display consistency errors so a human can locate the problem. The Issue Dependency View Generator validation mode must fail when consistency errors exist.
+
+## Currently Executable Issue
+
+An issue that is ready to be picked up according to both status and dependencies. In this repo, an issue is currently executable when its status is `ready-for-agent` or `ready-for-human`, and every issue listed in its `depends_on` metadata has status `done`.
+
+Issues with status `in-progress`, `blocked`, `in-review`, `done`, or `wontfix` are outside the currently executable set. They may still appear in dependency views so the user can understand the full batch state.
+
+## Next Executable Issue List
+
+A generated section in each single-batch Issue Dependency View that lists the currently executable issues before the Mermaid graph. It is sorted by issue number and uses the Currently Executable Issue rule.
+
+The list is an execution shortcut for agents and humans. The Mermaid graph explains structure, while the list identifies the next issue files that can be picked up immediately.
+
+## Waiting On Dependencies List
+
+A generated section in each single-batch Issue Dependency View that lists Dependency-Blocked Issues and the upstream issues they are waiting for. It is sorted by issue number.
+
+The list makes pending work explainable without requiring the user to infer dependency-blocked state from the graph manually.
+
+## Status-Blocked Issue
+
+An issue whose own frontmatter has `status: blocked`. This means work has started or been evaluated and cannot continue because of a recorded blocker, such as a missing decision, failed verification, unavailable tool, or unresolved dependency.
+
+## Dependency-Blocked Issue
+
+An issue whose own status is otherwise executable, such as `ready-for-agent` or `ready-for-human`, while at least one issue listed in its `depends_on` metadata is not yet `done`.
+
+Dependency-blocked issues should appear separately from Status-Blocked Issues in dependency indexes because their next action is to complete upstream work.
+
+## Issue Dependency Layer
+
+A visual ordering group in an Issue Dependency View. Layer 0 contains root issues with no `depends_on` entries inside the same Feature Issue Set. Later layers contain issues whose same-set dependencies appear in earlier layers.
+
+Single-batch Mermaid dependency graphs should use left-to-right layout by dependency layer and keep the original issue number in each node label. The layer communicates execution order, while the number preserves the issue's stable identity from the original split.
+
+## Issue Node Status Color
+
+The visual color assigned to an issue node in an Issue Dependency View. The color represents the issue's current execution status from frontmatter `status`, such as `done`, `ready-for-agent`, `ready-for-human`, `in-progress`, `blocked`, `in-review`, or `wontfix`.
+
+Node color has one meaning: current issue status. Dependency relationships are expressed by graph edges and dependency layers, while dependency-blocked state is reported in the Issue Dependency Index or a compact node annotation.
+
+Because the Markdown Mermaid view is a generated artifact, status color is current at generation time. A stale generated view should be detected by the Issue Dependency View Generator validation mode.
+
+## Issue Status Color Palette
+
+The fixed status-to-color mapping for issue nodes in generated dependency views. The palette is:
+
+- `done`: green
+- `ready-for-agent`: blue
+- `ready-for-human`: purple
+- `in-progress`: yellow
+- `blocked`: red
+- `in-review`: orange
+- `needs-info`: gray
+- `needs-triage`: light gray
+- `wontfix`: dark gray
+
+The palette should remain stable across generated Mermaid and Canvas views so the user can read execution state without relearning colors per batch.
+
 ## Pyramid Principle Validation Skill
 
 A review skill that evaluates whether a generated PDF note, document, or long-form writing artifact follows the Pyramid Principle. It focuses on reasoning structure: conclusion first, grouped support, clear hierarchy, and coherent progression from top-level claim to supporting sections.
@@ -168,9 +262,45 @@ The only information an acceptance reviewer is allowed to use: the final deliver
 
 A read-only reviewer that evaluates final delivered artifacts against an Acceptance Criteria File. The reviewer may write the Acceptance Report and optional human summary, but must not modify final artifacts, source materials, criteria files, generation records, or intermediate drafts.
 
+## Session-Scoped Delivery Target
+
+The active delivery target owned by one Codex session. It lets the Stop hook guard the PDF delivery flow for the current session without reading or blocking delivery targets owned by other concurrent sessions.
+
+## Delivery Task Index
+
+A project-level index of video delivery tasks. It supports task recovery, ownership checks, and workflow observability, but it is not the Stop hook's delivery-blocking source.
+
+## Delivery Target Ownership
+
+The relationship between one Video Output Directory and the Codex session currently allowed to advance its generation, acceptance, repair, and final delivery workflow.
+
+## Delivery Target Handoff
+
+An explicit transfer of Delivery Target Ownership from one Codex session to another. It preserves the previous owner relationship so interrupted or superseded delivery workflows remain auditable.
+
 ## Pyramid Review Directory
 
 The persistent evidence directory for Pyramid Gate outputs inside each video output folder: `review/pyramid/`. It stores stage reports such as `outline.pyramid.json`, `section_01.pyramid.json`, `main.pyramid.json`, and a human-readable `summary.md`. Disposable drafts and temporary attempts belong under `待删除`.
+
+## LaTeX Compile Guard
+
+A required workflow guard that ensures video-to-PDF LaTeX compilation happens through a controlled compile path with bounded runtime, bounded output location, and persistent provenance evidence.
+
+The LaTeX Compile Guard protects the workflow before final delivery. It does not judge PDF quality, replace Final Delivery Acceptance, or grant delivery approval by itself.
+
+## LaTeX Compile Report
+
+A machine-readable provenance report that records how a LaTeX compile ran, which TeX source and PDF artifact it produced, where logs and disposable build outputs were stored, and which fingerprints bind the report to current artifacts.
+
+A final LaTeX Compile Report can be used by the Final Delivery Guard as mechanical evidence that the delivered PDF came from the controlled compile path. A temporary compile report is diagnostic evidence only and cannot satisfy final delivery.
+
+## Temporary Compile
+
+A diagnostic LaTeX compile used to inspect errors, layout, or intermediate PDF output during generation. Temporary compile outputs belong under the Video Output Directory's `待删除` area and are outside final delivery evidence.
+
+## Final Compile
+
+The LaTeX compile that produces the PDF intended for delivery. A Final Compile must produce a final LaTeX Compile Report and bind that report to the current main TeX source and final PDF artifact.
 
 ## Video Output Directory
 

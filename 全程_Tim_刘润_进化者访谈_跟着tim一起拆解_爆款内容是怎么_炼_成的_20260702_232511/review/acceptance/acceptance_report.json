@@ -2,7 +2,7 @@
     "schema_version":  "1.0",
     "criteria_version":  "1.0",
     "criteria_file":  "docs/acceptance/acceptance_criteria.v1.json",
-    "overall_status":  "fail",
+    "overall_status":  "pass",
     "decision_source":  "acceptance_report_json",
     "review_context_used":  {
                                 "allowed_artifacts_manifest":  "review/acceptance/allowed_artifacts_manifest.json",
@@ -17,14 +17,14 @@
     "artifact_fingerprints":  [
                                   {
                                       "path":  "main_formula_reduced.tex",
-                                      "sha256":  "sha256:00ae05fb5d1f6f14d8bcb6a06e9f2cb3e3a7b06b7d8e7c29d48122897c1c63f1",
-                                      "size_bytes":  95557,
-                                      "size_chars":  42038
+                                      "sha256":  "sha256:c0326f49aa8a3ea90bce8002ea32b6189d2e7128f6391ca6b4ab48c4745bd4c4",
+                                      "size_bytes":  95550,
+                                      "size_chars":  42261
                                   },
                                   {
                                       "path":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                      "sha256":  "sha256:174d4b5d1e17d6226e76e00558a6c994d7c0ab73d316294a944a26a553bac23f",
-                                      "size_bytes":  1485947,
+                                      "sha256":  "sha256:35ebdb1b94b00d117b47fcc604aba1cf9eeeae800ddd0dc4aea8e8b50dff79ee",
+                                      "size_bytes":  1486754,
                                       "size_chars":  null
                                   }
                               ],
@@ -32,46 +32,24 @@
                               {
                                   "criterion_id":  "no_meta_writing_content",
                                   "category":  "style",
-                                  "status":  "fail",
+                                  "status":  "pass",
                                   "evidence":  [
                                                    {
                                                        "artifact_path":  "main_formula_reduced.tex",
-                                                       "location":  "line 138",
-                                                       "summary":  "正文导言说明“本版减少临时公式”并解释为何保留或减少公式，属于对写作选择和版本优化的正文说明。"
-                                                   },
-                                                   {
-                                                       "artifact_path":  "main_formula_reduced.tex",
-                                                       "location":  "line 622",
-                                                       "summary":  "第六章开头直接写入内部 work/segments 文件路径、已检查图像、AI 中文字幕和 ASR 识别噪声说明，属于生成/检查过程和材料处理过程的正文披露。"
+                                                       "location":  "full TeX artifact, 42261 characters",
+                                                       "summary":  "Full style scan found no prompt, agent-setting, review-strategy, acceptance-standard, repair-reason, or generation-constraint prose in the reader-facing body. Matches for source material, source timestamps, generated teaching figures, and result acceptance are topic/content disclosures rather than generation-process explanations."
                                                    },
                                                    {
                                                        "artifact_path":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                                       "location":  "rendered page page_0002.png and page_0021.png",
-                                                       "summary":  "这些元写作与过程说明出现在最终 PDF 主阅读流中，而不是来源说明、脚注或附录。"
+                                                       "location":  "rendered pages page_0001.png through page_0033.png",
+                                                       "summary":  "Rendered PDF pages show article-facing title, table of contents, chapters, source notes, captions, tables, diagrams, and summaries. No visible section reads as a process note to the reviewer or coordinator."
                                                    }
                                                ],
-                                  "scan_evidence":  {
-                                                        "scan_type":  "full_artifact_style_scan",
-                                                        "artifact":  "main_formula_reduced.tex",
-                                                        "matched_terms":  [
-                                                                              "公式减少优化版",
-                                                                              "本版减少临时公式",
-                                                                              "work/segments",
-                                                                              "已检查图像",
-                                                                              "AI 中文字幕",
-                                                                              "ASR 文本"
-                                                                          ],
-                                                        "reviewed_lines":  "1-901"
-                                                    },
-                                  "revision_guidance":  {
-                                                            "required_change":  "删除正文中的版本优化、写作选择、内部路径和生成/检查过程说明；必要的来源限制应改写为面向读者的来源说明、脚注或附录。",
-                                                            "allowed_fix_types":  [
-                                                                                      "title and subtitle cleanup",
-                                                                                      "body text rewrite",
-                                                                                      "move source caveats to footnote or source note",
-                                                                                      "remove internal workflow paths"
-                                                                                  ]
-                                                        }
+                                  "scan_evidence":  [
+                                                        "Pattern scan over final TeX checked: 提示词, 指令, agent, 审稿, 生成, 验收, 改写, 写作选择, 写作过程, ASR, OCR, 字幕, 识别错误, 来源限制, 内部文件, segment, work/, review/, 公式减少, 优化版. Context review found no blocking meta-writing use.",
+                                                        "Rendered page scan confirmed that source/material statements appear as article context, captions, footnotes, or teaching notes rather than generation-process prose."
+                                                    ],
+                                  "revision_guidance":  null
                               },
                               {
                                   "criterion_id":  "figure_visual_integrity",
@@ -80,99 +58,69 @@
                                   "evidence":  [
                                                    {
                                                        "artifact_path":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                                       "location":  "rendered pages page_0001.png through page_0032.png",
-                                                       "summary":  "所有截图、教学化流程图和关系图已逐页检查；未发现文字越界、箭头碰撞、节点关系混乱、图像裁切或不可读的非例外视觉缺陷。"
+                                                       "location":  "rendered pages with figures: 1, 3, 7, 10, 12, 13, 15, 17, 19, 21, 22, 25, 26, 28",
+                                                       "summary":  "All visible source screenshots and generated diagrams are contained within page margins. Labels, arrows, nodes, captions, and explanatory text remain readable and do not collide in a way that blocks interpretation."
+                                                   },
+                                                   {
+                                                       "artifact_path":  "main_formula_reduced.tex",
+                                                       "location":  "figure declarations and captions",
+                                                       "summary":  "TeX figure/caption scan shows source screenshots and teaching diagrams with explicit captions and timestamp/source anchoring."
                                                    }
                                                ],
-                                  "scan_evidence":  {
-                                                        "scan_type":  "full_rendered_pdf_visual_scan",
-                                                        "rendered_pages_checked":  "page_0001.png-page_0032.png",
-                                                        "result":  "No blocking figure visual-integrity defect observed."
-                                                    },
+                                  "scan_evidence":  [
+                                                        "Page-by-page visual scan checked page_0001.png through page_0033.png. Figures were inspected for clipping, text overflow, unreadable labels, element collisions, draft-like layout, and caption placement.",
+                                                        "Generated diagrams on pages 10, 12, 15, 19, 22, and 28 are light-toned yet readable at rendered review resolution and remain aligned inside their figure areas."
+                                                    ],
                                   "revision_guidance":  null
                               },
                               {
                                   "criterion_id":  "table_layout_integrity",
                                   "category":  "table_layout_integrity",
-                                  "status":  "fail",
+                                  "status":  "pass",
                                   "evidence":  [
                                                    {
                                                        "artifact_path":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                                       "location":  "rendered page page_0030.png, Table 3",
-                                                       "summary":  "“表 3：总结主线的源证据锚点”右侧内容超出页面边界，源证据锚点列的时间戳和文本被 PDF 页面裁切。"
+                                                       "location":  "rendered pages with tables: 11, 14, 30",
+                                                       "summary":  "Tables are fully visible within page margins. Column relationships are clear, row text wraps without clipping, and captions align with the table content."
                                                    },
                                                    {
                                                        "artifact_path":  "main_formula_reduced.tex",
-                                                       "location":  "lines 832-846",
-                                                       "summary":  "表 3 使用三列 lll 表格承载长文本证据锚点，缺少自动换行列宽控制，导致最终 PDF 中右侧内容溢出。"
+                                                       "location":  "table environments and captions",
+                                                       "summary":  "TeX scan identifies the final tables and matching captions; no table appears to require cropped continuation or hidden overflow in the rendered pages."
                                                    }
                                                ],
-                                  "scan_evidence":  {
-                                                        "scan_type":  "full_rendered_pdf_visual_scan",
-                                                        "failed_pages":  [
-                                                                             "page_0030.png"
-                                                                         ],
-                                                        "other_tables_checked":  [
-                                                                                     "page_0011.png",
-                                                                                     "page_0014.png"
-                                                                                 ]
-                                                    },
-                                  "revision_guidance":  {
-                                                            "required_change":  "修复表 3 的列宽与换行，确保所有单元格内容完整显示在版心内；可拆分长时间戳、压缩源证据文本或改用 tabularx/p 列/longtable。",
-                                                            "allowed_fix_types":  [
-                                                                                      "table layout repair",
-                                                                                      "wrap long cells",
-                                                                                      "split or shorten table content",
-                                                                                      "rerender PDF and refresh page evidence"
-                                                                                  ]
-                                                        }
+                                  "scan_evidence":  [
+                                                        "Table 1 on page 11, Table 2 on page 14, and Table 3 on page 30 were inspected in the rendered page images for page-edge clipping, excessive density, column ambiguity, unreadable text, and caption mismatch.",
+                                                        "No final table showed right-edge loss, overlapping text, missing borders, or unclear cell ownership."
+                                                    ],
+                                  "revision_guidance":  null
                               },
                               {
                                   "criterion_id":  "credibility_disclosure_placement",
                                   "category":  "credibility_disclosure_placement",
-                                  "status":  "fail",
+                                  "status":  "pass",
                                   "evidence":  [
                                                    {
-                                                       "artifact_path":  "main_formula_reduced.tex",
-                                                       "location":  "line 622",
-                                                       "summary":  "第六章主正文开头以整段方式披露 work/segments 内部路径、已检查图像、AI 中文字幕、ASR 识别噪声和上下文校正，直接打断商业化章节阅读流。"
-                                                   },
-                                                   {
-                                                       "artifact_path":  "main_formula_reduced.tex",
-                                                       "location":  "line 693",
-                                                       "summary":  "正文段落写明“Tim 在 ASR 文本中提到…”并说明“数字层面需要后续人工核验”，把可信度 caveat 放在主论述中。"
-                                                   },
-                                                   {
                                                        "artifact_path":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                                       "location":  "rendered pages page_0021.png and page_0025.png",
-                                                       "summary":  "两处可信度说明均在正文段落中可见，没有放入脚注、图注、表注、附录或来源说明。"
+                                                       "location":  "rendered pages page_0001.png through page_0033.png",
+                                                       "summary":  "Source timestamps, video-frame intervals, figure provenance, and the single precision caveat appear as footnotes, captions, source/material box entries, or short article-facing notes. They do not appear as long ASR/OCR/process disclaimers interrupting chapter openings or core arguments."
+                                                   },
+                                                   {
+                                                       "artifact_path":  "main_formula_reduced.tex",
+                                                       "location":  "full TeX artifact source/caveat scan",
+                                                       "summary":  "TeX scan found source-time footnotes, video-frame interval notes, material basis on the title page, and a precision caveat for platform-budget claims. It found no ASR/OCR uncertainty blocks, internal paths, segment filenames, or generation/review process disclosures in body prose."
                                                    }
                                                ],
-                                  "scan_evidence":  {
-                                                        "scan_type":  "full_text_and_visual_placement_scan",
-                                                        "text_hits":  [
-                                                                          "main_formula_reduced.tex:622",
-                                                                          "main_formula_reduced.tex:693"
-                                                                      ],
-                                                        "visual_hits":  [
-                                                                            "page_0021.png",
-                                                                            "page_0025.png"
-                                                                        ]
-                                                    },
-                                  "revision_guidance":  {
-                                                            "required_change":  "将 ASR 噪声、人工核验、来源限制和内部材料边界说明移出正文主段落；保留必要信息时应放到来源说明、脚注、图注、表注或附录，并删除内部文件路径。",
-                                                            "allowed_fix_types":  [
-                                                                                      "move caveat to footnote or source note",
-                                                                                      "remove internal file path",
-                                                                                      "rewrite body paragraph",
-                                                                                      "rerender PDF and refresh page evidence"
-                                                                                  ]
-                                                        }
+                                  "scan_evidence":  [
+                                                        "Rendered pages were checked for large main-flow caveat blocks, internal file paths, ASR/OCR noise explanations, subtitle-processing comments, and review-method disclosures.",
+                                                        "Caveats found during the scan are brief and positioned in accepted forms: footnotes, captions, source note box, or a short claim-specific note."
+                                                    ],
+                                  "revision_guidance":  null
                               }
                           ],
     "visual_scan_evidence":  {
                                  "pdf":  "爆款内容是怎么炼成的_Tim 的内容产品_团队复制与商业化方法论_公式减少优化版.pdf",
-                                 "page_count":  32,
+                                 "page_count":  33,
                                  "rendered_pages_dir":  "review/acceptance/rendered_pages",
                                  "pages_checked":  [
                                                        {
@@ -438,20 +386,14 @@
                                                        {
                                                            "page":  21,
                                                            "rendered_page_image":  "review/acceptance/rendered_pages/page_0021.png",
-                                                           "status":  "fail",
+                                                           "status":  "pass",
                                                            "criteria_checked":  [
                                                                                     "figure_visual_integrity",
                                                                                     "table_layout_integrity",
                                                                                     "credibility_disclosure_placement"
                                                                                 ],
                                                            "failures":  [
-                                                                            {
-                                                                                "criterion_id":  "credibility_disclosure_placement",
-                                                                                "category":  "credibility_disclosure_placement",
-                                                                                "visible_defect":  "Main reading flow contains a full body paragraph disclosing internal work/segments path, checked images, AI Chinese subtitles, ASR noise, and correction choices before section 6.1.",
-                                                                                "rendered_page_image":  "review/acceptance/rendered_pages/page_0021.png",
-                                                                                "pdf_page":  21
-                                                                            }
+
                                                                         ]
                                                        },
                                                        {
@@ -496,20 +438,14 @@
                                                        {
                                                            "page":  25,
                                                            "rendered_page_image":  "review/acceptance/rendered_pages/page_0025.png",
-                                                           "status":  "fail",
+                                                           "status":  "pass",
                                                            "criteria_checked":  [
                                                                                     "figure_visual_integrity",
                                                                                     "table_layout_integrity",
                                                                                     "credibility_disclosure_placement"
                                                                                 ],
                                                            "failures":  [
-                                                                            {
-                                                                                "criterion_id":  "credibility_disclosure_placement",
-                                                                                "category":  "credibility_disclosure_placement",
-                                                                                "visible_defect":  "Main body paragraph states that an industry-budget claim comes from ASR text and that numbers require later human verification, placing credibility caveat in the reading flow.",
-                                                                                "rendered_page_image":  "review/acceptance/rendered_pages/page_0025.png",
-                                                                                "pdf_page":  25
-                                                                            }
+
                                                                         ]
                                                        },
                                                        {
@@ -567,20 +503,14 @@
                                                        {
                                                            "page":  30,
                                                            "rendered_page_image":  "review/acceptance/rendered_pages/page_0030.png",
-                                                           "status":  "fail",
+                                                           "status":  "pass",
                                                            "criteria_checked":  [
                                                                                     "figure_visual_integrity",
                                                                                     "table_layout_integrity",
                                                                                     "credibility_disclosure_placement"
                                                                                 ],
                                                            "failures":  [
-                                                                            {
-                                                                                "criterion_id":  "table_layout_integrity",
-                                                                                "category":  "table_layout_integrity",
-                                                                                "visible_defect":  "Table 3 extends beyond the right page boundary; long source-evidence text and timestamps are visibly clipped at the page edge.",
-                                                                                "rendered_page_image":  "review/acceptance/rendered_pages/page_0030.png",
-                                                                                "pdf_page":  30
-                                                                            }
+
                                                                         ]
                                                        },
                                                        {
@@ -608,13 +538,24 @@
                                                            "failures":  [
 
                                                                         ]
+                                                       },
+                                                       {
+                                                           "page":  33,
+                                                           "rendered_page_image":  "review/acceptance/rendered_pages/page_0033.png",
+                                                           "status":  "pass",
+                                                           "criteria_checked":  [
+                                                                                    "figure_visual_integrity",
+                                                                                    "table_layout_integrity",
+                                                                                    "credibility_disclosure_placement"
+                                                                                ],
+                                                           "failures":  [
+
+                                                                        ]
                                                        }
                                                    ]
                              },
     "failed_criteria":  [
-                            "no_meta_writing_content",
-                            "table_layout_integrity",
-                            "credibility_disclosure_placement"
+
                         ],
-    "revision_required":  true
+    "revision_required":  false
 }

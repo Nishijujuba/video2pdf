@@ -22,6 +22,22 @@ Required subagent roles:
 - **Independent review agent**: after the first PDF is delivered, spawn an independent review agent. This agent must compare the draft against the original subtitle files and check for missing important details or subtle information. The workflow must continue through interaction and revision until the review agent judges that the TeX content is complete enough.
 - **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, and a fresh Acceptance Reviewer run decides delivery.
 
+### Subagent Wait Policy
+
+For Acceptance Reviewer subagents, use `wait_agent` with `timeout_ms: 3600000` so the reviewer has a one-hour wait window.
+
+A `wait_agent` timeout means only that the current wait window expired. It does not mean the subagent failed, stalled, or produced an invalid review. Do not interrupt or close a normally running Acceptance Reviewer because of `wait_agent` timeout alone. Interrupt or close it only when the reviewer reports an explicit error, violates the allowed artifact boundary, exceeds the one-hour wait window without producing required output, or the user asks to stop.
+
+### Visual Acceptance Input Policy
+
+Visual acceptance must inspect every rendered PDF page image individually. A `contact_sheet`, montage, overview image, selected key pages, thumbnails, sampled pages, or any reduced visual input set is auxiliary navigation material only and cannot serve as the basis for a pass/fail decision.
+
+The Acceptance Reviewer must inspect each `review/acceptance/rendered_pages/page_*.png` file corresponding to pages `1..page_count` and must record one page-specific `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page.
+
+If the reviewer cannot complete this per-page inspection within the allowed wait window, delivery must stay blocked. The coordinator must preserve the blocked state and run a fresh Acceptance Reviewer. The coordinator must not shrink the evidence set, replace per-page review with a contact sheet, or convert the task into key-page sampling to obtain a pass.
+
+`delivery_guard.py` proves freshness, manifest membership, path boundaries, and rendered-page coverage. It cannot prove that the reviewer actually inspected every page. A structurally valid `acceptance_report.json` based on reduced visual input is invalid workflow evidence and must be treated as delivery-blocking.
+
 ## Final Delivery Guard
 
 Every render workflow must bind final delivery to `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.

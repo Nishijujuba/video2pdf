@@ -3,6 +3,7 @@ type: issue
 status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
+  - "[[issues/final-delivery-acceptance-gate/03-codify-read-only-acceptance-reviewer-skill]]"
   - "[[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]"
 blocks:
   - "[[issues/final-delivery-acceptance-gate/06-integrate-final-acceptance-into-bilibili-and-youtube]]"
@@ -38,7 +39,7 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Revision Guidance, A
 
 ## Dependencies
 
-- Depends on: [[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]
+- Depends on: [[issues/final-delivery-acceptance-gate/03-codify-read-only-acceptance-reviewer-skill]], [[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]
 - Blocks: [[issues/final-delivery-acceptance-gate/06-integrate-final-acceptance-into-bilibili-and-youtube]]
 
 ## User Stories Covered

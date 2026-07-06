@@ -3,6 +3,7 @@ type: issue
 status: done
 feature: "[[prd/final-delivery-acceptance-gate]]"
 depends_on:
+  - "[[issues/final-delivery-acceptance-gate/03-codify-read-only-acceptance-reviewer-skill]]"
   - "[[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]]"
   - "[[issues/final-delivery-acceptance-gate/05-define-acceptance-repair-rerun-loop]]"
 blocks: []
@@ -38,7 +39,7 @@ Relevant domain concepts from root `CONTEXT.md`: Acceptance Evidence, Acceptance
 
 ## Dependencies
 
-- Depends on: [[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]], [[issues/final-delivery-acceptance-gate/05-define-acceptance-repair-rerun-loop]]
+- Depends on: [[issues/final-delivery-acceptance-gate/03-codify-read-only-acceptance-reviewer-skill]], [[issues/final-delivery-acceptance-gate/04-enforce-acceptance-manifests-fingerprints-and-decisions]], [[issues/final-delivery-acceptance-gate/05-define-acceptance-repair-rerun-loop]]
 - Blocks: none
 
 ## User Stories Covered

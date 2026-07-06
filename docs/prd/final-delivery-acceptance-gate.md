@@ -206,6 +206,10 @@ The required filename format is:
 
 The rendering helper must write every page image and provide the PDF page count. The Acceptance Reviewer uses those images for visual inspection. The validator checks that every page from `1` through `page_count` has exactly one `pages_checked[]` result.
 
+Visual acceptance requires direct inspection of each rendered page image. Contact sheets, montages, overview images, selected key pages, thumbnails, sampled pages, and other reduced visual input sets may be used only as navigation aids. They cannot replace page-level rendered PDF inspection, cannot justify a pass decision, and cannot satisfy the `pages_checked[]` contract.
+
+If the Acceptance Reviewer cannot complete direct inspection of every rendered page image, delivery remains blocked. The workflow must not shrink the evidence set, replace per-page review with a contact sheet, or convert the acceptance task into key-page sampling to obtain a passing report.
+
 The `visual_scan_evidence` object must use this shape:
 
 ```json
@@ -307,6 +311,7 @@ A failed page entry must include the criterion id, category, visible defect desc
 - Style criteria require full final text scans.
 - Figure, table, and credibility disclosure placement criteria require rendered PDF visual review.
 - Visual acceptance requires a full rendered PDF visual scan by an independent Codex visual reviewer.
+- Visual acceptance cannot be reduced to contact sheets, overview images, selected key pages, thumbnails, sampled pages, or any smaller visual input set.
 - The visual scan has no human manual review stage.
 - The visual scan report must include one result entry for every rendered PDF page.
 - The visual scan page count must match the rendered PDF page count.

@@ -43,6 +43,12 @@ The final compile report records compile provenance and freshness data, includin
 - mode
 - status
 - source skill or caller
+- wrapper producer identity
+- wrapper producer contract
+- wrapper producer mode
+- guarded wrapper script path
+- guarded wrapper script fingerprint
+- semantic wrapper invocation arguments
 - TeX path
 - final PDF path
 - engine path
@@ -65,6 +71,10 @@ For newly generated video PDFs, final delivery is allowed only when `delivery_gu
 - `review\latex\compile_report.json` exists;
 - the compile report has `mode: "final"`;
 - the compile report has `status: "passed"`;
+- the compile report producer, producer contract, and producer mode match the guarded final compile contract;
+- the compile report wrapper script path resolves to the project guarded wrapper;
+- the compile report wrapper script fingerprint matches the current guarded wrapper script;
+- the compile report invocation arguments declare final compile mode;
 - the report's TeX path resolves to the delivery target's main TeX;
 - the report's PDF path resolves to the delivery target's final PDF;
 - the report's recorded final PDF fingerprint matches the current final PDF;
@@ -178,6 +188,8 @@ Historical or externally supplied PDFs may use an explicit legacy boundary. A le
 ## Further Notes
 
 The key distinction is between prevention, execution control, and delivery proof. `PreToolUse` prevents obvious unsafe commands before they start. The guarded wrapper controls actual LaTeX execution and bounded failure. `delivery_guard.py check` proves that the final delivered PDF came from the controlled path.
+
+The compile report is workflow provenance. It is not a cryptographic attestation. It raises the delivery guard from artifact-hash freshness to wrapper-contract freshness, while still assuming local repo files and generated JSON are under normal workflow control.
 
 The main limitation is that `PreToolUse` cannot interrupt a tool call that has already started. Long-running compile protection therefore belongs inside the wrapper through total timeout and idle watchdog behavior.
 

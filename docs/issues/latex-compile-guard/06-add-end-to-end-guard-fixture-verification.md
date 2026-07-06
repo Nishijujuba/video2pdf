@@ -55,6 +55,8 @@ This issue closes [[prd/latex-compile-guard]] after [[issues/latex-compile-guard
 - A fixture new video PDF target with a fresh passing final compile report and passing acceptance evidence passes delivery guard.
 - The same fixture blocks after the final PDF fingerprint changes.
 - The same fixture blocks after the main TeX fingerprint changes.
+- The same fixture blocks when the final compile report lacks guarded wrapper provenance.
+- The same fixture blocks when the wrapper script fingerprint is stale.
 - A fixture quick-mode report cannot satisfy final delivery.
 - A fixture direct `xelatex` command is blocked by the PreToolUse guard.
 - A fixture guarded wrapper command is allowed by the PreToolUse guard.
@@ -66,7 +68,7 @@ This issue closes [[prd/latex-compile-guard]] after [[issues/latex-compile-guard
 
 - [x] Fixture verification covers wrapper, PreToolUse, delivery guard, and skill contract behavior.
 - [x] The verification path does not depend on downloading videos or calling models.
-- [x] Stale compile provenance cannot pass the fixture delivery guard.
+- [x] Stale artifact provenance or stale wrapper provenance cannot pass the fixture delivery guard.
 - [x] Hook configuration and issue dependency metadata validate cleanly.
 
 ## Execution Log

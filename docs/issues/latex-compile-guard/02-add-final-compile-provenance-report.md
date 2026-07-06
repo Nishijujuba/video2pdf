@@ -56,6 +56,7 @@ This issue depends on the quick path from [[issues/latex-compile-guard/01-establ
 - Final mode reports `mode: "final"` and `status: "passed"` only after the final PDF exists.
 - Final mode records the resolved main TeX path and final PDF path.
 - Final mode records current fingerprints for the main TeX and final PDF.
+- Final mode records guarded wrapper producer, contract, mode, wrapper script path/fingerprint, and wrapper argv.
 - Final mode records log paths and build directory paths that remain inside the video output boundary.
 - A changed PDF or changed TeX fixture can be detected as stale by comparing the report fingerprints.
 - Failed final compilation writes a failed report with an actionable failure reason and does not claim a passing delivery provenance state.
@@ -63,9 +64,9 @@ This issue depends on the quick path from [[issues/latex-compile-guard/01-establ
 ## Acceptance Criteria
 
 - [x] Final mode produces a durable LaTeX Compile Report under `review\latex`.
-- [x] The report records enough provenance for delivery guard freshness checks.
+- [x] The report records enough artifact and wrapper provenance for delivery guard freshness checks.
 - [x] Failed final compiles produce clear failed evidence without a false pass.
-- [x] Tests verify final-mode success, failure, and fingerprint recording.
+- [x] Tests verify final-mode success, failure, fingerprint recording, and wrapper provenance recording.
 
 ## Execution Log
 

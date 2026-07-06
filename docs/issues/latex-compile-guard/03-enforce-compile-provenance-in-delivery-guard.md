@@ -57,6 +57,9 @@ This issue depends on final compile reports from [[issues/latex-compile-guard/02
 - A malformed final compile report blocks delivery.
 - A final compile report for the wrong PDF blocks delivery.
 - A final compile report for the wrong TeX source blocks delivery.
+- A final compile report with missing or wrong wrapper producer, contract, or mode blocks delivery.
+- A final compile report with a stale wrapper script fingerprint blocks delivery.
+- A final compile report whose argv does not declare `--mode final` blocks delivery.
 - A stale report whose PDF fingerprint no longer matches blocks delivery.
 - A stale report whose TeX fingerprint no longer matches blocks delivery.
 - A fresh passing final compile report allows the existing acceptance freshness checks to proceed.
@@ -68,7 +71,7 @@ This issue depends on final compile reports from [[issues/latex-compile-guard/02
 - [x] `delivery_guard.py check` enforces final compile provenance for new video PDFs.
 - [x] Compile provenance failures have specific blocking messages.
 - [x] Legacy external PDF behavior stays explicit and bounded.
-- [x] Tests cover missing, failed, stale, wrong-artifact, quick-mode, and legacy cases.
+- [x] Tests cover missing, failed, stale, wrong-artifact, quick-mode, wrapper-provenance, and legacy cases.
 
 ## Execution Log
 

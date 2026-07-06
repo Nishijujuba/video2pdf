@@ -290,9 +290,13 @@ The LaTeX Compile Guard protects the workflow before final delivery. It does not
 
 ## LaTeX Compile Report
 
-A machine-readable provenance report that records how a LaTeX compile ran, which TeX source and PDF artifact it produced, where logs and disposable build outputs were stored, and which fingerprints bind the report to current artifacts.
+A machine-readable provenance report that records how a LaTeX compile ran, which TeX source it compiled, where logs and disposable build outputs were stored, and which fingerprints bind the report to current artifacts.
+
+For a final report, compile provenance also identifies the produced final PDF and the controlled wrapper that produced the report. Wrapper provenance includes the producer identity, producer contract, producer mode, wrapper script identity/fingerprint, and semantic invocation arguments. These fields let the Final Delivery Guard reject a report that only matches current artifact hashes without proving the guarded wrapper path.
 
 A final LaTeX Compile Report can be used by the Final Delivery Guard as mechanical evidence that the delivered PDF came from the controlled compile path. A temporary compile report is diagnostic evidence only and cannot satisfy final delivery.
+
+The report is workflow provenance. It is not a cryptographic signature or tamper-proof attestation.
 
 ## Temporary Compile
 
@@ -300,7 +304,7 @@ A diagnostic LaTeX compile used to inspect errors, layout, or intermediate PDF o
 
 ## Final Compile
 
-The LaTeX compile that produces the PDF intended for delivery. A Final Compile must produce a final LaTeX Compile Report and bind that report to the current main TeX source and final PDF artifact.
+The LaTeX compile that produces the PDF intended for delivery. A Final Compile must produce a final LaTeX Compile Report and bind that report to the current main TeX source, final PDF artifact, and wrapper provenance.
 
 ## Video Output Directory
 

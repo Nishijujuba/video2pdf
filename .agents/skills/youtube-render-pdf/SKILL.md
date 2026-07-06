@@ -432,7 +432,7 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-rende
   --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe"
 ```
 
-Use final mode as the delivery compile path. Final mode writes the durable PDF and the latest final compile provenance report at `review\latex\compile_report.json`; `delivery_guard.py check` verifies that report before delivery.
+Use final mode as the delivery compile path. Final mode writes the durable PDF and the latest final compile provenance report at `review\latex\compile_report.json`; `delivery_guard.py check` verifies that report before delivery. The final report must bind current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments.
 
 ```powershell
 D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
@@ -496,7 +496,7 @@ Before delivery, verify all of the following:
 - `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
 - `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
 - `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
-- `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, and matches the current main TeX and final PDF
+- `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, matches the current main TeX and final PDF, and carries current guarded wrapper provenance
 - `acceptance_report.json is the only machine-readable acceptance decision`; `acceptance_summary.md` is optional explanatory text
 - missing, failed, malformed, stale, or forbidden-context report blocks final delivery
 - no important teaching content has been dropped, and no concrete but critical detail has been lost during condensation, restructuring, or summarization

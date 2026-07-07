@@ -162,6 +162,14 @@ def _session_current_target_path(current_target_path: Path, session_id: str) -> 
     return resolved
 
 
+def _session_current_target_path_from_cli(current_target_path: Path, session_id: str) -> Path:
+    resolved = current_target_path.resolve()
+    if resolved.name == "current.json" and resolved.parent.parent.name == SESSION_TARGETS_DIRNAME:
+        _validate_explicit_session_current_target_path(resolved, session_id)
+        return resolved
+    return _session_current_target_path(current_target_path, session_id)
+
+
 def _validate_explicit_session_current_target_path(current_target_path: Path, session_id: str) -> None:
     path = current_target_path.resolve()
     if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or ":" in session_id:
@@ -947,22 +955,100 @@ def task_update(
         return EXIT_BLOCKED, _task_index_message(str(exc))
 
 
+def _claimed_task_index(
+    project_root: Path,
+    task_index_path: Path,
+    *,
+    session_id: str,
+    video_output_dir: Path,
+    target_file: Path,
+    stage: str,
+) -> dict[str, Any]:
+    session_id = _validate_session_id(session_id, "session_id")
+    stage = _validate_stage(stage, "stage")
+    resolved_video_output_dir, _resolved_target_file, video_relative, target_relative = _canonical_task_paths(
+        project_root,
+        video_output_dir=video_output_dir,
+        target_file=target_file,
+    )
+    index = _load_task_index(project_root, task_index_path)
+    active_task = _active_task_for_video_dir(project_root, index, resolved_video_output_dir)
+    if active_task is not None:
+        if active_task["owner_session_id"] != session_id:
+            raise GuardError(
+                "video_output_dir already has active owner_session_id "
+                f"{active_task['owner_session_id']}"
+            )
+        active_task["target_file"] = target_relative
+        active_task["last_session_id"] = session_id
+        active_task["stage"] = stage
+        active_task["updated_at"] = _now_iso()
+        return index
+
+    index["tasks"].append(
+        {
+            "video_output_dir": video_relative,
+            "target_file": target_relative,
+            "owner_session_id": session_id,
+            "owner_status": "active",
+            "last_session_id": session_id,
+            "stage": stage,
+            "updated_at": _now_iso(),
+        }
+    )
+    _validate_task_index(project_root, index)
+    return index
+
+
+def _owned_task_index(
+    project_root: Path,
+    task_index_path: Path,
+    *,
+    session_id: str,
+    video_output_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    session_id = _validate_session_id(session_id, "session_id")
+    resolved_video_output_dir = _resolve_project_path(project_root, str(video_output_dir), "video_output_dir")
+    index = _load_task_index(project_root, task_index_path)
+    active_task = _active_task_for_video_dir(project_root, index, resolved_video_output_dir)
+    if active_task is None:
+        raise GuardError("video_output_dir has no active owner to update")
+    if active_task["owner_session_id"] != session_id:
+        raise GuardError(
+            "video_output_dir active owner_session_id is "
+            f"{active_task['owner_session_id']}, not {session_id}"
+        )
+    return index, active_task
+
+
 def prepare_old_pdf(
     *,
     project_root: Path,
     current_target_path: Path,
+    task_index_path: Path,
+    session_id: str,
     criteria_path: Path,
     pdf_path: Path,
     explicit_video_output_dir: Path | None,
 ) -> tuple[int, str]:
     project_root = project_root.resolve()
     try:
+        session_id = _validate_session_id(session_id, "session_id")
         pdf_path = _resolve_project_path(project_root, str(pdf_path), "pdf")
         video_output_dir = infer_video_output_dir(project_root, pdf_path, explicit_video_output_dir)
         final_pdf_relative = pdf_path.relative_to(video_output_dir).as_posix()
         main_tex_relative = _choose_main_tex(video_output_dir, pdf_path)
         acceptance_dir = video_output_dir / "review" / "acceptance"
         target_path = acceptance_dir / "delivery_target.json"
+        session_target_path = _session_current_target_path_from_cli(current_target_path, session_id)
+        claimed_index = _claimed_task_index(
+            project_root,
+            task_index_path,
+            session_id=session_id,
+            video_output_dir=video_output_dir,
+            target_file=target_path,
+            stage="ready_for_delivery",
+        )
         manifest_path = create_allowed_artifacts_manifest(
             video_output_dir,
             criteria_path,
@@ -983,15 +1069,20 @@ def prepare_old_pdf(
             "attempt_limit": 3,
         }
         _write_json(target_path, target)
+        now = _now_iso()
         current = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
+            "scope": "session",
+            "session_id": session_id,
             "stage": "ready_for_delivery",
             "video_output_dir": video_output_dir.relative_to(project_root).as_posix(),
             "target_file": target_path.relative_to(project_root).as_posix(),
             "source_skill": "final-delivery-acceptance-old-pdf-repair",
-            "updated_at": _now_iso(),
+            "started_at": now,
+            "updated_at": now,
         }
-        _write_json(current_target_path, current)
+        _write_json(session_target_path, current)
+        _write_task_index(project_root, task_index_path, claimed_index)
         return EXIT_PASS, f"PREPARED: {target_path}"
     except (GuardError, AcceptanceReportValidationError) as exc:
         return EXIT_BLOCKED, _blocking_message(str(exc), None)
@@ -1055,17 +1146,44 @@ def record_failed_attempt(
     *,
     project_root: Path,
     current_target_path: Path,
+    task_index_path: Path,
+    session_id: str,
     video_output_dir: Path,
     attempt_number: int,
     changed_files: list[str],
 ) -> tuple[int, str]:
     project_root = project_root.resolve()
     try:
+        session_id = _validate_session_id(session_id, "session_id")
         if attempt_number < 1:
             raise GuardError("attempt_number must be at least 1")
         video_output_dir = _resolve_project_path(project_root, str(video_output_dir), "video_output_dir")
         acceptance_dir = video_output_dir / "review" / "acceptance"
         target_path = acceptance_dir / "delivery_target.json"
+        session_target_path = _session_current_target_path_from_cli(current_target_path, session_id)
+        current = _require_object(_load_json(session_target_path, "current target"), "current target")
+        _validate_current_target_schema(current, expected_session_id=session_id, require_session_scope=True)
+        _validate_explicit_session_current_target_path(session_target_path, session_id)
+        current_video_dir = _resolve_project_path(
+            project_root,
+            current.get("video_output_dir"),
+            "current target video_output_dir",
+        )
+        current_target_file = _resolve_project_path(
+            project_root,
+            current.get("target_file"),
+            "current target target_file",
+        )
+        if current_video_dir != video_output_dir:
+            raise GuardError("current target video_output_dir must match record-failed-attempt video_output_dir")
+        if current_target_file != target_path.resolve():
+            raise GuardError("current target target_file must match video delivery_target.json")
+        task_index, active_task = _owned_task_index(
+            project_root,
+            task_index_path,
+            session_id=session_id,
+            video_output_dir=video_output_dir,
+        )
         target = _require_object(_load_json(target_path, "delivery target"), "delivery target")
         attempt_limit = _validate_attempt_limit(target.get("attempt_limit"))
         if attempt_number > attempt_limit:
@@ -1095,16 +1213,21 @@ def record_failed_attempt(
         )
 
         if attempt_number == attempt_limit:
+            active_task["owner_status"] = "blocked"
+            active_task["last_session_id"] = session_id
+            active_task["stage"] = "blocked"
+            active_task["updated_at"] = _now_iso()
+            _validate_task_index(project_root, task_index)
             target["stage"] = "blocked"
             _write_json(target_path, target)
             (acceptance_dir / "manual_repair_brief.md").write_text(
                 _manual_brief(acceptance_dir, attempt_limit),
                 encoding="utf-8",
             )
-            current = _require_object(_load_json(current_target_path, "current target"), "current target")
             current["stage"] = "blocked"
             current["updated_at"] = _now_iso()
-            _write_json(current_target_path, current)
+            _write_json(session_target_path, current)
+            _write_task_index(project_root, task_index_path, task_index)
 
         return EXIT_PASS, f"RECORDED: {attempt_dir}"
     except GuardError as exc:
@@ -1355,14 +1478,16 @@ def _parse_args() -> argparse.Namespace:
 
     old_pdf_parser = subparsers.add_parser("old-pdf-prepare", help="Prepare a bounded old-PDF repair target.")
     old_pdf_parser.add_argument("pdf", type=Path)
+    old_pdf_parser.add_argument("--session-id", required=True)
     old_pdf_parser.add_argument("--video-output-dir", type=Path)
-    add_common(old_pdf_parser)
+    add_task_common(old_pdf_parser)
 
     attempt_parser = subparsers.add_parser("record-failed-attempt", help="Archive a failed acceptance attempt.")
+    attempt_parser.add_argument("--session-id", required=True)
     attempt_parser.add_argument("--video-output-dir", type=Path, required=True)
     attempt_parser.add_argument("--attempt-number", type=int, required=True)
     attempt_parser.add_argument("--changed-file", action="append", default=[])
-    add_common(attempt_parser)
+    add_task_common(attempt_parser)
 
     clear_parser = subparsers.add_parser("clear-target", help="Archive and clear the active project delivery target.")
     clear_parser.add_argument("--video-output-dir", type=Path)
@@ -1430,6 +1555,8 @@ def main() -> int:
         code, message = prepare_old_pdf(
             project_root=args.project_root,
             current_target_path=args.current_target,
+            task_index_path=args.task_index,
+            session_id=args.session_id,
             criteria_path=args.criteria,
             pdf_path=args.pdf,
             explicit_video_output_dir=args.video_output_dir,
@@ -1441,6 +1568,8 @@ def main() -> int:
         code, message = record_failed_attempt(
             project_root=args.project_root,
             current_target_path=args.current_target,
+            task_index_path=args.task_index,
+            session_id=args.session_id,
             video_output_dir=args.video_output_dir,
             attempt_number=args.attempt_number,
             changed_files=args.changed_file,

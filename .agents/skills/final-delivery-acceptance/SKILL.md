@@ -119,18 +119,22 @@ Blocking text must include: Final Delivery Guard blocked delivery. Use a separat
 Old-PDF repair requires an explicit video_output_dir unless the PDF is already inside one valid video output directory. The preparation command is:
 
 ```powershell
-D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py old-pdf-prepare "<pdf-path>" --video-output-dir "<video-output-dir>"
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py old-pdf-prepare "<pdf-path>" --session-id "<session_id>" --video-output-dir "<video-output-dir>"
 ```
 
 When the PDF is already inside a valid video output directory, `--video-output-dir` may be omitted. Isolated PDFs must not trigger broad workspace search.
 
+The prepare command writes `.codex/delivery-targets/sessions/<session_id>/current.json`, `review/acceptance/delivery_target.json`, and the project task-index owner entry for the selected video output directory. If another active session owns that video output directory, preparation blocks before writing target state.
+
 Repair subagents may inspect and modify only files inside that video output directory. A failed attempt is archived with:
 
 ```powershell
-D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py record-failed-attempt --video-output-dir "<video-output-dir>" --attempt-number 1 --changed-file main.tex
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py record-failed-attempt --session-id "<session_id>" --current-target ".codex\delivery-targets\sessions\<session_id>\current.json" --video-output-dir "<video-output-dir>" --attempt-number 1 --changed-file main.tex
 ```
 
 Each failed attempt preserves `acceptance_report.json`, optional `acceptance_summary.md`, `repair_brief.md`, and `changed_files.json` under `review/acceptance/attempts/attempt_01/`, then `attempt_02/` and `attempt_03/` when needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md`, set the target stage to `blocked`, and stop automatic repair.
+
+Automatic waiver is unavailable in this repair lifecycle.
 
 ## Scripts
 

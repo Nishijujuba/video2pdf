@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T02:43:19Z
+generated_at: 2026-07-07T03:04:09Z
 source_feature_slug: issue-dependency-views
 source_issue_count: 6
 source_issue_fingerprint: b36d34a739a7f442df7c52cc8ea4970ebd719151fe2d95672999aefeab789e40

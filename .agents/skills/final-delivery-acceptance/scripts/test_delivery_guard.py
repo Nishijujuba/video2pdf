@@ -1236,11 +1236,19 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("manual_repair_brief.md", completed.stderr)
 
     def test_old_pdf_prepare_infers_video_dir_and_rejects_isolated_pdf_without_boundary(self) -> None:
-        completed = self.run_guard("old-pdf-prepare", str(self.video_dir / "final.pdf"))
+        completed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         prepared_target = json.loads(self.target_path.read_text(encoding="utf-8"))
-        active_target = json.loads(self.current_target_path.read_text(encoding="utf-8"))
+        active_target = json.loads(self.session_current_target_path.read_text(encoding="utf-8"))
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
         self.assertEqual(prepared_target["stage"], "ready_for_delivery")
         self.assertEqual(prepared_target["video_output_dir"], ".")
         self.assertEqual(prepared_target["final_pdf"], "final.pdf")
@@ -1248,36 +1256,145 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIs(prepared_target["compile_provenance_required"], False)
         self.assertIs(prepared_target["legacy_existing_pdf"], True)
         self.assertIs(prepared_target["recompiled"], False)
+        self.assertEqual(active_target["schema_version"], "1.1")
+        self.assertEqual(active_target["scope"], "session")
+        self.assertEqual(active_target["session_id"], self.session_id)
         self.assertEqual(active_target["stage"], "ready_for_delivery")
         self.assertEqual(active_target["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task_index["schema_version"], "1.0")
+        self.assertEqual(len(task_index["tasks"]), 1)
+        task = task_index["tasks"][0]
+        self.assertEqual(task["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["owner_session_id"], self.session_id)
+        self.assertEqual(task["owner_status"], "active")
+        self.assertEqual(task["stage"], "ready_for_delivery")
+
+        resumed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        resumed_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(resumed_index["tasks"]), 1)
+        self.assertEqual(resumed_index["tasks"][0]["owner_session_id"], self.session_id)
 
         isolated_pdf = self.case_dir / "isolated.pdf"
         self.write_pdf(isolated_pdf, pages=1)
-        isolated = self.run_guard("old-pdf-prepare", str(isolated_pdf))
+        isolated = self.run_guard(
+            "old-pdf-prepare",
+            str(isolated_pdf),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
 
         self.assertEqual(isolated.returncode, 2)
         self.assertIn("requires an explicit video_output_dir", isolated.stderr)
 
         outside_pdf = REPO_ROOT.parent / "outside.pdf"
-        escaped = self.run_guard("old-pdf-prepare", str(outside_pdf))
+        escaped = self.run_guard(
+            "old-pdf-prepare",
+            str(outside_pdf),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
 
         self.assertEqual(escaped.returncode, 2)
         self.assertIn("pdf escapes project boundary", escaped.stderr)
 
+    def test_old_pdf_prepare_accepts_explicit_video_output_dir(self) -> None:
+        completed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--video-output-dir",
+            str(self.video_dir),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        active_target = json.loads(self.session_current_target_path.read_text(encoding="utf-8"))
+        prepared_target = json.loads(self.target_path.read_text(encoding="utf-8"))
+        self.assertEqual(active_target["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(prepared_target["final_pdf"], "final.pdf")
+        self.assertEqual(prepared_target["main_tex"], "main.tex")
+
+    def test_old_pdf_prepare_blocks_ambiguous_or_escaping_video_dir_before_mutating_targets(self) -> None:
+        nested_dir = self.video_dir / "nested"
+        (nested_dir / "待删除").mkdir(parents=True, exist_ok=True)
+        (nested_dir / "main.tex").write_text("Nested final article text.\n", encoding="utf-8")
+        self.write_pdf(nested_dir / "final.pdf", pages=1)
+        before_target = self.target_path.read_text(encoding="utf-8")
+
+        ambiguous = self.run_guard(
+            "old-pdf-prepare",
+            str(nested_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(ambiguous.returncode, 2)
+        self.assertIn("ambiguous", ambiguous.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertFalse(self.task_index_path.exists())
+        self.assertEqual(self.target_path.read_text(encoding="utf-8"), before_target)
+
+        escaping = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--video-output-dir",
+            "..\\outside",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(escaping.returncode, 2)
+        self.assertIn("video_output_dir", escaping.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertFalse(self.task_index_path.exists())
+        self.assertEqual(self.target_path.read_text(encoding="utf-8"), before_target)
+
     def test_record_failed_attempt_preserves_evidence_and_blocks_after_third_attempt(self) -> None:
-        self.write_delivery_target(stage="ready_for_delivery")
-        self.write_current_target(stage="ready_for_delivery")
+        prepared = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
         self.write_report(self.failed_report())
         (self.acceptance_dir / "acceptance_summary.md").write_text("Failed acceptance summary.\n", encoding="utf-8")
 
         first = self.run_guard(
             "record-failed-attempt",
+            "--session-id",
+            self.session_id,
             "--video-output-dir",
             str(self.video_dir),
             "--attempt-number",
             "1",
             "--changed-file",
             "main.tex",
+            "--task-index",
+            str(self.task_index_path),
+            current_target=self.session_current_target_path,
         )
 
         self.assertEqual(first.returncode, 0, first.stderr)
@@ -1290,24 +1407,71 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("no_meta_writing_content", repair_brief)
         self.assertIn("visual_scan_evidence", repair_brief)
         self.assertIn("Remove meta writing process language", repair_brief)
+        self.assertTrue(self.report_path.exists())
+        self.assertEqual(json.loads(self.report_path.read_text(encoding="utf-8"))["overall_status"], "fail")
 
         for attempt_number in (2, 3):
             completed = self.run_guard(
                 "record-failed-attempt",
+                "--session-id",
+                self.session_id,
                 "--video-output-dir",
                 str(self.video_dir),
                 "--attempt-number",
                 str(attempt_number),
                 "--changed-file",
                 "main.tex",
+                "--task-index",
+                str(self.task_index_path),
+                current_target=self.session_current_target_path,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
+            attempt_dir = self.acceptance_dir / "attempts" / f"attempt_{attempt_number:02d}"
+            self.assertTrue((attempt_dir / "acceptance_report.json").exists())
+            self.assertTrue((attempt_dir / "acceptance_summary.md").exists())
+            self.assertTrue((attempt_dir / "repair_brief.md").exists())
+            self.assertTrue((attempt_dir / "changed_files.json").exists())
 
         manual_brief = self.acceptance_dir / "manual_repair_brief.md"
         self.assertTrue(manual_brief.exists())
         self.assertIn("attempt_03", manual_brief.read_text(encoding="utf-8"))
         self.assertEqual(json.loads(self.target_path.read_text(encoding="utf-8"))["stage"], "blocked")
-        self.assertEqual(json.loads(self.current_target_path.read_text(encoding="utf-8"))["stage"], "blocked")
+        self.assertEqual(json.loads(self.session_current_target_path.read_text(encoding="utf-8"))["stage"], "blocked")
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(task_index["tasks"][0]["stage"], "blocked")
+        self.assertEqual(task_index["tasks"][0]["owner_status"], "blocked")
+
+    def test_record_failed_attempt_rejects_automatic_waiver_argument(self) -> None:
+        prepared = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        self.write_report(self.failed_report())
+
+        completed = self.run_guard(
+            "record-failed-attempt",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--attempt-number",
+            "1",
+            "--changed-file",
+            "main.tex",
+            "--task-index",
+            str(self.task_index_path),
+            "--waiver",
+            "automatic",
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("unrecognized arguments: --waiver", completed.stderr)
 
 
 if __name__ == "__main__":

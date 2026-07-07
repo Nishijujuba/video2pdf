@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]]"
@@ -14,15 +14,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 04 - Convert old-PDF prepare and failed-attempt lifecycle
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -70,14 +70,15 @@ The repair loop remains bounded to the video output directory. The Acceptance Re
 
 ## Acceptance Criteria
 
-- [ ] Old-PDF repair setup writes session target, video target, and task-index state consistently.
-- [ ] Repair scope stays mechanically bound to the selected video output directory.
-- [ ] Failed attempt evidence is preserved under numbered attempt folders.
-- [ ] The third failed attempt creates a manual repair brief and blocks delivery.
-- [ ] Tests cover inferred directory, explicit directory, ambiguous directory, path escape, failed attempts, and blocked lifecycle state.
+- [x] Old-PDF repair setup writes session target, video target, and task-index state consistently.
+- [x] Repair scope stays mechanically bound to the selected video output directory.
+- [x] Failed attempt evidence is preserved under numbered attempt folders.
+- [x] The third failed attempt creates a manual repair brief and blocks delivery.
+- [x] Tests cover inferred directory, explicit directory, ambiguous directory, path escape, failed attempts, and blocked lifecycle state.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Converted old-PDF prepare and failed-attempt recording to explicit session-scoped target and task-index lifecycle. Added tests for inferred and explicit video directories, mutation-free blocking on ambiguous or escaping scope, failed-attempt preservation, third-attempt blocked state, and unavailable automatic waiver; independent verification passed.
 
 ## Comments

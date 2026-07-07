@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T02:43:19Z
+generated_at: 2026-07-07T03:04:09Z
 source_feature_count: 6
 source_issue_count: 37
-source_issue_fingerprint: ef1137fc92f5d0c3c1f949489b8d91fe710b7e757035d283eff777fbb1c2afc8
+source_issue_fingerprint: 70c04ec9b4d70a630ce3e341ff261d3f107af852dbf57e2a0491779c7cfd72e3
 ---
 
 # Issue Dependency Index
@@ -66,9 +66,9 @@ source_issue_fingerprint: ef1137fc92f5d0c3c1f949489b8d91fe710b7e757035d283eff777
 
 - View: [[issues/_views/session-scoped-final-delivery-guard-dependencies]]
 - Issue count: 7
-- Status distribution: done=3, ready-for-agent=4
+- Status distribution: done=4, ready-for-agent=3
 - Root issues: [[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]
-- Currently executable: [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]]
+- Currently executable: [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]] waits on [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]]; [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]; [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- Dependency-blocked: [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]; [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
 - Consistency errors: None

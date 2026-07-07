@@ -1,11 +1,22 @@
 ---
-generated_at: 2026-07-07T10:43:22Z
-source_feature_count: 6
-source_issue_count: 37
-source_issue_fingerprint: abe4822be2105e73f9d215a4bc11074489ecbff46eab153275abaec113aa024c
+generated_at: 2026-07-07T15:32:39Z
+source_feature_count: 7
+source_issue_count: 44
+source_issue_fingerprint: 6f453f50d67b6a26169bb435230f3b8587a964d1ba81500590d191d04bf42c81
 ---
 
 # Issue Dependency Index
+
+## delivery-glossary-terminology-governance
+
+- View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
+- Issue count: 7
+- Status distribution: done=1, ready-for-agent=6
+- Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]
+- Status-blocked: None
+- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Consistency errors: None
 
 ## final-delivery-acceptance-gate
 

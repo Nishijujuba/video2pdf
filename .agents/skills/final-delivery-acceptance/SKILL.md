@@ -155,6 +155,7 @@ The delivered session target is moved under `<video-output-dir>\待删除\delive
 ## Scripts
 
 - `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`
+- `scripts/validate_delivery_glossary.py`: validates one standalone `delivery_glossary.v1` contract file for non-English teaching PDFs
 - `scripts/render_pdf_pages.py`: renders every final PDF page to `review/acceptance/rendered_pages/`
 - `scripts/validate_acceptance_report.py`: creates the allowed manifest, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
 - `scripts/delivery_guard.py`: prepares bounded old-PDF repair, records failed attempts, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`

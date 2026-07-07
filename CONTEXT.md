@@ -158,6 +158,36 @@ A user-authored, read-only JSON artifact that defines the acceptance standard fo
 
 The project documentation directory for acceptance criteria templates and related acceptance contract examples: `docs/acceptance/`.
 
+## Delivery Glossary
+
+A per-video JSON contract artifact for non-English teaching PDFs. It records core English expressions that carry explanatory work, their Chinese primary names, boundary explanations, body display strategies, and source-English preservation locations.
+
+The Delivery Glossary is workflow evidence for coordinators, Consistency agents, and Acceptance Reviewers. It is not a reader-facing appendix by default; a visible glossary or concept index is produced only when the user or task explicitly requests one.
+
+## Core English Expression
+
+An English expression from the source video that carries explanatory work in the PDF. It belongs in the Delivery Glossary when the reader would lose the main argument without a stable definition, such as a method name, framework label, recurring concept, or an ordinary English word temporarily promoted into a document concept.
+
+Product names, company names, person names, code identifiers, commands, file extensions, and familiar abbreviations stay outside the Delivery Glossary unless they define a new core concept.
+
+## Body Display Strategy
+
+The Delivery Glossary field that tells writers and reviewers how a core English expression may appear in reader-facing body text.
+
+The v1 values are `preserve_english`, `chinese_with_english_parenthetical`, `chinese_primary_only`, and `quote_only`. This strategy decides whether body prose should keep the English term, use Chinese with an English parenthetical, use Chinese only, or reserve the English expression for direct quotes.
+
+## Source English Preservation Location
+
+The Delivery Glossary field that states where the original English expression remains recoverable for source alignment.
+
+The v1 values are `body_parenthetical`, `body_after_definition`, `footnote`, `caption`, `quote_only`, `delivery_glossary_only`, and `none`. This location complements Body Display Strategy: one field controls body rendering, while the other controls source-term recoverability.
+
+## New Term Candidate
+
+A proposed Core English Expression found after the initial outline contract. Writer agents may report New Term Candidates in handoff notes with a proposed Chinese primary name, boundary explanation, body display strategy, and preservation location.
+
+The coordinator accepts or rejects New Term Candidates before consistency review. Accepted candidates enter the Delivery Glossary; rejected candidates stay outside the terminology contract and should not become body-text concepts.
+
 ## Acceptance Criteria Schema
 
 The minimal JSON contract for an Acceptance Criteria File. It identifies the schema version, criteria name, acceptance scope, review context policy, evaluation policy, and the blocking criteria list.

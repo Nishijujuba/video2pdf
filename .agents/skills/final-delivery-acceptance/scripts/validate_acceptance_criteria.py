@@ -257,6 +257,8 @@ def validate_acceptance_criteria(path: Path) -> list[str]:
         raise ValidationError("criteria must include argument_chain_integrity in category logic_readability")
     if categories_by_id.get("formula_information_gain") != "formula_information_gain":
         raise ValidationError("criteria must include formula_information_gain in category formula_information_gain")
+    if categories_by_id.get("delivery_glossary_term_strategy") != "style":
+        raise ValidationError("criteria must include delivery_glossary_term_strategy in category style")
     return []
 
 

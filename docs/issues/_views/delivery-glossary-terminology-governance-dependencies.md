@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T15:54:36Z
+generated_at: 2026-07-07T16:09:14Z
 source_feature_slug: delivery-glossary-terminology-governance
 source_issue_count: 7
-source_issue_fingerprint: d37a1bc90fe14468eba17cf4626bf822f3cbf30e4145fa2fba945aff3e428ca6
+source_issue_fingerprint: 6874b169b3819ef1fbb322107bb1c3b48a6e825d2af47587cd6b4b7761b23d8f
 ---
 
 # Issue Dependency View: delivery-glossary-terminology-governance
@@ -13,13 +13,12 @@ None
 
 ## Next executable
 
-- [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]] 03 - Add glossary-aware acceptance criterion
 - [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]] 04 - Integrate Delivery Glossary into YouTube render workflow
 - [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]] 05 - Integrate Delivery Glossary into Bilibili render workflow
 
 ## Waiting on dependencies
 
-- [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
+- [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
 - [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 
 ## Mermaid dependency graph
@@ -53,7 +52,7 @@ flowchart LR
   n_06_enforce_delivery_glossary_in_review_roles --> n_07_add_end_to_end_glossary_governance_fixtures
   class n_01_establish_delivery_glossary_schema_and_validation_contract done
   class n_02_thread_delivery_glossary_through_final_artifact_manifest done
-  class n_03_add_glossary_aware_acceptance_criterion ready_for_agent
+  class n_03_add_glossary_aware_acceptance_criterion done
   class n_04_integrate_delivery_glossary_into_youtube_render_workflow ready_for_agent
   class n_05_integrate_delivery_glossary_into_bilibili_render_workflow ready_for_agent
   class n_06_enforce_delivery_glossary_in_review_roles ready_for_agent

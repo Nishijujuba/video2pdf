@@ -73,6 +73,27 @@
       "fail_condition": "任意核心术语首次出现或关键入口位置使用不属于 allowed_exceptions 的生硬术语、数学隐喻、直译腔表达或未解释短称，导致读者难以理解主线。"
     },
     {
+      "id": "delivery_glossary_term_strategy",
+      "category": "style",
+      "rule": "对于非英语教学 PDF，当 review/acceptance/delivery_glossary.json 被列入 allowed artifacts manifest 时，Acceptance Reviewer 必须用 Delivery Glossary 检查最终 PDF 正文中的每个核心英文表达。每个 term 的实际 body rendering 必须同时匹配 `body_display_strategy` 和 `where_to_preserve_english`；仅在某处解释过该词，或仅确认 glossary 存在，不能构成通过。",
+      "violation_patterns": [
+        "某个 term 的 `body_display_strategy` 为 `chinese_primary_only`，但正文以裸英文、英文作句子主语、英文括注或英文标签承担解释功能，且该用法不是源材料逐字引用。",
+        "某个 term 的 `where_to_preserve_english` 要求可见保留，例如 `body_parenthetical`、`body_after_definition`、`footnote` 或 `caption`，但最终 PDF 在相应位置没有保留英文源表达。",
+        "某个 term 的 `where_to_preserve_english` 为 `delivery_glossary_only` 或 `none`，但正文仍把英文源表达作为普通正文术语反复使用。",
+        "某个 term 的策略要求 `preserve_english`、`chinese_with_english_parenthetical` 或 `quote_only`，但正文实际呈现方式与该策略不一致。",
+        "验收报告只说明 Delivery Glossary 存在、术语已经解释、或整体术语看起来一致，没有逐项核对 body_display_strategy 与 where_to_preserve_english 的正文呈现。"
+      ],
+      "allowed_exceptions": [
+        "allowed artifacts manifest 未列入 review/acceptance/delivery_glossary.json，且该输出不是需要 Delivery Glossary 的非英语教学 PDF。",
+        "英文表达只出现在源材料逐字引用中，且该位置符合 glossary 的 `body_display_strategy` 或 `where_to_preserve_english`。",
+        "`where_to_preserve_english` 为 `delivery_glossary_only` 或 `none` 时，正文不需要额外可见英文保留。",
+        "`forbidden_body_forms` 是 future optional extension，not a v1 required field；缺少该字段不得被视为 Delivery Glossary 或 acceptance criteria 的合同缺口。"
+      ],
+      "scan_policy": "full_artifact_style_scan",
+      "pass_condition": "当 Delivery Glossary 属于允许审阅输入时，报告必须覆盖每个 glossary term 的最终正文呈现：body_display_strategy 匹配；where_to_preserve_english 要求的可见英文保留已经出现在指定位置；chinese_primary_only 没有裸英文正文使用；delivery_glossary_only 不要求正文额外保留英文；没有把缺少 forbidden_body_forms 当作 v1 失败。",
+      "fail_condition": "任意 glossary term 的最终正文呈现不匹配 body_display_strategy 或 where_to_preserve_english，或 chinese_primary_only 出现裸英文正文使用，或需要可见保留的英文源表达缺失，或验收把 forbidden_body_forms 当成 v1 必填字段，均为 delivery-blocking failure。"
+    },
+    {
       "id": "argument_chain_integrity",
       "category": "logic_readability",
       "rule": "当 reader-facing 正文使用结构性标签组织论证，或使用法律、隐私、安全、支付、合规、生产事故、用户数据、权限边界等高风险领域例子支撑论证时，必须让读者清楚看出每个标签或例子的含义、层级关系、因果链条、证据功能、具体影响机制和结论边界；若只是并列抽象标签，或以高风险词汇制造紧张感、扩大结论强度，导致读者需要自行补全推导关系，则验收失败。",

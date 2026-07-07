@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/delivery-glossary-terminology-governance]]"
 depends_on:
   - "[[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]"
@@ -14,12 +14,12 @@ created: 2026-07-07
 updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 03 - Add glossary-aware acceptance criterion
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -65,5 +65,6 @@ The style acceptance concepts are defined in root `CONTEXT.md`: Style Acceptance
 ## Execution Log
 
 - 2026-07-07: Created from [[prd/delivery-glossary-terminology-governance]].
+- 2026-07-08: Added the default `delivery_glossary_term_strategy` style acceptance criterion, enforced its presence in criteria validation, and covered strategy fields, `chinese_primary_only`, visible English preservation, and optional `forbidden_body_forms` extension language. Independent verification passed focused criteria tests and criteria validation.
 
 ## Comments

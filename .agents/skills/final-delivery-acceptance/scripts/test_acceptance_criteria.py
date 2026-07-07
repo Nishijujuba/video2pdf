@@ -90,6 +90,72 @@ class AcceptanceCriteriaValidationTests(unittest.TestCase):
             "missing-formula-information-gain.json",
         )
 
+    def test_requires_delivery_glossary_term_strategy_style_criterion(self) -> None:
+        criteria = default_criteria()
+        criteria["criteria"] = [
+            item
+            for item in criteria["criteria"]
+            if not isinstance(item, dict) or item.get("id") != "delivery_glossary_term_strategy"
+        ]
+
+        self.assert_invalid(
+            criteria,
+            "criteria must include delivery_glossary_term_strategy in category style",
+            "missing-delivery-glossary-term-strategy.json",
+        )
+
+    def test_delivery_glossary_term_strategy_text_names_v1_contract_fields(self) -> None:
+        criteria = default_criteria()
+        glossary_gate = next(
+            item
+            for item in criteria["criteria"]
+            if isinstance(item, dict) and item.get("id") == "delivery_glossary_term_strategy"
+        )
+
+        combined_text = json.dumps(glossary_gate, ensure_ascii=False)
+
+        for required_text in [
+            "body_display_strategy",
+            "where_to_preserve_english",
+            "chinese_primary_only",
+            "delivery_glossary_only",
+            "forbidden_body_forms",
+            "future optional extension",
+            "not a v1 required field",
+        ]:
+            self.assertIn(required_text, combined_text)
+
+    def test_delivery_glossary_term_strategy_must_stay_style_scan(self) -> None:
+        wrong_category = default_criteria()
+        wrong_category["criteria"] = [
+            {
+                **item,
+                "category": "formula_information_gain",
+                "scan_policy": "full_artifact_formula_scan",
+            }
+            if isinstance(item, dict) and item.get("id") == "delivery_glossary_term_strategy"
+            else item
+            for item in wrong_category["criteria"]
+        ]
+        self.assert_invalid(
+            wrong_category,
+            "criteria must include delivery_glossary_term_strategy in category style",
+            "wrong-glossary-category.json",
+        )
+
+        wrong_scan_policy = default_criteria()
+        wrong_scan_policy["criteria"] = [
+            {**item, "scan_policy": "full_rendered_pdf_visual_scan"}
+            if isinstance(item, dict) and item.get("id") == "delivery_glossary_term_strategy"
+            else item
+            for item in wrong_scan_policy["criteria"]
+        ]
+        self.assert_invalid(
+            wrong_scan_policy,
+            "criteria\\[\\d+\\].scan_policy must be 'full_artifact_style_scan'",
+            "wrong-glossary-scan-policy.json",
+        )
+
     def test_rejects_missing_allowed_category_criterion(self) -> None:
         criteria = default_criteria()
         criteria["criteria"] = [

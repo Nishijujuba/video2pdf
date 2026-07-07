@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T15:54:36Z
+generated_at: 2026-07-07T16:09:14Z
 source_feature_count: 7
 source_issue_count: 44
-source_issue_fingerprint: a7ca519ef8c856f9e86630745c8604b51aaeff3850847c86c7bdc558678483e2
+source_issue_fingerprint: be3104b200b7db760865160fd42baa58aabc4c77719a21d26b5454e1b192d406
 ---
 
 # Issue Dependency Index
@@ -11,11 +11,11 @@ source_issue_fingerprint: a7ca519ef8c856f9e86630745c8604b51aaeff3850847c86c7bdc5
 
 - View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
 - Issue count: 7
-- Status distribution: done=2, ready-for-agent=5
+- Status distribution: done=3, ready-for-agent=4
 - Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
-- Currently executable: [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 - Consistency errors: None
 
 ## final-delivery-acceptance-gate

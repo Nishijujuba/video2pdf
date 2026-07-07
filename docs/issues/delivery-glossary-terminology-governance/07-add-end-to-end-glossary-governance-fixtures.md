@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/delivery-glossary-terminology-governance]]"
 depends_on:
   - "[[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]"
@@ -13,12 +13,12 @@ created: 2026-07-07
 updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 07 - Add end-to-end glossary governance fixtures
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -64,5 +64,6 @@ The relevant decisions are [[adr/0005-use-delivery-glossary-for-non-english-pdf-
 ## Execution Log
 
 - 2026-07-07: Created from [[prd/delivery-glossary-terminology-governance]].
+- 2026-07-08: Added end-to-end glossary governance fixtures covering `grief`, `capability overhang`, `HTML mockup`, product-name boundaries, no default appendix, manifest inclusion, and Acceptance Report pass/fail behavior. Independent verification passed the new fixture test, acceptance report, glossary validator, review-role, acceptance-criteria, YouTube workflow, Bilibili workflow, and diff checks.
 
 ## Comments

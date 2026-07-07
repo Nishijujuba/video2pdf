@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,226 @@ def validate_delivery_glossary(path: Path) -> list[str]:
         if "forbidden_body_forms" in term_obj:
             _require_string_array(term_obj["forbidden_body_forms"], f"terms[{index}].forbidden_body_forms")
     return []
+
+
+def _english_expression_source(english: str) -> str:
+    return r"\s+".join(re.escape(part) for part in english.split())
+
+
+def _english_expression_pattern(english: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?<![A-Za-z0-9_]){_english_expression_source(english)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+
+
+def _parenthetical_pattern(chinese_primary: str, english: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"{re.escape(chinese_primary)}\s*[（(]\s*{_english_expression_source(english)}\s*[)）]",
+        re.IGNORECASE,
+    )
+
+
+def _line_location(body_text: str, offset: int, artifact_path: str) -> str:
+    line = body_text.count("\n", 0, max(offset, 0)) + 1
+    return f"{artifact_path}:line {line}"
+
+
+def _first_match_location(body_text: str, artifact_path: str, *patterns: re.Pattern[str]) -> str:
+    offsets = [match.start() for pattern in patterns if (match := pattern.search(body_text))]
+    if offsets:
+        return _line_location(body_text, min(offsets), artifact_path)
+    return f"{artifact_path}:full artifact"
+
+
+def _finding(
+    *,
+    term: str,
+    status: str,
+    location: str,
+    summary: str,
+    strategy: str,
+    preservation: str,
+) -> dict[str, str]:
+    return {
+        "term": term,
+        "status": status,
+        "location": location,
+        "summary": summary,
+        "body_display_strategy": strategy,
+        "where_to_preserve_english": preservation,
+    }
+
+
+def evaluate_delivery_glossary_body_text(
+    glossary: dict[str, Any],
+    body_text: str,
+    *,
+    artifact_path: str = "main.tex",
+) -> dict[str, Any]:
+    """Evaluate representative final body text against Delivery Glossary strategies.
+
+    This helper is intentionally conservative fixture support. It checks explicit
+    string patterns used by regression tests and produces evidence that can be
+    embedded in an Acceptance Report; the read-only reviewer still owns semantic
+    judgment for real PDFs.
+    """
+
+    glossary_obj = _require_object(glossary, "delivery glossary")
+    _validate_required_keys(glossary_obj, TOP_LEVEL_KEYS, "delivery glossary")
+    if not isinstance(body_text, str):
+        raise ValidationError("body_text must be a string")
+    terms = glossary_obj["terms"]
+    if not isinstance(terms, list):
+        raise ValidationError("terms must be an array")
+
+    findings: list[dict[str, str]] = []
+    failed_terms: list[str] = []
+    checked_terms: list[str] = []
+    for index, term in enumerate(terms):
+        term_obj = _require_object(term, f"terms[{index}]")
+        english = _require_string(term_obj.get("english"), f"terms[{index}].english") or ""
+        chinese_primary = _require_string(term_obj.get("chinese_primary"), f"terms[{index}].chinese_primary") or ""
+        strategy = _require_string(term_obj.get("body_display_strategy"), f"terms[{index}].body_display_strategy") or ""
+        preservation = _require_string(
+            term_obj.get("where_to_preserve_english"),
+            f"terms[{index}].where_to_preserve_english",
+        ) or ""
+        english_pattern = _english_expression_pattern(english)
+        chinese_pattern = re.compile(re.escape(chinese_primary))
+        parenthetical_pattern = _parenthetical_pattern(chinese_primary, english)
+        has_english = english_pattern.search(body_text) is not None
+        has_chinese = chinese_pattern.search(body_text) is not None
+        has_parenthetical = parenthetical_pattern.search(body_text) is not None
+        if not has_english and not has_chinese:
+            continue
+
+        checked_terms.append(english)
+        location = _first_match_location(body_text, artifact_path, english_pattern, chinese_pattern)
+        status = "pass"
+        summary = "Body wording matches the Delivery Glossary strategy."
+        if strategy == "chinese_primary_only":
+            if has_english:
+                status = "fail"
+                summary = (
+                    f"`{english}` appears in body prose even though the glossary requires "
+                    f"`chinese_primary_only` with `{preservation}` preservation."
+                )
+            elif not has_chinese:
+                status = "fail"
+                summary = f"`{chinese_primary}` is missing from body prose for `{english}`."
+        elif strategy == "chinese_with_english_parenthetical":
+            if not has_parenthetical:
+                status = "fail"
+                summary = (
+                    f"`{english}` must appear in a body parenthetical next to `{chinese_primary}` "
+                    "for this fixture strategy."
+                )
+        elif strategy == "preserve_english":
+            if not has_english:
+                status = "fail"
+                summary = f"`{english}` is missing even though the strategy preserves English body wording."
+        elif strategy == "quote_only":
+            if has_english and preservation not in {"quote_only", "delivery_glossary_only"}:
+                status = "fail"
+                summary = f"`{english}` appears outside a quote-only fixture allowance."
+
+        if preservation == "body_parenthetical" and not has_parenthetical:
+            status = "fail"
+            summary = f"`{english}` is not preserved in the required body parenthetical position."
+        if preservation in {"delivery_glossary_only", "none"} and has_english and strategy == "chinese_primary_only":
+            status = "fail"
+        if status == "fail":
+            failed_terms.append(english)
+        findings.append(
+            _finding(
+                term=english,
+                status=status,
+                location=location,
+                summary=summary,
+                strategy=strategy,
+                preservation=preservation,
+            )
+        )
+
+    return {
+        "scan_policy": "delivery_glossary_body_text_fixture_scan",
+        "scanned_artifacts": [artifact_path],
+        "status": "fail" if failed_terms else "pass",
+        "terms_checked": checked_terms,
+        "failed_terms": failed_terms,
+        "findings": findings,
+        "limitations": "Deterministic representative fixture scan; real acceptance still requires reviewer judgment.",
+    }
+
+
+def classify_delivery_glossary_candidate(
+    english: str,
+    usage_text: str,
+    *,
+    candidate_kind: str = "concept",
+    defines_new_core_concept: bool = False,
+) -> dict[str, Any]:
+    """Classify representative new-term candidates for governance fixtures."""
+
+    english = _require_string(english, "english") or ""
+    usage_text = _require_string(usage_text, "usage_text") or ""
+    candidate_kind = _require_string(candidate_kind, "candidate_kind") or ""
+    lowered_expression = english.lower()
+    lowered_usage = usage_text.lower()
+    excluded_name_kinds = {
+        "product_name",
+        "company_name",
+        "person_name",
+        "code_identifier",
+        "command",
+        "file_extension",
+    }
+    if candidate_kind in excluded_name_kinds and not defines_new_core_concept:
+        return {
+            "include": False,
+            "reason": "Name-only usage does not define a new core concept.",
+            "english": english,
+        }
+    if defines_new_core_concept:
+        return {
+            "include": True,
+            "reason": "The candidate is marked as defining a new core concept.",
+            "english": english,
+        }
+
+    if lowered_expression == "html mockup":
+        method_signals = (
+            "method",
+            "reference artifact",
+            "layout and interaction intent",
+            "interaction intent",
+            "communicates layout",
+            "model",
+        )
+        file_only_signals = ("html file", "file named", "index.html", ".html")
+        has_method_signal = any(signal in lowered_usage for signal in method_signals)
+        has_file_only_signal = any(signal in lowered_usage for signal in file_only_signals)
+        if has_method_signal:
+            return {
+                "include": True,
+                "reason": "HTML mockup is used as a method concept.",
+                "english": english,
+            }
+        if has_file_only_signal:
+            return {
+                "include": False,
+                "reason": "HTML mockup only names an HTML file in this usage.",
+                "english": english,
+            }
+
+    concept_signals = ("defines", "concept", "framework", "method", "category", "recurring")
+    include = any(signal in lowered_usage for signal in concept_signals)
+    return {
+        "include": include,
+        "reason": "Usage carries explanatory work." if include else "Usage does not carry core explanatory work.",
+        "english": english,
+    }
 
 
 def main() -> int:

@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:27:47Z
+generated_at: 2026-07-07T16:41:03Z
 source_feature_slug: delivery-glossary-terminology-governance
 source_issue_count: 7
-source_issue_fingerprint: d30a7e1fa91fc70d96193b8af843de2899d8b56cfdf02d0da94c6156d2ec0d18
+source_issue_fingerprint: b6781d8b8cf91e090d946b7f00c64920204c1993358b71d769c26e724ff04468
 ---
 
 # Issue Dependency View: delivery-glossary-terminology-governance
@@ -13,7 +13,7 @@ None
 
 ## Next executable
 
-- [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] 07 - Add end-to-end glossary governance fixtures
+None
 
 ## Waiting on dependencies
 
@@ -54,7 +54,7 @@ flowchart LR
   class n_04_integrate_delivery_glossary_into_youtube_render_workflow done
   class n_05_integrate_delivery_glossary_into_bilibili_render_workflow done
   class n_06_enforce_delivery_glossary_in_review_roles done
-  class n_07_add_end_to_end_glossary_governance_fixtures ready_for_agent
+  class n_07_add_end_to_end_glossary_governance_fixtures done
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff
   classDef ready_for_agent fill:#0969da,stroke:#1f2328,color:#ffffff
   classDef ready_for_human fill:#8250df,stroke:#1f2328,color:#ffffff

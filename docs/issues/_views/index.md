@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:27:47Z
+generated_at: 2026-07-07T16:41:03Z
 source_feature_count: 7
 source_issue_count: 44
-source_issue_fingerprint: 7de67b16dd8aed4ef7fa2b6a80b109457fffb6a93b40caac90193e19c8bf4fa6
+source_issue_fingerprint: 817a653bd23267a85cac0405fc7245c9c5417313778525f6928cb5d452e93807
 ---
 
 # Issue Dependency Index
@@ -11,9 +11,9 @@ source_issue_fingerprint: 7de67b16dd8aed4ef7fa2b6a80b109457fffb6a93b40caac90193e
 
 - View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
 - Issue count: 7
-- Status distribution: done=6, ready-for-agent=1
+- Status distribution: done=7
 - Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
-- Currently executable: [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]]
+- Currently executable: None
 - Status-blocked: None
 - Dependency-blocked: None
 - Consistency errors: None

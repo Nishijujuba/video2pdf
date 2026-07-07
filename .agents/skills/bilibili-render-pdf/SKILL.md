@@ -211,6 +211,34 @@ For longer videos, do not rely on a single monolithic pass.
 - Keep a small overlap between neighboring segments when the explanation crosses boundaries, then deduplicate during integration.
 - The main agent must integrate the segment outputs into one unified outline and one coherent final narrative. The final PDF must read like a single lecture note, not a concatenation of chunk summaries.
 
+## Terminology Glossary Workflow
+
+After Bilibili source acquisition and subtitle acquisition have established the usable source language, decide whether the Delivery Glossary applies before the outline is finalized.
+
+This workflow applies to non-English teaching PDFs whose final reader mode is a standalone Chinese learning note while the source video contains core English expressions that carry explanatory work. English-learning, IELTS, TOEFL, pronunciation, grammar, vocabulary, and similar language-learning Bilibili content keeps the existing English-primary behavior: preserve authentic English wording, sample answers, collocations, sentence patterns, and examiner-style phrasing in the PDF body when useful.
+
+When this workflow applies, the Outline agent must create the initial global Delivery Glossary at `review/acceptance/delivery_glossary.json` before writer agents begin. The outline contract must include the intended term boundary and source-preservation strategy for every core English expression that will drive explanations across chapters. The JSON contract must use:
+
+- `schema_version`: `delivery_glossary.v1`
+- `language_profile`: `non_english_teaching_pdf`
+- `default_reader_mode`: `standalone_readable_video_learning_note`
+- `terms`: a non-empty list of core English expressions with `english`, `chinese_primary`, `plain_language_boundary`, `related_terms`, `opposed_terms`, `first_use_expected_location`, `body_display_strategy`, `where_to_preserve_english`, and `required_after_first_use`
+
+Use `body_display_strategy` to decide how the term appears in reader-facing body prose. Use `where_to_preserve_english` to decide where the original English expression remains recoverable for source alignment. Product names, company names, person names, code identifiers, commands, file extensions, and familiar abbreviations stay outside the glossary unless they define a new core concept in this video.
+
+Writer agents must follow the global Delivery Glossary while writing `section_*.tex`. Writer agents must include `new_term_candidates` in every handoff note when discovering a new core English expression after the outline stage, including the proposed `chinese_primary`, `plain_language_boundary`, `body_display_strategy`, and `where_to_preserve_english`. If no new core English expressions were found, the handoff must state `new_term_candidates: none`.
+
+The workflow coordinator must accept or reject each candidate before consistency review. The coordinator must merge accepted candidates into `review/acceptance/delivery_glossary.json`; rejected candidates remain outside the body terminology contract. After each merge, validate the glossary before consistency review and final acceptance:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\final-delivery-acceptance\scripts\validate_delivery_glossary.py `
+  "<video-name>\review\acceptance\delivery_glossary.json"
+```
+
+The final allowed artifact manifest must include the Delivery Glossary when this workflow applies. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `--include-delivery-glossary` so the Acceptance Reviewer can read the glossary within the allowed final-artifact boundary.
+
+The Delivery Glossary is a workflow contract artifact and is not a PDF appendix unless the user or task explicitly requests one. A visible reader-facing glossary, concept index, or appendix is opt-in and must be written as polished teaching content, separate from the JSON contract fields.
+
 ## Pyramid Gate Workflow
 
 Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here.
@@ -577,11 +605,12 @@ Required evidence paths:
 
 - `docs/acceptance/acceptance_criteria.v1.json`
 - `review/acceptance/allowed_artifacts_manifest.json`
+- `review/acceptance/delivery_glossary.json` when the non-English teaching PDF Delivery Glossary workflow applies
 - `review/acceptance/rendered_pages/`
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, and rendered page evidence.
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. When the non-English teaching PDF Delivery Glossary workflow applies, validate `review/acceptance/delivery_glossary.json` first and pass `--include-delivery-glossary` while creating the manifest. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, and rendered page evidence.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
 
@@ -612,6 +641,7 @@ Before delivery, verify all of the following:
 - `check_output_gate.py "<video-name>" --enforce-gate` has passed, or `--allow-waivers` has passed with explicit waiver evidence in the relevant JSON reports
 - `<video-name>\review\pyramid\summary.md` is current, and the matching JSON reports remain the machine decision source
 - `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
+- `review\acceptance\delivery_glossary.json` exists, validates with `validate_delivery_glossary.py`, and appears in the manifest when the non-English teaching PDF Delivery Glossary workflow applies
 - `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
 - `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
 - `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, matches the current main TeX and final PDF, and carries current guarded wrapper provenance

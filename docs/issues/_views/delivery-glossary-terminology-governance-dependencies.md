@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:15:33Z
+generated_at: 2026-07-07T16:16:23Z
 source_feature_slug: delivery-glossary-terminology-governance
 source_issue_count: 7
-source_issue_fingerprint: a12aaeeb813ac3c952ffc08feb596e50e33e981f881d1b3347da2bac181aab36
+source_issue_fingerprint: 8660a1f3737eb04a675b85afe72228a26ee88e0ed75046f788fc406736554ab8
 ---
 
 # Issue Dependency View: delivery-glossary-terminology-governance
@@ -13,11 +13,10 @@ None
 
 ## Next executable
 
-- [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]] 05 - Integrate Delivery Glossary into Bilibili render workflow
+- [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] 06 - Enforce Delivery Glossary in review roles
 
 ## Waiting on dependencies
 
-- [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
 - [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 
 ## Mermaid dependency graph
@@ -53,7 +52,7 @@ flowchart LR
   class n_02_thread_delivery_glossary_through_final_artifact_manifest done
   class n_03_add_glossary_aware_acceptance_criterion done
   class n_04_integrate_delivery_glossary_into_youtube_render_workflow done
-  class n_05_integrate_delivery_glossary_into_bilibili_render_workflow ready_for_agent
+  class n_05_integrate_delivery_glossary_into_bilibili_render_workflow done
   class n_06_enforce_delivery_glossary_in_review_roles ready_for_agent
   class n_07_add_end_to_end_glossary_governance_fixtures ready_for_agent
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff

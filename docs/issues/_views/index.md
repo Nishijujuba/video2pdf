@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:15:33Z
+generated_at: 2026-07-07T16:16:23Z
 source_feature_count: 7
 source_issue_count: 44
-source_issue_fingerprint: 268896e0c86813b1b51c25ce726f0d3133d32c22e6721b1f2dbf361672c8cbc5
+source_issue_fingerprint: 75e57393a220d1a7d86e078856af6b1983dca439ce4e48d57d956a783688a447
 ---
 
 # Issue Dependency Index
@@ -11,11 +11,11 @@ source_issue_fingerprint: 268896e0c86813b1b51c25ce726f0d3133d32c22e6721b1f2dbf36
 
 - View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
 - Issue count: 7
-- Status distribution: done=4, ready-for-agent=3
+- Status distribution: done=5, ready-for-agent=2
 - Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
-- Currently executable: [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 - Consistency errors: None
 
 ## final-delivery-acceptance-gate

@@ -27,6 +27,7 @@ Forbidden context:
 - `work/`
 - `review/pyramid/`
 - `review/consistency/`
+- intermediate drafts
 - intermediate files outside the allowed manifest
 
 The reviewer may write only:
@@ -73,7 +74,10 @@ The Acceptance Reviewer must:
 - declare `generation_process_used: false`
 - keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file
 - list `review/acceptance/delivery_glossary.json` in `review_context_used.artifacts_read` only when the manifest includes it
+- when a manifest-listed Delivery Glossary is present, check for every Delivery Glossary term found in final body text that the body wording follows `body_display_strategy`, that the original English expression appears only where `where_to_preserve_english` allows, and that each finding includes artifact-grounded evidence
 - bind the report to current artifact fingerprints
+
+For glossary-backed non-English teaching PDFs, the Acceptance Reviewer must treat `body_display_strategy` as the rule for reader-facing body prose and `where_to_preserve_english` as the rule for where the original English expression may appear. If the Delivery Glossary says `grief` uses `chinese_primary_only` plus `delivery_glossary_only`, final body text should not make `grief` the sentence subject; body prose should use the Chinese primary wording, and the English expression should remain recoverable through the manifest-listed glossary.
 
 For `formula_information_gain`, the reviewer must classify every body formula as `source_material`, `inherent_quantitative`, or `interpretive_teaching_model`. Each entry in `scan_evidence.formulas_checked[]` must include `location`, `formula_excerpt`, `source_type`, `status`, and `information_gain_summary`. If the final text contains no body formulas, the reviewer must write `formulas_checked: []` and `no_body_formula_found: true`. A formula fails when it only restates adjacent prose, wraps a list as `Y = f(...)` without a decision boundary, or adds symbols without lowering reader cognitive load.
 

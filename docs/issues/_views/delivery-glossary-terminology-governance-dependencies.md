@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:16:23Z
+generated_at: 2026-07-07T16:27:47Z
 source_feature_slug: delivery-glossary-terminology-governance
 source_issue_count: 7
-source_issue_fingerprint: 8660a1f3737eb04a675b85afe72228a26ee88e0ed75046f788fc406736554ab8
+source_issue_fingerprint: d30a7e1fa91fc70d96193b8af843de2899d8b56cfdf02d0da94c6156d2ec0d18
 ---
 
 # Issue Dependency View: delivery-glossary-terminology-governance
@@ -13,11 +13,11 @@ None
 
 ## Next executable
 
-- [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] 06 - Enforce Delivery Glossary in review roles
+- [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] 07 - Add end-to-end glossary governance fixtures
 
 ## Waiting on dependencies
 
-- [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+None
 
 ## Mermaid dependency graph
 
@@ -53,7 +53,7 @@ flowchart LR
   class n_03_add_glossary_aware_acceptance_criterion done
   class n_04_integrate_delivery_glossary_into_youtube_render_workflow done
   class n_05_integrate_delivery_glossary_into_bilibili_render_workflow done
-  class n_06_enforce_delivery_glossary_in_review_roles ready_for_agent
+  class n_06_enforce_delivery_glossary_in_review_roles done
   class n_07_add_end_to_end_glossary_governance_fixtures ready_for_agent
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff
   classDef ready_for_agent fill:#0969da,stroke:#1f2328,color:#ffffff

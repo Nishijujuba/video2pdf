@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:16:23Z
+generated_at: 2026-07-07T16:27:47Z
 source_feature_count: 7
 source_issue_count: 44
-source_issue_fingerprint: 75e57393a220d1a7d86e078856af6b1983dca439ce4e48d57d956a783688a447
+source_issue_fingerprint: 7de67b16dd8aed4ef7fa2b6a80b109457fffb6a93b40caac90193e19c8bf4fa6
 ---
 
 # Issue Dependency Index
@@ -11,11 +11,11 @@ source_issue_fingerprint: 75e57393a220d1a7d86e078856af6b1983dca439ce4e48d57d956a
 
 - View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
 - Issue count: 7
-- Status distribution: done=5, ready-for-agent=2
+- Status distribution: done=6, ready-for-agent=1
 - Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
-- Currently executable: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Dependency-blocked: None
 - Consistency errors: None
 
 ## final-delivery-acceptance-gate

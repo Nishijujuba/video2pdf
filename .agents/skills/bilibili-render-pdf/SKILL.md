@@ -235,6 +235,8 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\final-delivery
   "<video-name>\review\acceptance\delivery_glossary.json"
 ```
 
+The Consistency agent must check `section_*.tex` and `main.tex` against the Delivery Glossary and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
+
 The final allowed artifact manifest must include the Delivery Glossary when this workflow applies. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `--include-delivery-glossary` so the Acceptance Reviewer can read the glossary within the allowed final-artifact boundary.
 
 The Delivery Glossary is a workflow contract artifact and is not a PDF appendix unless the user or task explicitly requests one. A visible reader-facing glossary, concept index, or appendix is opt-in and must be written as polished teaching content, separate from the JSON contract fields.

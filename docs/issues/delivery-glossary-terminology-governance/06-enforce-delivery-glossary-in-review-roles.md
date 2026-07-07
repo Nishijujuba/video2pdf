@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/delivery-glossary-terminology-governance]]"
 depends_on:
   - "[[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]]"
@@ -16,12 +16,12 @@ created: 2026-07-07
 updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 06 - Enforce Delivery Glossary in review roles
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -67,5 +67,6 @@ The reviewer boundary follows [[adr/0002-use-json-acceptance-contract-for-final-
 ## Execution Log
 
 - 2026-07-07: Created from [[prd/delivery-glossary-terminology-governance]].
+- 2026-07-08: Added evidence-bearing Consistency agent glossary checks, final-artifacts-only Acceptance Reviewer glossary strategy checks, manifest-only glossary access wording, and the `grief` `chinese_primary_only` plus `delivery_glossary_only` review case. Independent verification passed review-role, skill-contract, glossary validator, and diff checks.
 
 ## Comments

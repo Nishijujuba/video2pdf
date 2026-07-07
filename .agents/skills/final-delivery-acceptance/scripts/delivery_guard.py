@@ -26,6 +26,7 @@ from validate_acceptance_report import (
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_CRITERIA = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
 DEFAULT_CURRENT_TARGET = REPO_ROOT / ".codex" / "delivery-targets" / "current.json"
+SESSION_TARGETS_DIRNAME = "sessions"
 ALLOWED_STAGES = {"generating", "ready_for_delivery", "accepted", "delivered", "blocked"}
 GUARD_STAGES = {"ready_for_delivery", "accepted"}
 COMPILE_REPORT_PRODUCER = "compile_latex_ascii.py"
@@ -99,6 +100,17 @@ def _load_json(path: Path, label: str) -> Any:
         raise GuardError(f"{label} invalid JSON: {exc}") from exc
 
 
+def _read_hook_input(stream: Any) -> dict[str, Any]:
+    raw = stream.read()
+    if not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GuardError(f"hook input invalid JSON: {exc}") from exc
+    return _require_object(value, "hook input")
+
+
 def _require_object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise GuardError(f"{label} must be an object")
@@ -125,6 +137,22 @@ def _require_relative_path(value: Any, label: str, *, allow_dot: bool = False) -
 
 def _looks_windows_absolute(value: str) -> bool:
     return len(value) >= 3 and value[1] == ":" and value[2] in {"/", "\\"}
+
+
+def _session_id_from_hook_input(hook_input: dict[str, Any]) -> str:
+    session_id = _require_string(hook_input.get("session_id"), "hook input session_id").strip()
+    if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or ":" in session_id:
+        raise GuardError("hook input session_id must be a single safe path segment")
+    return session_id
+
+
+def _session_current_target_path(current_target_path: Path, session_id: str) -> Path:
+    delivery_targets_dir = current_target_path.resolve().parent
+    sessions_dir = delivery_targets_dir / SESSION_TARGETS_DIRNAME
+    resolved = (sessions_dir / session_id / "current.json").resolve()
+    if not _path_under(sessions_dir, resolved):
+        raise GuardError("hook input session_id resolves outside the session target directory")
+    return resolved
 
 
 def _resolve_project_path(project_root: Path, value: Any, label: str) -> Path:
@@ -192,6 +220,20 @@ def _require_keys(value: dict[str, Any], keys: set[str], label: str) -> None:
         raise GuardError(f"{label} missing fields: {', '.join(sorted(missing))}")
 
 
+def _validate_current_target_schema(current: dict[str, Any], *, expected_session_id: str | None = None) -> None:
+    schema_version = current.get("schema_version")
+    if schema_version == "1.0":
+        return
+    if schema_version == "1.1":
+        if current.get("scope") != "session":
+            raise GuardError("current target scope must be 'session' for schema_version '1.1'")
+        session_id = _require_string(current.get("session_id"), "current target session_id")
+        if expected_session_id is not None and session_id != expected_session_id:
+            raise GuardError("current target session_id does not match hook input session_id")
+        return
+    raise GuardError("current target schema_version must be '1.0' or '1.1'")
+
+
 def resolve_delivery_target(
     *,
     project_root: Path,
@@ -207,8 +249,7 @@ def resolve_delivery_target(
         {"schema_version", "stage", "video_output_dir", "target_file", "source_skill", "updated_at"},
         "current target",
     )
-    if current["schema_version"] != "1.0":
-        raise GuardError("current target schema_version must be '1.0'")
+    _validate_current_target_schema(current)
     stage = _validate_stage(current["stage"], "current target stage")
     video_output_dir = _resolve_project_path(project_root, current["video_output_dir"], "current target video_output_dir")
     target_file = _resolve_project_path(project_root, current["target_file"], "current target target_file")
@@ -930,16 +971,22 @@ def guard_report_is_fresh(target: DeliveryTarget) -> bool:
         return False
 
 
-def run_hook_stop(*, project_root: Path, current_target_path: Path, criteria_path: Path) -> tuple[int, str]:
+def run_hook_stop(
+    *,
+    project_root: Path,
+    current_target_path: Path,
+    criteria_path: Path,
+    hook_input: dict[str, Any],
+) -> tuple[int, str]:
     """Implement the project-local Stop hook decision."""
 
     project_root = project_root.resolve()
-    current_target_path = current_target_path.resolve()
     try:
+        session_id = _session_id_from_hook_input(hook_input)
+        current_target_path = _session_current_target_path(current_target_path, session_id)
         current = _require_object(_load_json(current_target_path, "current target"), "current target")
         _require_keys(current, {"schema_version", "stage"}, "current target")
-        if current["schema_version"] != "1.0":
-            raise GuardError("current target schema_version must be '1.0'")
+        _validate_current_target_schema(current, expected_session_id=session_id)
         stage = _validate_stage(current["stage"], "current target stage")
     except MissingTargetError:
         return EXIT_PASS, "No active delivery target; Final Delivery Guard allows this response."
@@ -949,7 +996,7 @@ def run_hook_stop(*, project_root: Path, current_target_path: Path, criteria_pat
     if stage == "generating":
         return EXIT_PASS, "Final Delivery Guard allows stage generating; final delivery is not active."
     if stage == "delivered":
-        return EXIT_PASS, "Final Delivery Guard allows stale delivered stage; render workflow should clear current.json."
+        return EXIT_PASS, "Final Delivery Guard allows stale delivered session target; render workflow should archive session state."
     if stage == "blocked":
         target = _try_resolve_target(project_root, current_target_path)
         reason = "target stage is blocked; inspect review/acceptance/manual_repair_brief.md or attempts evidence"
@@ -1028,11 +1075,16 @@ def main() -> int:
         print(message, file=stream)
         return code
     if args.command == "hook-stop":
-        code, message = run_hook_stop(
-            project_root=args.project_root,
-            current_target_path=args.current_target,
-            criteria_path=args.criteria,
-        )
+        try:
+            hook_input = _read_hook_input(sys.stdin)
+            code, message = run_hook_stop(
+                project_root=args.project_root,
+                current_target_path=args.current_target,
+                criteria_path=args.criteria,
+                hook_input=hook_input,
+            )
+        except GuardError as exc:
+            code, message = EXIT_BLOCKED, _blocking_message(str(exc), None)
         stream = sys.stdout if code == EXIT_PASS else sys.stderr
         print(message, file=stream)
         return code

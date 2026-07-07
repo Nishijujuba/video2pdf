@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on: []
 blocks:
@@ -11,15 +11,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 01 - Resolve hook session targets from official hook input
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -66,14 +66,15 @@ The Stop hook must read the official hook input field `session_id`, resolve `.co
 
 ## Acceptance Criteria
 
-- [ ] `hook-stop` consumes hook JSON from standard input and validates `session_id`.
-- [ ] Missing `session_id` blocks delivery safely.
-- [ ] No session target allows unrelated work for the current session.
-- [ ] The legacy singleton `current.json` path is unavailable as a hook fallback.
-- [ ] Tests cover no-target, missing-session, generating, ready-for-delivery, accepted, blocked, delivered, and stale singleton cases.
+- [x] `hook-stop` consumes hook JSON from standard input and validates `session_id`.
+- [x] Missing `session_id` blocks delivery safely.
+- [x] No session target allows unrelated work for the current session.
+- [x] The legacy singleton `current.json` path is unavailable as a hook fallback.
+- [x] Tests cover no-target, missing-session, generating, ready-for-delivery, accepted, blocked, delivered, and stale singleton cases.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Implemented `hook-stop` session target resolution from hook stdin, added fixture coverage for missing/no-target/stage/singleton/task-index cases, and verified with a separate subagent plus final-delivery-acceptance unittest discovery.
 
 ## Comments

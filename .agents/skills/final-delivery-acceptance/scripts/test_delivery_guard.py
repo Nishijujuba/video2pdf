@@ -53,6 +53,10 @@ class DeliveryGuardTests(unittest.TestCase):
         self.target_path = self.acceptance_dir / "delivery_target.json"
         self.current_target_path = self.case_dir / ".codex" / "delivery-targets" / "current.json"
         self.current_target_path.parent.mkdir(parents=True, exist_ok=True)
+        self.session_id = f"session-{uuid.uuid4().hex}"
+        self.session_current_target_path = (
+            self.current_target_path.parent / "sessions" / self.session_id / "current.json"
+        )
         self.write_compile_report(self.valid_compile_report())
         self.write_report(self.valid_report())
         self.write_delivery_target()
@@ -258,7 +262,39 @@ class DeliveryGuardTests(unittest.TestCase):
         }
         self.current_target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def run_guard(self, *extra: str, current_target: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def write_session_current_target(
+        self,
+        *,
+        stage: str = "accepted",
+        video_output_dir: str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        resolved_session_id = session_id or self.session_id
+        target_path = self.current_target_path.parent / "sessions" / resolved_session_id / "current.json"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        rel_video = video_output_dir or self.video_dir.relative_to(REPO_ROOT).as_posix()
+        current = {
+            "schema_version": "1.1",
+            "scope": "session",
+            "session_id": resolved_session_id,
+            "turn_id": "turn-fixture",
+            "observed_codex_thread_id": "diagnostic-thread-fixture",
+            "stage": stage,
+            "video_output_dir": rel_video,
+            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+            "source_skill": "test-fixture",
+            "started_at": "2026-07-05T12:00:00+08:00",
+            "updated_at": "2026-07-05T12:00:00+08:00",
+        }
+        target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        return target_path
+
+    def run_guard(
+        self,
+        *extra: str,
+        current_target: Path | None = None,
+        hook_input: dict[str, object] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
@@ -274,6 +310,7 @@ class DeliveryGuardTests(unittest.TestCase):
             ],
             cwd=REPO_ROOT,
             text=True,
+            input=json.dumps(hook_input) if hook_input is not None else None,
             capture_output=True,
             check=False,
         )
@@ -566,19 +603,65 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("current target video_output_dir", path_escape.stderr)
 
     def test_hook_stop_runs_guard_once_then_reuses_fresh_report(self) -> None:
-        first = self.run_guard("hook-stop")
+        self.write_session_current_target()
+
+        first = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
 
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertIn("PASS:", first.stdout)
         self.assertTrue((self.acceptance_dir / "delivery_guard_report.json").exists())
 
-        second = self.run_guard("hook-stop")
+        second = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
 
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("fresh passing guard report", second.stdout)
 
+    def test_hook_stop_dispatches_guard_for_ready_or_accepted_session_target(self) -> None:
+        self.write_current_target(stage="blocked")
+        for stage in ("ready_for_delivery", "accepted"):
+            with self.subTest(stage=stage):
+                self.write_delivery_target(stage=stage)
+                self.write_session_current_target(stage=stage)
+
+                completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("PASS:", completed.stdout)
+                report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "pass")
+                self.assertEqual(report["stage"], stage)
+
+    def test_hook_stop_blocks_missing_session_id_from_official_hook_input(self) -> None:
+        completed = self.run_guard("hook-stop", hook_input={})
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        self.assertIn("session_id", completed.stderr)
+
+    def test_hook_stop_allows_generating_session_target_from_official_hook_input(self) -> None:
+        self.write_delivery_target(stage="generating")
+        self.write_session_current_target(stage="generating")
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("stage generating", completed.stdout)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_hook_stop_allows_delivered_session_target_and_reports_archive_workflow(self) -> None:
+        self.write_delivery_target(stage="delivered")
+        self.write_session_current_target(stage="delivered")
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("stale delivered session target", completed.stdout)
+        self.assertIn("archive", completed.stdout)
+
     def test_successful_fixture_workflow_reaches_guard_and_clears_current_target(self) -> None:
-        guarded = self.run_guard("hook-stop")
+        self.write_session_current_target()
+
+        guarded = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
         self.assertEqual(guarded.returncode, 0, guarded.stderr)
 
         cleared = self.run_guard("clear-target", "--video-output-dir", str(self.video_dir))
@@ -593,26 +676,55 @@ class DeliveryGuardTests(unittest.TestCase):
             self.assertEqual(active["stage"], "delivered")
 
     def test_hook_stop_allows_missing_target_and_generating_stage(self) -> None:
-        missing_target = self.case_dir / ".codex" / "delivery-targets" / "missing-current.json"
+        self.write_current_target(stage="blocked")
 
-        no_target = self.run_guard("hook-stop", current_target=missing_target)
+        no_target = self.run_guard("hook-stop", hook_input={"session_id": "missing-session-target"})
 
         self.assertEqual(no_target.returncode, 0, no_target.stderr)
         self.assertIn("No active delivery target", no_target.stdout)
 
         self.write_delivery_target(stage="generating")
-        self.write_current_target(stage="generating")
-        generating = self.run_guard("hook-stop")
+        self.write_session_current_target(stage="generating")
+        generating = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
 
         self.assertEqual(generating.returncode, 0, generating.stderr)
         self.assertIn("stage generating", generating.stdout)
         self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
 
+    def test_hook_stop_does_not_scan_task_index_to_decide_blocking(self) -> None:
+        task_index = self.current_target_path.parent / "task-index.json"
+        task_index.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "tasks": [
+                        {
+                            "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                            "owner_session_id": "other-session",
+                            "owner_status": "active",
+                            "last_session_id": "other-session",
+                            "stage": "blocked",
+                            "updated_at": "2026-07-05T12:00:00+08:00",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("No active delivery target", completed.stdout)
+
     def test_hook_stop_blocks_blocked_stage_with_recovery_instruction(self) -> None:
         self.write_delivery_target(stage="blocked")
-        self.write_current_target(stage="blocked")
+        self.write_session_current_target(stage="blocked")
 
-        completed = self.run_guard("hook-stop")
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)

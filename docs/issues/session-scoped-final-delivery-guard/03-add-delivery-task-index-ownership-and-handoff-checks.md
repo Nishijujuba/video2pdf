@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]"
@@ -13,15 +13,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 03 - Add delivery task index ownership and handoff checks
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -67,14 +67,15 @@ The task index is defined by [[prd/final-delivery-guard-and-bounded-repair]] as 
 
 ## Acceptance Criteria
 
-- [ ] `task-index.json` has a validated schema and test fixtures.
-- [ ] Ownership claim, resume, conflict, and handoff behavior are reachable through a testable command or shared helper.
-- [ ] Ownership checks prevent concurrent sessions from advancing the same video output directory.
-- [ ] Stop hook behavior remains based only on the current session target.
-- [ ] Tests cover active ownership, handoff, superseded, abandoned, blocked, delivered, and path-boundary cases.
+- [x] `task-index.json` has a validated schema and test fixtures.
+- [x] Ownership claim, resume, conflict, and handoff behavior are reachable through a testable command or shared helper.
+- [x] Ownership checks prevent concurrent sessions from advancing the same video output directory.
+- [x] Stop hook behavior remains based only on the current session target.
+- [x] Tests cover active ownership, handoff, superseded, abandoned, blocked, delivered, and path-boundary cases.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Added validated task-index helpers and `task-claim`, `task-handoff`, and `task-update` commands; covered claim, resume, conflict, handoff, terminal owner states, path-boundary checks, and Stop-hook task-index isolation. Independent verification passed after final-delivery-acceptance unittest discovery and dependency-view check.
 
 ## Comments

@@ -26,9 +26,12 @@ from validate_acceptance_report import (
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_CRITERIA = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
 DEFAULT_CURRENT_TARGET = REPO_ROOT / ".codex" / "delivery-targets" / "current.json"
+DEFAULT_TASK_INDEX = REPO_ROOT / ".codex" / "delivery-targets" / "task-index.json"
 SESSION_TARGETS_DIRNAME = "sessions"
 ALLOWED_STAGES = {"generating", "ready_for_delivery", "accepted", "delivered", "blocked"}
 GUARD_STAGES = {"ready_for_delivery", "accepted"}
+OWNER_STATUSES = {"active", "blocked", "delivered", "abandoned", "superseded"}
+HANDOFF_PREVIOUS_OWNER_STATUSES = {"abandoned", "superseded"}
 COMPILE_REPORT_PRODUCER = "compile_latex_ascii.py"
 COMPILE_REPORT_PRODUCER_CONTRACT = "latex_compile_guard.v1"
 COMPILE_WRAPPER_RELATIVE = Path(".agents") / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
@@ -140,9 +143,13 @@ def _looks_windows_absolute(value: str) -> bool:
 
 
 def _session_id_from_hook_input(hook_input: dict[str, Any]) -> str:
-    session_id = _require_string(hook_input.get("session_id"), "hook input session_id").strip()
+    return _validate_session_id(hook_input.get("session_id"), "hook input session_id")
+
+
+def _validate_session_id(value: Any, label: str) -> str:
+    session_id = _require_string(value, label).strip()
     if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or ":" in session_id:
-        raise GuardError("hook input session_id must be a single safe path segment")
+        raise GuardError(f"{label} must be a single safe path segment")
     return session_id
 
 
@@ -679,6 +686,267 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _task_index_message(reason: str) -> str:
+    return f"TASK INDEX BLOCKED: {reason}"
+
+
+def _validate_owner_status(value: Any, label: str) -> str:
+    owner_status = _require_string(value, label)
+    if owner_status not in OWNER_STATUSES:
+        raise GuardError(f"{label} is invalid: {owner_status}")
+    return owner_status
+
+
+def _resolve_task_index_path(project_root: Path, task_index_path: Path) -> Path:
+    resolved = task_index_path.resolve()
+    if not _path_under(project_root, resolved):
+        raise GuardError(f"task index path escapes project boundary: {task_index_path}")
+    return resolved
+
+
+def _task_entry_paths(project_root: Path, task: dict[str, Any], label: str) -> tuple[Path, Path]:
+    video_relative = _require_relative_path(task.get("video_output_dir"), f"{label}.video_output_dir")
+    target_relative = _require_relative_path(task.get("target_file"), f"{label}.target_file")
+    video_output_dir = (project_root / video_relative).resolve()
+    target_file = (project_root / target_relative).resolve()
+    if not _path_under(project_root, video_output_dir):
+        raise GuardError(f"{label}.video_output_dir escapes project boundary")
+    if not _path_under(project_root, target_file):
+        raise GuardError(f"{label}.target_file escapes project boundary")
+    if not _path_under(video_output_dir, target_file):
+        raise GuardError(f"{label}.target_file must stay inside video_output_dir")
+    return video_output_dir, target_file
+
+
+def _validate_task_index(project_root: Path, index: dict[str, Any]) -> dict[str, Any]:
+    if index.get("schema_version") != "1.0":
+        raise GuardError("task-index schema_version must be '1.0'")
+    tasks = index.get("tasks")
+    if not isinstance(tasks, list):
+        raise GuardError("task-index tasks must be a list")
+    active_by_video_dir: dict[Path, str] = {}
+    for task_number, item in enumerate(tasks):
+        label = f"task-index.tasks[{task_number}]"
+        task = _require_object(item, label)
+        _require_keys(
+            task,
+            {
+                "video_output_dir",
+                "target_file",
+                "owner_session_id",
+                "owner_status",
+                "last_session_id",
+                "stage",
+                "updated_at",
+            },
+            label,
+        )
+        video_output_dir, _target_file = _task_entry_paths(project_root, task, label)
+        owner_session_id = _validate_session_id(task.get("owner_session_id"), f"{label}.owner_session_id")
+        _validate_session_id(task.get("last_session_id"), f"{label}.last_session_id")
+        if "continued_from_session_id" in task:
+            _validate_session_id(task.get("continued_from_session_id"), f"{label}.continued_from_session_id")
+        owner_status = _validate_owner_status(task.get("owner_status"), f"{label}.owner_status")
+        _validate_stage(task.get("stage"), f"{label}.stage")
+        _require_string(task.get("updated_at"), f"{label}.updated_at")
+        if owner_status == "active":
+            active_owner = active_by_video_dir.get(video_output_dir)
+            if active_owner is not None:
+                raise GuardError(
+                    "task-index has multiple active owners for video_output_dir: "
+                    f"{task['video_output_dir']} ({active_owner}, {owner_session_id})"
+                )
+            active_by_video_dir[video_output_dir] = owner_session_id
+    return index
+
+
+def _load_task_index(project_root: Path, task_index_path: Path) -> dict[str, Any]:
+    task_index_path = _resolve_task_index_path(project_root, task_index_path)
+    if not task_index_path.exists():
+        return {"schema_version": "1.0", "tasks": []}
+    index = _require_object(_load_json(task_index_path, "task index"), "task index")
+    return _validate_task_index(project_root, index)
+
+
+def _write_task_index(project_root: Path, task_index_path: Path, index: dict[str, Any]) -> None:
+    task_index_path = _resolve_task_index_path(project_root, task_index_path)
+    _validate_task_index(project_root, index)
+    _write_json(task_index_path, index)
+
+
+def _canonical_task_paths(
+    project_root: Path,
+    *,
+    video_output_dir: Path,
+    target_file: Path,
+) -> tuple[Path, Path, str, str]:
+    resolved_video_output_dir = _resolve_project_path(project_root, str(video_output_dir), "video_output_dir")
+    resolved_target_file = _resolve_project_path(project_root, str(target_file), "target_file")
+    if not _path_under(resolved_video_output_dir, resolved_target_file):
+        raise GuardError("target_file must stay inside video_output_dir")
+    return (
+        resolved_video_output_dir,
+        resolved_target_file,
+        _repo_relative(project_root, resolved_video_output_dir),
+        _repo_relative(project_root, resolved_target_file),
+    )
+
+
+def _active_task_for_video_dir(
+    project_root: Path,
+    index: dict[str, Any],
+    video_output_dir: Path,
+) -> dict[str, Any] | None:
+    for item in index["tasks"]:
+        task = _require_object(item, "task-index task")
+        task_video_output_dir, _target_file = _task_entry_paths(project_root, task, "task-index task")
+        if task_video_output_dir == video_output_dir.resolve() and task.get("owner_status") == "active":
+            return task
+    return None
+
+
+def task_claim(
+    *,
+    project_root: Path,
+    task_index_path: Path,
+    session_id: str,
+    video_output_dir: Path,
+    target_file: Path,
+    stage: str,
+) -> tuple[int, str]:
+    project_root = project_root.resolve()
+    try:
+        session_id = _validate_session_id(session_id, "session_id")
+        stage = _validate_stage(stage, "stage")
+        resolved_video_output_dir, _resolved_target_file, video_relative, target_relative = _canonical_task_paths(
+            project_root,
+            video_output_dir=video_output_dir,
+            target_file=target_file,
+        )
+        index = _load_task_index(project_root, task_index_path)
+        active_task = _active_task_for_video_dir(project_root, index, resolved_video_output_dir)
+        if active_task is not None:
+            if active_task["owner_session_id"] != session_id:
+                raise GuardError(
+                    "video_output_dir already has active owner_session_id "
+                    f"{active_task['owner_session_id']}"
+                )
+            active_task["target_file"] = target_relative
+            active_task["last_session_id"] = session_id
+            active_task["stage"] = stage
+            active_task["updated_at"] = _now_iso()
+            _write_task_index(project_root, task_index_path, index)
+            return EXIT_PASS, f"RESUMED: {_resolve_task_index_path(project_root, task_index_path)}"
+
+        index["tasks"].append(
+            {
+                "video_output_dir": video_relative,
+                "target_file": target_relative,
+                "owner_session_id": session_id,
+                "owner_status": "active",
+                "last_session_id": session_id,
+                "stage": stage,
+                "updated_at": _now_iso(),
+            }
+        )
+        _write_task_index(project_root, task_index_path, index)
+        return EXIT_PASS, f"CLAIMED: {_resolve_task_index_path(project_root, task_index_path)}"
+    except GuardError as exc:
+        return EXIT_BLOCKED, _task_index_message(str(exc))
+
+
+def task_handoff(
+    *,
+    project_root: Path,
+    task_index_path: Path,
+    from_session_id: str,
+    to_session_id: str,
+    video_output_dir: Path,
+    target_file: Path,
+    stage: str,
+    previous_owner_status: str,
+) -> tuple[int, str]:
+    project_root = project_root.resolve()
+    try:
+        from_session_id = _validate_session_id(from_session_id, "from_session_id")
+        to_session_id = _validate_session_id(to_session_id, "to_session_id")
+        if from_session_id == to_session_id:
+            raise GuardError("from_session_id and to_session_id must be different")
+        stage = _validate_stage(stage, "stage")
+        previous_owner_status = _validate_owner_status(previous_owner_status, "previous_owner_status")
+        if previous_owner_status not in HANDOFF_PREVIOUS_OWNER_STATUSES:
+            raise GuardError("previous_owner_status must be superseded or abandoned")
+        resolved_video_output_dir, _resolved_target_file, video_relative, target_relative = _canonical_task_paths(
+            project_root,
+            video_output_dir=video_output_dir,
+            target_file=target_file,
+        )
+        index = _load_task_index(project_root, task_index_path)
+        active_task = _active_task_for_video_dir(project_root, index, resolved_video_output_dir)
+        if active_task is None:
+            raise GuardError("video_output_dir has no active owner to hand off")
+        if active_task["owner_session_id"] != from_session_id:
+            raise GuardError(
+                "video_output_dir active owner_session_id is "
+                f"{active_task['owner_session_id']}, not {from_session_id}"
+            )
+
+        now = _now_iso()
+        active_task["owner_status"] = previous_owner_status
+        active_task["last_session_id"] = to_session_id
+        active_task["updated_at"] = now
+        index["tasks"].append(
+            {
+                "video_output_dir": video_relative,
+                "target_file": target_relative,
+                "owner_session_id": to_session_id,
+                "owner_status": "active",
+                "last_session_id": to_session_id,
+                "stage": stage,
+                "updated_at": now,
+                "continued_from_session_id": from_session_id,
+            }
+        )
+        _write_task_index(project_root, task_index_path, index)
+        return EXIT_PASS, f"HANDOFF: {_resolve_task_index_path(project_root, task_index_path)}"
+    except GuardError as exc:
+        return EXIT_BLOCKED, _task_index_message(str(exc))
+
+
+def task_update(
+    *,
+    project_root: Path,
+    task_index_path: Path,
+    session_id: str,
+    video_output_dir: Path,
+    stage: str,
+    owner_status: str,
+) -> tuple[int, str]:
+    project_root = project_root.resolve()
+    try:
+        session_id = _validate_session_id(session_id, "session_id")
+        stage = _validate_stage(stage, "stage")
+        owner_status = _validate_owner_status(owner_status, "owner_status")
+        resolved_video_output_dir = _resolve_project_path(project_root, str(video_output_dir), "video_output_dir")
+        index = _load_task_index(project_root, task_index_path)
+        active_task = _active_task_for_video_dir(project_root, index, resolved_video_output_dir)
+        if active_task is None:
+            raise GuardError("video_output_dir has no active owner to update")
+        if active_task["owner_session_id"] != session_id:
+            raise GuardError(
+                "video_output_dir active owner_session_id is "
+                f"{active_task['owner_session_id']}, not {session_id}"
+            )
+        active_task["owner_status"] = owner_status
+        active_task["last_session_id"] = session_id
+        active_task["stage"] = stage
+        active_task["updated_at"] = _now_iso()
+        _write_task_index(project_root, task_index_path, index)
+        return EXIT_PASS, f"UPDATED: {_resolve_task_index_path(project_root, task_index_path)}"
+    except GuardError as exc:
+        return EXIT_BLOCKED, _task_index_message(str(exc))
+
+
 def prepare_old_pdf(
     *,
     project_root: Path,
@@ -1075,6 +1343,10 @@ def _parse_args() -> argparse.Namespace:
         subparser.add_argument("--current-target", type=Path, default=current_target_default)
         subparser.add_argument("--criteria", type=Path, default=DEFAULT_CRITERIA)
 
+    def add_task_common(subparser: argparse.ArgumentParser) -> None:
+        add_common(subparser)
+        subparser.add_argument("--task-index", type=Path, default=DEFAULT_TASK_INDEX)
+
     check_parser = subparsers.add_parser("check", help="Validate the active target and write delivery_guard_report.json.")
     add_common(check_parser, current_target_default=None)
 
@@ -1095,6 +1367,29 @@ def _parse_args() -> argparse.Namespace:
     clear_parser = subparsers.add_parser("clear-target", help="Archive and clear the active project delivery target.")
     clear_parser.add_argument("--video-output-dir", type=Path)
     add_common(clear_parser)
+
+    task_claim_parser = subparsers.add_parser("task-claim", help="Claim or resume delivery task ownership.")
+    task_claim_parser.add_argument("--session-id", required=True)
+    task_claim_parser.add_argument("--video-output-dir", type=Path, required=True)
+    task_claim_parser.add_argument("--target-file", type=Path, required=True)
+    task_claim_parser.add_argument("--stage", required=True)
+    add_task_common(task_claim_parser)
+
+    task_handoff_parser = subparsers.add_parser("task-handoff", help="Transfer delivery task ownership.")
+    task_handoff_parser.add_argument("--from-session-id", required=True)
+    task_handoff_parser.add_argument("--to-session-id", required=True)
+    task_handoff_parser.add_argument("--video-output-dir", type=Path, required=True)
+    task_handoff_parser.add_argument("--target-file", type=Path, required=True)
+    task_handoff_parser.add_argument("--stage", required=True)
+    task_handoff_parser.add_argument("--previous-owner-status", required=True)
+    add_task_common(task_handoff_parser)
+
+    task_update_parser = subparsers.add_parser("task-update", help="Update active delivery task ownership state.")
+    task_update_parser.add_argument("--session-id", required=True)
+    task_update_parser.add_argument("--video-output-dir", type=Path, required=True)
+    task_update_parser.add_argument("--stage", required=True)
+    task_update_parser.add_argument("--owner-status", required=True)
+    add_task_common(task_update_parser)
     return parser.parse_args()
 
 
@@ -1158,6 +1453,44 @@ def main() -> int:
             project_root=args.project_root,
             current_target_path=args.current_target,
             video_output_dir=args.video_output_dir,
+        )
+        stream = sys.stdout if code == EXIT_PASS else sys.stderr
+        print(message, file=stream)
+        return code
+    if args.command == "task-claim":
+        code, message = task_claim(
+            project_root=args.project_root,
+            task_index_path=args.task_index,
+            session_id=args.session_id,
+            video_output_dir=args.video_output_dir,
+            target_file=args.target_file,
+            stage=args.stage,
+        )
+        stream = sys.stdout if code == EXIT_PASS else sys.stderr
+        print(message, file=stream)
+        return code
+    if args.command == "task-handoff":
+        code, message = task_handoff(
+            project_root=args.project_root,
+            task_index_path=args.task_index,
+            from_session_id=args.from_session_id,
+            to_session_id=args.to_session_id,
+            video_output_dir=args.video_output_dir,
+            target_file=args.target_file,
+            stage=args.stage,
+            previous_owner_status=args.previous_owner_status,
+        )
+        stream = sys.stdout if code == EXIT_PASS else sys.stderr
+        print(message, file=stream)
+        return code
+    if args.command == "task-update":
+        code, message = task_update(
+            project_root=args.project_root,
+            task_index_path=args.task_index,
+            session_id=args.session_id,
+            video_output_dir=args.video_output_dir,
+            stage=args.stage,
+            owner_status=args.owner_status,
         )
         stream = sys.stdout if code == EXIT_PASS else sys.stderr
         print(message, file=stream)

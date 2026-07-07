@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T02:24:38Z
+generated_at: 2026-07-07T02:43:19Z
 source_feature_slug: latex-compile-guard
 source_issue_count: 6
 source_issue_fingerprint: 510e05d12a4cc456045d8e7543c14ec2557ae46814e911e9ecafb9aab741b543

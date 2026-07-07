@@ -53,6 +53,7 @@ class DeliveryGuardTests(unittest.TestCase):
         self.target_path = self.acceptance_dir / "delivery_target.json"
         self.current_target_path = self.case_dir / ".codex" / "delivery-targets" / "current.json"
         self.current_target_path.parent.mkdir(parents=True, exist_ok=True)
+        self.task_index_path = self.current_target_path.parent / "task-index.json"
         self.session_id = f"session-{uuid.uuid4().hex}"
         self.session_current_target_path = (
             self.current_target_path.parent / "sessions" / self.session_id / "current.json"
@@ -383,6 +384,301 @@ class DeliveryGuardTests(unittest.TestCase):
 
     def run_check(self, *, current_target: Path | None = None) -> subprocess.CompletedProcess[str]:
         return self.run_guard("check", current_target=current_target or self.write_session_current_target())
+
+    def run_task_command(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        return self.run_guard(*extra, "--task-index", str(self.task_index_path))
+
+    def test_task_claim_records_new_active_owner_for_unowned_video_dir(self) -> None:
+        completed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("CLAIMED:", completed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(index["schema_version"], "1.0")
+        self.assertEqual(len(index["tasks"]), 1)
+        task = index["tasks"][0]
+        self.assertEqual(task["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["owner_session_id"], self.session_id)
+        self.assertEqual(task["owner_status"], "active")
+        self.assertEqual(task["last_session_id"], self.session_id)
+        self.assertEqual(task["stage"], "ready_for_delivery")
+        self.assertIn("updated_at", task)
+
+    def test_task_claim_resumes_same_owner_and_rejects_different_active_owner(self) -> None:
+        first = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "generating",
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        resumed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("RESUMED:", resumed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index["tasks"]), 1)
+        self.assertEqual(index["tasks"][0]["stage"], "ready_for_delivery")
+
+        conflict = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            "other-session",
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(conflict.returncode, 2)
+        self.assertIn("already has active owner_session_id", conflict.stderr)
+        index_after_conflict = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index_after_conflict["tasks"]), 1)
+
+    def test_task_handoff_records_continuation_and_supersedes_previous_owner(self) -> None:
+        old_session = "old-session"
+        claim = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            old_session,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        self.assertEqual(claim.returncode, 0, claim.stderr)
+
+        completed = self.run_task_command(
+            "task-handoff",
+            "--from-session-id",
+            old_session,
+            "--to-session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+            "--previous-owner-status",
+            "superseded",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("HANDOFF:", completed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index["tasks"]), 2)
+        previous, current = index["tasks"]
+        self.assertEqual(previous["owner_session_id"], old_session)
+        self.assertEqual(previous["owner_status"], "superseded")
+        self.assertEqual(previous["last_session_id"], self.session_id)
+        self.assertEqual(current["owner_session_id"], self.session_id)
+        self.assertEqual(current["owner_status"], "active")
+        self.assertEqual(current["continued_from_session_id"], old_session)
+        self.assertEqual(current["last_session_id"], self.session_id)
+
+    def test_task_handoff_is_required_for_different_session_takeover_and_can_abandon_previous_owner(self) -> None:
+        old_session = "old-session"
+        claim = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            old_session,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "generating",
+        )
+        self.assertEqual(claim.returncode, 0, claim.stderr)
+
+        conflict = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        self.assertEqual(conflict.returncode, 2)
+
+        handoff = self.run_task_command(
+            "task-handoff",
+            "--from-session-id",
+            old_session,
+            "--to-session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+            "--previous-owner-status",
+            "abandoned",
+        )
+
+        self.assertEqual(handoff.returncode, 0, handoff.stderr)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        previous, current = index["tasks"]
+        self.assertEqual(previous["owner_status"], "abandoned")
+        self.assertEqual(current["continued_from_session_id"], old_session)
+        self.assertEqual(current["owner_status"], "active")
+
+    def test_task_update_moves_active_owner_to_terminal_owner_statuses(self) -> None:
+        cases = [
+            ("blocked", "blocked"),
+            ("delivered", "delivered"),
+            ("superseded", "blocked"),
+            ("abandoned", "blocked"),
+        ]
+        for owner_status, stage in cases:
+            with self.subTest(owner_status=owner_status):
+                claim = self.run_task_command(
+                    "task-claim",
+                    "--session-id",
+                    self.session_id,
+                    "--video-output-dir",
+                    str(self.video_dir),
+                    "--target-file",
+                    str(self.target_path),
+                    "--stage",
+                    "ready_for_delivery",
+                )
+                self.assertEqual(claim.returncode, 0, claim.stderr)
+
+                completed = self.run_task_command(
+                    "task-update",
+                    "--session-id",
+                    self.session_id,
+                    "--video-output-dir",
+                    str(self.video_dir),
+                    "--stage",
+                    stage,
+                    "--owner-status",
+                    owner_status,
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("UPDATED:", completed.stdout)
+                index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+                task = index["tasks"][-1]
+                self.assertEqual(task["owner_session_id"], self.session_id)
+                self.assertEqual(task["owner_status"], owner_status)
+                self.assertEqual(task["stage"], stage)
+
+    def test_task_index_schema_and_path_boundaries_are_validated(self) -> None:
+        self.task_index_path.write_text(
+            json.dumps({"schema_version": "2.0", "tasks": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        invalid_schema = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(invalid_schema.returncode, 2)
+        self.assertIn("schema_version", invalid_schema.stderr)
+
+        self.task_index_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "tasks": [
+                        {
+                            "video_output_dir": "../outside-video",
+                            "target_file": "review/acceptance/delivery_target.json",
+                            "owner_session_id": self.session_id,
+                            "owner_status": "active",
+                            "last_session_id": self.session_id,
+                            "stage": "ready_for_delivery",
+                            "updated_at": "2026-07-05T12:00:00+08:00",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        escaped_entry = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(escaped_entry.returncode, 2)
+        self.assertIn("video_output_dir", escaped_entry.stderr)
+        self.assertIn("parent path segments", escaped_entry.stderr)
+
+        self.task_index_path.write_text(
+            json.dumps({"schema_version": "1.0", "tasks": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        outside_target = self.case_dir.parent / "outside" / "delivery_target.json"
+        escaped_cli_path = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(outside_target),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(escaped_cli_path.returncode, 2)
+        self.assertIn("target_file must stay inside video_output_dir", escaped_cli_path.stderr)
 
     def test_check_requires_explicit_session_scoped_current_target(self) -> None:
         completed = subprocess.run(
@@ -876,32 +1172,57 @@ class DeliveryGuardTests(unittest.TestCase):
 
     def test_hook_stop_does_not_scan_task_index_to_decide_blocking(self) -> None:
         task_index = self.current_target_path.parent / "task-index.json"
-        task_index.write_text(
-            json.dumps(
-                {
-                    "schema_version": "1.0",
-                    "tasks": [
-                        {
-                            "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
-                            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
-                            "owner_session_id": "other-session",
-                            "owner_status": "active",
-                            "last_session_id": "other-session",
-                            "stage": "blocked",
-                            "updated_at": "2026-07-05T12:00:00+08:00",
-                        }
-                    ],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        cases = [
+            {
+                "schema_version": "1.0",
+                "tasks": [
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "other-session",
+                        "owner_status": "active",
+                        "last_session_id": "other-session",
+                        "stage": "blocked",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    }
+                ],
+            },
+            {
+                "schema_version": "2.0",
+                "tasks": [],
+            },
+            {
+                "schema_version": "1.0",
+                "tasks": [
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "first-session",
+                        "owner_status": "active",
+                        "last_session_id": "first-session",
+                        "stage": "ready_for_delivery",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    },
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "second-session",
+                        "owner_status": "active",
+                        "last_session_id": "second-session",
+                        "stage": "ready_for_delivery",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    },
+                ],
+            },
+        ]
+        for payload in cases:
+            with self.subTest(schema_version=payload["schema_version"], task_count=len(payload["tasks"])):
+                task_index.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+                completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("No active delivery target", completed.stdout)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("No active delivery target", completed.stdout)
 
     def test_hook_stop_blocks_blocked_stage_with_recovery_instruction(self) -> None:
         self.write_delivery_target(stage="blocked")

@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T15:32:39Z
+generated_at: 2026-07-07T15:54:36Z
 source_feature_count: 7
 source_issue_count: 44
-source_issue_fingerprint: 6f453f50d67b6a26169bb435230f3b8587a964d1ba81500590d191d04bf42c81
+source_issue_fingerprint: a7ca519ef8c856f9e86630745c8604b51aaeff3850847c86c7bdc558678483e2
 ---
 
 # Issue Dependency Index
@@ -11,11 +11,11 @@ source_issue_fingerprint: 6f453f50d67b6a26169bb435230f3b8587a964d1ba81500590d191
 
 - View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
 - Issue count: 7
-- Status distribution: done=1, ready-for-agent=6
+- Status distribution: done=2, ready-for-agent=5
 - Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
-- Currently executable: [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
 - Consistency errors: None
 
 ## final-delivery-acceptance-gate

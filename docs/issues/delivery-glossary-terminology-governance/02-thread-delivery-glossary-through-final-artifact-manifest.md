@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/delivery-glossary-terminology-governance]]"
 depends_on:
   - "[[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]"
@@ -16,12 +16,12 @@ created: 2026-07-07
 updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 02 - Thread Delivery Glossary through final artifact manifest
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -66,5 +66,6 @@ The related acceptance contract decision is [[adr/0002-use-json-acceptance-contr
 ## Execution Log
 
 - 2026-07-07: Created from [[prd/delivery-glossary-terminology-governance]].
+- 2026-07-07: Added manifest support for `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, validated glossary role/path/schema during manifest and report validation, covered glossary-aware context, missing, stale, escaping, invalid, and absent-manifest cases, and preserved default TeX/PDF artifact behavior. Independent verification passed focused acceptance report, glossary, and skill contract tests.
 
 ## Comments

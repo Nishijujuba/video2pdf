@@ -24,6 +24,8 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "docs/acceptance/acceptance_criteria.v1.json",
             "review/acceptance/allowed_artifacts_manifest.json",
             "review/acceptance/rendered_pages/",
+            "review/acceptance/delivery_glossary.json",
+            "--include-delivery-glossary",
             "review/acceptance/acceptance_report.json",
             "review/acceptance/acceptance_summary.md",
             "acceptance_report.json is the only machine-readable delivery decision source",

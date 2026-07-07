@@ -16,6 +16,7 @@ Allowed inputs:
 - final delivered artifacts listed in `review/acceptance/allowed_artifacts_manifest.json`
 - the criteria file `docs/acceptance/acceptance_criteria.v1.json`
 - rendered page evidence under `review/acceptance/rendered_pages/`
+- for non-English teaching PDFs, `review/acceptance/delivery_glossary.json` only when it is listed in `review/acceptance/allowed_artifacts_manifest.json`
 
 Forbidden context:
 
@@ -38,7 +39,7 @@ The reviewer must not modify final artifacts, TeX source, figures, tables, crite
 ## Required Workflow
 
 1. Validate the criteria file with `scripts/validate_acceptance_criteria.py`.
-2. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `scripts/validate_acceptance_report.py manifest`.
+2. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `scripts/validate_acceptance_report.py manifest`. Preserve the default artifact set for ordinary outputs. For non-English teaching PDFs that have a valid delivery glossary contract, pass `--include-delivery-glossary` so the manifest includes `review/acceptance/delivery_glossary.json` with role `delivery_glossary`.
 3. Render the final PDF pages with `scripts/render_pdf_pages.py` so every page has a `review/acceptance/rendered_pages/page_0001.png` style image.
 4. Launch the Acceptance Reviewer from a clean context containing only the allowed manifest, the criteria file, final delivered artifacts, and rendered pages.
 5. The Acceptance Reviewer must evaluate every criterion and must record one result for every rendered PDF page.
@@ -71,6 +72,7 @@ The Acceptance Reviewer must:
 - include revision guidance for each failed criterion
 - declare `generation_process_used: false`
 - keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file
+- list `review/acceptance/delivery_glossary.json` in `review_context_used.artifacts_read` only when the manifest includes it
 - bind the report to current artifact fingerprints
 
 For `formula_information_gain`, the reviewer must classify every body formula as `source_material`, `inherent_quantitative`, or `interpretive_teaching_model`. Each entry in `scan_evidence.formulas_checked[]` must include `location`, `formula_excerpt`, `source_type`, `status`, and `information_gain_summary`. If the final text contains no body formulas, the reviewer must write `formulas_checked: []` and `no_body_formula_found: true`. A formula fails when it only restates adjacent prose, wraps a list as `Y = f(...)` without a decision boundary, or adds symbols without lowering reader cognitive load.
@@ -157,7 +159,7 @@ The delivered session target is moved under `<video-output-dir>\待删除\delive
 - `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`
 - `scripts/validate_delivery_glossary.py`: validates one standalone `delivery_glossary.v1` contract file for non-English teaching PDFs
 - `scripts/render_pdf_pages.py`: renders every final PDF page to `review/acceptance/rendered_pages/`
-- `scripts/validate_acceptance_report.py`: creates the allowed manifest, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
+- `scripts/validate_acceptance_report.py`: creates the allowed manifest, can include `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
 - `scripts/delivery_guard.py`: prepares bounded old-PDF repair, records failed attempts, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
 
 Use the project virtual environment:

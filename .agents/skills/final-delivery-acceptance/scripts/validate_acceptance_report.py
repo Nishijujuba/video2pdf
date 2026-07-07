@@ -13,9 +13,13 @@ from typing import Any
 
 from validate_acceptance_criteria import ALLOWED_CATEGORIES, ValidationError as CriteriaValidationError
 from validate_acceptance_criteria import validate_acceptance_criteria
+from validate_delivery_glossary import ValidationError as DeliveryGlossaryValidationError
+from validate_delivery_glossary import validate_delivery_glossary
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+DELIVERY_GLOSSARY_ROLE = "delivery_glossary"
+DELIVERY_GLOSSARY_PATH = "review/acceptance/delivery_glossary.json"
 REPORT_KEYS = {
     "schema_version",
     "criteria_version",
@@ -195,6 +199,8 @@ def create_allowed_artifacts_manifest(
     video_output_dir: Path,
     criteria_path: Path,
     artifacts: list[tuple[str, str]],
+    *,
+    include_delivery_glossary: bool = False,
 ) -> Path:
     """Create review/acceptance/allowed_artifacts_manifest.json."""
 
@@ -203,6 +209,9 @@ def create_allowed_artifacts_manifest(
         raise ValidationError(f"video output directory not found: {video_output_dir}")
     acceptance_dir = video_output_dir / "review" / "acceptance"
     acceptance_dir.mkdir(parents=True, exist_ok=True)
+
+    if include_delivery_glossary:
+        artifacts = [*artifacts, (DELIVERY_GLOSSARY_ROLE, DELIVERY_GLOSSARY_PATH)]
 
     final_artifacts: list[dict[str, str]] = []
     for index, (role, artifact_path) in enumerate(artifacts):
@@ -213,6 +222,13 @@ def create_allowed_artifacts_manifest(
             raise ValidationError(f"artifact path escapes video output directory: {artifact_path}")
         if not resolved.exists():
             raise ValidationError(f"final artifact not found: {normalized}")
+        if role == DELIVERY_GLOSSARY_ROLE:
+            if normalized != DELIVERY_GLOSSARY_PATH:
+                raise ValidationError(f"delivery_glossary artifact path must be {DELIVERY_GLOSSARY_PATH}")
+            try:
+                validate_delivery_glossary(resolved)
+            except DeliveryGlossaryValidationError as exc:
+                raise ValidationError(f"delivery glossary invalid: {exc}") from exc
         final_artifacts.append({"role": role, "path": normalized})
 
     manifest = {
@@ -240,11 +256,29 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
         _validate_keys(artifact, MANIFEST_ARTIFACT_KEYS, f"manifest.final_artifacts[{index}]")
         _require_string(artifact["role"], f"manifest.final_artifacts[{index}].role")
         path = _normalize_relative_path(artifact["path"], f"manifest.final_artifacts[{index}].path")
+        artifact["path"] = path
         if path in seen:
             raise ValidationError(f"manifest.final_artifacts[{index}].path is duplicated: {path}")
         seen.add(path)
     _require_string_array(manifest["forbidden_artifacts"], "manifest.forbidden_artifacts")
     return manifest
+
+
+def _validate_manifest_artifacts(manifest: dict[str, Any], video_output_dir: Path) -> None:
+    video_output_dir = video_output_dir.resolve()
+    for index, artifact in enumerate(manifest["final_artifacts"]):
+        role = artifact["role"]
+        path = artifact["path"]
+        resolved = (video_output_dir / path).resolve()
+        if not _path_under(video_output_dir, resolved):
+            raise ValidationError(f"manifest.final_artifacts[{index}].path escapes video output directory")
+        if role == DELIVERY_GLOSSARY_ROLE:
+            if path != DELIVERY_GLOSSARY_PATH:
+                raise ValidationError(f"delivery_glossary artifact path must be {DELIVERY_GLOSSARY_PATH}")
+            try:
+                validate_delivery_glossary(resolved)
+            except DeliveryGlossaryValidationError as exc:
+                raise ValidationError(f"delivery glossary invalid: {exc}") from exc
 
 
 def _criteria_items(criteria_path: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -612,6 +646,7 @@ def validate_acceptance_report(
     video_output_dir = video_output_dir.resolve()
     report = _load_report(report_path)
     manifest = _load_manifest(manifest_path)
+    _validate_manifest_artifacts(manifest, video_output_dir)
     criteria, criteria_by_id = _criteria_items(criteria_path)
 
     if report["schema_version"] != "1.0":
@@ -679,6 +714,11 @@ def main() -> int:
         default=[],
         help="Final artifact in role=relative/path form. Defaults to tex=main.tex and pdf=final.pdf.",
     )
+    manifest_parser.add_argument(
+        "--include-delivery-glossary",
+        action="store_true",
+        help=f"Include {DELIVERY_GLOSSARY_PATH} as a delivery_glossary final artifact.",
+    )
 
     validate_parser = subparsers.add_parser("validate", help="Validate an Acceptance Report.")
     validate_parser.add_argument("report", type=Path)
@@ -691,7 +731,12 @@ def main() -> int:
     try:
         if args.command == "manifest":
             artifacts = args.artifact or [("tex", "main.tex"), ("pdf", "final.pdf")]
-            manifest_path = create_allowed_artifacts_manifest(args.video_output_dir, args.criteria, artifacts)
+            manifest_path = create_allowed_artifacts_manifest(
+                args.video_output_dir,
+                args.criteria,
+                artifacts,
+                include_delivery_glossary=args.include_delivery_glossary,
+            )
             print(manifest_path)
             return EXIT_VALID
 

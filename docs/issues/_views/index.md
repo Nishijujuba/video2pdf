@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T09:58:59Z
+generated_at: 2026-07-07T10:43:22Z
 source_feature_count: 6
 source_issue_count: 37
-source_issue_fingerprint: d909830f559e217c7be9097fa51ae235a15537d5de9ea61aed81c1c0b4534360
+source_issue_fingerprint: abe4822be2105e73f9d215a4bc11074489ecbff46eab153275abaec113aa024c
 ---
 
 # Issue Dependency Index
@@ -66,9 +66,9 @@ source_issue_fingerprint: d909830f559e217c7be9097fa51ae235a15537d5de9ea61aed81c1
 
 - View: [[issues/_views/session-scoped-final-delivery-guard-dependencies]]
 - Issue count: 7
-- Status distribution: done=6, ready-for-agent=1
+- Status distribution: done=7
 - Root issues: [[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]
-- Currently executable: [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]]
+- Currently executable: None
 - Status-blocked: None
 - Dependency-blocked: None
 - Consistency errors: None

@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]"
@@ -14,15 +14,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 07 - Add concurrent-session regression fixtures
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -70,14 +70,17 @@ The PRD lists concurrent session behavior as the reason for replacing the projec
 
 ## Acceptance Criteria
 
-- [ ] Concurrent-session fixtures cover independent pass and block outcomes.
-- [ ] Singleton target regression coverage proves the legacy path is ignored.
-- [ ] Ownership conflict and handoff coverage prove same-directory safety.
-- [ ] Delivered archive coverage proves session isolation.
-- [ ] Documentation contract tests and dependency-view validation pass.
+- [x] Concurrent-session fixtures cover independent pass and block outcomes.
+- [x] Singleton target regression coverage proves the legacy path is ignored.
+- [x] Ownership conflict and handoff coverage prove same-directory safety.
+- [x] Delivered archive coverage proves session isolation.
+- [x] Documentation contract tests and dependency-view validation pass.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Added concurrent session guard fixtures for A/B pass-block isolation, legacy singleton rejection, ownership conflict and handoff, delivered archive isolation, and diagnostic entrypoint boundaries.
+- 2026-07-07: Implementation review subagent Hypatia confirmed the fixture coverage and passed the delivery guard test file.
+- 2026-07-07: Independent verification subagent Huygens passed 91 unittest cases, dependency-view validation, and `git diff --check`; issue 07 approved for commit.
 
 ## Comments

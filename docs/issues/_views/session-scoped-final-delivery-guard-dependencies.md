@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T09:58:59Z
+generated_at: 2026-07-07T10:43:22Z
 source_feature_slug: session-scoped-final-delivery-guard
 source_issue_count: 7
-source_issue_fingerprint: be4fd7b8591516dfe79fd9f9cc8bd00c8eee7f45a1d0930728b82d9c757f106d
+source_issue_fingerprint: 4e79e5bc4ade2b2750955456fba798a964c4b027c689b450a6772c1c148c21c7
 ---
 
 # Issue Dependency View: session-scoped-final-delivery-guard
@@ -13,7 +13,7 @@ None
 
 ## Next executable
 
-- [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] 07 - Add concurrent-session regression fixtures
+None
 
 ## Waiting on dependencies
 
@@ -64,7 +64,7 @@ flowchart LR
   class n_04_convert_old_pdf_prepare_and_failed_attempt_lifecycle done
   class n_05_archive_delivered_session_targets_and_update_task_index done
   class n_06_update_render_skills_and_project_instructions done
-  class n_07_add_concurrent_session_regression_fixtures ready_for_agent
+  class n_07_add_concurrent_session_regression_fixtures done
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff
   classDef ready_for_agent fill:#0969da,stroke:#1f2328,color:#ffffff
   classDef ready_for_human fill:#8250df,stroke:#1f2328,color:#ffffff

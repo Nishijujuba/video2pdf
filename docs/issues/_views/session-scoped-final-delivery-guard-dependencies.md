@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T03:04:09Z
+generated_at: 2026-07-07T08:08:28Z
 source_feature_slug: session-scoped-final-delivery-guard
 source_issue_count: 7
-source_issue_fingerprint: 7c29da2d0aa32fc58c34f21076a68a7586cbd931fd13f58bbf39e0c4d6a73568
+source_issue_fingerprint: e59c2c3dfc2c26420f3eea365571214a3f58bfea088acaa001528a5b69c67211
 ---
 
 # Issue Dependency View: session-scoped-final-delivery-guard
@@ -13,12 +13,11 @@ None
 
 ## Next executable
 
-- [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]] 05 - Archive delivered session targets and update task index
+- [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] 06 - Update render skills and project instructions
 
 ## Waiting on dependencies
 
-- [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]
-- [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
 
 ## Mermaid dependency graph
 
@@ -63,7 +62,7 @@ flowchart LR
   class n_02_validate_session_scoped_delivery_targets_end_to_end done
   class n_03_add_delivery_task_index_ownership_and_handoff_checks done
   class n_04_convert_old_pdf_prepare_and_failed_attempt_lifecycle done
-  class n_05_archive_delivered_session_targets_and_update_task_index ready_for_agent
+  class n_05_archive_delivered_session_targets_and_update_task_index done
   class n_06_update_render_skills_and_project_instructions ready_for_agent
   class n_07_add_concurrent_session_regression_fixtures ready_for_agent
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff

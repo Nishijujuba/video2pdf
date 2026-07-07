@@ -136,6 +136,14 @@ Each failed attempt preserves `acceptance_report.json`, optional `acceptance_sum
 
 Automatic waiver is unavailable in this repair lifecycle.
 
+After successful final delivery, archive the session target and mark task ownership delivered with:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py clear-target --session-id "<session_id>" --current-target ".codex\delivery-targets\sessions\<session_id>\current.json" --task-index ".codex\delivery-targets\task-index.json" --video-output-dir "<video-output-dir>"
+```
+
+The delivered session target is moved under `<video-output-dir>\待删除\delivery-targets\sessions\`; no permanent deletion is performed.
+
 ## Scripts
 
 - `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`

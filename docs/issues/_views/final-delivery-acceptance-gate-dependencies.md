@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T03:04:09Z
+generated_at: 2026-07-07T08:08:28Z
 source_feature_slug: final-delivery-acceptance-gate
 source_issue_count: 6
 source_issue_fingerprint: a0fa31d0376ab436503ce4aecbce2e8757ab18de35107fd1df00d9ea7c5b3b83

@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]]"
@@ -12,15 +12,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 05 - Archive delivered session targets and update task index
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -28,9 +28,9 @@ Archive delivered session targets under the video output directory and mark the 
 
 ## What to build
 
-Update the delivered lifecycle so a successful final delivery preserves the session target in the video output directory's `待删除` area and leaves no active session target for later Stop-hook runs. A completed slice should mark the task-index task as `delivered`, record the delivered session id and timestamp, and preserve enough target metadata for audit.
+Update the delivered lifecycle so a successful final delivery preserves the session target in the video output directory's `寰呭垹闄 area and leaves no active session target for later Stop-hook runs. A completed slice should mark the task-index task as `delivered`, record the delivered session id and timestamp, and preserve enough target metadata for audit.
 
-This slice must use move-to-`待删除` behavior for cleanup, preserving the repository's no-permanent-deletion policy.
+This slice must use move-to-`寰呭垹闄 behavior for cleanup, preserving the repository's no-permanent-deletion policy.
 
 ## Context
 
@@ -55,7 +55,7 @@ The PRD requires delivered session targets to be archived after successful final
 
 ## Acceptance Tests
 
-- A delivered session target is moved to the video output directory under `待删除/delivery-targets/sessions/`.
+- A delivered session target is moved to the video output directory under `寰呭垹闄?delivery-targets/sessions/`.
 - The archived filename contains the session id or otherwise remains traceable to the session target owner.
 - The active session target path no longer exists after archive succeeds.
 - `task-index.json` marks the task as `delivered`.
@@ -65,14 +65,16 @@ The PRD requires delivered session targets to be archived after successful final
 
 ## Acceptance Criteria
 
-- [ ] Delivered session targets are archived under the owning video output directory's `待删除` folder.
-- [ ] Permanent deletion is avoided.
-- [ ] The task index records delivered state after final delivery.
-- [ ] Archive behavior is idempotent for already-cleared sessions.
-- [ ] Tests cover archive, missing target, existing archive, task-index update, and path-boundary cases.
+- [x] Delivered session targets are archived under the owning video output directory's `寰呭垹闄 folder.
+- [x] Permanent deletion is avoided.
+- [x] The task index records delivered state after final delivery.
+- [x] Archive behavior is idempotent for already-cleared sessions.
+- [x] Tests cover archive, missing target, existing archive, task-index update, and path-boundary cases.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Implemented `clear-target --session-id` archival, task-index delivered state updates, idempotent missing-target handling, and path/ownership boundary tests.
+- 2026-07-07: Independent verification subagent Feynman passed 87 unittest cases, dependency-view validation, and `git diff --check`; issue 05 approved for commit.
 
 ## Comments

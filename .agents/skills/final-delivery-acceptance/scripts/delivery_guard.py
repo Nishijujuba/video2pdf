@@ -1234,10 +1234,87 @@ def record_failed_attempt(
         return EXIT_BLOCKED, _blocking_message(str(exc), None)
 
 
-def clear_target(*, project_root: Path, current_target_path: Path, video_output_dir: Path | None) -> tuple[int, str]:
+def _unique_archive_path(archive_dir: Path, session_id: str) -> Path:
+    safe_stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    archive_path = archive_dir / f"current-{session_id}-{safe_stamp}.json"
+    counter = 1
+    while archive_path.exists():
+        archive_path = archive_dir / f"current-{session_id}-{safe_stamp}-{counter}.json"
+        counter += 1
+    return archive_path
+
+
+def clear_target(
+    *,
+    project_root: Path,
+    current_target_path: Path,
+    video_output_dir: Path | None,
+    task_index_path: Path | None = None,
+    session_id: str | None = None,
+) -> tuple[int, str]:
     project_root = project_root.resolve()
     current_target_path = current_target_path.resolve()
     try:
+        if session_id is not None:
+            session_id = _validate_session_id(session_id, "session_id")
+            session_target_path = _session_current_target_path_from_cli(current_target_path, session_id)
+            if not _path_under(project_root, session_target_path):
+                raise GuardError("current target path escapes project boundary")
+            if not session_target_path.exists():
+                return EXIT_PASS, "No active session delivery target to clear."
+            if task_index_path is None:
+                raise GuardError("clear-target requires task-index for session-scoped targets")
+            current = _require_object(_load_json(session_target_path, "current target"), "current target")
+            _validate_current_target_schema(current, expected_session_id=session_id, require_session_scope=True)
+            _validate_explicit_session_current_target_path(session_target_path, session_id)
+            current_video_dir = _resolve_project_path(
+                project_root,
+                current.get("video_output_dir"),
+                "current target video_output_dir",
+            )
+            current_target_file = _resolve_project_path(
+                project_root,
+                current.get("target_file"),
+                "current target target_file",
+            )
+            if not _path_under(current_video_dir, current_target_file):
+                raise GuardError("current target target_file must stay inside video_output_dir")
+            if video_output_dir is not None:
+                resolved_video_dir = _resolve_project_path(project_root, str(video_output_dir), "video_output_dir")
+                if resolved_video_dir != current_video_dir:
+                    raise GuardError("video_output_dir must match current target video_output_dir")
+            else:
+                resolved_video_dir = current_video_dir
+            if not resolved_video_dir.is_dir():
+                raise GuardError(f"video_output_dir not found: {resolved_video_dir}")
+
+            task_index, active_task = _owned_task_index(
+                project_root,
+                task_index_path,
+                session_id=session_id,
+                video_output_dir=resolved_video_dir,
+            )
+            _task_video_dir, task_target_file = _task_entry_paths(project_root, active_task, "task-index active task")
+            if task_target_file != current_target_file:
+                raise GuardError("task-index target_file must match current target target_file")
+
+            now = _now_iso()
+            current["stage"] = "delivered"
+            current["updated_at"] = now
+            current["cleared_by"] = "delivery_guard.py clear-target"
+            session_target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+            archive_dir = resolved_video_dir / "待删除" / "delivery-targets" / "sessions"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = _unique_archive_path(archive_dir, session_id)
+            session_target_path.replace(archive_path)
+
+            active_task["owner_status"] = "delivered"
+            active_task["last_session_id"] = session_id
+            active_task["stage"] = "delivered"
+            active_task["updated_at"] = now
+            _write_task_index(project_root, task_index_path, task_index)
+            return EXIT_PASS, f"CLEARED: {archive_path}"
+
         if not current_target_path.exists():
             return EXIT_PASS, "No active delivery target to clear."
         current = _require_object(_load_json(current_target_path, "current target"), "current target")
@@ -1490,8 +1567,9 @@ def _parse_args() -> argparse.Namespace:
     add_task_common(attempt_parser)
 
     clear_parser = subparsers.add_parser("clear-target", help="Archive and clear the active project delivery target.")
+    clear_parser.add_argument("--session-id")
     clear_parser.add_argument("--video-output-dir", type=Path)
-    add_common(clear_parser)
+    add_task_common(clear_parser)
 
     task_claim_parser = subparsers.add_parser("task-claim", help="Claim or resume delivery task ownership.")
     task_claim_parser.add_argument("--session-id", required=True)
@@ -1582,6 +1660,8 @@ def main() -> int:
             project_root=args.project_root,
             current_target_path=args.current_target,
             video_output_dir=args.video_output_dir,
+            task_index_path=args.task_index,
+            session_id=args.session_id,
         )
         stream = sys.stdout if code == EXIT_PASS else sys.stderr
         print(message, file=stream)

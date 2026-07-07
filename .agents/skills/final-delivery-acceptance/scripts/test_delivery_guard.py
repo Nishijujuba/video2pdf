@@ -1154,6 +1154,114 @@ class DeliveryGuardTests(unittest.TestCase):
             active = json.loads(self.current_target_path.read_text(encoding="utf-8"))
             self.assertEqual(active["stage"], "delivered")
 
+    def test_clear_target_archives_session_target_and_marks_task_delivered(self) -> None:
+        self.write_session_current_target(stage="accepted")
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+
+        archive_dir = self.video_dir / "待删除" / "delivery-targets" / "sessions"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        existing_archive = archive_dir / f"current-{self.session_id}-existing.json"
+        existing_archive.write_text('{"preserve": true}\n', encoding="utf-8")
+
+        cleared = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            "--video-output-dir",
+            str(self.video_dir),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertTrue(existing_archive.exists())
+        archived_targets = sorted(archive_dir.glob(f"*{self.session_id}*.json"))
+        self.assertGreaterEqual(len(archived_targets), 2)
+        delivered_archives = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in archived_targets
+            if path != existing_archive
+        ]
+        self.assertEqual(delivered_archives[0]["stage"], "delivered")
+        self.assertEqual(delivered_archives[0]["session_id"], self.session_id)
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        task = task_index["tasks"][0]
+        self.assertEqual(task["owner_status"], "delivered")
+        self.assertEqual(task["stage"], "delivered")
+        self.assertEqual(task["last_session_id"], self.session_id)
+
+    def test_clear_target_missing_session_target_is_idempotent(self) -> None:
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+        before_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+
+        cleared = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertIn("No active session delivery target", cleared.stdout)
+        self.assertEqual(json.loads(self.task_index_path.read_text(encoding="utf-8")), before_index)
+
+    def test_clear_target_rejects_video_dir_mismatch_before_archive(self) -> None:
+        self.write_session_current_target(stage="accepted")
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+
+        blocked = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            "--video-output-dir",
+            str(self.case_dir),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("video_output_dir must match current target video_output_dir", blocked.stderr)
+        self.assertTrue(self.session_current_target_path.exists())
+        self.assertFalse((self.video_dir / "待删除" / "delivery-targets" / "sessions").exists())
+
     def test_hook_stop_allows_missing_target_and_generating_stage(self) -> None:
         self.write_current_target(stage="blocked")
 

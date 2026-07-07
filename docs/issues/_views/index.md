@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T03:04:09Z
+generated_at: 2026-07-07T08:08:28Z
 source_feature_count: 6
 source_issue_count: 37
-source_issue_fingerprint: 70c04ec9b4d70a630ce3e341ff261d3f107af852dbf57e2a0491779c7cfd72e3
+source_issue_fingerprint: b665f528eaa741dc6efd9f3eb479cd2a37dae3164402175518eab5624c663099
 ---
 
 # Issue Dependency Index
@@ -66,9 +66,9 @@ source_issue_fingerprint: 70c04ec9b4d70a630ce3e341ff261d3f107af852dbf57e2a049177
 
 - View: [[issues/_views/session-scoped-final-delivery-guard-dependencies]]
 - Issue count: 7
-- Status distribution: done=4, ready-for-agent=3
+- Status distribution: done=5, ready-for-agent=2
 - Root issues: [[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]
-- Currently executable: [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]
+- Currently executable: [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]; [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- Dependency-blocked: [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
 - Consistency errors: None

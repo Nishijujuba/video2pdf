@@ -239,6 +239,40 @@ If approved waivers exist and continuation is intentional, run the output-level 
 
 Treat the JSON reports as the machine decision source. Treat `summary.md` as the human-readable digest that must be refreshed by the final output-level check.
 
+## Terminology Glossary Workflow
+
+Apply this workflow to non-English teaching PDFs whose default reader-facing output is a Chinese learning note about non-language-learning source material.
+
+English-learning and IELTS YouTube content keeps existing English-primary behavior. This exclusion also covers TOEFL, pronunciation, grammar, vocabulary, speaking, writing, and similar language-learning videos. These PDFs preserve source English as primary evidence and do not use this Chinese-primary glossary behavior unless the user explicitly asks.
+
+For applicable non-English teaching PDFs:
+
+- The Outline agent must create a global Delivery Glossary at `review/acceptance/delivery_glossary.json` before writer agents start. The outline contract must define each core English expression that carries explanatory work, its Chinese primary name, plain-language boundary, related or opposed concepts when useful, first-use location, `body_display_strategy`, `where_to_preserve_english`, and required wording after first use.
+- The Delivery Glossary must use `schema_version: "delivery_glossary.v1"`, `language_profile: "non_english_teaching_pdf"`, and `default_reader_mode: "standalone_readable_video_learning_note"`.
+- Validate the initial glossary before writer work:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -B .agents\skills\final-delivery-acceptance\scripts\validate_delivery_glossary.py `
+  '<video-name>\review\acceptance\delivery_glossary.json'
+```
+
+- Writer agents must follow the global Delivery Glossary when writing `section_*.tex`. Each Writer agent handoff note must include `new_term_candidates`, or the literal line `new_term_candidates: none` when that section adds no candidate terms. Each candidate must include the source English expression, proposed Chinese primary name, plain-language boundary, proposed body display strategy, preservation location, and first-use location.
+- The workflow coordinator must accept or reject `new_term_candidates` before consistency review. The coordinator merges accepted candidates into `review/acceptance/delivery_glossary.json`, keeps rejected candidates outside the terminology contract, and reruns `validate_delivery_glossary.py` after each merge.
+- The Consistency agent must check `section_*.tex` and `main.tex` against the Delivery Glossary for first-use wording, later-use stability, source-English preservation location, and chapter-to-chapter terminology consistency.
+- The glossary is not a PDF appendix unless explicitly requested. It is workflow evidence for coordination, consistency review, and final acceptance; a reader-facing glossary, concept index, or appendix appears only when the user or task asks for one.
+
+Before Final Delivery Acceptance Gate, validate the final glossary again and include it in the allowed artifact manifest when this workflow applies. The final manifest must include the glossary when applicable by passing `--include-delivery-glossary`:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -B .agents\skills\final-delivery-acceptance\scripts\validate_acceptance_report.py manifest `
+  '<video-name>' `
+  --artifact tex=main.tex `
+  --artifact pdf='<normalized-title>.pdf' `
+  --include-delivery-glossary
+```
+
 ## Teaching Content Rules
 
 Build the notes from all of the following when available:

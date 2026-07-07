@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/delivery-glossary-terminology-governance]]"
 depends_on:
   - "[[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]"
@@ -13,12 +13,12 @@ created: 2026-07-07
 updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 04 - Integrate Delivery Glossary into YouTube render workflow
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -63,5 +63,6 @@ The governing ADR is [[adr/0005-use-delivery-glossary-for-non-english-pdf-terms]
 ## Execution Log
 
 - 2026-07-07: Created from [[prd/delivery-glossary-terminology-governance]].
+- 2026-07-08: Added YouTube delivery glossary workflow instructions covering outline glossary creation, writer `new_term_candidates`, coordinator merge and validation, `--include-delivery-glossary` final manifest behavior, no default PDF appendix, and English-learning/IELTS carveout. Independent verification passed YouTube glossary workflow and glossary validator tests.
 
 ## Comments

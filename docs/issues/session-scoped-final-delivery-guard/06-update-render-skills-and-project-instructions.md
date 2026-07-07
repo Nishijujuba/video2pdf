@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]]"
@@ -14,15 +14,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 06 - Update render skills and project instructions
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -70,14 +70,17 @@ The project keeps both Codex and Claude Code instructions, so `AGENTS.md` and `C
 
 ## Acceptance Criteria
 
-- [ ] Final-delivery acceptance documentation matches the implemented session-scoped target commands.
-- [ ] Bilibili and YouTube render skills describe the full session lifecycle through delivered archive.
-- [ ] `AGENTS.md` and `CLAUDE.md` are synchronized for final delivery guard rules.
-- [ ] Contract tests cover the updated docs and required workflow ordering.
-- [ ] The docs preserve project-local scope and deferred plugin packaging.
+- [x] Final-delivery acceptance documentation matches the implemented session-scoped target commands.
+- [x] Bilibili and YouTube render skills describe the full session lifecycle through delivered archive.
+- [x] `AGENTS.md` and `CLAUDE.md` are synchronized for final delivery guard rules.
+- [x] Contract tests cover the updated docs and required workflow ordering.
+- [x] The docs preserve project-local scope and deferred plugin packaging.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Updated final-delivery acceptance, Bilibili, YouTube, AGENTS, and CLAUDE documentation for the session-scoped guard lifecycle and strengthened skill contract tests.
+- 2026-07-07: Independent verification subagent Carson found a blocking incomplete `task-handoff` command; the command and contract test were corrected.
+- 2026-07-07: Independent verification subagent Franklin passed 87 unittest cases, dependency-view validation, and `git diff --check`; issue 06 approved for commit.
 
 ## Comments

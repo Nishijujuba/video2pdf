@@ -92,13 +92,15 @@ After repair, the workflow must rerender affected final artifacts, refresh rende
 
 ## Delivery Target And Guard
 
-Every active delivery workflow is represented by a session-scoped `.codex/delivery-targets/sessions/{session_id}/current.json` file and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+Every active delivery workflow is represented by a session-scoped `.codex/delivery-targets/sessions/{session_id}/current.json` file, whose CLI placeholder form is `.codex/delivery-targets/sessions/<session_id>/current.json`, plus the project task index `.codex/delivery-targets/task-index.json` and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
 The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. Compile provenance binds current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments. It must record `attempt_limit: 3`.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The guard proves freshness, manifest membership, rendered page coverage, path boundaries, compile provenance for newly generated video PDFs, and enforced Acceptance Report decision. It does not replace the Acceptance Reviewer.
 
 The Acceptance Reviewer evaluates delivery quality from final delivered artifacts and rendered page evidence. `review\latex\compile_report.json` is compile provenance for `delivery_guard.py check`. A compile report cannot replace acceptance_report.json, cannot override `overall_status`, and cannot serve as Acceptance Reviewer quality judgment.
+
+The task index records task-index ownership for startup, recovery, and observability. It is not a Stop hook blocking source; the Stop hook does not scan all active tasks. Ownership changes require explicit handoff through `task-handoff --from-session-id "<from_session_id>" --to-session-id "<to_session_id>" --target-file "<video-output-dir>\review\acceptance\delivery_target.json" --stage "<stage>" --previous-owner-status "<superseded-or-abandoned>"`.
 
 Before delivery from a non-hook render or acceptance workflow, run `delivery_guard.py check` with the explicit session-scoped current target:
 
@@ -110,7 +112,7 @@ The legacy `.codex/delivery-targets/current.json` singleton path is unsupported 
 
 Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
-The project Stop hook calls `delivery_guard.py hook-stop`, reads the official hook `session_id`, and resolves `.codex/delivery-targets/sessions/{session_id}/current.json`. It may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
@@ -124,7 +126,13 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\fin
 
 When the PDF is already inside a valid video output directory, `--video-output-dir` may be omitted. Isolated PDFs must not trigger broad workspace search.
 
-The prepare command writes `.codex/delivery-targets/sessions/<session_id>/current.json`, `review/acceptance/delivery_target.json`, and the project task-index owner entry for the selected video output directory. If another active session owns that video output directory, preparation blocks before writing target state.
+The prepare command writes `.codex/delivery-targets/sessions/<session_id>/current.json`, `.codex/delivery-targets/task-index.json`, `review/acceptance/delivery_target.json`, and the project task-index ownership entry for the selected video output directory. If another active session owns that video output directory, preparation blocks before writing target state.
+
+When a new Codex session must continue a bound video output directory, perform explicit handoff with:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py task-handoff --from-session-id "<from_session_id>" --to-session-id "<to_session_id>" --task-index ".codex\delivery-targets\task-index.json" --video-output-dir "<video-output-dir>" --target-file "<video-output-dir>\review\acceptance\delivery_target.json" --stage "ready_for_delivery" --previous-owner-status "superseded"
+```
 
 Repair subagents may inspect and modify only files inside that video output directory. A failed attempt is archived with:
 

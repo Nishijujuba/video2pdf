@@ -83,13 +83,19 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                     "missing, failed, malformed, stale, or forbidden-context report blocks final delivery",
                     "Pyramid Gate and independent content review remain separate",
                     "repair subagents",
+                    "session-scoped active target",
+                    ".codex/delivery-targets/sessions/<session_id>/current.json",
+                    ".codex/delivery-targets/task-index.json",
+                    "clear-target --session-id",
+                    "does not scan all active tasks",
                 ]
                 for item in required:
                     self.assertIn(item, text)
 
     def test_guard_and_bounded_repair_contracts_are_synchronized(self) -> None:
         common_phrases = [
-            ".codex/delivery-targets/current.json",
+            ".codex/delivery-targets/sessions/<session_id>/current.json",
+            ".codex/delivery-targets/task-index.json",
             "review/acceptance/delivery_target.json",
             "review/acceptance/delivery_guard_report.json",
             "delivery_guard.py check",
@@ -103,6 +109,12 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "review/acceptance/manual_repair_brief.md",
             "delivery_guard_report.json is a mechanical proof of freshness and contract validity",
             "Do not deliver this PDF until delivery_guard.py records a fresh pass",
+            "task-index ownership",
+            "explicit handoff",
+            "clear-target --session-id",
+            "The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`",
+            "The Stop hook reads the official hook `session_id`",
+            "does not scan all active tasks",
             "UserPromptSubmit remains out of scope",
         ]
         for relative in (
@@ -120,6 +132,12 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         final_delivery = read(REPO_ROOT / ".agents/skills/final-delivery-acceptance" / "SKILL.md")
         self.assertIn("Old-PDF repair requires an explicit video_output_dir unless the PDF is already inside one valid video output directory", final_delivery)
         self.assertIn("Repair subagents may inspect and modify only files inside that video output directory", final_delivery)
+        self.assertIn('old-pdf-prepare "<pdf-path>" --session-id "<session_id>"', final_delivery)
+        self.assertIn('record-failed-attempt --session-id "<session_id>"', final_delivery)
+        self.assertIn('task-handoff --from-session-id "<from_session_id>" --to-session-id "<to_session_id>"', final_delivery)
+        self.assertIn('--target-file "<video-output-dir>\\review\\acceptance\\delivery_target.json"', final_delivery)
+        self.assertIn('--stage "ready_for_delivery"', final_delivery)
+        self.assertIn('--previous-owner-status "superseded"', final_delivery)
         self.assertIn("Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents", final_delivery)
         self.assertIn("The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation", final_delivery)
 

@@ -40,15 +40,19 @@ If the reviewer cannot complete this per-page inspection within the allowed wait
 
 ## Final Delivery Guard
 
-Every render workflow must bind final delivery to `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+Every render workflow must bind final delivery to the session-scoped active target `.codex/delivery-targets/sessions/<session_id>/current.json`, the project task index `.codex/delivery-targets/task-index.json`, and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
 The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The compile report cannot replace acceptance_report.json; it only proves guarded compilation provenance for `delivery_guard.py check`.
 
-Before final delivery, run `delivery_guard.py check`. Final delivery is allowed only after a fresh passing guard report exists. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+Before final delivery, run `delivery_guard.py check` against the session-scoped current target. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Final delivery is allowed only after a fresh passing guard report exists. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+
+The task index records task-index ownership for startup, recovery, and observability. It is not a Stop hook blocking source; the Stop hook does not scan all active tasks. A new session may take over a video output directory only through explicit handoff recorded in `.codex/delivery-targets/task-index.json`.
 
 When acceptance fails, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, `attempt_02/`, and `attempt_03/` as needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md` and set the target stage to `blocked`.
 
-The project Stop hook calls `delivery_guard.py hook-stop`, which may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+After successful delivery, archive the session target with `clear-target --session-id` so stale delivered state cannot affect later work.
+
+The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

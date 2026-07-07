@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T08:08:28Z
+generated_at: 2026-07-07T09:58:59Z
 source_feature_slug: final-delivery-guard-and-bounded-repair
 source_issue_count: 6
 source_issue_fingerprint: 2642a8ee3387181327e1cd1408cfb3190d647075bc7d0aa463fe4a72b92e33c3

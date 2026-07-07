@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T08:08:28Z
+generated_at: 2026-07-07T09:58:59Z
 source_feature_count: 6
 source_issue_count: 37
-source_issue_fingerprint: b665f528eaa741dc6efd9f3eb479cd2a37dae3164402175518eab5624c663099
+source_issue_fingerprint: d909830f559e217c7be9097fa51ae235a15537d5de9ea61aed81c1c0b4534360
 ---
 
 # Issue Dependency Index
@@ -66,9 +66,9 @@ source_issue_fingerprint: b665f528eaa741dc6efd9f3eb479cd2a37dae3164402175518eab5
 
 - View: [[issues/_views/session-scoped-final-delivery-guard-dependencies]]
 - Issue count: 7
-- Status distribution: done=5, ready-for-agent=2
+- Status distribution: done=6, ready-for-agent=1
 - Root issues: [[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]
-- Currently executable: [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- Currently executable: [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]]
 - Status-blocked: None
-- Dependency-blocked: [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- Dependency-blocked: None
 - Consistency errors: None

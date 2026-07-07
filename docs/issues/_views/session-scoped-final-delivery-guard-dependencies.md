@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T01:47:46Z
+generated_at: 2026-07-07T02:24:38Z
 source_feature_slug: session-scoped-final-delivery-guard
 source_issue_count: 7
-source_issue_fingerprint: 4a13123c9e88861d4237e45ec32f09d0a48f79c5f3d104a0018fb6aca2e66e84
+source_issue_fingerprint: 1de0b7ccc08fb5b65686b9f4a0c8d6e387d6cec51217674cfe1eed4b853f46de
 ---
 
 # Issue Dependency View: session-scoped-final-delivery-guard
@@ -13,15 +13,14 @@ None
 
 ## Next executable
 
-- [[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]] 02 - Validate session-scoped delivery targets end to end
 - [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]] 03 - Add delivery task index ownership and handoff checks
 
 ## Waiting on dependencies
 
-- [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]] waits on [[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]], [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]]
+- [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]] waits on [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]]
 - [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]] waits on [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]], [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]]
-- [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]], [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]], [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]
-- [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/02-validate-session-scoped-delivery-targets-end-to-end]], [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]], [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
+- [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]] waits on [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]], [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]]
+- [[issues/session-scoped-final-delivery-guard/07-add-concurrent-session-regression-fixtures]] waits on [[issues/session-scoped-final-delivery-guard/03-add-delivery-task-index-ownership-and-handoff-checks]], [[issues/session-scoped-final-delivery-guard/04-convert-old-pdf-prepare-and-failed-attempt-lifecycle]], [[issues/session-scoped-final-delivery-guard/05-archive-delivered-session-targets-and-update-task-index]], [[issues/session-scoped-final-delivery-guard/06-update-render-skills-and-project-instructions]]
 
 ## Mermaid dependency graph
 
@@ -63,7 +62,7 @@ flowchart LR
   n_05_archive_delivered_session_targets_and_update_task_index --> n_07_add_concurrent_session_regression_fixtures
   n_06_update_render_skills_and_project_instructions --> n_07_add_concurrent_session_regression_fixtures
   class n_01_resolve_hook_session_targets_from_official_hook_input done
-  class n_02_validate_session_scoped_delivery_targets_end_to_end ready_for_agent
+  class n_02_validate_session_scoped_delivery_targets_end_to_end done
   class n_03_add_delivery_task_index_ownership_and_handoff_checks ready_for_agent
   class n_04_convert_old_pdf_prepare_and_failed_attempt_lifecycle ready_for_agent
   class n_05_archive_delivered_session_targets_and_update_task_index ready_for_agent

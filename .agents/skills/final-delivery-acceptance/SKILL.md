@@ -92,7 +92,7 @@ After repair, the workflow must rerender affected final artifacts, refresh rende
 
 ## Delivery Target And Guard
 
-Every active delivery workflow is represented by `.codex/delivery-targets/current.json` and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+Every active delivery workflow is represented by a session-scoped `.codex/delivery-targets/sessions/{session_id}/current.json` file and the video-level `review/acceptance/delivery_target.json`. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
 The video-level target binds the final PDF, main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. Compile provenance binds current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments. It must record `attempt_limit: 3`.
 
@@ -100,15 +100,17 @@ The video-level target binds the final PDF, main TeX file, `review/acceptance/al
 
 The Acceptance Reviewer evaluates delivery quality from final delivered artifacts and rendered page evidence. `review\latex\compile_report.json` is compile provenance for `delivery_guard.py check`. A compile report cannot replace acceptance_report.json, cannot override `overall_status`, and cannot serve as Acceptance Reviewer quality judgment.
 
-Before delivery, run:
+Before delivery from a non-hook render or acceptance workflow, run `delivery_guard.py check` with the explicit session-scoped current target:
 
 ```powershell
-D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py check
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B .agents\skills\final-delivery-acceptance\scripts\delivery_guard.py check --current-target ".codex\delivery-targets\sessions\<session_id>\current.json"
 ```
+
+The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`.
 
 Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
-The project Stop hook calls `delivery_guard.py hook-stop`. It may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+The project Stop hook calls `delivery_guard.py hook-stop`, reads the official hook `session_id`, and resolves `.codex/delivery-targets/sessions/{session_id}/current.json`. It may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

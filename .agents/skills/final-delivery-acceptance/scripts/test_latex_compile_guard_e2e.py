@@ -160,18 +160,24 @@ class LatexCompileGuardE2ETests(unittest.TestCase):
         )
         self.write_acceptance_report(video_dir, final_pdf)
         self.write_delivery_target(video_dir, final_pdf, compile_report)
-        current_target = self.case_dir / ".codex" / "delivery-targets" / "current.json"
+        session_id = f"session-{uuid.uuid4().hex}"
+        current_target = self.case_dir / ".codex" / "delivery-targets" / "sessions" / session_id / "current.json"
         current_target.parent.mkdir(parents=True, exist_ok=True)
         current_target.write_text(
             json.dumps(
                 {
-                    "schema_version": "1.0",
+                    "schema_version": "1.1",
+                    "scope": "session",
+                    "session_id": session_id,
+                    "turn_id": "turn-fixture",
+                    "observed_codex_thread_id": "diagnostic-thread-fixture",
                     "stage": "accepted",
                     "video_output_dir": video_dir.relative_to(REPO_ROOT).as_posix(),
                     "target_file": (video_dir / "review" / "acceptance" / "delivery_target.json")
                     .relative_to(REPO_ROOT)
                     .as_posix(),
                     "source_skill": "e2e-fixture",
+                    "started_at": "2026-07-06T00:00:00+08:00",
                     "updated_at": "2026-07-06T00:00:00+08:00",
                 },
                 ensure_ascii=False,

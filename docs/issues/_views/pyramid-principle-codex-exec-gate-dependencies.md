@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T01:47:46Z
+generated_at: 2026-07-07T02:24:38Z
 source_feature_slug: pyramid-principle-codex-exec-gate
 source_issue_count: 6
 source_issue_fingerprint: baf83874a053ae52c8ae3fcdfaaa78b1ee1e79d6355802c5cbfdd583e8a9e7ba

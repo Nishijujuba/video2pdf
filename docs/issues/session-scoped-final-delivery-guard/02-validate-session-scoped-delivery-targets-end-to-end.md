@@ -1,6 +1,6 @@
 ---
 type: issue
-status: ready-for-agent
+status: done
 feature: "[[prd/final-delivery-guard-and-bounded-repair]]"
 depends_on:
   - "[[issues/session-scoped-final-delivery-guard/01-resolve-hook-session-targets-from-official-hook-input]]"
@@ -13,15 +13,15 @@ related_adrs:
   - "[[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]]"
 owner: unassigned
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 tags:
   - issue
-  - status/ready-for-agent
+  - status/done
 ---
 
 # 02 - Validate session-scoped delivery targets end to end
 
-Status: ready-for-agent
+Status: done
 
 ## Goal
 
@@ -70,14 +70,15 @@ The semantic acceptance source remains `acceptance_report.json`. `delivery_guard
 
 ## Acceptance Criteria
 
-- [ ] `delivery_guard.py check` resolves session-scoped target state without using `.codex/delivery-targets/current.json`.
-- [ ] Guard reports bind the current session target and video-output evidence.
-- [ ] Guard failures remain mechanical and do not make semantic quality judgments.
-- [ ] Tests cover fresh pass, stale evidence, missing evidence, path escape, failed report, and page coverage cases.
-- [ ] The final-delivery acceptance skill documents the supported non-hook check invocation.
+- [x] `delivery_guard.py check` resolves session-scoped target state without using `.codex/delivery-targets/current.json`.
+- [x] Guard reports bind the current session target and video-output evidence.
+- [x] Guard failures remain mechanical and do not make semantic quality judgments.
+- [x] Tests cover fresh pass, stale evidence, missing evidence, path escape, failed report, and page coverage cases.
+- [x] The final-delivery acceptance skill documents the supported non-hook check invocation.
 
 ## Execution Log
 
 - 2026-07-06: Created from [[prd/final-delivery-guard-and-bounded-repair]] and [[adr/0004-use-session-scoped-delivery-targets-for-final-delivery-guard]].
+- 2026-07-07: Updated `delivery_guard.py check` to require explicit session-scoped current targets, bind session target fingerprints into guard reports, document the supported non-hook invocation, and cover missing/malformed/stale/path-escape cases. Independent verification initially caught a path-shape gap, then passed after the explicit session target path guard was added.
 
 ## Comments

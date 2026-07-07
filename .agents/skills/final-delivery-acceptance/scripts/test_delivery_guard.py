@@ -219,6 +219,72 @@ class DeliveryGuardTests(unittest.TestCase):
         report["failed_criteria"] = [first_result["criterion_id"]]
         return report
 
+    def write_two_page_target_and_report(
+        self,
+        *,
+        pages_checked: list[int],
+        create_second_rendered_page: bool = False,
+    ) -> None:
+        two_page_pdf = self.video_dir / "final-two-page.pdf"
+        self.write_pdf(two_page_pdf, pages=2)
+        if create_second_rendered_page:
+            (self.rendered_dir / "page_0002.png").write_bytes(b"png evidence 2")
+        self.write_delivery_target(final_pdf="final-two-page.pdf")
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [("tex", "main.tex"), ("pdf", "final-two-page.pdf")],
+        )
+        self.write_compile_report(self.valid_compile_report(final_pdf_name="final-two-page.pdf"))
+        report = self.valid_report()
+        context = dict(report["review_context_used"])
+        context["artifacts_read"] = [
+            "main.tex",
+            "final-two-page.pdf",
+            "docs/acceptance/acceptance_criteria.v1.json",
+        ]
+        report["review_context_used"] = context
+        report["artifact_fingerprints"] = [
+            compute_artifact_fingerprint(self.video_dir / "main.tex", "main.tex"),
+            compute_artifact_fingerprint(two_page_pdf, "final-two-page.pdf"),
+        ]
+        criterion_results = []
+        for result in report["criterion_results"]:
+            result = dict(result)
+            if result["category"] in VISUAL_CATEGORIES:
+                result["evidence"] = [
+                    {
+                        "artifact_path": "final-two-page.pdf",
+                        "location": "full artifact",
+                        "summary": "No blocking defect detected.",
+                    }
+                ]
+                result["scan_evidence"] = {
+                    "scan_policy": result["scan_evidence"]["scan_policy"],
+                    "scanned_artifacts": ["final-two-page.pdf"],
+                }
+            criterion_results.append(result)
+        report["criterion_results"] = criterion_results
+        visual = dict(report["visual_scan_evidence"])
+        visual["pdf"] = "final-two-page.pdf"
+        visual["page_count"] = 2
+        visual["pages_checked"] = [
+            {
+                "page": page_number,
+                "rendered_page_image": f"review/acceptance/rendered_pages/page_{page_number:04d}.png",
+                "status": "pass",
+                "criteria_checked": [
+                    "figure_visual_integrity",
+                    "table_layout_integrity",
+                    "credibility_disclosure_placement",
+                ],
+                "failures": [],
+            }
+            for page_number in pages_checked
+        ]
+        report["visual_scan_evidence"] = visual
+        self.write_report(report)
+
     def write_delivery_target(
         self,
         *,
@@ -315,8 +381,82 @@ class DeliveryGuardTests(unittest.TestCase):
             check=False,
         )
 
+    def run_check(self, *, current_target: Path | None = None) -> subprocess.CompletedProcess[str]:
+        return self.run_guard("check", current_target=current_target or self.write_session_current_target())
+
+    def test_check_requires_explicit_session_scoped_current_target(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(SCRIPT),
+                "check",
+                "--project-root",
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--current-target", completed.stderr)
+        self.assertIn(".codex/delivery-targets/sessions/<session_id>/current.json", completed.stderr)
+
+    def test_check_rejects_explicit_legacy_current_target(self) -> None:
+        completed = self.run_guard("check", current_target=self.current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target schema_version must be '1.1'", completed.stderr)
+        self.assertIn("session-scoped", completed.stderr)
+
+    def test_check_blocks_missing_session_target_path(self) -> None:
+        completed = self.run_guard("check", current_target=self.session_current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target not found", completed.stderr)
+
+    def test_check_blocks_malformed_session_target_with_specific_reason(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["scope"] = "project"
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check(current_target=session_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target scope must be 'session'", completed.stderr)
+
+    def test_check_blocks_session_payload_at_non_session_target_path(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        self.current_target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_guard("check", current_target=self.current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target path must be under a delivery-targets/sessions/<session_id>/current.json tree", completed.stderr)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_check_blocks_session_target_when_path_session_id_disagrees(self) -> None:
+        session_target = self.write_session_current_target()
+        mismatch_target = self.current_target_path.parent / "sessions" / "different-session" / "current.json"
+        mismatch_target.parent.mkdir(parents=True, exist_ok=True)
+        mismatch_target.write_text(session_target.read_text(encoding="utf-8"), encoding="utf-8")
+
+        completed = self.run_guard("check", current_target=mismatch_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target path session_id must match current target session_id", completed.stderr)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
     def test_check_writes_fresh_passing_guard_report(self) -> None:
-        completed = self.run_guard("check")
+        session_target = self.write_session_current_target()
+
+        completed = self.run_check(current_target=session_target)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
@@ -328,6 +468,7 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(report["acceptance_report_status"], "pass")
         self.assertIsNone(report["blocking_message"])
         fingerprint_paths = {item["path"] for item in report["artifact_fingerprints"]}
+        self.assertIn(session_target.relative_to(REPO_ROOT).as_posix(), fingerprint_paths)
         self.assertIn("final.pdf", fingerprint_paths)
         self.assertIn("review/latex/compile_report.json", fingerprint_paths)
         self.assertIn("acceptance_report_enforced", {item["condition"] for item in report["checked_conditions"]})
@@ -335,18 +476,39 @@ class DeliveryGuardTests(unittest.TestCase):
     def test_check_rejects_missing_final_compile_report_for_new_video_target(self) -> None:
         self.write_delivery_target(compile_report="review/latex/missing_compile_report.json")
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report is missing", completed.stderr)
         self.assertIn("review/latex/missing_compile_report.json", completed.stderr)
+
+    def test_check_blocks_missing_video_delivery_target(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["target_file"] = (self.acceptance_dir / "missing_delivery_target.json").relative_to(REPO_ROOT).as_posix()
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check(current_target=session_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("delivery target not found", completed.stderr)
+
+    def test_check_blocks_missing_allowed_artifacts_manifest(self) -> None:
+        target = json.loads(self.target_path.read_text(encoding="utf-8"))
+        target["allowed_artifacts_manifest"] = "review/acceptance/missing_manifest.json"
+        self.target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("allowed artifacts manifest not found", completed.stderr)
 
     def test_check_rejects_quick_mode_compile_report(self) -> None:
         report = self.valid_compile_report()
         report["mode"] = "quick"
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report mode must be 'final'", completed.stderr)
@@ -357,7 +519,7 @@ class DeliveryGuardTests(unittest.TestCase):
         report["status"] = "failed"
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report status must be 'passed'", completed.stderr)
@@ -366,7 +528,7 @@ class DeliveryGuardTests(unittest.TestCase):
     def test_check_rejects_handwritten_compile_report_without_wrapper_producer(self) -> None:
         self.write_compile_report(self.handwritten_compile_report_without_wrapper_producer())
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("producer", completed.stderr)
@@ -380,7 +542,7 @@ class DeliveryGuardTests(unittest.TestCase):
         }
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("wrapper_script_fingerprint is stale", completed.stderr)
@@ -390,7 +552,7 @@ class DeliveryGuardTests(unittest.TestCase):
         report["argv"] = ["--tex", str((self.video_dir / "main.tex").resolve()), "--mode", "quick"]
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("argv must include --mode final", completed.stderr)
@@ -400,7 +562,7 @@ class DeliveryGuardTests(unittest.TestCase):
         del report["final_pdf"]
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("malformed final compile report", completed.stderr)
@@ -416,7 +578,7 @@ class DeliveryGuardTests(unittest.TestCase):
                     report["schema_version"] = schema_value
                 self.write_compile_report(report)
 
-                completed = self.run_guard("check")
+                completed = self.run_check()
 
                 self.assertEqual(completed.returncode, 2)
                 self.assertIn("schema_version", completed.stderr)
@@ -429,7 +591,7 @@ class DeliveryGuardTests(unittest.TestCase):
         report["final_pdf_fingerprint"] = self.compile_fingerprint(wrong_pdf)
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report final_pdf does not match delivery_target.final_pdf", completed.stderr)
@@ -443,7 +605,7 @@ class DeliveryGuardTests(unittest.TestCase):
         report["source_tex_fingerprint"] = self.compile_fingerprint(wrong_tex)
         self.write_compile_report(report)
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report source_tex does not match delivery_target.main_tex", completed.stderr)
@@ -452,7 +614,7 @@ class DeliveryGuardTests(unittest.TestCase):
         with (self.video_dir / "final.pdf").open("ab") as handle:
             handle.write(b"\nchanged after final compile report")
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report final_pdf_fingerprint is stale", completed.stderr)
@@ -460,7 +622,7 @@ class DeliveryGuardTests(unittest.TestCase):
     def test_check_rejects_stale_compile_report_tex_fingerprint(self) -> None:
         (self.video_dir / "main.tex").write_text("Changed after final compile report.\n", encoding="utf-8")
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report source_tex_fingerprint is stale", completed.stderr)
@@ -473,7 +635,7 @@ class DeliveryGuardTests(unittest.TestCase):
             recompiled=False,
         )
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
@@ -485,7 +647,7 @@ class DeliveryGuardTests(unittest.TestCase):
             compile_provenance_required=False,
         )
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("compile_provenance_required may be false only for legacy_existing_pdf", completed.stderr)
@@ -497,7 +659,7 @@ class DeliveryGuardTests(unittest.TestCase):
             legacy_existing_pdf=True,
         )
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("recompiled is explicitly false", completed.stderr)
@@ -510,7 +672,7 @@ class DeliveryGuardTests(unittest.TestCase):
             recompiled=True,
         )
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report is missing", completed.stderr)
@@ -520,7 +682,7 @@ class DeliveryGuardTests(unittest.TestCase):
         (self.video_dir / "main.tex").write_text("Changed after acceptance.\n", encoding="utf-8")
         self.write_compile_report(self.valid_compile_report())
 
-        completed = self.run_guard("check")
+        completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("artifact_fingerprints entry is stale: main.tex", completed.stderr)
@@ -528,76 +690,80 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
         self.assertIn("Final Delivery Guard blocked delivery", report["blocking_message"])
 
+    def test_check_rejects_failed_acceptance_report_decision(self) -> None:
+        self.write_report(self.failed_report())
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("acceptance report status 'fail' blocks delivery", completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["acceptance_report_status"], "fail")
+
+    def test_check_rejects_malformed_acceptance_report(self) -> None:
+        report = self.valid_report()
+        del report["overall_status"]
+        self.write_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("report missing keys", completed.stderr)
+        self.assertIn("overall_status", completed.stderr)
+
+    def test_check_rejects_acceptance_report_with_forbidden_context(self) -> None:
+        report = self.valid_report()
+        context = dict(report["review_context_used"])
+        context["artifacts_read"] = [
+            *context["artifacts_read"],
+            "review/pyramid/main.pyramid.json",
+        ]
+        report["review_context_used"] = context
+        self.write_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("review_context_used.artifacts_read", completed.stderr)
+        self.assertIn("outside allowed artifacts", completed.stderr)
+
     def test_check_rejects_manifest_mismatch_and_missing_rendered_page_coverage(self) -> None:
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         manifest["final_artifacts"] = [{"role": "tex", "path": "main.tex"}]
         self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        manifest_mismatch = self.run_guard("check")
+        manifest_mismatch = self.run_check()
 
         self.assertEqual(manifest_mismatch.returncode, 2)
         self.assertIn("final PDF is absent from allowed_artifacts_manifest.json", manifest_mismatch.stderr)
 
-        two_page_pdf = self.video_dir / "final-two-page.pdf"
-        self.write_pdf(two_page_pdf, pages=2)
-        self.write_delivery_target(final_pdf="final-two-page.pdf")
-        self.manifest_path = create_allowed_artifacts_manifest(
-            self.video_dir,
-            CRITERIA_PATH,
-            [("tex", "main.tex"), ("pdf", "final-two-page.pdf")],
-        )
-        self.write_compile_report(self.valid_compile_report(final_pdf_name="final-two-page.pdf"))
-        missing_page_report = self.valid_report()
-        context = dict(missing_page_report["review_context_used"])
-        context["artifacts_read"] = [
-            "main.tex",
-            "final-two-page.pdf",
-            "docs/acceptance/acceptance_criteria.v1.json",
-        ]
-        missing_page_report["review_context_used"] = context
-        missing_page_report["artifact_fingerprints"] = [
-            compute_artifact_fingerprint(self.video_dir / "main.tex", "main.tex"),
-            compute_artifact_fingerprint(two_page_pdf, "final-two-page.pdf"),
-        ]
-        criterion_results = []
-        for result in missing_page_report["criterion_results"]:
-            result = dict(result)
-            if result["category"] in VISUAL_CATEGORIES:
-                result["evidence"] = [
-                    {
-                        "artifact_path": "final-two-page.pdf",
-                        "location": "full artifact",
-                        "summary": "No blocking defect detected.",
-                    }
-                ]
-                result["scan_evidence"] = {
-                    "scan_policy": result["scan_evidence"]["scan_policy"],
-                    "scanned_artifacts": ["final-two-page.pdf"],
-                }
-            criterion_results.append(result)
-        missing_page_report["criterion_results"] = criterion_results
-        visual = dict(missing_page_report["visual_scan_evidence"])
-        visual["pdf"] = "final-two-page.pdf"
-        visual["page_count"] = 2
-        visual["pages_checked"] = visual["pages_checked"][:1]
-        missing_page_report["visual_scan_evidence"] = visual
-        self.write_report(missing_page_report)
+        self.write_two_page_target_and_report(pages_checked=[1])
 
-        missing_page = self.run_guard("check")
+        missing_page = self.run_check()
 
         self.assertEqual(missing_page.returncode, 2)
         self.assertIn("visual_scan_evidence.pages_checked must cover every page exactly once", missing_page.stderr)
 
-    def test_resolver_rejects_invalid_stage_and_path_escape(self) -> None:
-        self.write_current_target(stage="almost_ready")
+    def test_check_rejects_missing_rendered_page_image(self) -> None:
+        self.write_two_page_target_and_report(pages_checked=[1, 2])
 
-        invalid_stage = self.run_guard("check")
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("rendered page image is missing", completed.stderr)
+        self.assertIn("review/acceptance/rendered_pages/page_0002.png", completed.stderr)
+
+    def test_resolver_rejects_invalid_stage_and_path_escape(self) -> None:
+        invalid_stage_target = self.write_session_current_target(stage="almost_ready")
+
+        invalid_stage = self.run_check(current_target=invalid_stage_target)
 
         self.assertEqual(invalid_stage.returncode, 2)
         self.assertIn("current target stage is invalid", invalid_stage.stderr)
 
-        self.write_current_target(video_output_dir="../outside")
-        path_escape = self.run_guard("check")
+        path_escape_target = self.write_session_current_target(video_output_dir="../outside")
+        path_escape = self.run_check(current_target=path_escape_target)
 
         self.assertEqual(path_escape.returncode, 2)
         self.assertIn("current target video_output_dir", path_escape.stderr)
@@ -615,6 +781,23 @@ class DeliveryGuardTests(unittest.TestCase):
 
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("fresh passing guard report", second.stdout)
+
+    def test_hook_stop_reruns_guard_when_session_target_fingerprint_changes(self) -> None:
+        session_target = self.write_session_current_target()
+
+        first = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("PASS:", first.stdout)
+
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["turn_id"] = "changed-turn-fixture"
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        second = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("PASS:", second.stdout)
+        self.assertNotIn("fresh passing guard report", second.stdout)
 
     def test_hook_stop_dispatches_guard_for_ready_or_accepted_session_target(self) -> None:
         self.write_current_target(stage="blocked")

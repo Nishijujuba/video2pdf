@@ -155,6 +155,22 @@ def _session_current_target_path(current_target_path: Path, session_id: str) -> 
     return resolved
 
 
+def _validate_explicit_session_current_target_path(current_target_path: Path, session_id: str) -> None:
+    path = current_target_path.resolve()
+    if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or ":" in session_id:
+        raise GuardError("current target session_id must be a single safe path segment")
+    if (
+        path.name != "current.json"
+        or path.parent.parent.name != SESSION_TARGETS_DIRNAME
+        or path.parent.parent.parent.name != "delivery-targets"
+    ):
+        raise GuardError(
+            "current target path must be under a delivery-targets/sessions/<session_id>/current.json tree"
+        )
+    if path.parent.name != session_id:
+        raise GuardError("current target path session_id must match current target session_id")
+
+
 def _resolve_project_path(project_root: Path, value: Any, label: str) -> Path:
     raw = _require_string(value, label)
     if Path(raw).is_absolute() or _looks_windows_absolute(raw):
@@ -220,8 +236,16 @@ def _require_keys(value: dict[str, Any], keys: set[str], label: str) -> None:
         raise GuardError(f"{label} missing fields: {', '.join(sorted(missing))}")
 
 
-def _validate_current_target_schema(current: dict[str, Any], *, expected_session_id: str | None = None) -> None:
+def _validate_current_target_schema(
+    current: dict[str, Any],
+    *,
+    expected_session_id: str | None = None,
+    require_session_scope: bool = False,
+) -> None:
     schema_version = current.get("schema_version")
+    if require_session_scope or expected_session_id is not None:
+        if schema_version != "1.1":
+            raise GuardError("current target schema_version must be '1.1' for a session-scoped delivery target")
     if schema_version == "1.0":
         return
     if schema_version == "1.1":
@@ -238,6 +262,7 @@ def resolve_delivery_target(
     *,
     project_root: Path,
     current_target_path: Path = DEFAULT_CURRENT_TARGET,
+    require_session_scope: bool = False,
 ) -> DeliveryTarget:
     """Resolve and validate the active project and video delivery targets."""
 
@@ -249,7 +274,10 @@ def resolve_delivery_target(
         {"schema_version", "stage", "video_output_dir", "target_file", "source_skill", "updated_at"},
         "current target",
     )
-    _validate_current_target_schema(current)
+    _validate_current_target_schema(current, require_session_scope=require_session_scope)
+    if require_session_scope:
+        session_id = _require_string(current.get("session_id"), "current target session_id")
+        _validate_explicit_session_current_target_path(current_target_path, session_id)
     stage = _validate_stage(current["stage"], "current target stage")
     video_output_dir = _resolve_project_path(project_root, current["video_output_dir"], "current target video_output_dir")
     target_file = _resolve_project_path(project_root, current["target_file"], "current target target_file")
@@ -559,6 +587,9 @@ def guard_fingerprints(target: DeliveryTarget, manifest: dict[str, Any]) -> list
     ordered_paths.extend(_manifest_paths(manifest))
     seen: set[str] = set()
     fingerprints: list[dict[str, Any]] = []
+    current_target_relative = _repo_relative(target.project_root, target.current_target_path)
+    fingerprints.append(_fingerprint_file(target.current_target_path, current_target_relative))
+    seen.add(current_target_relative)
     for relative_path in ordered_paths:
         if relative_path in seen:
             continue
@@ -895,7 +926,11 @@ def run_check(*, project_root: Path, current_target_path: Path, criteria_path: P
     acceptance_status: str | None = None
     fingerprints: list[dict[str, Any]] = []
     try:
-        target = resolve_delivery_target(project_root=project_root, current_target_path=current_target_path)
+        target = resolve_delivery_target(
+            project_root=project_root,
+            current_target_path=current_target_path,
+            require_session_scope=True,
+        )
         checked_conditions.append(_condition("target_resolved", "pass"))
         if target.stage not in GUARD_STAGES:
             raise GuardError(f"delivery guard check requires ready_for_delivery or accepted stage, got {target.stage}")
@@ -1035,13 +1070,13 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check Final Delivery Guard state.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def add_common(subparser: argparse.ArgumentParser) -> None:
+    def add_common(subparser: argparse.ArgumentParser, *, current_target_default: Path | None = DEFAULT_CURRENT_TARGET) -> None:
         subparser.add_argument("--project-root", type=Path, default=REPO_ROOT)
-        subparser.add_argument("--current-target", type=Path, default=DEFAULT_CURRENT_TARGET)
+        subparser.add_argument("--current-target", type=Path, default=current_target_default)
         subparser.add_argument("--criteria", type=Path, default=DEFAULT_CRITERIA)
 
     check_parser = subparsers.add_parser("check", help="Validate the active target and write delivery_guard_report.json.")
-    add_common(check_parser)
+    add_common(check_parser, current_target_default=None)
 
     hook_parser = subparsers.add_parser("hook-stop", help="Run the lightweight Stop hook delivery decision.")
     add_common(hook_parser)
@@ -1066,6 +1101,14 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     if args.command == "check":
+        if args.current_target is None:
+            message = _blocking_message(
+                "delivery_guard.py check requires --current-target "
+                ".codex/delivery-targets/sessions/<session_id>/current.json",
+                None,
+            )
+            print(message, file=sys.stderr)
+            return EXIT_BLOCKED
         code, message = run_check(
             project_root=args.project_root,
             current_target_path=args.current_target,

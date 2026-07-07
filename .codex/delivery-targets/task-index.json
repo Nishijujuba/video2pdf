@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "tasks": [
+    {
+      "video_output_dir": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable",
+      "target_file": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable/review/acceptance/delivery_target.json",
+      "owner_session_id": "e2e-field-guide-fable-a",
+      "owner_status": "active",
+      "last_session_id": "e2e-field-guide-fable-a",
+      "stage": "ready_for_delivery",
+      "updated_at": "2026-07-07T20:39:12+08:00"
+    },
+    {
+      "video_output_dir": "待删除/acceptance-e2e-20260707-session-guard/fable-5-usage",
+      "target_file": "待删除/acceptance-e2e-20260707-session-guard/fable-5-usage/review/acceptance/delivery_target.json",
+      "owner_session_id": "e2e-fable-5-usage-b",
+      "owner_status": "active",
+      "last_session_id": "e2e-fable-5-usage-b",
+      "stage": "ready_for_delivery",
+      "updated_at": "2026-07-07T20:39:40+08:00"
+    }
+  ]
+}

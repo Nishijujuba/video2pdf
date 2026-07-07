@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.1",
+  "scope": "session",
+  "session_id": "e2e-field-guide-fable-a",
+  "stage": "ready_for_delivery",
+  "video_output_dir": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable",
+  "target_file": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable/review/acceptance/delivery_target.json",
+  "source_skill": "final-delivery-acceptance-old-pdf-repair",
+  "started_at": "2026-07-07T20:39:12+08:00",
+  "updated_at": "2026-07-07T20:39:12+08:00"
+}

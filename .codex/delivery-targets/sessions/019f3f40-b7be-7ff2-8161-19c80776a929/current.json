@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.1",
+  "scope": "session",
+  "session_id": "019f3f40-b7be-7ff2-8161-19c80776a929",
+  "stage": "ready_for_delivery",
+  "video_output_dir": "workspace/Inside Anthropic_ How Claude Tag Is Changing Agentic Work_20260708_090900",
+  "target_file": "workspace/Inside Anthropic_ How Claude Tag Is Changing Agentic Work_20260708_090900/review/acceptance/delivery_target.json",
+  "source_skill": "youtube-render-pdf",
+  "started_at": "2026-07-08T09:09:00+08:00",
+  "updated_at": "2026-07-08T11:05:11+08:00"
+}

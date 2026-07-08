@@ -18,6 +18,15 @@
       "last_session_id": "e2e-fable-5-usage-b",
       "stage": "ready_for_delivery",
       "updated_at": "2026-07-07T20:39:40+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Inside Anthropic_ How Claude Tag Is Changing Agentic Work_20260708_090900",
+      "target_file": "workspace/Inside Anthropic_ How Claude Tag Is Changing Agentic Work_20260708_090900/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f3f40-b7be-7ff2-8161-19c80776a929",
+      "owner_status": "active",
+      "last_session_id": "019f3f40-b7be-7ff2-8161-19c80776a929",
+      "stage": "ready_for_delivery",
+      "updated_at": "2026-07-08T11:05:12+08:00"
     }
   ]
 }

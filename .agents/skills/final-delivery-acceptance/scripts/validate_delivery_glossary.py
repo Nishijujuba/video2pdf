@@ -53,6 +53,12 @@ class ValidationError(Exception):
     """Raised when a Delivery Glossary file is malformed."""
 
 
+def _configure_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def _require_object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValidationError(f"{label} must be an object")
@@ -350,6 +356,7 @@ def classify_delivery_glossary_candidate(
 
 
 def main() -> int:
+    _configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Validate one Delivery Glossary JSON file.")
     parser.add_argument("glossary", type=Path)
     args = parser.parse_args()

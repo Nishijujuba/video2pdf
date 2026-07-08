@@ -1244,6 +1244,18 @@ def _unique_archive_path(archive_dir: Path, session_id: str) -> Path:
     return archive_path
 
 
+def _replace_path_with_retry(source: Path, target: Path, *, attempts: int = 10, delay_seconds: float = 0.1) -> OSError | None:
+    last_error: OSError | None = None
+    for _ in range(attempts):
+        try:
+            source.replace(target)
+            return None
+        except OSError as exc:
+            last_error = exc
+            time.sleep(delay_seconds)
+    return last_error
+
+
 def clear_target(
     *,
     project_root: Path,
@@ -1306,7 +1318,9 @@ def clear_target(
             archive_dir = resolved_video_dir / "待删除" / "delivery-targets" / "sessions"
             archive_dir.mkdir(parents=True, exist_ok=True)
             archive_path = _unique_archive_path(archive_dir, session_id)
-            session_target_path.replace(archive_path)
+            archive_error = _replace_path_with_retry(session_target_path, archive_path)
+            if archive_error is not None:
+                raise GuardError(f"cannot archive session delivery target: {archive_error}")
 
             active_task["owner_status"] = "delivered"
             active_task["last_session_id"] = session_id
@@ -1337,15 +1351,7 @@ def clear_target(
         safe_stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         archive_path = archive_dir / f"current-{safe_stamp}.json"
         archive_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
-        last_error: OSError | None = None
-        for _ in range(5):
-            try:
-                current_target_path.replace(archive_path)
-                last_error = None
-                break
-            except OSError as exc:
-                last_error = exc
-                time.sleep(0.1)
+        last_error = _replace_path_with_retry(current_target_path, archive_path, attempts=5)
         if last_error is not None:
             return EXIT_PASS, f"CLEARED: {archive_path}; active target retained at delivered stage because archive move was unavailable"
         return EXIT_PASS, f"CLEARED: {archive_path}"

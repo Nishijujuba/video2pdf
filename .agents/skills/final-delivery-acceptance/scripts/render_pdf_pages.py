@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import re
-import shutil
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -39,7 +40,16 @@ def _move_stale_page(video_output_dir: Path, rendered_pages_dir: Path, stale_pag
     trash_dir = video_output_dir / "待删除" / "acceptance-rendered-pages" / uuid.uuid4().hex
     trash_dir.mkdir(parents=True, exist_ok=True)
     target = trash_dir / stale_page.name
-    shutil.move(str(stale_page), str(target))
+    last_error: OSError | None = None
+    for _ in range(10):
+        try:
+            stale_page.replace(target)
+            return
+        except OSError as exc:
+            last_error = exc
+            gc.collect()
+            time.sleep(0.1)
+    raise RenderError(f"cannot move stale rendered page to 待删除: {last_error}") from last_error
 
 
 def render_pdf_pages(pdf_path: Path, *, video_output_dir: Path | None = None, dpi: int = 200) -> dict[str, object]:
@@ -61,31 +71,45 @@ def render_pdf_pages(pdf_path: Path, *, video_output_dir: Path | None = None, dp
     if dpi < 72:
         raise RenderError("dpi must be at least 72")
 
-    rendered_pages_dir = video_output_dir / "review" / "acceptance" / "rendered_pages"
-    rendered_pages_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         doc = fitz.open(pdf_path)
     except Exception as exc:
         raise RenderError(f"cannot open PDF: {pdf_path}") from exc
 
-    rendered_paths: list[str] = []
     try:
         page_count = len(doc)
-        if page_count < 1:
-            raise RenderError("PDF contains no pages")
-        expected_names = {f"page_{page_number:04d}.png" for page_number in range(1, page_count + 1)}
-        for existing in rendered_pages_dir.glob("page_*.png"):
-            if existing.name not in expected_names:
-                _move_stale_page(video_output_dir, rendered_pages_dir, existing)
+    finally:
+        doc.close()
 
+    if page_count < 1:
+        raise RenderError("PDF contains no pages")
+
+    rendered_pages_dir = video_output_dir / "review" / "acceptance" / "rendered_pages"
+    rendered_pages_dir.mkdir(parents=True, exist_ok=True)
+    expected_names = {f"page_{page_number:04d}.png" for page_number in range(1, page_count + 1)}
+    gc.collect()
+    for existing in rendered_pages_dir.glob("page_*.png"):
+        if existing.name not in expected_names:
+            _move_stale_page(video_output_dir, rendered_pages_dir, existing)
+
+    rendered_paths: list[str] = []
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as exc:
+        raise RenderError(f"cannot open PDF: {pdf_path}") from exc
+
+    try:
         for page_number, page in enumerate(doc, start=1):
             output_path = rendered_pages_dir / f"page_{page_number:04d}.png"
             pixmap = page.get_pixmap(dpi=dpi, alpha=False)
-            pixmap.save(output_path)
+            try:
+                pixmap.save(output_path)
+            finally:
+                del pixmap
             rendered_paths.append(_relative_to_video(video_output_dir, output_path))
     finally:
         doc.close()
+        gc.collect()
 
     return {
         "pdf": _relative_to_video(video_output_dir, pdf_path),

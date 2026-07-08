@@ -1,11 +1,22 @@
 ---
-generated_at: 2026-07-07T10:43:22Z
-source_feature_count: 6
-source_issue_count: 37
-source_issue_fingerprint: abe4822be2105e73f9d215a4bc11074489ecbff46eab153275abaec113aa024c
+generated_at: 2026-07-07T14:54:06Z
+source_feature_count: 7
+source_issue_count: 44
+source_issue_fingerprint: e832cdc9b34fbd966a5b3aeccad024db8b3120382a39a2e73e0a8f12d6b53552
 ---
 
 # Issue Dependency Index
+
+## delivery-glossary-terminology-governance
+
+- View: [[issues/_views/delivery-glossary-terminology-governance-dependencies]]
+- Issue count: 7
+- Status distribution: ready-for-agent=7
+- Root issues: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
+- Currently executable: [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]
+- Status-blocked: None
+- Dependency-blocked: [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]] waits on [[issues/delivery-glossary-terminology-governance/01-establish-delivery-glossary-schema-and-validation-contract]]; [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]] waits on [[issues/delivery-glossary-terminology-governance/02-thread-delivery-glossary-through-final-artifact-manifest]]; [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]] waits on [[issues/delivery-glossary-terminology-governance/03-add-glossary-aware-acceptance-criterion]], [[issues/delivery-glossary-terminology-governance/04-integrate-delivery-glossary-into-youtube-render-workflow]], [[issues/delivery-glossary-terminology-governance/05-integrate-delivery-glossary-into-bilibili-render-workflow]]; [[issues/delivery-glossary-terminology-governance/07-add-end-to-end-glossary-governance-fixtures]] waits on [[issues/delivery-glossary-terminology-governance/06-enforce-delivery-glossary-in-review-roles]]
+- Consistency errors: None
 
 ## final-delivery-acceptance-gate
 

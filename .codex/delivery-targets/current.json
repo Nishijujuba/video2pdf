@@ -1,8 +1,0 @@
-{
-  "schema_version": "1.0",
-  "stage": "ready_for_delivery",
-  "video_output_dir": "workspace/Know your unknowns HTML Effectiveness_20260706_155115",
-  "target_file": "workspace/Know your unknowns HTML Effectiveness_20260706_155115/review/acceptance/delivery_target.json",
-  "source_skill": "bilibili-render-pdf",
-  "updated_at": "2026-07-06T18:33:52+08:00"
-}

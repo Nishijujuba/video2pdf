@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-07T10:43:22Z
+generated_at: 2026-07-07T14:54:06Z
 source_feature_slug: session-scoped-final-delivery-guard
 source_issue_count: 7
 source_issue_fingerprint: 4e79e5bc4ade2b2750955456fba798a964c4b027c689b450a6772c1c148c21c7

@@ -258,6 +258,34 @@ Artifact-grounded proof used by an Acceptance Report to justify a pass or fail d
 
 The only information an acceptance reviewer is allowed to use: the final delivered artifacts and the Acceptance Criteria File. Generation process records, chat history, writer notes, and intermediate drafts are outside the review context.
 
+## Delivery Glossary
+
+A final-delivery contract artifact for non-English teaching PDFs that records core English expressions and how they should appear in Chinese body text. The Delivery Glossary is normally stored at `review/acceptance/delivery_glossary.json` and listed in the allowed artifacts manifest so the Acceptance Reviewer may use it.
+
+The Delivery Glossary is not a default reader-facing appendix. It supports acceptance review and terminology consistency. A body glossary or concept index appears in the PDF only when the user or task explicitly asks for it.
+
+## Core English Expression
+
+An English source expression that carries explanatory work in a non-English teaching PDF. It enters the Delivery Glossary when it appears in a title, guide, chapter opening, paragraph conclusion, caption, table heading, method name, framework, category, or source-video concept label and the reader would lose the main argument without understanding it.
+
+Product names, company names, people names, code identifiers, commands, file extensions, and familiar technical abbreviations are outside this set unless they define a new core concept in the document.
+
+## Body Display Strategy
+
+The Delivery Glossary field that controls how a Core English Expression should appear in final PDF body text. Initial strategies are `preserve_english`, `chinese_with_english_parenthetical`, `chinese_primary_only`, and `quote_only`.
+
+The strategy is chosen by the Outline agent for the global terminology contract. Writer agents may propose new term candidates, but they should not independently change an existing term's body strategy.
+
+## Source English Preservation Location
+
+The Delivery Glossary field that records where the original English expression should be preserved. Initial locations are `body_parenthetical`, `body_after_definition`, `footnote`, `caption`, `quote_only`, `delivery_glossary_only`, and `none`.
+
+This field lets acceptance distinguish a correct Chinese-only body rendering, such as using "失落感" for source `grief`, from an accidental loss of a technical term that should remain visible in the body.
+
+## New Term Candidate
+
+A proposed Core English Expression discovered during chapter writing after the Outline agent has created the initial terminology contract. Writer agents report New Term Candidates in their handoff or delivery notes with a proposed Chinese primary name, reason, first-use location, and display strategy. The coordinator decides whether to merge the candidate into the global Delivery Glossary.
+
 ## Acceptance Reviewer
 
 A read-only reviewer that evaluates final delivered artifacts against an Acceptance Criteria File. The reviewer may write the Acceptance Report and optional human summary, but must not modify final artifacts, source materials, criteria files, generation records, or intermediate drafts.

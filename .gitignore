@@ -4,6 +4,11 @@ work/
 .cache/
 .venvs/
 .uv-cache-qwen3-asr/
+**/__pycache__/
+*.pyc
+.codex/delivery-targets/sessions/
+.codex/last_youtube_output.txt
+/magick_test.jpg
 
 # LaTeX build junk
 *.aux
@@ -29,3 +34,4 @@ workspace/**
 !workspace/**/
 !workspace/*.pdf
 !workspace/**/*.pdf
+workspace/**/待删除/

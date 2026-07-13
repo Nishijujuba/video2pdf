@@ -1,0 +1,1939 @@
+#!/usr/bin/env python3
+"""Tests for Final Delivery Guard target resolution and CLI checks."""
+
+from __future__ import annotations
+
+import json
+import hashlib
+import subprocess
+import sys
+import unittest
+import uuid
+from pathlib import Path
+
+import fitz
+
+from validate_acceptance_report import compute_artifact_fingerprint, create_allowed_artifacts_manifest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
+SCRIPT = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
+WRAPPER_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
+TEXT_ARTIFACT_CATEGORIES = {"style", "logic_readability", "formula_information_gain"}
+VISUAL_CATEGORIES = {
+    "figure_visual_integrity",
+    "table_layout_integrity",
+    "credibility_disclosure_placement",
+}
+
+
+def load_criteria() -> dict[str, object]:
+    return json.loads(CRITERIA_PATH.read_text(encoding="utf-8"))
+
+
+class DeliveryGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.case_dir = REPO_ROOT / "待删除" / "delivery-guard-tests" / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.video_dir = self.case_dir / "video"
+        self.acceptance_dir = self.video_dir / "review" / "acceptance"
+        self.rendered_dir = self.acceptance_dir / "rendered_pages"
+        self.rendered_dir.mkdir(parents=True, exist_ok=True)
+        (self.video_dir / "待删除").mkdir(parents=True, exist_ok=True)
+        (self.video_dir / "main.tex").write_text("Final article text.\n", encoding="utf-8")
+        self.write_pdf(self.video_dir / "final.pdf", pages=1)
+        (self.rendered_dir / "page_0001.png").write_bytes(b"png evidence")
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [("tex", "main.tex"), ("pdf", "final.pdf")],
+        )
+        self.compile_report_path = self.video_dir / "review" / "latex" / "compile_report.json"
+        self.report_path = self.acceptance_dir / "acceptance_report.json"
+        self.target_path = self.acceptance_dir / "delivery_target.json"
+        self.current_target_path = self.case_dir / ".codex" / "delivery-targets" / "current.json"
+        self.current_target_path.parent.mkdir(parents=True, exist_ok=True)
+        self.task_index_path = self.current_target_path.parent / "task-index.json"
+        self.session_id = f"session-{uuid.uuid4().hex}"
+        self.session_current_target_path = (
+            self.current_target_path.parent / "sessions" / self.session_id / "current.json"
+        )
+        self.write_compile_report(self.valid_compile_report())
+        self.write_report(self.valid_report())
+        self.write_delivery_target()
+        self.write_current_target()
+
+    def write_pdf(self, path: Path, *, pages: int) -> None:
+        doc = fitz.open()
+        for page_number in range(1, pages + 1):
+            page = doc.new_page(width=300, height=300)
+            page.insert_text((72, 72), f"Page {page_number}")
+        doc.save(path)
+        doc.close()
+
+    def valid_report(self) -> dict[str, object]:
+        criteria = load_criteria()
+        criteria_items = criteria["criteria"]
+        assert isinstance(criteria_items, list)
+        return {
+            "schema_version": "1.0",
+            "criteria_version": criteria["criteria_version"],
+            "criteria_file": "docs/acceptance/acceptance_criteria.v1.json",
+            "overall_status": "pass",
+            "decision_source": "acceptance_report_json",
+            "review_context_used": {
+                "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
+                "final_artifacts_only": True,
+                "generation_process_used": False,
+                "artifacts_read": [
+                    "main.tex",
+                    "final.pdf",
+                    "docs/acceptance/acceptance_criteria.v1.json",
+                ],
+            },
+            "artifact_fingerprints": [
+                compute_artifact_fingerprint(self.video_dir / "main.tex", "main.tex"),
+                compute_artifact_fingerprint(self.video_dir / "final.pdf", "final.pdf"),
+            ],
+            "criterion_results": [
+                {
+                    "criterion_id": item["id"],
+                    "category": item["category"],
+                    "status": "pass",
+                    "evidence": [
+                        {
+                            "artifact_path": "main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else "final.pdf",
+                            "location": "full artifact",
+                            "summary": "No blocking defect detected.",
+                        }
+                    ],
+                    "scan_evidence": (
+                        {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex"],
+                            "formulas_checked": [],
+                            "no_body_formula_found": True,
+                        }
+                        if item["category"] == "formula_information_gain"
+                        else {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else "final.pdf"],
+                        }
+                    ),
+                    "revision_guidance": None,
+                }
+                for item in criteria_items
+            ],
+            "visual_scan_evidence": {
+                "pdf": "final.pdf",
+                "page_count": 1,
+                "rendered_pages_dir": "review/acceptance/rendered_pages",
+                "pages_checked": [
+                    {
+                        "page": 1,
+                        "rendered_page_image": "review/acceptance/rendered_pages/page_0001.png",
+                        "status": "pass",
+                        "criteria_checked": [
+                            "figure_visual_integrity",
+                            "table_layout_integrity",
+                            "credibility_disclosure_placement",
+                        ],
+                        "failures": [],
+                    }
+                ],
+            },
+            "failed_criteria": [],
+            "revision_required": False,
+        }
+
+    def valid_report_for(self, video_dir: Path, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
+        criteria = load_criteria()
+        criteria_items = criteria["criteria"]
+        assert isinstance(criteria_items, list)
+        return {
+            "schema_version": "1.0",
+            "criteria_version": criteria["criteria_version"],
+            "criteria_file": "docs/acceptance/acceptance_criteria.v1.json",
+            "overall_status": "pass",
+            "decision_source": "acceptance_report_json",
+            "review_context_used": {
+                "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
+                "final_artifacts_only": True,
+                "generation_process_used": False,
+                "artifacts_read": [
+                    "main.tex",
+                    final_pdf_name,
+                    "docs/acceptance/acceptance_criteria.v1.json",
+                ],
+            },
+            "artifact_fingerprints": [
+                compute_artifact_fingerprint(video_dir / "main.tex", "main.tex"),
+                compute_artifact_fingerprint(video_dir / final_pdf_name, final_pdf_name),
+            ],
+            "criterion_results": [
+                {
+                    "criterion_id": item["id"],
+                    "category": item["category"],
+                    "status": "pass",
+                    "evidence": [
+                        {
+                            "artifact_path": "main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else final_pdf_name,
+                            "location": "full artifact",
+                            "summary": "No blocking defect detected.",
+                        }
+                    ],
+                    "scan_evidence": (
+                        {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex"],
+                            "formulas_checked": [],
+                            "no_body_formula_found": True,
+                        }
+                        if item["category"] == "formula_information_gain"
+                        else {
+                            "scan_policy": item["scan_policy"],
+                            "scanned_artifacts": ["main.tex" if item["category"] in TEXT_ARTIFACT_CATEGORIES else final_pdf_name],
+                        }
+                    ),
+                    "revision_guidance": None,
+                }
+                for item in criteria_items
+            ],
+            "visual_scan_evidence": {
+                "pdf": final_pdf_name,
+                "page_count": 1,
+                "rendered_pages_dir": "review/acceptance/rendered_pages",
+                "pages_checked": [
+                    {
+                        "page": 1,
+                        "rendered_page_image": "review/acceptance/rendered_pages/page_0001.png",
+                        "status": "pass",
+                        "criteria_checked": [
+                            "figure_visual_integrity",
+                            "table_layout_integrity",
+                            "credibility_disclosure_placement",
+                        ],
+                        "failures": [],
+                    }
+                ],
+            },
+            "failed_criteria": [],
+            "revision_required": False,
+        }
+
+    def write_report(self, report: dict[str, object]) -> None:
+        self.report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def compile_fingerprint(self, path: Path) -> dict[str, object]:
+        raw = path.read_bytes()
+        return {
+            "algorithm": "sha256",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "size_bytes": len(raw),
+        }
+
+    def valid_compile_report(self, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
+        source_tex = self.video_dir / "main.tex"
+        final_pdf = self.video_dir / final_pdf_name
+        return {
+            "schema_version": "latex_compile_report.v1",
+            "mode": "final",
+            "status": "passed",
+            "producer": "compile_latex_ascii.py",
+            "producer_contract": "latex_compile_guard.v1",
+            "producer_mode": "final",
+            "wrapper_script": str(WRAPPER_SCRIPT.resolve()),
+            "wrapper_script_fingerprint": self.compile_fingerprint(WRAPPER_SCRIPT),
+            "argv": [
+                "--tex",
+                str(source_tex.resolve()),
+                "--mode",
+                "final",
+                "--engine",
+                "fake-xelatex",
+                "--final-pdf",
+                str(final_pdf.resolve()),
+            ],
+            "source_tex": str(source_tex.resolve()),
+            "main_tex": str(source_tex.resolve()),
+            "final_pdf": str(final_pdf.resolve()),
+            "source_tex_fingerprint": self.compile_fingerprint(source_tex),
+            "final_pdf_fingerprint": self.compile_fingerprint(final_pdf),
+            "build_directory": str((self.video_dir / "待删除" / "latex-build" / "run").resolve()),
+            "log_paths": [],
+            "source_skill": "test-fixture",
+        }
+
+    def valid_compile_report_for(self, video_dir: Path, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
+        source_tex = video_dir / "main.tex"
+        final_pdf = video_dir / final_pdf_name
+        return {
+            "schema_version": "latex_compile_report.v1",
+            "mode": "final",
+            "status": "passed",
+            "producer": "compile_latex_ascii.py",
+            "producer_contract": "latex_compile_guard.v1",
+            "producer_mode": "final",
+            "wrapper_script": str(WRAPPER_SCRIPT.resolve()),
+            "wrapper_script_fingerprint": self.compile_fingerprint(WRAPPER_SCRIPT),
+            "argv": [
+                "--tex",
+                str(source_tex.resolve()),
+                "--mode",
+                "final",
+                "--engine",
+                "fake-xelatex",
+                "--final-pdf",
+                str(final_pdf.resolve()),
+            ],
+            "source_tex": str(source_tex.resolve()),
+            "main_tex": str(source_tex.resolve()),
+            "final_pdf": str(final_pdf.resolve()),
+            "source_tex_fingerprint": self.compile_fingerprint(source_tex),
+            "final_pdf_fingerprint": self.compile_fingerprint(final_pdf),
+            "build_directory": str((video_dir / "test-latex-build" / "run").resolve()),
+            "log_paths": [],
+            "source_skill": "test-fixture",
+        }
+
+    def handwritten_compile_report_without_wrapper_producer(self) -> dict[str, object]:
+        report = self.valid_compile_report()
+        for key in ("producer", "producer_contract", "producer_mode", "wrapper_script", "wrapper_script_fingerprint", "argv"):
+            del report[key]
+        return report
+
+    def write_compile_report(self, report: dict[str, object]) -> None:
+        self.compile_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.compile_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def failed_report(self) -> dict[str, object]:
+        report = self.valid_report()
+        report["overall_status"] = "fail"
+        report["revision_required"] = True
+        first_result = dict(report["criterion_results"][0])
+        first_result["status"] = "fail"
+        first_result["evidence"] = [
+            {
+                "artifact_path": "main.tex",
+                "location": "paragraph 1",
+                "summary": "Meta writing content remains in the final artifact.",
+            }
+        ]
+        first_result["revision_guidance"] = {
+            "required_change": "Remove meta writing process language from the final article.",
+            "allowed_fix_types": ["rewrite"],
+        }
+        report["criterion_results"][0] = first_result
+        report["failed_criteria"] = [first_result["criterion_id"]]
+        return report
+
+    def failed_report_for(self, video_dir: Path) -> dict[str, object]:
+        report = self.valid_report_for(video_dir)
+        report["overall_status"] = "fail"
+        report["revision_required"] = True
+        first_result = dict(report["criterion_results"][0])
+        first_result["status"] = "fail"
+        first_result["evidence"] = [
+            {
+                "artifact_path": "main.tex",
+                "location": "paragraph 1",
+                "summary": "Meta writing content remains in the final artifact.",
+            }
+        ]
+        first_result["revision_guidance"] = {
+            "required_change": "Remove meta writing process language from the final article.",
+            "allowed_fix_types": ["rewrite"],
+        }
+        report["criterion_results"][0] = first_result
+        report["failed_criteria"] = [first_result["criterion_id"]]
+        return report
+
+    def write_two_page_target_and_report(
+        self,
+        *,
+        pages_checked: list[int],
+        create_second_rendered_page: bool = False,
+    ) -> None:
+        two_page_pdf = self.video_dir / "final-two-page.pdf"
+        self.write_pdf(two_page_pdf, pages=2)
+        if create_second_rendered_page:
+            (self.rendered_dir / "page_0002.png").write_bytes(b"png evidence 2")
+        self.write_delivery_target(final_pdf="final-two-page.pdf")
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [("tex", "main.tex"), ("pdf", "final-two-page.pdf")],
+        )
+        self.write_compile_report(self.valid_compile_report(final_pdf_name="final-two-page.pdf"))
+        report = self.valid_report()
+        context = dict(report["review_context_used"])
+        context["artifacts_read"] = [
+            "main.tex",
+            "final-two-page.pdf",
+            "docs/acceptance/acceptance_criteria.v1.json",
+        ]
+        report["review_context_used"] = context
+        report["artifact_fingerprints"] = [
+            compute_artifact_fingerprint(self.video_dir / "main.tex", "main.tex"),
+            compute_artifact_fingerprint(two_page_pdf, "final-two-page.pdf"),
+        ]
+        criterion_results = []
+        for result in report["criterion_results"]:
+            result = dict(result)
+            if result["category"] in VISUAL_CATEGORIES:
+                result["evidence"] = [
+                    {
+                        "artifact_path": "final-two-page.pdf",
+                        "location": "full artifact",
+                        "summary": "No blocking defect detected.",
+                    }
+                ]
+                result["scan_evidence"] = {
+                    "scan_policy": result["scan_evidence"]["scan_policy"],
+                    "scanned_artifacts": ["final-two-page.pdf"],
+                }
+            criterion_results.append(result)
+        report["criterion_results"] = criterion_results
+        visual = dict(report["visual_scan_evidence"])
+        visual["pdf"] = "final-two-page.pdf"
+        visual["page_count"] = 2
+        visual["pages_checked"] = [
+            {
+                "page": page_number,
+                "rendered_page_image": f"review/acceptance/rendered_pages/page_{page_number:04d}.png",
+                "status": "pass",
+                "criteria_checked": [
+                    "figure_visual_integrity",
+                    "table_layout_integrity",
+                    "credibility_disclosure_placement",
+                ],
+                "failures": [],
+            }
+            for page_number in pages_checked
+        ]
+        report["visual_scan_evidence"] = visual
+        self.write_report(report)
+
+    def write_delivery_target(
+        self,
+        *,
+        stage: str = "accepted",
+        final_pdf: str = "final.pdf",
+        compile_report: str | None = "review/latex/compile_report.json",
+        compile_provenance_required: bool | None = None,
+        legacy_existing_pdf: bool | None = None,
+        recompiled: bool | None = None,
+    ) -> None:
+        target = {
+            "schema_version": "1.0",
+            "stage": stage,
+            "video_output_dir": ".",
+            "final_pdf": final_pdf,
+            "main_tex": "main.tex",
+            "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
+            "acceptance_report": "review/acceptance/acceptance_report.json",
+            "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
+            "attempt_limit": 3,
+        }
+        if compile_report is not None:
+            target["compile_report"] = compile_report
+        if compile_provenance_required is not None:
+            target["compile_provenance_required"] = compile_provenance_required
+        if legacy_existing_pdf is not None:
+            target["legacy_existing_pdf"] = legacy_existing_pdf
+        if recompiled is not None:
+            target["recompiled"] = recompiled
+        self.target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def write_current_target(self, *, stage: str = "accepted", video_output_dir: str | None = None) -> None:
+        rel_video = video_output_dir or self.video_dir.relative_to(REPO_ROOT).as_posix()
+        current = {
+            "schema_version": "1.0",
+            "stage": stage,
+            "video_output_dir": rel_video,
+            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+            "source_skill": "test-fixture",
+            "updated_at": "2026-07-05T12:00:00+08:00",
+        }
+        self.current_target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def write_session_current_target(
+        self,
+        *,
+        stage: str = "accepted",
+        video_output_dir: str | None = None,
+        session_id: str | None = None,
+    ) -> Path:
+        resolved_session_id = session_id or self.session_id
+        target_path = self.current_target_path.parent / "sessions" / resolved_session_id / "current.json"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        rel_video = video_output_dir or self.video_dir.relative_to(REPO_ROOT).as_posix()
+        current = {
+            "schema_version": "1.1",
+            "scope": "session",
+            "session_id": resolved_session_id,
+            "turn_id": "turn-fixture",
+            "observed_codex_thread_id": "diagnostic-thread-fixture",
+            "stage": stage,
+            "video_output_dir": rel_video,
+            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+            "source_skill": "test-fixture",
+            "started_at": "2026-07-05T12:00:00+08:00",
+            "updated_at": "2026-07-05T12:00:00+08:00",
+        }
+        target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        return target_path
+
+    def write_session_current_target_for(
+        self,
+        *,
+        session_id: str,
+        video_dir: Path,
+        target_path: Path,
+        stage: str = "accepted",
+    ) -> Path:
+        target_path_for_session = self.current_target_path.parent / "sessions" / session_id / "current.json"
+        target_path_for_session.parent.mkdir(parents=True, exist_ok=True)
+        current = {
+            "schema_version": "1.1",
+            "scope": "session",
+            "session_id": session_id,
+            "turn_id": "turn-fixture",
+            "observed_codex_thread_id": "diagnostic-thread-fixture",
+            "stage": stage,
+            "video_output_dir": video_dir.relative_to(REPO_ROOT).as_posix(),
+            "target_file": target_path.relative_to(REPO_ROOT).as_posix(),
+            "source_skill": "test-fixture",
+            "started_at": "2026-07-05T12:00:00+08:00",
+            "updated_at": "2026-07-05T12:00:00+08:00",
+        }
+        target_path_for_session.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        return target_path_for_session
+
+    def write_video_fixture(
+        self,
+        name: str,
+        *,
+        session_id: str,
+        stage: str = "accepted",
+        acceptance_status: str = "pass",
+    ) -> dict[str, Path | str]:
+        video_dir = self.case_dir / name
+        acceptance_dir = video_dir / "review" / "acceptance"
+        rendered_dir = acceptance_dir / "rendered_pages"
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        (video_dir / "main.tex").write_text(f"{name} article text.\n", encoding="utf-8")
+        self.write_pdf(video_dir / "final.pdf", pages=1)
+        (rendered_dir / "page_0001.png").write_bytes(f"png evidence {name}".encode("utf-8"))
+        create_allowed_artifacts_manifest(
+            video_dir,
+            CRITERIA_PATH,
+            [("tex", "main.tex"), ("pdf", "final.pdf")],
+        )
+        compile_report_path = video_dir / "review" / "latex" / "compile_report.json"
+        compile_report_path.parent.mkdir(parents=True, exist_ok=True)
+        compile_report_path.write_text(
+            json.dumps(self.valid_compile_report_for(video_dir), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        report = self.failed_report_for(video_dir) if acceptance_status == "fail" else self.valid_report_for(video_dir)
+        (acceptance_dir / "acceptance_report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        target_path = acceptance_dir / "delivery_target.json"
+        target = {
+            "schema_version": "1.0",
+            "stage": stage,
+            "video_output_dir": ".",
+            "final_pdf": "final.pdf",
+            "main_tex": "main.tex",
+            "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
+            "acceptance_report": "review/acceptance/acceptance_report.json",
+            "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
+            "compile_report": "review/latex/compile_report.json",
+            "attempt_limit": 3,
+        }
+        target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
+        session_target = self.write_session_current_target_for(
+            session_id=session_id,
+            video_dir=video_dir,
+            target_path=target_path,
+            stage=stage,
+        )
+        return {
+            "session_id": session_id,
+            "video_dir": video_dir,
+            "acceptance_dir": acceptance_dir,
+            "target_path": target_path,
+            "session_target": session_target,
+        }
+
+    def run_guard(
+        self,
+        *extra: str,
+        current_target: Path | None = None,
+        hook_input: dict[str, object] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(SCRIPT),
+                *extra,
+                "--project-root",
+                str(REPO_ROOT),
+                "--current-target",
+                str(current_target or self.current_target_path),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            input=json.dumps(hook_input) if hook_input is not None else None,
+            capture_output=True,
+            check=False,
+        )
+
+    def run_check(self, *, current_target: Path | None = None) -> subprocess.CompletedProcess[str]:
+        return self.run_guard("check", current_target=current_target or self.write_session_current_target())
+
+    def run_task_command(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        return self.run_guard(*extra, "--task-index", str(self.task_index_path))
+
+    def test_task_claim_records_new_active_owner_for_unowned_video_dir(self) -> None:
+        completed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("CLAIMED:", completed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(index["schema_version"], "1.0")
+        self.assertEqual(len(index["tasks"]), 1)
+        task = index["tasks"][0]
+        self.assertEqual(task["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["owner_session_id"], self.session_id)
+        self.assertEqual(task["owner_status"], "active")
+        self.assertEqual(task["last_session_id"], self.session_id)
+        self.assertEqual(task["stage"], "ready_for_delivery")
+        self.assertIn("updated_at", task)
+
+    def test_task_claim_resumes_same_owner_and_rejects_different_active_owner(self) -> None:
+        first = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "generating",
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        resumed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("RESUMED:", resumed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index["tasks"]), 1)
+        self.assertEqual(index["tasks"][0]["stage"], "ready_for_delivery")
+
+        conflict = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            "other-session",
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(conflict.returncode, 2)
+        self.assertIn("already has active owner_session_id", conflict.stderr)
+        index_after_conflict = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index_after_conflict["tasks"]), 1)
+
+    def test_task_handoff_records_continuation_and_supersedes_previous_owner(self) -> None:
+        old_session = "old-session"
+        claim = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            old_session,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        self.assertEqual(claim.returncode, 0, claim.stderr)
+
+        completed = self.run_task_command(
+            "task-handoff",
+            "--from-session-id",
+            old_session,
+            "--to-session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+            "--previous-owner-status",
+            "superseded",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("HANDOFF:", completed.stdout)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(index["tasks"]), 2)
+        previous, current = index["tasks"]
+        self.assertEqual(previous["owner_session_id"], old_session)
+        self.assertEqual(previous["owner_status"], "superseded")
+        self.assertEqual(previous["last_session_id"], self.session_id)
+        self.assertEqual(current["owner_session_id"], self.session_id)
+        self.assertEqual(current["owner_status"], "active")
+        self.assertEqual(current["continued_from_session_id"], old_session)
+        self.assertEqual(current["last_session_id"], self.session_id)
+
+    def test_task_handoff_is_required_for_different_session_takeover_and_can_abandon_previous_owner(self) -> None:
+        old_session = "old-session"
+        claim = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            old_session,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "generating",
+        )
+        self.assertEqual(claim.returncode, 0, claim.stderr)
+
+        conflict = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        self.assertEqual(conflict.returncode, 2)
+
+        handoff = self.run_task_command(
+            "task-handoff",
+            "--from-session-id",
+            old_session,
+            "--to-session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+            "--previous-owner-status",
+            "abandoned",
+        )
+
+        self.assertEqual(handoff.returncode, 0, handoff.stderr)
+        index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        previous, current = index["tasks"]
+        self.assertEqual(previous["owner_status"], "abandoned")
+        self.assertEqual(current["continued_from_session_id"], old_session)
+        self.assertEqual(current["owner_status"], "active")
+
+    def test_task_update_moves_active_owner_to_terminal_owner_statuses(self) -> None:
+        cases = [
+            ("blocked", "blocked"),
+            ("delivered", "delivered"),
+            ("superseded", "blocked"),
+            ("abandoned", "blocked"),
+        ]
+        for owner_status, stage in cases:
+            with self.subTest(owner_status=owner_status):
+                claim = self.run_task_command(
+                    "task-claim",
+                    "--session-id",
+                    self.session_id,
+                    "--video-output-dir",
+                    str(self.video_dir),
+                    "--target-file",
+                    str(self.target_path),
+                    "--stage",
+                    "ready_for_delivery",
+                )
+                self.assertEqual(claim.returncode, 0, claim.stderr)
+
+                completed = self.run_task_command(
+                    "task-update",
+                    "--session-id",
+                    self.session_id,
+                    "--video-output-dir",
+                    str(self.video_dir),
+                    "--stage",
+                    stage,
+                    "--owner-status",
+                    owner_status,
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("UPDATED:", completed.stdout)
+                index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+                task = index["tasks"][-1]
+                self.assertEqual(task["owner_session_id"], self.session_id)
+                self.assertEqual(task["owner_status"], owner_status)
+                self.assertEqual(task["stage"], stage)
+
+    def test_task_index_schema_and_path_boundaries_are_validated(self) -> None:
+        self.task_index_path.write_text(
+            json.dumps({"schema_version": "2.0", "tasks": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        invalid_schema = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(invalid_schema.returncode, 2)
+        self.assertIn("schema_version", invalid_schema.stderr)
+
+        self.task_index_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "tasks": [
+                        {
+                            "video_output_dir": "../outside-video",
+                            "target_file": "review/acceptance/delivery_target.json",
+                            "owner_session_id": self.session_id,
+                            "owner_status": "active",
+                            "last_session_id": self.session_id,
+                            "stage": "ready_for_delivery",
+                            "updated_at": "2026-07-05T12:00:00+08:00",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        escaped_entry = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(escaped_entry.returncode, 2)
+        self.assertIn("video_output_dir", escaped_entry.stderr)
+        self.assertIn("parent path segments", escaped_entry.stderr)
+
+        self.task_index_path.write_text(
+            json.dumps({"schema_version": "1.0", "tasks": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        outside_target = self.case_dir.parent / "outside" / "delivery_target.json"
+        escaped_cli_path = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(outside_target),
+            "--stage",
+            "ready_for_delivery",
+        )
+
+        self.assertEqual(escaped_cli_path.returncode, 2)
+        self.assertIn("target_file must stay inside video_output_dir", escaped_cli_path.stderr)
+
+    def test_check_requires_explicit_session_scoped_current_target(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(SCRIPT),
+                "check",
+                "--project-root",
+                str(REPO_ROOT),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--current-target", completed.stderr)
+        self.assertIn(".codex/delivery-targets/sessions/<session_id>/current.json", completed.stderr)
+
+    def test_check_rejects_explicit_legacy_current_target(self) -> None:
+        completed = self.run_guard("check", current_target=self.current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target schema_version must be '1.1'", completed.stderr)
+        self.assertIn("session-scoped", completed.stderr)
+
+    def test_check_blocks_missing_session_target_path(self) -> None:
+        completed = self.run_guard("check", current_target=self.session_current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target not found", completed.stderr)
+
+    def test_check_blocks_malformed_session_target_with_specific_reason(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["scope"] = "project"
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check(current_target=session_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target scope must be 'session'", completed.stderr)
+
+    def test_check_blocks_session_payload_at_non_session_target_path(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        self.current_target_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_guard("check", current_target=self.current_target_path)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target path must be under a delivery-targets/sessions/<session_id>/current.json tree", completed.stderr)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_check_blocks_session_target_when_path_session_id_disagrees(self) -> None:
+        session_target = self.write_session_current_target()
+        mismatch_target = self.current_target_path.parent / "sessions" / "different-session" / "current.json"
+        mismatch_target.parent.mkdir(parents=True, exist_ok=True)
+        mismatch_target.write_text(session_target.read_text(encoding="utf-8"), encoding="utf-8")
+
+        completed = self.run_guard("check", current_target=mismatch_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("current target path session_id must match current target session_id", completed.stderr)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_check_writes_fresh_passing_guard_report(self) -> None:
+        session_target = self.write_session_current_target()
+
+        completed = self.run_check(current_target=session_target)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["schema_version"], "1.0")
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["stage"], "accepted")
+        self.assertEqual(report["final_pdf"], "final.pdf")
+        self.assertEqual(report["validated_by"], "delivery_guard.py")
+        self.assertEqual(report["acceptance_report_status"], "pass")
+        self.assertIsNone(report["blocking_message"])
+        fingerprint_paths = {item["path"] for item in report["artifact_fingerprints"]}
+        self.assertIn(session_target.relative_to(REPO_ROOT).as_posix(), fingerprint_paths)
+        self.assertIn("final.pdf", fingerprint_paths)
+        self.assertIn("review/latex/compile_report.json", fingerprint_paths)
+        self.assertIn("acceptance_report_enforced", {item["condition"] for item in report["checked_conditions"]})
+
+    def test_check_rejects_missing_final_compile_report_for_new_video_target(self) -> None:
+        self.write_delivery_target(compile_report="review/latex/missing_compile_report.json")
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report is missing", completed.stderr)
+        self.assertIn("review/latex/missing_compile_report.json", completed.stderr)
+
+    def test_check_blocks_missing_video_delivery_target(self) -> None:
+        session_target = self.write_session_current_target()
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["target_file"] = (self.acceptance_dir / "missing_delivery_target.json").relative_to(REPO_ROOT).as_posix()
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check(current_target=session_target)
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("delivery target not found", completed.stderr)
+
+    def test_check_blocks_missing_allowed_artifacts_manifest(self) -> None:
+        target = json.loads(self.target_path.read_text(encoding="utf-8"))
+        target["allowed_artifacts_manifest"] = "review/acceptance/missing_manifest.json"
+        self.target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("allowed artifacts manifest not found", completed.stderr)
+
+    def test_check_rejects_quick_mode_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        report["mode"] = "quick"
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report mode must be 'final'", completed.stderr)
+        self.assertIn("quick", completed.stderr)
+
+    def test_check_rejects_failed_final_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        report["status"] = "failed"
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report status must be 'passed'", completed.stderr)
+        self.assertIn("failed", completed.stderr)
+
+    def test_check_rejects_handwritten_compile_report_without_wrapper_producer(self) -> None:
+        self.write_compile_report(self.handwritten_compile_report_without_wrapper_producer())
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("producer", completed.stderr)
+
+    def test_check_rejects_compile_report_with_stale_wrapper_fingerprint(self) -> None:
+        report = self.valid_compile_report()
+        report["wrapper_script_fingerprint"] = {
+            "algorithm": "sha256",
+            "sha256": "0" * 64,
+            "size_bytes": 1,
+        }
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("wrapper_script_fingerprint is stale", completed.stderr)
+
+    def test_check_rejects_compile_report_without_final_mode_argv(self) -> None:
+        report = self.valid_compile_report()
+        report["argv"] = ["--tex", str((self.video_dir / "main.tex").resolve()), "--mode", "quick"]
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("argv must include --mode final", completed.stderr)
+
+    def test_check_rejects_malformed_final_compile_report(self) -> None:
+        report = self.valid_compile_report()
+        del report["final_pdf"]
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("malformed final compile report", completed.stderr)
+        self.assertIn("final_pdf", completed.stderr)
+
+    def test_check_rejects_final_compile_report_with_missing_or_wrong_schema(self) -> None:
+        for label, schema_value in (("missing", None), ("wrong", "1.0")):
+            with self.subTest(label=label):
+                report = self.valid_compile_report()
+                if schema_value is None:
+                    del report["schema_version"]
+                else:
+                    report["schema_version"] = schema_value
+                self.write_compile_report(report)
+
+                completed = self.run_check()
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("schema_version", completed.stderr)
+
+    def test_check_rejects_compile_report_for_wrong_pdf(self) -> None:
+        wrong_pdf = self.video_dir / "wrong.pdf"
+        self.write_pdf(wrong_pdf, pages=1)
+        report = self.valid_compile_report()
+        report["final_pdf"] = str(wrong_pdf.resolve())
+        report["final_pdf_fingerprint"] = self.compile_fingerprint(wrong_pdf)
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report final_pdf does not match delivery_target.final_pdf", completed.stderr)
+
+    def test_check_rejects_compile_report_for_wrong_tex(self) -> None:
+        wrong_tex = self.video_dir / "wrong.tex"
+        wrong_tex.write_text("Wrong TeX source.\n", encoding="utf-8")
+        report = self.valid_compile_report()
+        report["source_tex"] = str(wrong_tex.resolve())
+        report["main_tex"] = str(wrong_tex.resolve())
+        report["source_tex_fingerprint"] = self.compile_fingerprint(wrong_tex)
+        self.write_compile_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report source_tex does not match delivery_target.main_tex", completed.stderr)
+
+    def test_check_rejects_stale_compile_report_pdf_fingerprint(self) -> None:
+        with (self.video_dir / "final.pdf").open("ab") as handle:
+            handle.write(b"\nchanged after final compile report")
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report final_pdf_fingerprint is stale", completed.stderr)
+
+    def test_check_rejects_stale_compile_report_tex_fingerprint(self) -> None:
+        (self.video_dir / "main.tex").write_text("Changed after final compile report.\n", encoding="utf-8")
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report source_tex_fingerprint is stale", completed.stderr)
+
+    def test_legacy_existing_pdf_can_explicitly_skip_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_legacy_compile_report.json",
+            compile_provenance_required=False,
+            legacy_existing_pdf=True,
+            recompiled=False,
+        )
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "pass")
+
+    def test_new_video_target_cannot_disable_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_compile_report.json",
+            compile_provenance_required=False,
+        )
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("compile_provenance_required may be false only for legacy_existing_pdf", completed.stderr)
+
+    def test_legacy_skip_requires_explicit_no_recompile_claim(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_legacy_compile_report.json",
+            compile_provenance_required=False,
+            legacy_existing_pdf=True,
+        )
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("recompiled is explicitly false", completed.stderr)
+
+    def test_legacy_recompile_target_requires_compile_provenance(self) -> None:
+        self.write_delivery_target(
+            compile_report="review/latex/missing_recompile_compile_report.json",
+            compile_provenance_required=True,
+            legacy_existing_pdf=True,
+            recompiled=True,
+        )
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("final compile report is missing", completed.stderr)
+        self.assertIn("missing_recompile_compile_report.json", completed.stderr)
+
+    def test_check_rejects_stale_acceptance_report(self) -> None:
+        (self.video_dir / "main.tex").write_text("Changed after acceptance.\n", encoding="utf-8")
+        self.write_compile_report(self.valid_compile_report())
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("artifact_fingerprints entry is stale: main.tex", completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("Final Delivery Guard blocked delivery", report["blocking_message"])
+
+    def test_check_rejects_failed_acceptance_report_decision(self) -> None:
+        self.write_report(self.failed_report())
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("acceptance report status 'fail' blocks delivery", completed.stderr)
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["acceptance_report_status"], "fail")
+
+    def test_check_rejects_malformed_acceptance_report(self) -> None:
+        report = self.valid_report()
+        del report["overall_status"]
+        self.write_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("report missing keys", completed.stderr)
+        self.assertIn("overall_status", completed.stderr)
+
+    def test_check_rejects_acceptance_report_with_forbidden_context(self) -> None:
+        report = self.valid_report()
+        context = dict(report["review_context_used"])
+        context["artifacts_read"] = [
+            *context["artifacts_read"],
+            "review/pyramid/main.pyramid.json",
+        ]
+        report["review_context_used"] = context
+        self.write_report(report)
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("review_context_used.artifacts_read", completed.stderr)
+        self.assertIn("outside allowed artifacts", completed.stderr)
+
+    def test_check_rejects_manifest_mismatch_and_missing_rendered_page_coverage(self) -> None:
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest["final_artifacts"] = [{"role": "tex", "path": "main.tex"}]
+        self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        manifest_mismatch = self.run_check()
+
+        self.assertEqual(manifest_mismatch.returncode, 2)
+        self.assertIn("final PDF is absent from allowed_artifacts_manifest.json", manifest_mismatch.stderr)
+
+        self.write_two_page_target_and_report(pages_checked=[1])
+
+        missing_page = self.run_check()
+
+        self.assertEqual(missing_page.returncode, 2)
+        self.assertIn("visual_scan_evidence.pages_checked must cover every page exactly once", missing_page.stderr)
+
+    def test_check_rejects_missing_rendered_page_image(self) -> None:
+        self.write_two_page_target_and_report(pages_checked=[1, 2])
+
+        completed = self.run_check()
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("rendered page image is missing", completed.stderr)
+        self.assertIn("review/acceptance/rendered_pages/page_0002.png", completed.stderr)
+
+    def test_resolver_rejects_invalid_stage_and_path_escape(self) -> None:
+        invalid_stage_target = self.write_session_current_target(stage="almost_ready")
+
+        invalid_stage = self.run_check(current_target=invalid_stage_target)
+
+        self.assertEqual(invalid_stage.returncode, 2)
+        self.assertIn("current target stage is invalid", invalid_stage.stderr)
+
+        path_escape_target = self.write_session_current_target(video_output_dir="../outside")
+        path_escape = self.run_check(current_target=path_escape_target)
+
+        self.assertEqual(path_escape.returncode, 2)
+        self.assertIn("current target video_output_dir", path_escape.stderr)
+
+    def test_hook_stop_runs_guard_once_then_reuses_fresh_report(self) -> None:
+        self.write_session_current_target()
+
+        first = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("PASS:", first.stdout)
+        self.assertTrue((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+        second = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("fresh passing guard report", second.stdout)
+
+    def test_hook_stop_reruns_guard_when_session_target_fingerprint_changes(self) -> None:
+        session_target = self.write_session_current_target()
+
+        first = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("PASS:", first.stdout)
+
+        current = json.loads(session_target.read_text(encoding="utf-8"))
+        current["turn_id"] = "changed-turn-fixture"
+        session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        second = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("PASS:", second.stdout)
+        self.assertNotIn("fresh passing guard report", second.stdout)
+
+    def test_hook_stop_dispatches_guard_for_ready_or_accepted_session_target(self) -> None:
+        self.write_current_target(stage="blocked")
+        for stage in ("ready_for_delivery", "accepted"):
+            with self.subTest(stage=stage):
+                self.write_delivery_target(stage=stage)
+                self.write_session_current_target(stage=stage)
+
+                completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("PASS:", completed.stdout)
+                report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "pass")
+                self.assertEqual(report["stage"], stage)
+
+    def test_hook_stop_blocks_missing_session_id_from_official_hook_input(self) -> None:
+        completed = self.run_guard("hook-stop", hook_input={})
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        self.assertIn("session_id", completed.stderr)
+
+    def test_hook_stop_allows_generating_session_target_from_official_hook_input(self) -> None:
+        self.write_delivery_target(stage="generating")
+        self.write_session_current_target(stage="generating")
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("stage generating", completed.stdout)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_hook_stop_allows_delivered_session_target_and_reports_archive_workflow(self) -> None:
+        self.write_delivery_target(stage="delivered")
+        self.write_session_current_target(stage="delivered")
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("stale delivered session target", completed.stdout)
+        self.assertIn("archive", completed.stdout)
+
+    def test_successful_fixture_workflow_reaches_guard_and_clears_current_target(self) -> None:
+        self.write_session_current_target()
+
+        guarded = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+        self.assertEqual(guarded.returncode, 0, guarded.stderr)
+
+        cleared = self.run_guard("clear-target", "--video-output-dir", str(self.video_dir))
+
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        archived_targets = list((self.video_dir / "待删除" / "delivery-targets").glob("current-*.json"))
+        self.assertTrue(archived_targets)
+        archived = json.loads(archived_targets[0].read_text(encoding="utf-8"))
+        self.assertEqual(archived["stage"], "delivered")
+        if self.current_target_path.exists():
+            active = json.loads(self.current_target_path.read_text(encoding="utf-8"))
+            self.assertEqual(active["stage"], "delivered")
+
+    def test_clear_target_archives_session_target_and_marks_task_delivered(self) -> None:
+        self.write_session_current_target(stage="accepted")
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+
+        archive_dir = self.video_dir / "待删除" / "delivery-targets" / "sessions"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        existing_archive = archive_dir / f"current-{self.session_id}-existing.json"
+        existing_archive.write_text('{"preserve": true}\n', encoding="utf-8")
+
+        cleared = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            "--video-output-dir",
+            str(self.video_dir),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertTrue(existing_archive.exists())
+        archived_targets = sorted(archive_dir.glob(f"*{self.session_id}*.json"))
+        self.assertGreaterEqual(len(archived_targets), 2)
+        delivered_archives = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in archived_targets
+            if path != existing_archive
+        ]
+        self.assertEqual(delivered_archives[0]["stage"], "delivered")
+        self.assertEqual(delivered_archives[0]["session_id"], self.session_id)
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        task = task_index["tasks"][0]
+        self.assertEqual(task["owner_status"], "delivered")
+        self.assertEqual(task["stage"], "delivered")
+        self.assertEqual(task["last_session_id"], self.session_id)
+
+    def test_clear_target_missing_session_target_is_idempotent(self) -> None:
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+        before_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+
+        cleared = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertIn("No active session delivery target", cleared.stdout)
+        self.assertEqual(json.loads(self.task_index_path.read_text(encoding="utf-8")), before_index)
+
+    def test_clear_target_rejects_video_dir_mismatch_before_archive(self) -> None:
+        self.write_session_current_target(stage="accepted")
+        claimed = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "accepted",
+        )
+        self.assertEqual(claimed.returncode, 0, claimed.stderr)
+
+        blocked = self.run_guard(
+            "clear-target",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+            "--video-output-dir",
+            str(self.case_dir),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("video_output_dir must match current target video_output_dir", blocked.stderr)
+        self.assertTrue(self.session_current_target_path.exists())
+        self.assertFalse((self.video_dir / "待删除" / "delivery-targets" / "sessions").exists())
+
+    def test_concurrent_sessions_pass_and_block_without_cross_session_leakage(self) -> None:
+        session_a = "session-a"
+        session_b = "session-b"
+        video_a = self.write_video_fixture("video-a", session_id=session_a, acceptance_status="pass")
+        video_b = self.write_video_fixture("video-b", session_id=session_b, acceptance_status="fail")
+        self.write_current_target(stage="blocked")
+
+        passed_a = self.run_check(current_target=video_a["session_target"])
+        blocked_b = self.run_check(current_target=video_b["session_target"])
+        hook_a_after_b = self.run_guard("hook-stop", hook_input={"session_id": session_a})
+
+        self.assertEqual(passed_a.returncode, 0, passed_a.stderr)
+        self.assertIn("PASS:", passed_a.stdout)
+        self.assertEqual(blocked_b.returncode, 2)
+        self.assertIn("Final Delivery Guard blocked delivery", blocked_b.stderr)
+        self.assertIn("acceptance report status 'fail' blocks delivery", blocked_b.stderr)
+        self.assertEqual(hook_a_after_b.returncode, 0, hook_a_after_b.stderr)
+        self.assertIn("fresh passing guard report", hook_a_after_b.stdout)
+        self.assertTrue((video_a["acceptance_dir"] / "delivery_guard_report.json").exists())
+        report_b = json.loads((video_b["acceptance_dir"] / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report_b["status"], "fail")
+
+    def test_concurrent_task_index_rejects_same_video_owner_and_allows_handoff(self) -> None:
+        session_a = "owner-a"
+        session_b = "owner-b"
+        first_claim = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            session_a,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        conflict = self.run_task_command(
+            "task-claim",
+            "--session-id",
+            session_b,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+        )
+        handoff = self.run_task_command(
+            "task-handoff",
+            "--from-session-id",
+            session_a,
+            "--to-session-id",
+            session_b,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--target-file",
+            str(self.target_path),
+            "--stage",
+            "ready_for_delivery",
+            "--previous-owner-status",
+            "superseded",
+        )
+
+        self.assertEqual(first_claim.returncode, 0, first_claim.stderr)
+        self.assertEqual(conflict.returncode, 2)
+        self.assertIn("already has active owner_session_id", conflict.stderr)
+        self.assertEqual(handoff.returncode, 0, handoff.stderr)
+        tasks = json.loads(self.task_index_path.read_text(encoding="utf-8"))["tasks"]
+        previous, current = tasks
+        self.assertEqual(previous["owner_session_id"], session_a)
+        self.assertEqual(previous["owner_status"], "superseded")
+        self.assertEqual(current["owner_session_id"], session_b)
+        self.assertEqual(current["continued_from_session_id"], session_a)
+        self.assertEqual(current["owner_status"], "active")
+
+    def test_delivered_archive_for_one_session_preserves_other_active_session(self) -> None:
+        session_a = "archive-a"
+        session_b = "archive-b"
+        video_a = self.write_video_fixture("archive-video-a", session_id=session_a)
+        video_b = self.write_video_fixture("archive-video-b", session_id=session_b)
+        for fixture in (video_a, video_b):
+            claimed = self.run_task_command(
+                "task-claim",
+                "--session-id",
+                str(fixture["session_id"]),
+                "--video-output-dir",
+                str(fixture["video_dir"]),
+                "--target-file",
+                str(fixture["target_path"]),
+                "--stage",
+                "accepted",
+            )
+            self.assertEqual(claimed.returncode, 0, claimed.stderr)
+
+        cleared_a = self.run_guard(
+            "clear-target",
+            "--session-id",
+            session_a,
+            "--task-index",
+            str(self.task_index_path),
+            "--video-output-dir",
+            str(video_a["video_dir"]),
+            current_target=video_a["session_target"],
+        )
+        passed_b = self.run_check(current_target=video_b["session_target"])
+
+        self.assertEqual(cleared_a.returncode, 0, cleared_a.stderr)
+        self.assertFalse(video_a["session_target"].exists())
+        self.assertTrue(video_b["session_target"].exists())
+        archives = list(video_a["video_dir"].rglob(f"*{session_a}*.json"))
+        self.assertTrue(archives)
+        self.assertEqual(passed_b.returncode, 0, passed_b.stderr)
+        tasks = json.loads(self.task_index_path.read_text(encoding="utf-8"))["tasks"]
+        task_by_owner = {task["owner_session_id"]: task for task in tasks}
+        self.assertEqual(task_by_owner[session_a]["owner_status"], "delivered")
+        self.assertEqual(task_by_owner[session_b]["owner_status"], "active")
+
+    def test_diagnostic_video_output_dir_entrypoint_cannot_replace_session_target(self) -> None:
+        fixture = self.write_video_fixture("diagnostic-video", session_id="diagnostic-owner", acceptance_status="fail")
+        diagnostic = self.run_guard(
+            "record-failed-attempt",
+            "--session-id",
+            "missing-diagnostic-session",
+            "--video-output-dir",
+            str(fixture["video_dir"]),
+            "--attempt-number",
+            "1",
+            "--changed-file",
+            "main.tex",
+            "--task-index",
+            str(self.task_index_path),
+        )
+        legacy_check = self.run_guard("check", current_target=self.current_target_path)
+
+        self.assertEqual(diagnostic.returncode, 2)
+        self.assertIn("Final Delivery Guard blocked delivery", diagnostic.stderr)
+        self.assertFalse((fixture["acceptance_dir"] / "attempts" / "attempt_01").exists())
+        self.assertEqual(legacy_check.returncode, 2)
+        self.assertIn("session-scoped delivery target", legacy_check.stderr)
+
+    def test_hook_stop_allows_missing_target_and_generating_stage(self) -> None:
+        self.write_current_target(stage="blocked")
+
+        no_target = self.run_guard("hook-stop", hook_input={"session_id": "missing-session-target"})
+
+        self.assertEqual(no_target.returncode, 0, no_target.stderr)
+        self.assertIn("No active delivery target", no_target.stdout)
+
+        self.write_delivery_target(stage="generating")
+        self.write_session_current_target(stage="generating")
+        generating = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(generating.returncode, 0, generating.stderr)
+        self.assertIn("stage generating", generating.stdout)
+        self.assertFalse((self.acceptance_dir / "delivery_guard_report.json").exists())
+
+    def test_hook_stop_does_not_scan_task_index_to_decide_blocking(self) -> None:
+        task_index = self.current_target_path.parent / "task-index.json"
+        cases = [
+            {
+                "schema_version": "1.0",
+                "tasks": [
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "other-session",
+                        "owner_status": "active",
+                        "last_session_id": "other-session",
+                        "stage": "blocked",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    }
+                ],
+            },
+            {
+                "schema_version": "2.0",
+                "tasks": [],
+            },
+            {
+                "schema_version": "1.0",
+                "tasks": [
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "first-session",
+                        "owner_status": "active",
+                        "last_session_id": "first-session",
+                        "stage": "ready_for_delivery",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    },
+                    {
+                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
+                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "owner_session_id": "second-session",
+                        "owner_status": "active",
+                        "last_session_id": "second-session",
+                        "stage": "ready_for_delivery",
+                        "updated_at": "2026-07-05T12:00:00+08:00",
+                    },
+                ],
+            },
+        ]
+        for payload in cases:
+            with self.subTest(schema_version=payload["schema_version"], task_count=len(payload["tasks"])):
+                task_index.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("No active delivery target", completed.stdout)
+
+    def test_hook_stop_blocks_blocked_stage_with_recovery_instruction(self) -> None:
+        self.write_delivery_target(stage="blocked")
+        self.write_session_current_target(stage="blocked")
+
+        completed = self.run_guard("hook-stop", hook_input={"session_id": self.session_id})
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        self.assertIn("Use a separate Acceptance Reviewer subagent and repair subagents", completed.stderr)
+        self.assertIn("manual_repair_brief.md", completed.stderr)
+
+    def test_old_pdf_prepare_infers_video_dir_and_rejects_isolated_pdf_without_boundary(self) -> None:
+        completed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        prepared_target = json.loads(self.target_path.read_text(encoding="utf-8"))
+        active_target = json.loads(self.session_current_target_path.read_text(encoding="utf-8"))
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(prepared_target["stage"], "ready_for_delivery")
+        self.assertEqual(prepared_target["video_output_dir"], ".")
+        self.assertEqual(prepared_target["final_pdf"], "final.pdf")
+        self.assertEqual(prepared_target["attempt_limit"], 3)
+        self.assertIs(prepared_target["compile_provenance_required"], False)
+        self.assertIs(prepared_target["legacy_existing_pdf"], True)
+        self.assertIs(prepared_target["recompiled"], False)
+        self.assertEqual(active_target["schema_version"], "1.1")
+        self.assertEqual(active_target["scope"], "session")
+        self.assertEqual(active_target["session_id"], self.session_id)
+        self.assertEqual(active_target["stage"], "ready_for_delivery")
+        self.assertEqual(active_target["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task_index["schema_version"], "1.0")
+        self.assertEqual(len(task_index["tasks"]), 1)
+        task = task_index["tasks"][0]
+        self.assertEqual(task["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["target_file"], self.target_path.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(task["owner_session_id"], self.session_id)
+        self.assertEqual(task["owner_status"], "active")
+        self.assertEqual(task["stage"], "ready_for_delivery")
+
+        resumed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        resumed_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(resumed_index["tasks"]), 1)
+        self.assertEqual(resumed_index["tasks"][0]["owner_session_id"], self.session_id)
+
+        isolated_pdf = self.case_dir / "isolated.pdf"
+        self.write_pdf(isolated_pdf, pages=1)
+        isolated = self.run_guard(
+            "old-pdf-prepare",
+            str(isolated_pdf),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(isolated.returncode, 2)
+        self.assertIn("requires an explicit video_output_dir", isolated.stderr)
+
+        outside_pdf = REPO_ROOT.parent / "outside.pdf"
+        escaped = self.run_guard(
+            "old-pdf-prepare",
+            str(outside_pdf),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(escaped.returncode, 2)
+        self.assertIn("pdf escapes project boundary", escaped.stderr)
+
+    def test_old_pdf_prepare_accepts_explicit_video_output_dir(self) -> None:
+        completed = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--video-output-dir",
+            str(self.video_dir),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        active_target = json.loads(self.session_current_target_path.read_text(encoding="utf-8"))
+        prepared_target = json.loads(self.target_path.read_text(encoding="utf-8"))
+        self.assertEqual(active_target["video_output_dir"], self.video_dir.relative_to(REPO_ROOT).as_posix())
+        self.assertEqual(prepared_target["final_pdf"], "final.pdf")
+        self.assertEqual(prepared_target["main_tex"], "main.tex")
+
+    def test_old_pdf_prepare_blocks_ambiguous_or_escaping_video_dir_before_mutating_targets(self) -> None:
+        nested_dir = self.video_dir / "nested"
+        (nested_dir / "待删除").mkdir(parents=True, exist_ok=True)
+        (nested_dir / "main.tex").write_text("Nested final article text.\n", encoding="utf-8")
+        self.write_pdf(nested_dir / "final.pdf", pages=1)
+        before_target = self.target_path.read_text(encoding="utf-8")
+
+        ambiguous = self.run_guard(
+            "old-pdf-prepare",
+            str(nested_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(ambiguous.returncode, 2)
+        self.assertIn("ambiguous", ambiguous.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertFalse(self.task_index_path.exists())
+        self.assertEqual(self.target_path.read_text(encoding="utf-8"), before_target)
+
+        escaping = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--video-output-dir",
+            "..\\outside",
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+
+        self.assertEqual(escaping.returncode, 2)
+        self.assertIn("video_output_dir", escaping.stderr)
+        self.assertFalse(self.session_current_target_path.exists())
+        self.assertFalse(self.task_index_path.exists())
+        self.assertEqual(self.target_path.read_text(encoding="utf-8"), before_target)
+
+    def test_record_failed_attempt_preserves_evidence_and_blocks_after_third_attempt(self) -> None:
+        prepared = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        self.write_report(self.failed_report())
+        (self.acceptance_dir / "acceptance_summary.md").write_text("Failed acceptance summary.\n", encoding="utf-8")
+
+        first = self.run_guard(
+            "record-failed-attempt",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--attempt-number",
+            "1",
+            "--changed-file",
+            "main.tex",
+            "--task-index",
+            str(self.task_index_path),
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        attempt_dir = self.acceptance_dir / "attempts" / "attempt_01"
+        self.assertTrue((attempt_dir / "acceptance_report.json").exists())
+        self.assertTrue((attempt_dir / "acceptance_summary.md").exists())
+        self.assertTrue((attempt_dir / "repair_brief.md").exists())
+        self.assertTrue((attempt_dir / "changed_files.json").exists())
+        repair_brief = (attempt_dir / "repair_brief.md").read_text(encoding="utf-8")
+        self.assertIn("no_meta_writing_content", repair_brief)
+        self.assertIn("visual_scan_evidence", repair_brief)
+        self.assertIn("Remove meta writing process language", repair_brief)
+        self.assertTrue(self.report_path.exists())
+        self.assertEqual(json.loads(self.report_path.read_text(encoding="utf-8"))["overall_status"], "fail")
+
+        for attempt_number in (2, 3):
+            completed = self.run_guard(
+                "record-failed-attempt",
+                "--session-id",
+                self.session_id,
+                "--video-output-dir",
+                str(self.video_dir),
+                "--attempt-number",
+                str(attempt_number),
+                "--changed-file",
+                "main.tex",
+                "--task-index",
+                str(self.task_index_path),
+                current_target=self.session_current_target_path,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            attempt_dir = self.acceptance_dir / "attempts" / f"attempt_{attempt_number:02d}"
+            self.assertTrue((attempt_dir / "acceptance_report.json").exists())
+            self.assertTrue((attempt_dir / "acceptance_summary.md").exists())
+            self.assertTrue((attempt_dir / "repair_brief.md").exists())
+            self.assertTrue((attempt_dir / "changed_files.json").exists())
+
+        manual_brief = self.acceptance_dir / "manual_repair_brief.md"
+        self.assertTrue(manual_brief.exists())
+        self.assertIn("attempt_03", manual_brief.read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(self.target_path.read_text(encoding="utf-8"))["stage"], "blocked")
+        self.assertEqual(json.loads(self.session_current_target_path.read_text(encoding="utf-8"))["stage"], "blocked")
+        task_index = json.loads(self.task_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(task_index["tasks"][0]["stage"], "blocked")
+        self.assertEqual(task_index["tasks"][0]["owner_status"], "blocked")
+
+    def test_record_failed_attempt_rejects_automatic_waiver_argument(self) -> None:
+        prepared = self.run_guard(
+            "old-pdf-prepare",
+            str(self.video_dir / "final.pdf"),
+            "--session-id",
+            self.session_id,
+            "--task-index",
+            str(self.task_index_path),
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        self.write_report(self.failed_report())
+
+        completed = self.run_guard(
+            "record-failed-attempt",
+            "--session-id",
+            self.session_id,
+            "--video-output-dir",
+            str(self.video_dir),
+            "--attempt-number",
+            "1",
+            "--changed-file",
+            "main.tex",
+            "--task-index",
+            str(self.task_index_path),
+            "--waiver",
+            "automatic",
+            current_target=self.session_current_target_path,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("unrecognized arguments: --waiver", completed.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

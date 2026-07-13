@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bilibili Batch Render PDF"
+  short_description: "Render one independent PDF per Bilibili part with resumable Codex exec, manual fallback, and artifact reconciliation."
+  default_prompt: "Use this skill to enumerate a Bilibili multi-part source, create a resumable manifest, and run each selected part through codex exec or the manual prompt/reconcile fallback when Codex CLI infrastructure fails. Each part must use bilibili-render-pdf, obey AGENTS.md, and run the required outline, writer, figure, consistency, and independent review subagents."

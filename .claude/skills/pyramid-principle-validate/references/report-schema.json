@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pyramid Principle Text Gate Report",
+  "type": "object",
+  "required": [
+    "target",
+    "artifact_type",
+    "context_label",
+    "status",
+    "score",
+    "dimensions",
+    "findings",
+    "required_revisions",
+    "waiver",
+    "audit"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "waiver": {
+            "properties": {
+              "state": {
+                "const": "none"
+              }
+            },
+            "required": ["state"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "waiver": {
+            "properties": {
+              "approved_by": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "null"
+              },
+              "approved_at": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "waiver": {
+            "properties": {
+              "state": {
+                "const": "approved"
+              }
+            },
+            "required": ["state"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "waiver": {
+            "properties": {
+              "approved_by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "approved_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "pass"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "waiver": {
+            "properties": {
+              "state": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "needs_revision", "blocked"]
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dimensions": {
+      "type": "object",
+      "required": [
+        "top_down_clarity",
+        "support_hierarchy",
+        "grouping_mece",
+        "teaching_progression",
+        "title_body_alignment"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "top_down_clarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "support_hierarchy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "grouping_mece": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "teaching_progression": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "title_body_alignment": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "location", "issue", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["info", "minor", "major", "critical"]
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "issue": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "required_revisions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "waiver": {
+      "type": "object",
+      "required": ["state", "approved_by", "reason", "approved_at"],
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["none", "approved"]
+        },
+        "approved_by": {
+          "type": ["string", "null"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "approved_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "required": [
+        "standard_name",
+        "backend",
+        "prompt_version",
+        "input_sha256",
+        "input_size_chars",
+        "max_input_size_chars",
+        "large_input_approval_state",
+        "evaluation_context",
+        "generated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "standard_name": {
+          "type": "string",
+          "const": "Pyramid Principle Text Standard"
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["codex-exec"]
+        },
+        "prompt_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input_size_chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_input_size_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "large_input_approval_state": {
+          "type": "string",
+          "enum": ["not_required", "approved"]
+        },
+        "evaluation_context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-glossary.v1.json",
+  "title": "Delivery Glossary",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "language_profile",
+    "default_reader_mode",
+    "terms"
+  ],
+  "properties": {
+    "schema_version": { "const": "delivery_glossary.v1" },
+    "language_profile": { "const": "non_english_teaching_pdf" },
+    "default_reader_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "terms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "english",
+          "chinese_primary",
+          "plain_language_boundary",
+          "related_terms",
+          "opposed_terms",
+          "first_use_expected_location",
+          "body_display_strategy",
+          "where_to_preserve_english",
+          "required_after_first_use"
+        ],
+        "properties": {
+          "english": { "type": "string", "minLength": 1 },
+          "chinese_primary": { "type": "string", "minLength": 1 },
+          "plain_language_boundary": { "type": "string", "minLength": 1 },
+          "related_terms": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "opposed_terms": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "first_use_expected_location": { "type": "string", "minLength": 1 },
+          "body_display_strategy": {
+            "enum": [
+              "preserve_english",
+              "chinese_with_english_parenthetical",
+              "chinese_primary_only",
+              "quote_only"
+            ]
+          },
+          "where_to_preserve_english": {
+            "enum": [
+              "body_parenthetical",
+              "body_after_definition",
+              "footnote",
+              "caption",
+              "quote_only",
+              "delivery_glossary_only",
+              "none"
+            ]
+          },
+          "required_after_first_use": { "type": "string", "minLength": 1 },
+          "forbidden_body_forms": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

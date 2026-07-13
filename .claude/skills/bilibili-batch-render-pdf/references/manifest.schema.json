@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/bilibili-batch-render-pdf/manifest.schema.json",
+  "title": "Bilibili Batch Render PDF Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "source_url",
+    "batch_name",
+    "output_root",
+    "batch_dir",
+    "control_dir",
+    "cookie_file",
+    "items"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "bilibili-batch-render-pdf" },
+    "source_url": { "type": "string" },
+    "batch_name": { "type": "string" },
+    "batch_title": { "type": "string" },
+    "output_root": { "type": "string" },
+    "batch_dir": { "type": "string" },
+    "control_dir": { "type": "string" },
+    "cookie_file": { "type": "string" },
+    "venv_python": { "type": "string" },
+    "tools_dir": { "type": "string" },
+    "xelatex": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "part_id",
+          "index",
+          "title",
+          "url",
+          "output_dir",
+          "status",
+          "attempt",
+          "prompt_path",
+          "log_path",
+          "last_message_path",
+          "status_path",
+          "output_schema_path"
+        ],
+        "properties": {
+          "part_id": { "type": "string" },
+          "index": { "type": "integer", "minimum": 1 },
+          "page": { "type": "integer", "minimum": 1 },
+          "bvid": {},
+          "id": {},
+          "title": { "type": "string" },
+          "part_title": { "type": "string" },
+          "url": { "type": "string" },
+          "source_url": { "type": "string" },
+          "output_dir": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["planned", "running", "succeeded", "failed", "blocked", "skipped", "cancelled"]
+          },
+          "attempt": { "type": "integer", "minimum": 0 },
+          "attempts": { "type": "integer", "minimum": 0 },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "started_at": { "type": ["string", "null"] },
+          "ended_at": { "type": ["string", "null"] },
+          "duration_ms": { "type": ["integer", "null"] },
+          "pid": { "type": ["integer", "null"] },
+          "exit_code": { "type": ["integer", "null"] },
+          "pdf_path": { "type": "string" },
+          "tex_path": { "type": "string" },
+          "artifact_checks": { "type": "object" },
+          "failure_class": { "type": "string" },
+          "error_message": { "type": "string" },
+          "retryable": { "type": "boolean" },
+          "next_action": { "type": "string" },
+          "raw_final_response": { "type": "object" },
+          "prompt_path": { "type": "string" },
+          "log_path": { "type": "string" },
+          "last_message_path": { "type": "string" },
+          "status_path": { "type": "string" },
+          "output_schema_path": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

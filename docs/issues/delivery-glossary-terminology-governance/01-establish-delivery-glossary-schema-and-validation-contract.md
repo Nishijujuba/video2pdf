@@ -53,11 +53,11 @@ The key domain concepts are defined in root `CONTEXT.md`: Delivery Glossary, Cor
 
 ## Acceptance Criteria
 
-- [ ] A valid minimal `delivery_glossary.v1` file passes validation.
-- [ ] Validation rejects missing required fields, empty required strings, invalid `language_profile`, invalid `body_display_strategy`, and invalid `where_to_preserve_english`.
-- [ ] Validation accepts future optional fields without making `forbidden_body_forms` mandatory in v1.
-- [ ] Fixture coverage includes `grief`, `capability overhang`, and a product-name exclusion case.
-- [ ] Documentation states that the Delivery Glossary is a contract artifact, not a default PDF appendix.
+- [x] A valid minimal `delivery_glossary.v1` file passes validation.
+- [x] Validation rejects missing required fields, empty required strings, invalid `language_profile`, invalid `body_display_strategy`, and invalid `where_to_preserve_english`.
+- [x] Validation accepts future optional fields without making `forbidden_body_forms` mandatory in v1.
+- [x] Fixture coverage includes `grief`, `capability overhang`, and a product-name exclusion case.
+- [x] Documentation states that the Delivery Glossary is a contract artifact, not a default PDF appendix.
 
 ## Execution Log
 

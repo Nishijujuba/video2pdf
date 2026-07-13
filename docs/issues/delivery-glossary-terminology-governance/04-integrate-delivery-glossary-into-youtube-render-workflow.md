@@ -53,12 +53,12 @@ The governing ADR is [[adr/0005-use-delivery-glossary-for-non-english-pdf-terms]
 
 ## Acceptance Criteria
 
-- [ ] YouTube workflow instructions require the Outline agent to create a global Delivery Glossary for non-English teaching PDFs.
-- [ ] YouTube Writer agent instructions require `new_term_candidates` in handoff notes, or `new_term_candidates: none`.
-- [ ] YouTube workflow coordinator instructions merge accepted candidates into `review/acceptance/delivery_glossary.json`.
-- [ ] YouTube workflow final manifest instructions include the glossary when applicable.
-- [ ] YouTube workflow instructions state that the glossary is not a PDF appendix unless explicitly requested.
-- [ ] English-learning and IELTS YouTube content keeps its existing English-primary behavior.
+- [x] YouTube workflow instructions require the Outline agent to create a global Delivery Glossary for non-English teaching PDFs.
+- [x] YouTube Writer agent instructions require `new_term_candidates` in handoff notes, or `new_term_candidates: none`.
+- [x] YouTube workflow coordinator instructions merge accepted candidates into `review/acceptance/delivery_glossary.json`.
+- [x] YouTube workflow final manifest instructions include the glossary when applicable.
+- [x] YouTube workflow instructions state that the glossary is not a PDF appendix unless explicitly requested.
+- [x] English-learning and IELTS YouTube content keeps its existing English-primary behavior.
 
 ## Execution Log
 

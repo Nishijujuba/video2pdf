@@ -55,12 +55,12 @@ The style acceptance concepts are defined in root `CONTEXT.md`: Style Acceptance
 
 ## Acceptance Criteria
 
-- [ ] The default acceptance criteria include a glossary-aware style criterion for non-English teaching PDFs.
-- [ ] The criterion requires checking `body_display_strategy` and `where_to_preserve_english`.
-- [ ] The criterion treats bare English body use as a failure when a term requires `chinese_primary_only`.
-- [ ] The criterion treats missing English source preservation as a failure when a term requires visible preservation.
-- [ ] The criterion explicitly keeps `forbidden_body_forms` out of the v1 required contract while allowing it as future extension language.
-- [ ] Criteria validation passes for the updated default criteria file.
+- [x] The default acceptance criteria include a glossary-aware style criterion for non-English teaching PDFs.
+- [x] The criterion requires checking `body_display_strategy` and `where_to_preserve_english`.
+- [x] The criterion treats bare English body use as a failure when a term requires `chinese_primary_only`.
+- [x] The criterion treats missing English source preservation as a failure when a term requires visible preservation.
+- [x] The criterion explicitly keeps `forbidden_body_forms` out of the v1 required contract while allowing it as future extension language.
+- [x] Criteria validation passes for the updated default criteria file.
 
 ## Execution Log
 

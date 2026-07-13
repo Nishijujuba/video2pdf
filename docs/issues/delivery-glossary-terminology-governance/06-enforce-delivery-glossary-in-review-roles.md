@@ -58,11 +58,11 @@ The reviewer boundary follows [[adr/0002-use-json-acceptance-contract-for-final-
 
 ## Acceptance Criteria
 
-- [ ] Consistency agent instructions require checking glossary first-use, later-use, and strategy stability.
-- [ ] Acceptance Reviewer instructions list `delivery_glossary.json` as allowed input only when it appears in the manifest.
-- [ ] Acceptance Reviewer instructions require checking `body_display_strategy` and `where_to_preserve_english`.
-- [ ] Reviewer instructions include the `grief` case: `chinese_primary_only` plus `delivery_glossary_only` means body text should not make `grief` the sentence subject.
-- [ ] Reviewer boundary remains read-only and final-artifact-only.
+- [x] Consistency agent instructions require checking glossary first-use, later-use, and strategy stability.
+- [x] Acceptance Reviewer instructions list `delivery_glossary.json` as allowed input only when it appears in the manifest.
+- [x] Acceptance Reviewer instructions require checking `body_display_strategy` and `where_to_preserve_english`.
+- [x] Reviewer instructions include the `grief` case: `chinese_primary_only` plus `delivery_glossary_only` means body text should not make `grief` the sentence subject.
+- [x] Reviewer boundary remains read-only and final-artifact-only.
 
 ## Execution Log
 

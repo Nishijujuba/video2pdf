@@ -53,12 +53,12 @@ The governing ADR is [[adr/0005-use-delivery-glossary-for-non-english-pdf-terms]
 
 ## Acceptance Criteria
 
-- [ ] Bilibili workflow instructions require the Outline agent to create a global Delivery Glossary for non-English teaching PDFs.
-- [ ] Bilibili Writer agent instructions require `new_term_candidates` in handoff notes, or `new_term_candidates: none`.
-- [ ] Bilibili workflow coordinator instructions merge accepted candidates into `review/acceptance/delivery_glossary.json`.
-- [ ] Bilibili workflow final manifest instructions include the glossary when applicable.
-- [ ] Bilibili workflow instructions state that the glossary is not a PDF appendix unless explicitly requested.
-- [ ] English-learning and IELTS-like Bilibili content keeps its existing English-primary behavior.
+- [x] Bilibili workflow instructions require the Outline agent to create a global Delivery Glossary for non-English teaching PDFs.
+- [x] Bilibili Writer agent instructions require `new_term_candidates` in handoff notes, or `new_term_candidates: none`.
+- [x] Bilibili workflow coordinator instructions merge accepted candidates into `review/acceptance/delivery_glossary.json`.
+- [x] Bilibili workflow final manifest instructions include the glossary when applicable.
+- [x] Bilibili workflow instructions state that the glossary is not a PDF appendix unless explicitly requested.
+- [x] English-learning and IELTS-like Bilibili content keeps its existing English-primary behavior.
 
 ## Execution Log
 

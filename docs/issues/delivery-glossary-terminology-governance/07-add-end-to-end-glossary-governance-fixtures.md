@@ -53,13 +53,13 @@ The relevant decisions are [[adr/0005-use-delivery-glossary-for-non-english-pdf-
 
 ## Acceptance Criteria
 
-- [ ] A fixture where `grief` uses `chinese_primary_only` plus `delivery_glossary_only` passes when body text uses a bounded Chinese expression.
-- [ ] A fixture where body text says the equivalent of "本节讨论的 grief 是" fails for the same glossary entry.
-- [ ] A fixture where `capability overhang` uses `chinese_with_english_parenthetical` passes when body text preserves the English source label in the expected place.
-- [ ] A fixture where `HTML mockup` is included only when used as a method concept, not when it only means an HTML file.
-- [ ] A fixture proves product names are excluded unless they define a new core concept.
-- [ ] A fixture proves no reader-facing PDF glossary appendix is required by default.
-- [ ] Existing final-delivery acceptance fixtures still pass.
+- [x] A fixture where `grief` uses `chinese_primary_only` plus `delivery_glossary_only` passes when body text uses a bounded Chinese expression.
+- [x] A fixture where body text says the equivalent of "本节讨论的 grief 是" fails for the same glossary entry.
+- [x] A fixture where `capability overhang` uses `chinese_with_english_parenthetical` passes when body text preserves the English source label in the expected place.
+- [x] A fixture where `HTML mockup` is included only when used as a method concept, not when it only means an HTML file.
+- [x] A fixture proves product names are excluded unless they define a new core concept.
+- [x] A fixture proves no reader-facing PDF glossary appendix is required by default.
+- [x] Existing final-delivery acceptance fixtures still pass.
 
 ## Execution Log
 

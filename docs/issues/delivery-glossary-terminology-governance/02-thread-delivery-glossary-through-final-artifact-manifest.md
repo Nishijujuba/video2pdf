@@ -57,11 +57,11 @@ The related acceptance contract decision is [[adr/0002-use-json-acceptance-contr
 
 ## Acceptance Criteria
 
-- [ ] Manifest generation can include `review/acceptance/delivery_glossary.json` for non-English teaching PDF outputs.
-- [ ] Manifest validation fingerprints the glossary as an in-scope final artifact.
-- [ ] Report validation accepts reviewer context that includes the glossary only when the glossary appears in the manifest.
-- [ ] Report validation rejects glossary-aware reports when the glossary is missing, stale, outside the video output directory, or absent from the allowed artifacts manifest.
-- [ ] Existing final PDF and TeX artifact validation behavior remains unchanged.
+- [x] Manifest generation can include `review/acceptance/delivery_glossary.json` for non-English teaching PDF outputs.
+- [x] Manifest validation fingerprints the glossary as an in-scope final artifact.
+- [x] Report validation accepts reviewer context that includes the glossary only when the glossary appears in the manifest.
+- [x] Report validation rejects glossary-aware reports when the glossary is missing, stale, outside the video output directory, or absent from the allowed artifacts manifest.
+- [x] Existing final PDF and TeX artifact validation behavior remains unchanged.
 
 ## Execution Log
 

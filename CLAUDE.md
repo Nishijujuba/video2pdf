@@ -182,7 +182,7 @@ A formula is allowed only when it earns its cognitive cost.
 
 ### Issue tracker
 
-Issues are tracked as local markdown files under `docs/issues/<feature-slug>/`; `docs/` is the Obsidian vault root for PRDs, ADRs, and issue graph tracking. There is no external PR triage surface. See `docs/agents/issue-tracker.md`.
+Project 2.0 specs and tickets are tracked as human-approved GitHub Issues in `Nishijujuba/video2pdf`. The completed local planning record under `docs/prd/` and `docs/issues/` is the read-only Project 1.0 archive. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

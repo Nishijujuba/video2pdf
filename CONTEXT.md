@@ -1,5 +1,21 @@
 # Project Glossary
 
+## Project 2.0 Spec
+
+A human-approved GitHub planning item that defines the problem, solution, user stories, implementation decisions, testing seams, and scope for a Project 2.0 change.
+
+## Implementation Ticket
+
+A human-approved, context-sized vertical slice derived from a Project 2.0 Spec. It carries independently verifiable acceptance criteria and explicit blocking relationships.
+
+## Human Publication Gate
+
+The required human approval checkpoint before an agent publishes or materially changes a Project 2.0 Spec, Implementation Ticket, milestone assignment, containment relationship, or dependency relationship.
+
+## Legacy Planning Archive
+
+The completed Project 1.0 planning record retained as read-only historical evidence. It may inform new work and does not receive new planning items or status changes.
+
 ## Feature Issue Set
 
 A batch of implementation issues that belong to one feature-level planning unit. In this repo, a Feature Issue Set is represented by one `docs/issues/<feature-slug>/` directory, and its issue files normally come from the same PRD.

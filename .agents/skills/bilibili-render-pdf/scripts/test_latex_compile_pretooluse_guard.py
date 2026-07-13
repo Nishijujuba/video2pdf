@@ -142,6 +142,54 @@ class LatexCompilePreToolUseGuardTests(unittest.TestCase):
         self.assertEqual("approve", result["decision"])
         self.assertEqual("allow", result["hookSpecificOutput"]["permissionDecision"])
 
+    def test_guarded_wrapper_help_is_allowed_without_compile_mode(self) -> None:
+        result = self.module.decide_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": (
+                        "python .agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py --help"
+                    )
+                },
+            }
+        )
+
+        self.assertEqual("approve", result["decision"])
+        self.assertEqual("allow", result["hookSpecificOutput"]["permissionDecision"])
+        self.assertIn("help", result["reason"].lower())
+
+    def test_source_reading_command_that_names_wrapper_is_allowed(self) -> None:
+        result = self.module.decide_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": (
+                        "Get-Content -Raw "
+                        ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
+                    )
+                },
+            }
+        )
+
+        self.assertEqual("approve", result["decision"])
+        self.assertEqual("allow", result["hookSpecificOutput"]["permissionDecision"])
+
+    def test_python_module_source_check_that_names_wrapper_is_allowed(self) -> None:
+        result = self.module.decide_hook(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": (
+                        "python -m py_compile "
+                        ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
+                    )
+                },
+            }
+        )
+
+        self.assertEqual("approve", result["decision"])
+        self.assertEqual("allow", result["hookSpecificOutput"]["permissionDecision"])
+
     def test_guarded_wrapper_followed_by_direct_engine_is_blocked(self) -> None:
         result = self.module.decide_hook(
             {

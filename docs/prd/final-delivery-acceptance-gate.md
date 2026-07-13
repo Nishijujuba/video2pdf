@@ -4,7 +4,7 @@
 
 The video-to-PDF workflow already has Pyramid Gate checks, LaTeX compilation, layout blank-space checks, and an independent content review against subtitles. Those checks do not enforce the user's final delivery acceptance standards for writing taste, rendered visual quality, table layout integrity, or credibility caveat placement.
 
-The user needs a final hard gate before report delivery. This gate must be run by a separate Acceptance Reviewer subagent that reads only final delivered artifacts and the Acceptance Criteria File. If the gate fails, the workflow must use repair subagents to revise the artifact and then rerun acceptance until the Acceptance Report passes.
+The user needs a final hard gate before report delivery. This gate must be run by a separate Acceptance Reviewer subagent that reads only final delivered artifacts, the Acceptance Criteria File, the allowed artifact manifest, rendered page evidence, and the fail-closed report skeleton. If the gate fails, the workflow must use repair subagents to revise the artifact and then rerun acceptance until the Acceptance Report passes.
 
 Without this gate, PDFs can still ship with body text explaining generation choices, draft-like diagrams, clipped tables, or ASR caveats interrupting the main reading flow. These defects damage readability, professional finish, and credibility even when the source content is complete.
 
@@ -14,7 +14,7 @@ Implement a Final Delivery Acceptance Gate as the last workflow gate before deli
 
 The end-to-end workflow will change in three places.
 
-First, project orchestration instructions will define a new final Acceptance Reviewer role. This subagent is independent and read-only. It may inspect only final delivered artifacts and the Acceptance Criteria File. It must not inspect generation process records, chat history, writer notes, intermediate drafts, or prior repair discussion. It writes the Acceptance Report and optional human summary.
+First, project orchestration instructions will define a new final Acceptance Reviewer role. This subagent is independent and read-only. It may inspect only final delivered artifacts, the Acceptance Criteria File, the allowed artifact manifest, rendered page evidence, and the fail-closed report skeleton. It must not inspect generation process records, chat history, writer notes, intermediate drafts, or prior repair discussion. It writes the Acceptance Report and optional human summary.
 
 Second, the Bilibili and YouTube render workflows will call the Final Delivery Acceptance Gate after the final PDF has been rendered and before delivery. The gate must use the project acceptance criteria template, perform a full rendered PDF visual scan with Codex visual capability, run full text checks for style criteria, bind reports to artifact fingerprints, and stop delivery if any criterion fails.
 
@@ -34,10 +34,11 @@ Each video output directory will contain acceptance evidence under:
 - `<video-output-dir>/review/acceptance/rendered_pages/page_0001.png`
 - `<video-output-dir>/review/acceptance/rendered_pages/page_0002.png`
 - `<video-output-dir>/review/acceptance/rendered_pages/...`
+- `<video-output-dir>/review/acceptance/acceptance_report.skeleton.json`
 - `<video-output-dir>/review/acceptance/acceptance_report.json`
 - `<video-output-dir>/review/acceptance/acceptance_summary.md`
 
-The acceptance report path is fixed: `review/acceptance/acceptance_report.json`. The optional human summary path is fixed: `review/acceptance/acceptance_summary.md`. Rendered page evidence always lives under `review/acceptance/rendered_pages/` with zero-padded one-based page numbers.
+The acceptance report skeleton path is fixed: `review/acceptance/acceptance_report.skeleton.json`. The acceptance report path is fixed: `review/acceptance/acceptance_report.json`. The optional human summary path is fixed: `review/acceptance/acceptance_summary.md`. Rendered page evidence always lives under `review/acceptance/rendered_pages/` with zero-padded one-based page numbers.
 
 The project implementation will add a dedicated acceptance skill and validator tooling under:
 
@@ -158,9 +159,11 @@ Each `criterion_results[]` entry must include:
 
 Failed criterion results must include non-empty `evidence` and non-null `revision_guidance`. Revision guidance must state the required change and allowed fix types.
 
+Before launching the Acceptance Reviewer, the workflow must generate `review/acceptance/acceptance_report.skeleton.json` from the criteria file, allowed artifact manifest, current final artifact fingerprints, and rendered-page evidence. The skeleton is fail-closed and is not the machine-readable delivery decision source. Its role is to provide the fixed JSON structure, current fingerprints, and page slots so the reviewer fills judgment and evidence rather than inventing report fields.
+
 ### Context isolation mechanism
 
-The master workflow must create `review/acceptance/allowed_artifacts_manifest.json` before spawning the Acceptance Reviewer. This manifest is the only artifact list passed to the reviewer.
+The master workflow must create `review/acceptance/allowed_artifacts_manifest.json` and `review/acceptance/acceptance_report.skeleton.json` before spawning the Acceptance Reviewer. The manifest is the only final-artifact list passed to the reviewer; the skeleton supplies report shape and current evidence slots.
 
 The manifest must include:
 
@@ -239,7 +242,7 @@ A failed page entry must include the criterion id, category, visible defect desc
 
 1. As a PDF workflow owner, I want final delivery acceptance to run after the PDF is rendered, so that the reviewer judges the same artifact the reader will receive.
 2. As a PDF workflow owner, I want the Acceptance Reviewer to be a separate subagent, so that the generator cannot approve its own final artifact.
-3. As a PDF workflow owner, I want the Acceptance Reviewer to read only final artifacts and the criteria file, so that generation intent cannot compensate for reader-facing defects.
+3. As a PDF workflow owner, I want the Acceptance Reviewer to read only final artifacts, the criteria file, the allowed manifest, rendered pages, and the fail-closed report skeleton, so that generation intent cannot compensate for reader-facing defects.
 4. As a PDF workflow owner, I want generation process records excluded from acceptance context, so that the reviewer cannot use hidden author intent to excuse weak delivery.
 5. As a PDF workflow owner, I want `acceptance_criteria.json` to be a read-only standard, so that the reviewer cannot rewrite the standard during review.
 6. As a PDF workflow owner, I want `acceptance_report.json` to be the only machine decision source, so that delivery automation can deterministically pass or fail.
@@ -297,7 +300,7 @@ A failed page entry must include the criterion id, category, visible defect desc
 - The gate uses the project Acceptance Criteria File contract as the input standard.
 - The gate produces an Acceptance Report JSON as the only machine-readable pass or fail decision.
 - The Acceptance Reviewer is a separate read-only subagent.
-- The Acceptance Reviewer can read only final delivered artifacts and the Acceptance Criteria File.
+- The Acceptance Reviewer can read only final delivered artifacts, the Acceptance Criteria File, the allowed artifact manifest, rendered page evidence, and the fail-closed report skeleton.
 - Generation process records, chat history, writer notes, intermediate drafts, and repair discussion are forbidden acceptance context.
 - The Acceptance Reviewer may write the Acceptance Report and an optional human summary.
 - The Acceptance Reviewer must not modify final artifacts, source materials, criteria files, generation records, or intermediate drafts.

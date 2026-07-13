@@ -67,6 +67,57 @@ class CompileLatexAsciiTests(unittest.TestCase):
         self.assertEqual("P05_notes", self.module.ascii_path_component("P05 notes"))
         self.assertEqual("P05_notes", self.module.ascii_path_component("P05_笔记 notes"))
 
+    def test_help_documents_guarded_modes_outputs_timeouts_and_long_path_handling(self) -> None:
+        working_dir = self._make_video_dir("help-no-side-effects")
+        before = sorted(path.relative_to(working_dir) for path in working_dir.rglob("*"))
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            self.module.main(["--help"])
+
+        self.assertEqual(0, raised.exception.code)
+        help_text = stdout.getvalue()
+        for expected in (
+            "--mode {quick,final}",
+            "--tex TEX",
+            "--engine ENGINE",
+            "--final-pdf FINAL_PDF",
+            "--total-timeout TOTAL_TIMEOUT",
+            "--idle-timeout IDLE_TIMEOUT",
+            "待删除\\latex-build",
+            "review\\latex\\compile_report.json",
+            "automatic short launch alias",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, help_text)
+        after = sorted(path.relative_to(working_dir) for path in working_dir.rglob("*"))
+        self.assertEqual(before, after)
+
+    def test_long_windows_process_cwd_uses_short_alias(self) -> None:
+        long_cwd = Path("C:/") / ("long-component-" * 20)
+        short_cwd = str(Path.cwd())
+
+        with (
+            mock.patch.object(self.module.os, "name", "nt"),
+            mock.patch.object(self.module, "windows_short_path", return_value=short_cwd) as get_short,
+        ):
+            process_cwd = self.module.process_cwd_for_subprocess(long_cwd)
+
+        self.assertEqual(short_cwd, process_cwd)
+        get_short.assert_called_once_with(long_cwd)
+
+    def test_short_windows_process_cwd_keeps_original_path(self) -> None:
+        short_cwd = Path(r"C:\\work\\latex-build")
+
+        with (
+            mock.patch.object(self.module.os, "name", "nt"),
+            mock.patch.object(self.module, "windows_short_path") as get_short,
+        ):
+            process_cwd = self.module.process_cwd_for_subprocess(short_cwd)
+
+        self.assertEqual(str(short_cwd), process_cwd)
+        get_short.assert_not_called()
+
     def test_legacy_positional_cli_routes_to_copy_back_compile_path(self) -> None:
         video_dir = self._make_video_dir("legacy-cli")
         tex_path = video_dir / "main.tex"
@@ -157,6 +208,119 @@ class CompileLatexAsciiTests(unittest.TestCase):
         finish_time = _dt.datetime.fromisoformat(report["finish_time"])
         self.assertLessEqual(start_time, finish_time)
         self.assertFalse((video_dir / "review" / "latex").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process cwd regression")
+    def test_quick_mode_compiles_from_long_physical_build_directory(self) -> None:
+        video_dir = self._make_video_dir("quick-long-cwd")
+        while len(str(video_dir / "待删除" / "latex-build" / "123456_123456")) < 280:
+            video_dir = video_dir / "long-component"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        tex_path = video_dir / "main.tex"
+        tex_path.write_text(
+            "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}\n",
+            encoding="utf-8",
+        )
+        engine_dir = self._make_video_dir("quick-long-cwd-engine")
+        engine_path = self._write_fake_engine(engine_dir, "passing-engine")
+
+        exit_code = self.module.main(
+            [
+                "--tex",
+                str(tex_path),
+                "--mode",
+                "quick",
+                "--engine",
+                str(engine_path),
+                "--total-timeout",
+                "5",
+                "--idle-timeout",
+                "5",
+            ]
+        )
+
+        self.assertEqual(0, exit_code)
+        reports = sorted((video_dir / "待删除" / "latex-build").glob("*/compile_report.json"))
+        self.assertEqual(1, len(reports))
+        self.assertGreaterEqual(len(str(reports[0].parent)), 260)
+        report = json.loads(reports[0].read_text(encoding="utf-8"))
+        self.assertEqual("passed", report["status"])
+        self.assertEqual(str(reports[0].parent.resolve()), report["build_directory"])
+        self.assertTrue(Path(report["log_paths"][0]).exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process cwd regression")
+    def test_long_path_alias_failure_writes_report_before_engine_start(self) -> None:
+        video_dir = self._make_video_dir("quick-long-cwd-alias-failure")
+        while len(str(video_dir / "待删除" / "latex-build" / "123456_123456")) < 280:
+            video_dir = video_dir / "long-component"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        tex_path = video_dir / "main.tex"
+        tex_path.write_text("\\documentclass{article}\n", encoding="utf-8")
+        engine_dir = self._make_video_dir("quick-long-cwd-alias-failure-engine")
+        engine_path = self._write_fake_engine(engine_dir, "passing-engine")
+
+        with (
+            mock.patch.object(
+                self.module,
+                "windows_short_path",
+                side_effect=OSError(123, "automatic short launch alias unavailable"),
+            ),
+            mock.patch.object(self.module.subprocess, "Popen") as popen,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            self.module.main(
+                [
+                    "--tex",
+                    str(tex_path),
+                    "--mode",
+                    "quick",
+                    "--engine",
+                    str(engine_path),
+                    "--total-timeout",
+                    "5",
+                    "--idle-timeout",
+                    "5",
+                ]
+            )
+
+        self.assertEqual(1, raised.exception.code)
+        popen.assert_not_called()
+        reports = sorted((video_dir / "待删除" / "latex-build").glob("*/compile_report.json"))
+        self.assertEqual(1, len(reports))
+        report = json.loads(reports[0].read_text(encoding="utf-8"))
+        self.assertEqual("failed", report["status"])
+        self.assertIn("failed to prepare LaTeX engine cwd", report["failure_reason"])
+        self.assertIn("automatic short launch alias unavailable", report["failure_reason"])
+        self.assertTrue(reports[0].parent.resolve().is_relative_to((video_dir / "待删除").resolve()))
+
+    def test_guarded_cli_rejects_caller_controlled_build_root(self) -> None:
+        video_dir = self._make_video_dir("reject-build-root")
+        tex_path = video_dir / "main.tex"
+        tex_path.write_text("\\documentclass{article}\n", encoding="utf-8")
+        engine_path = self._write_fake_engine(video_dir, "passing-engine")
+        external_build_root = self._make_video_dir("external-build-root")
+        stderr = io.StringIO()
+
+        with (
+            mock.patch.object(self.module, "compile_quick") as compile_quick,
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            self.module.main(
+                [
+                    "--tex",
+                    str(tex_path),
+                    "--mode",
+                    "quick",
+                    "--engine",
+                    str(engine_path),
+                    "--build-root",
+                    str(external_build_root),
+                ]
+            )
+
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("unrecognized arguments: --build-root", stderr.getvalue())
+        compile_quick.assert_not_called()
 
     def test_final_mode_writes_durable_report_and_final_pdf_provenance(self) -> None:
         video_dir = self._make_video_dir("final-report")

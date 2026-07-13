@@ -26,7 +26,7 @@ The output must:
 When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
 
 - Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
-- `yt-dlp`: `D:\Project\video2pdf\kimi\tools\yt-dlp.exe`
+- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
 - Node.js for YouTube JavaScript challenge solving: `C:\Program Files\nodejs\node.exe`
 - `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
 - `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
@@ -40,7 +40,7 @@ For every YouTube `yt-dlp` command that inspects metadata, lists formats, downlo
 Preferred YouTube extraction command shape:
 
 ```powershell
-& 'D:\Project\video2pdf\kimi\tools\yt-dlp.exe' `
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp `
   --cookies '<localized-cookie-file>' `
   --js-runtimes node `
   --no-cache-dir `
@@ -457,6 +457,14 @@ Do not add decorative graphics that do not teach anything.
 
 Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
 
+Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py --help
+```
+
+When a physical build directory is too long for a Windows process `cwd`, the wrapper uses an automatic short launch alias. Copied inputs, logs, compile reports, and other disposable evidence remain physically under the owning video output directory's `待删除\latex-build\` subtree.
+
 Use quick mode only as the temporary diagnostic compile path for TeX errors, layout investigation, and intermediate PDF inspection. Quick mode leaves its diagnostic `compile_report.json` under `待删除\latex-build\<run-id>\` and cannot satisfy final delivery.
 
 ```powershell
@@ -495,11 +503,12 @@ Required evidence paths:
 
 - `docs/acceptance/acceptance_criteria.v1.json`
 - `review/acceptance/allowed_artifacts_manifest.json`
+- `review/acceptance/acceptance_report.skeleton.json`
 - `review/acceptance/rendered_pages/`
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, and rendered page evidence.
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
 
@@ -520,6 +529,20 @@ After rendering the final PDF, set the active target to `ready_for_delivery`, ru
 Before the final response, run `delivery_guard.py check` against `.codex/delivery-targets/sessions/<session_id>/current.json`. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Do not deliver this PDF until delivery_guard.py records a fresh pass. After successful delivery, run `clear-target --session-id` so stale `delivered` state cannot affect later work.
 
 The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

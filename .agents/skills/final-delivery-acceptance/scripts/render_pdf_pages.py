@@ -34,6 +34,13 @@ def _relative_to_video(video_output_dir: Path, path: Path) -> str:
     return path.resolve().relative_to(video_output_dir.resolve()).as_posix()
 
 
+def _native_save_path(path: Path) -> str:
+    resolved = str(path.resolve())
+    if sys.platform == "win32" and not resolved.startswith("\\\\?\\"):
+        return "\\\\?\\" + resolved
+    return resolved
+
+
 def _move_stale_page(video_output_dir: Path, rendered_pages_dir: Path, stale_page: Path) -> None:
     if not _path_under(rendered_pages_dir, stale_page):
         raise RenderError(f"stale rendered page escapes rendered_pages_dir: {stale_page}")
@@ -103,7 +110,7 @@ def render_pdf_pages(pdf_path: Path, *, video_output_dir: Path | None = None, dp
             output_path = rendered_pages_dir / f"page_{page_number:04d}.png"
             pixmap = page.get_pixmap(dpi=dpi, alpha=False)
             try:
-                pixmap.save(output_path)
+                pixmap.save(_native_save_path(output_path))
             finally:
                 del pixmap
             rendered_paths.append(_relative_to_video(video_output_dir, output_path))

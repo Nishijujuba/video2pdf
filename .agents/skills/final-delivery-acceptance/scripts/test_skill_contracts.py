@@ -116,6 +116,10 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "clear-target --session-id",
             "The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`",
             "The Stop hook reads the official hook `session_id`",
+            "Official Stop hook command on Windows",
+            "Official hook stdin payload",
+            '{"session_id":"<session_id>"}',
+            ".codex\\delivery-targets\\sessions\\<session_id>\\current.json",
             "does not scan all active tasks",
             "UserPromptSubmit remains out of scope",
         ]
@@ -165,6 +169,7 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         required = [
             "LaTeX Compile Guard",
             "compile_latex_ascii.py",
+            "--help",
             "--mode quick",
             "--mode final",
             "--tex",
@@ -175,6 +180,7 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "review\\latex\\compile_report.json",
             "quick mode",
             "final mode",
+            "automatic short launch alias",
         ]
         forbidden = [
             "Compile twice with `xelatex`",

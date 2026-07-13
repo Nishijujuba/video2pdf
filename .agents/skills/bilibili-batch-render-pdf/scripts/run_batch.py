@@ -24,7 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
 DEFAULT_PROJECT_ROOT = Path(r"D:\Project\video2pdf\newskill-kimi")
 DEFAULT_OUTPUT_ROOT = DEFAULT_PROJECT_ROOT / "workspace"
 DEFAULT_COOKIE_FILE = Path(r"C:\Users\juju\Downloads\www.bilibili.com_cookies.txt")
-DEFAULT_VENV_PYTHON = Path(r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe")
+YT_DLP_PYTHON = Path(r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe")
 DEFAULT_TOOLS_DIR = Path(r"D:\Project\video2pdf\kimi\tools")
 DEFAULT_XELATEX = Path(r"D:\kits\MiKTex\miktex\bin\x64\xelatex.exe")
 TRASH_DIR_NAME = "待删除"
@@ -197,8 +197,8 @@ def write_item_status(item: dict[str, Any]) -> None:
 def check_inputs_for_enumeration(args: argparse.Namespace) -> None:
     if not args.url:
         return
-    if not Path(args.venv_python).exists():
-        fail(f"yt-dlp Python runtime is missing: {args.venv_python}")
+    if not YT_DLP_PYTHON.exists():
+        fail(f"Required yt-dlp Python runtime is missing: {YT_DLP_PYTHON}")
     if not Path(args.cookie_file).exists():
         fail(f"Bilibili cookie file is missing: {args.cookie_file}")
 
@@ -253,7 +253,7 @@ def resolve_codex_executable(value: str) -> str:
 def run_yt_dlp_metadata(args: argparse.Namespace) -> dict[str, Any]:
     check_inputs_for_enumeration(args)
     cmd = [
-        str(args.venv_python),
+        str(YT_DLP_PYTHON),
         "-m",
         "yt_dlp",
         "--no-cache-dir",
@@ -1092,7 +1092,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUTPUT_ROOT, help="Video output root.")
     parser.add_argument("--batch-name", help="Override the batch folder name.")
     parser.add_argument("--cookie-file", type=Path, default=DEFAULT_COOKIE_FILE, help="Bilibili Netscape cookie file.")
-    parser.add_argument("--venv-python", type=Path, default=DEFAULT_VENV_PYTHON, help="Python executable with yt-dlp installed.")
     parser.add_argument("--proxy", help="Optional yt-dlp proxy, such as http://127.0.0.1:7897.")
     parser.add_argument("--yt-dlp-arg", action="append", default=[], help="Extra yt-dlp argument string. Repeat as needed.")
     parser.add_argument("--codex", default="codex", help="Codex CLI executable. On Windows, bare 'codex' resolves to codex.cmd when available.")

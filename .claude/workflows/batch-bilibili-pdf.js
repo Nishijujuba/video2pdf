@@ -7,7 +7,7 @@ export const meta = {
   ],
 }
 
-const YT_DLP = 'D:/Project/video2pdf/kimi/tools/yt-dlp.exe'
+const YT_DLP_PYTHON = 'D:/Project/video2pdf/kimi/.venv/Scripts/python.exe'
 const COOKIES = 'C:/Users/juju/Downloads/www.bilibili.com_cookies.txt'
 
 function normalizeUrl(raw) {
@@ -50,7 +50,7 @@ const expanded = await pipeline(
   url => agent(
     `You are a Bilibili URL expander. Use the Bash tool to run yt-dlp and determine how many pages (P) this Bilibili URL contains.\n\n` +
     `Command to run:\n` +
-    `"${YT_DLP}" --cookies "${COOKIES}" --flat-playlist --print "%(webpage_url)s" "${url}"\n\n` +
+    `"${YT_DLP_PYTHON}" -m yt_dlp --cookies "${COOKIES}" --flat-playlist --print "%(webpage_url)s" "${url}"\n\n` +
     `If the command fails due to cookies, report that as an error and stop.\n` +
     `If the URL already has ?p=N, just return that single URL.\n` +
     `If it's a multi-P video, return each page as https://www.bilibili.com/video/BVXXXX?p=N .\n` +

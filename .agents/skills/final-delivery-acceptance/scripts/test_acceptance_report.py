@@ -18,6 +18,7 @@ from validate_acceptance_report import (
     ValidationError,
     compute_artifact_fingerprint,
     create_allowed_artifacts_manifest,
+    create_acceptance_report_skeleton,
     validate_acceptance_report,
     validate_delivery_decision,
 )
@@ -263,6 +264,8 @@ class AcceptanceReportValidationTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -397,6 +400,93 @@ class AcceptanceReportValidationTests(unittest.TestCase):
                     ("delivery_glossary", "review/acceptance/custom_delivery_glossary.json"),
                 ],
             )
+
+    def test_skeleton_prepopulates_report_contract_and_blocks_until_reviewed(self) -> None:
+        skeleton_path = create_acceptance_report_skeleton(
+            self.video_dir,
+            criteria_path=CRITERIA_PATH,
+            manifest_path=self.manifest_path,
+        )
+        skeleton = json.loads(skeleton_path.read_text(encoding="utf-8"))
+        criteria = load_criteria()
+        criteria_items = criteria["criteria"]
+        assert isinstance(criteria_items, list)
+        criteria_ids = [item["id"] for item in criteria_items]
+
+        self.assertEqual(skeleton_path, self.acceptance_dir / "acceptance_report.skeleton.json")
+        self.assertEqual(skeleton["schema_version"], "1.0")
+        self.assertEqual(skeleton["decision_source"], "acceptance_report_json")
+        self.assertEqual(skeleton["overall_status"], "fail")
+        self.assertEqual(skeleton["failed_criteria"], criteria_ids)
+        self.assertTrue(skeleton["revision_required"])
+        self.assertEqual(
+            skeleton["review_context_used"]["artifacts_read"],
+            [
+                "main.tex",
+                "final.pdf",
+                "docs/acceptance/acceptance_criteria.v1.json",
+                "review/acceptance/acceptance_report.skeleton.json",
+            ],
+        )
+        self.assertEqual(
+            skeleton["artifact_fingerprints"],
+            [
+                compute_artifact_fingerprint(self.video_dir / "main.tex", "main.tex"),
+                compute_artifact_fingerprint(self.video_dir / "final.pdf", "final.pdf"),
+            ],
+        )
+        self.assertEqual(
+            [item["criterion_id"] for item in skeleton["criterion_results"]],
+            criteria_ids,
+        )
+        self.assertTrue(all(item["status"] == "fail" for item in skeleton["criterion_results"]))
+
+        visual = skeleton["visual_scan_evidence"]
+        self.assertEqual(visual["pdf"], "final.pdf")
+        self.assertEqual(visual["page_count"], 1)
+        self.assertEqual(visual["rendered_pages_dir"], "review/acceptance/rendered_pages")
+        self.assertEqual(
+            [page["rendered_page_image"] for page in visual["pages_checked"]],
+            [
+                "review/acceptance/rendered_pages/page_0001.png",
+            ],
+        )
+
+        with self.assertRaisesRegex(GateBlockedError, "acceptance report status 'fail' blocks delivery"):
+            validate_acceptance_report(
+                skeleton_path,
+                criteria_path=CRITERIA_PATH,
+                video_output_dir=self.video_dir,
+                manifest_path=self.manifest_path,
+                enforce_decision=True,
+            )
+
+    def test_skeleton_cli_writes_default_template_path(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(SCRIPT_PATH),
+                "skeleton",
+                str(self.video_dir),
+                "--criteria",
+                str(CRITERIA_PATH),
+                "--manifest",
+                str(self.manifest_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        skeleton_path = Path(completed.stdout.strip())
+        self.assertEqual(skeleton_path, self.acceptance_dir / "acceptance_report.skeleton.json")
+        self.assertTrue(skeleton_path.exists())
 
     def test_rejects_incoherent_decision_forbidden_context_and_stale_fingerprint(self) -> None:
         pass_with_failed_result = self.valid_report()

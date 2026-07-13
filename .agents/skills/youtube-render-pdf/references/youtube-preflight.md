@@ -21,11 +21,11 @@ Cause: direct egress to YouTube and PyPI is unreliable from the current host (co
 
 Fix: route through the local HTTP proxy. Apply it everywhere — both yt-dlp invocations and `uv pip install`:
 
-```
-export HTTPS_PROXY=http://127.0.0.1:7897
-export HTTP_PROXY=http://127.0.0.1:7897
+```powershell
+$env:HTTPS_PROXY = 'http://127.0.0.1:7897'
+$env:HTTP_PROXY = 'http://127.0.0.1:7897'
 # yt-dlp also wants the explicit flag
-python -m yt_dlp --proxy http://127.0.0.1:7897 ...
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --proxy http://127.0.0.1:7897 ...
 ```
 
 If the proxy address is unknown, ask the user once rather than retrying without it. The proxy address is host-specific; do not hardcode it in the skill, but a memory entry for a returning user is appropriate.
@@ -45,7 +45,7 @@ Cause: YouTube wraps signature and `n` parameters in obfuscated JavaScript. Mode
 1. **yt-dlp version** must be nightly **2026.04 or later**. The stable 2026.03.17 predates the EJS hooks and will keep failing even with the plugin installed. Upgrade with:
 
    ```
-   uv pip install --python <venv-python> --pre -U yt-dlp
+   uv pip install --python D:\Project\video2pdf\kimi\.venv\Scripts\python.exe --pre -U yt-dlp
    ```
 
    (Run this through the proxy too if you are behind one.)
@@ -53,10 +53,10 @@ Cause: YouTube wraps signature and `n` parameters in obfuscated JavaScript. Mode
 2. **`yt-dlp-ejs` package** must be installed into the **same Python env as yt-dlp**:
 
    ```
-   uv pip install --python <venv-python> yt-dlp-ejs
+   uv pip install --python D:\Project\video2pdf\kimi\.venv\Scripts\python.exe yt-dlp-ejs
    ```
 
-   You can confirm it loaded by looking for `yt_dlp_ejs-X.Y.Z` in the `[debug] Optional libraries:` line of `python -m yt_dlp -v ...`.
+   You can confirm it loaded by looking for `yt_dlp_ejs-X.Y.Z` in the `[debug] Optional libraries:` line of `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp -v ...`.
 
 3. **A working JS runtime** must be on PATH and yt-dlp must be told to use it. yt-dlp accepts `bun`, `deno`, `node`, or `quickjs`. Important caveats from observed runs:
 
@@ -82,7 +82,7 @@ Cause: a standalone `yt-dlp.exe` does **not** auto-load Python packages from any
 Fix: drive yt-dlp through the venv, not the exe:
 
 ```
-<venv>/Scripts/python.exe -m yt_dlp --proxy ... --js-runtimes bun ...
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --proxy ... --js-runtimes bun ...
 ```
 
 If you only have the standalone exe, you must instead point it at an `~/.config/yt-dlp/jsinterp/` script distribution per the upstream wiki — but the venv route is far simpler when a venv with `yt-dlp-ejs` already exists.
@@ -91,12 +91,12 @@ If you only have the standalone exe, you must instead point it at an `~/.config/
 
 For the verified environment (Windows + uv venv + bun 1.3 + Clash on 7897), this single line lists formats successfully:
 
-```
-HTTPS_PROXY=http://127.0.0.1:7897 \
-<venv-python> -m yt_dlp \
-  --proxy http://127.0.0.1:7897 \
-  --cookies <cookies.txt> \
-  --js-runtimes bun \
+```powershell
+$env:HTTPS_PROXY = 'http://127.0.0.1:7897'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp `
+  --proxy http://127.0.0.1:7897 `
+  --cookies '<cookies.txt>' `
+  --js-runtimes bun `
   --list-formats <youtube-url>
 ```
 

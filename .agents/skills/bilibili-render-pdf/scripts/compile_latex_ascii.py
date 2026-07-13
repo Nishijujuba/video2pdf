@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as _dt
 import hashlib
 import json
@@ -28,6 +29,7 @@ COMPILE_REPORT_PRODUCER = "compile_latex_ascii.py"
 COMPILE_REPORT_PRODUCER_CONTRACT = "latex_compile_guard.v1"
 TASKKILL_TIMEOUT_SECONDS = 5
 TERMINATION_GRACE_SECONDS = 1.0
+WINDOWS_PROCESS_CWD_LIMIT = 260
 COPY_SUFFIXES = {
     ".tex",
     ".sty",
@@ -197,9 +199,60 @@ def iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
+def windows_short_path(path: Path) -> str:
+    if os.name != "nt":
+        return str(path)
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_short_path_name = kernel32.GetShortPathNameW
+    get_short_path_name.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    get_short_path_name.restype = ctypes.c_uint32
+
+    source = str(path)
+    required = get_short_path_name(source, None, 0)
+    if required == 0:
+        error_code = ctypes.get_last_error()
+        raise OSError(error_code, f"GetShortPathNameW failed for LaTeX build directory: {source}")
+
+    buffer = ctypes.create_unicode_buffer(required)
+    written = get_short_path_name(source, buffer, required)
+    if written == 0:
+        error_code = ctypes.get_last_error()
+        raise OSError(error_code, f"GetShortPathNameW failed for LaTeX build directory: {source}")
+    if written >= required:
+        buffer = ctypes.create_unicode_buffer(written + 1)
+        written = get_short_path_name(source, buffer, written + 1)
+        if written == 0:
+            error_code = ctypes.get_last_error()
+            raise OSError(error_code, f"GetShortPathNameW failed for LaTeX build directory: {source}")
+    return buffer.value
+
+
+def process_cwd_for_subprocess(path: Path) -> str:
+    process_cwd = str(path)
+    if os.name != "nt" or len(process_cwd) < WINDOWS_PROCESS_CWD_LIMIT:
+        return process_cwd
+
+    process_cwd = windows_short_path(path)
+    if len(process_cwd) >= WINDOWS_PROCESS_CWD_LIMIT:
+        raise OSError(
+            f"Windows short-path alias is still too long for a process cwd "
+            f"({len(process_cwd)} characters): {process_cwd}"
+        )
+    if not Path(process_cwd).is_dir():
+        raise NotADirectoryError(f"Windows short-path alias is not a directory: {process_cwd}")
+    return process_cwd
+
+
 def make_quick_build_dir(video_output_dir: Path) -> Path:
-    run_id = f"{_dt.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:8]}"
-    return video_output_dir / TRASH_DIR_NAME / "latex-build" / run_id
+    now = _dt.datetime.now()
+    run_id = f"{now.strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:8]}"
+    root = video_output_dir / TRASH_DIR_NAME / "latex-build"
+    candidate = root / run_id
+    if os.name == "nt" and len(str(candidate)) >= 240:
+        short_run_id = f"{now.strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        return root / short_run_id
+    return candidate
 
 
 def file_fingerprint(path: Path) -> dict[str, str | int]:
@@ -331,9 +384,13 @@ def run_engine_with_timeouts(
     idle_timeout: float,
 ) -> tuple[int, str, str | None]:
     try:
+        process_cwd = process_cwd_for_subprocess(cwd)
+    except OSError as exc:
+        return 1, "", f"failed to prepare LaTeX engine cwd: {exc.__class__.__name__}: {exc}"
+    try:
         proc = subprocess.Popen(
             cmd,
-            cwd=str(cwd),
+            cwd=process_cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -662,6 +719,17 @@ def compile_latex(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Compile a LaTeX document through the legacy copier or guarded wrapper.",
+        epilog=(
+            "Guarded quick mode requires --mode quick --tex TEX --engine ENGINE.\n"
+            "Guarded final mode requires --mode final --tex TEX --engine ENGINE "
+            "--final-pdf FINAL_PDF.\n"
+            "Quick and final builds stay under the video output directory at "
+            "待删除\\latex-build; final provenance is written to "
+            "review\\latex\\compile_report.json. On Windows, an automatic short launch alias "
+            "is used when the physical build directory is too long for a process cwd; physical "
+            "inputs, logs, and build evidence remain under 待删除\\latex-build."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("legacy_tex", nargs="?", type=Path, help="Legacy positional source .tex file.")
     parser.add_argument("--tex", type=Path, help="Path to the source .tex file.")

@@ -9,6 +9,7 @@ work/
 .codex/delivery-targets/sessions/
 .codex/last_youtube_output.txt
 /magick_test.jpg
+/.claude/settings.json
 
 # LaTeX build junk
 *.aux

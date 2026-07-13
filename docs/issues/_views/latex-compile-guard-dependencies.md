@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T10:43:22Z
+generated_at: 2026-07-10T05:57:13Z
 source_feature_slug: latex-compile-guard
-source_issue_count: 6
-source_issue_fingerprint: 510e05d12a4cc456045d8e7543c14ec2557ae46814e911e9ecafb9aab741b543
+source_issue_count: 7
+source_issue_fingerprint: 4404070dd83c7eed4e2513c626dce7b9777b37ed0b7bf235bf92abc3368740a7
 ---
 
 # Issue Dependency View: latex-compile-guard
@@ -25,6 +25,7 @@ None
 flowchart LR
   subgraph layer_0["Layer 0"]
     n_01_establish_guarded_compile_wrapper_quick_path["01 - Establish guarded compile wrapper quick path"]
+    n_07_repair_long_path_startup_and_help_discovery["07 - Repair long-path startup and help discovery"]
   end
   subgraph layer_1["Layer 1"]
     n_02_add_final_compile_provenance_report["02 - Add final compile provenance report"]
@@ -52,6 +53,7 @@ flowchart LR
   class n_04_block_unsafe_latex_shell_calls_with_pretooluse done
   class n_05_integrate_guarded_compile_contract_into_render_skills done
   class n_06_add_end_to_end_guard_fixture_verification done
+  class n_07_repair_long_path_startup_and_help_discovery done
   classDef done fill:#2ea043,stroke:#1f2328,color:#ffffff
   classDef ready_for_agent fill:#0969da,stroke:#1f2328,color:#ffffff
   classDef ready_for_human fill:#8250df,stroke:#1f2328,color:#ffffff

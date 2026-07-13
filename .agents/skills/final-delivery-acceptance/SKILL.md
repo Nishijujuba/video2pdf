@@ -7,7 +7,7 @@ description: Run the final, read-only delivery acceptance gate for rendered vide
 
 Use this skill after the final PDF has been rendered and before delivery of a `/bilibili-render-pdf` or `/youtube-render-pdf` result.
 
-The Acceptance Reviewer is an independent read-only reviewer. The reviewer evaluates the final delivered artifacts against `docs/acceptance/acceptance_criteria.v1.json`, using the allowed artifact boundary in `review/acceptance/allowed_artifacts_manifest.json`.
+The Acceptance Reviewer is an independent read-only reviewer. The reviewer evaluates the final delivered artifacts against `docs/acceptance/acceptance_criteria.v1.json`, using the allowed artifact boundary in `review/acceptance/allowed_artifacts_manifest.json` and the fail-closed report skeleton in `review/acceptance/acceptance_report.skeleton.json`.
 
 ## Context Boundary
 
@@ -16,6 +16,7 @@ Allowed inputs:
 - final delivered artifacts listed in `review/acceptance/allowed_artifacts_manifest.json`
 - the criteria file `docs/acceptance/acceptance_criteria.v1.json`
 - rendered page evidence under `review/acceptance/rendered_pages/`
+- the fail-closed report skeleton `review/acceptance/acceptance_report.skeleton.json`
 - for non-English teaching PDFs, `review/acceptance/delivery_glossary.json` only when it is listed in `review/acceptance/allowed_artifacts_manifest.json`
 
 Forbidden context:
@@ -42,9 +43,10 @@ The reviewer must not modify final artifacts, TeX source, figures, tables, crite
 1. Validate the criteria file with `scripts/validate_acceptance_criteria.py`.
 2. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `scripts/validate_acceptance_report.py manifest`. Preserve the default artifact set for ordinary outputs. For non-English teaching PDFs that have a valid delivery glossary contract, pass `--include-delivery-glossary` so the manifest includes `review/acceptance/delivery_glossary.json` with role `delivery_glossary`.
 3. Render the final PDF pages with `scripts/render_pdf_pages.py` so every page has a `review/acceptance/rendered_pages/page_0001.png` style image.
-4. Launch the Acceptance Reviewer from a clean context containing only the allowed manifest, the criteria file, final delivered artifacts, and rendered pages.
-5. The Acceptance Reviewer must evaluate every criterion and must record one result for every rendered PDF page.
-6. Validate `review/acceptance/acceptance_report.json` with `scripts/validate_acceptance_report.py validate --enforce-decision`.
+4. Create or refresh `review/acceptance/acceptance_report.skeleton.json` with `scripts/validate_acceptance_report.py skeleton` so fixed JSON shape, artifact fingerprints, and rendered-page slots come from the validator contract.
+5. Launch the Acceptance Reviewer from a clean context containing only the allowed manifest, the criteria file, final delivered artifacts, rendered pages, and the fail-closed report skeleton.
+6. The Acceptance Reviewer must evaluate every criterion, replace all skeleton placeholders, and record one result for every rendered PDF page.
+7. Validate `review/acceptance/acceptance_report.json` with `scripts/validate_acceptance_report.py validate --enforce-decision`.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. An optional Markdown summary may explain the decision, and it cannot override the JSON result.
 
@@ -72,7 +74,8 @@ The Acceptance Reviewer must:
 - include artifact-grounded evidence for each failed criterion
 - include revision guidance for each failed criterion
 - declare `generation_process_used: false`
-- keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file
+- keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file and `review/acceptance/acceptance_report.skeleton.json` when the skeleton was used
+- replace every skeleton placeholder before writing the final `review/acceptance/acceptance_report.json`
 - list `review/acceptance/delivery_glossary.json` in `review_context_used.artifacts_read` only when the manifest includes it
 - when a manifest-listed Delivery Glossary is present, check for every Delivery Glossary term found in final body text that the body wording follows `body_display_strategy`, that the original English expression appears only where `where_to_preserve_english` allows, and that each finding includes artifact-grounded evidence
 - bind the report to current artifact fingerprints
@@ -120,6 +123,20 @@ Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
 The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
 
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
+
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
 ## Old-PDF Repair Mode
@@ -163,7 +180,7 @@ The delivered session target is moved under `<video-output-dir>\待删除\delive
 - `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`
 - `scripts/validate_delivery_glossary.py`: validates one standalone `delivery_glossary.v1` contract file for non-English teaching PDFs
 - `scripts/render_pdf_pages.py`: renders every final PDF page to `review/acceptance/rendered_pages/`
-- `scripts/validate_acceptance_report.py`: creates the allowed manifest, can include `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
+- `scripts/validate_acceptance_report.py`: creates the allowed manifest, creates a fail-closed report skeleton, can include `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
 - `scripts/delivery_guard.py`: prepares bounded old-PDF repair, records failed attempts, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
 
 Use the project virtual environment:

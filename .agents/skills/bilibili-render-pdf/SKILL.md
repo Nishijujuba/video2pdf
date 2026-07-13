@@ -14,7 +14,7 @@ This skill extends the `youtube-render-pdf` workflow with Bilibili-specific adap
 | Aspect | Handling |
 |--------|----------|
 | **Subtitle scarcity** | Try cookie-assisted CC subtitle probing first → then inspect metadata → fall back to Whisper speech-to-text → visual-only mode |
-| **Login-gated HD** | 1080P+ requires cookies; prompt the user to use `yt-dlp --cookies-from-browser chrome` |
+| **Login-gated HD** | 1080P+ requires cookies; invoke `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp` with the required cookie flags |
 | **Multi-part videos** | Detect 分P videos and ask the user which parts to process |
 | **URL formats** | Support `bilibili.com/video/BVxxxxxxx` and `b23.tv` short links |
 | **Danmaku** | Do not use danmaku as a teaching content source (too noisy); use only CC subtitles or Whisper output |
@@ -39,7 +39,7 @@ When running on this machine, prefer these exact binaries instead of relying on 
 
 - Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
 - Whisper CLI for subtitle fallback: `D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe`
-- `yt-dlp`: `D:\Project\video2pdf\kimi\tools\yt-dlp.exe`
+- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
 - `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
 - `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
 - ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
@@ -61,17 +61,17 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ### Cookie-First Subtitle Probe
 
-1. Before inspecting metadata, first try cookie-assisted subtitle discovery with `yt-dlp --list-subs`.
+1. Before inspecting metadata, first try cookie-assisted subtitle discovery with the required `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp --list-subs` launcher.
    Use a user-provided Netscape cookie file such as `www.bilibili.com_cookies.txt` whenever available.
    This comes first in the workflow because Bilibili subtitle availability is often clearer with cookies than from an initial metadata-only pass.
 
-2. Use a generic Bash command format for manual probing:
+2. Use the fixed PowerShell launcher for manual probing:
 
-```bash
-COOKIE_FILE="/path/to/www.bilibili.com_cookies.txt"
-URL="https://www.bilibili.com/video/BVxxxxxxxxx/"
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
 
-yt-dlp --cookies "$COOKIE_FILE" --no-playlist --list-subs "$URL"
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist --list-subs $URL
 ```
 
 3. Use a generic Python command format when the probe is being orchestrated programmatically:
@@ -84,7 +84,9 @@ url = "https://www.bilibili.com/video/BVxxxxxxxxx/"
 
 subprocess.run(
     [
-        "yt-dlp",
+        r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe",
+        "-m",
+        "yt_dlp",
         "--cookies",
         cookie_file,
         "--no-playlist",
@@ -125,36 +127,36 @@ Preserve the subtitle timestamps; do not flatten subtitles into plain text too e
 On Bilibili, AI subtitles such as `ai-zh` may only appear when auto-generated subtitles are requested, so include `--write-auto-subs` alongside `--write-subs`.
 When a cookie file is available, reuse it for subtitle download.
 
-```bash
-COOKIE_FILE="/path/to/www.bilibili.com_cookies.txt"
-URL="https://www.bilibili.com/video/BVxxxxxxxxx/"
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
 
-yt-dlp --cookies "$COOKIE_FILE" --no-playlist \
-  --write-subs --write-auto-subs \
-  --sub-langs "zh-Hans,zh-CN,zh,ai-zh" --convert-subs srt \
-  --skip-download -o "%(title)s.%(ext)s" "$URL"
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist `
+  --write-subs --write-auto-subs `
+  --sub-langs 'zh-Hans,zh-CN,zh,ai-zh' --convert-subs srt `
+  --skip-download -o '%(title)s.%(ext)s' $URL
 ```
 
 For English-learning videos, check and download English tracks first:
 
-```bash
-COOKIE_FILE="/path/to/www.bilibili.com_cookies.txt"
-URL="https://www.bilibili.com/video/BVxxxxxxxxx/"
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
 
-yt-dlp --cookies "$COOKIE_FILE" --no-playlist --list-subs "$URL"
-yt-dlp --cookies "$COOKIE_FILE" --no-playlist \
-  --write-subs --write-auto-subs \
-  --sub-langs "en,en-US,en-GB,zh-Hans,zh-CN,zh,ai-zh" --convert-subs srt \
-  --skip-download -o "%(title)s.%(ext)s" "$URL"
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist --list-subs $URL
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist `
+  --write-subs --write-auto-subs `
+  --sub-langs 'en,en-US,en-GB,zh-Hans,zh-CN,zh,ai-zh' --convert-subs srt `
+  --skip-download -o '%(title)s.%(ext)s' $URL
 ```
 
 **Priority 2: Whisper speech-to-text (when no CC subtitles are available)**
 
 Extract audio first, then transcribe with Whisper to produce a timestamped SRT file.
 
-```
-yt-dlp -x --audio-format wav -o "audio.%(ext)s" "<URL>"
-whisper audio.wav --model medium --language zh --output_format srt --output_dir .
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp -x --audio-format wav -o 'audio.%(ext)s' '<URL>'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe' audio.wav --model medium --language zh --output_format srt --output_dir .
 ```
 
 **Priority 3: Visual-only mode (when audio quality is too poor)**
@@ -567,6 +569,14 @@ Do not add decorative graphics that do not teach anything.
 
 Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
 
+Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py --help
+```
+
+When a physical build directory is too long for a Windows process `cwd`, the wrapper uses an automatic short launch alias. Copied inputs, logs, compile reports, and other disposable evidence remain physically under the owning video output directory's `待删除\latex-build\` subtree.
+
 Use quick mode only as the temporary diagnostic compile path for TeX errors, layout investigation, and intermediate PDF inspection. Quick mode leaves its diagnostic `compile_report.json` under `待删除\latex-build\<run-id>\` and cannot satisfy final delivery.
 
 ```powershell
@@ -608,11 +618,12 @@ Required evidence paths:
 - `docs/acceptance/acceptance_criteria.v1.json`
 - `review/acceptance/allowed_artifacts_manifest.json`
 - `review/acceptance/delivery_glossary.json` when the non-English teaching PDF Delivery Glossary workflow applies
+- `review/acceptance/acceptance_report.skeleton.json`
 - `review/acceptance/rendered_pages/`
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. When the non-English teaching PDF Delivery Glossary workflow applies, validate `review/acceptance/delivery_glossary.json` first and pass `--include-delivery-glossary` while creating the manifest. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, and rendered page evidence.
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. When the non-English teaching PDF Delivery Glossary workflow applies, validate `review/acceptance/delivery_glossary.json` first and pass `--include-delivery-glossary` while creating the manifest. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
 
@@ -633,6 +644,20 @@ After rendering the final PDF, set the active target to `ready_for_delivery`, ru
 Before the final response, run `delivery_guard.py check` against `.codex/delivery-targets/sessions/<session_id>/current.json`. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Do not deliver this PDF until delivery_guard.py records a fresh pass. After successful delivery, run `clear-target --session-id` so stale `delivered` state cannot affect later work.
 
 The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

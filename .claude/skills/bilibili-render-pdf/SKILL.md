@@ -1,20 +1,20 @@
 ---
 name: bilibili-render-pdf
-description: Generate a professional, detailed, figure-rich LaTeX course note and final PDF from a Bilibili lecture, tutorial, or technical talk. Use when the user provides a Bilibili URL (BV number) and wants structured Chinese teaching notes that combine the video's title, chapters, diagrams, formulas, code, subtitle explanations, the original video cover on the front page, and a final synthesis chapter, with key frames extracted from the highest usable video resolution and inserted as figures, and where the final deliverable must include a rendered PDF. Falls back to Whisper speech-to-text when no CC subtitles are available.
+description: Generate a professional, detailed, figure-rich LaTeX course note and final PDF from a Bilibili lecture, tutorial, or technical talk. Use when the user provides a Bilibili URL (BV number) and wants structured Chinese teaching notes that combine the video's title, chapters, diagrams, formulas, code, subtitle explanations, the original video cover on the front page, a final synthesis chapter, key frames extracted from the highest usable video resolution, and a rendered PDF that passes compile and layout blank-space checks. Falls back to Whisper speech-to-text when no CC subtitles are available.
 ---
 
 # Bilibili Render PDF
 
 Use this skill to turn a Bilibili video into a complete, compileable `.tex` note and a rendered PDF.
 
-This skill extends the `youtube-render-pdf` workflow with Bilibili-specific adaptations for subtitle scarcity, login-gated high resolution, multi-part (分P) videos, and platform-specific non-teaching content.
+This skill extends the `youtube-render-pdf` workflow with Bilibili-specific adaptations for cookie-first subtitle probing, login-gated high resolution, subtitle scarcity, multi-part (分P) videos, and platform-specific non-teaching content.
 
 ## Bilibili vs YouTube: Key Differences
 
 | Aspect | Handling |
 |--------|----------|
-| **Subtitle scarcity** | Try CC subtitles first → fall back to Whisper speech-to-text → visual-only mode |
-| **Login-gated HD** | 1080P+ requires cookies; prompt the user to use `yt-dlp --cookies "$COOKIE_FILE" ` |
+| **Subtitle scarcity** | Try cookie-assisted CC subtitle probing first → then inspect metadata → fall back to Whisper speech-to-text → visual-only mode |
+| **Login-gated HD** | 1080P+ requires cookies; invoke `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp` with the required cookie flags |
 | **Multi-part videos** | Detect 分P videos and ask the user which parts to process |
 | **URL formats** | Support `bilibili.com/video/BVxxxxxxx` and `b23.tv` short links |
 | **Danmaku** | Do not use danmaku as a teaching content source (too noisy); use only CC subtitles or Whisper output |
@@ -38,23 +38,14 @@ The output must:
 When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
 
 - Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
-- Whisper GPU transcriber for subtitle fallback (short audio <10min): `D:\Project\video2pdf\kimi\tools\whisper_gpu.bat`
-  - It wraps `faster-whisper` (medium model + CUDA float16) via the shared `.venv` Python runtime.
-  - Recommended invocation: `D:\Project\video2pdf\kimi\tools\whisper_gpu.bat audio.wav --format srt --language zh`
-- **Whisper chunked transcriber for long audio (≥10min): `D:\Project\video2pdf\kimi\tools\whisper_chunked.bat`**
-  - Automatically splits long audio into 5-minute chunks, transcribes each, and merges with correct timestamp offsets.
-  - Uses `int8` compute type by default (more stable than `float16` for long audio).
-  - Outputs real-time progress to `.whisper_log` in the working directory.
-  - Automatically kills competing GPU processes before loading the model.
-  - Recommended invocation: `D:\Project\video2pdf\kimi\tools\whisper_chunked.bat audio.wav --language zh -o audio.srt`
-- `yt-dlp`: `D:\Project\video2pdf\kimi\tools\yt-dlp.exe`
+- Whisper CLI for subtitle fallback: `D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe`
+- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
 - `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
 - `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
 - ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
-- `xelatex`: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
-- `COOKIE_FILE`: `C:\Users\juju\Downloads\www.bilibili.com_cookies.txt`
+- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
 
-Use the shared `kimi` uv environment as the default local runtime for Python-based helper work. When CC subtitles are unavailable, use the `whisper_gpu.bat` path above, which automatically invokes `faster-whisper` with the medium model on CUDA.
+Use the shared `kimi` uv environment as the default local runtime for Python-based helper work, and use the `whisper.exe` path above whenever the CC subtitle path is unavailable.
 
 ## Pedagogical Standard
 
@@ -68,145 +59,307 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ## Source Acquisition
 
+### Cookie-First Subtitle Probe
+
+1. Before inspecting metadata, first try cookie-assisted subtitle discovery with the required `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp --list-subs` launcher.
+   Use a user-provided Netscape cookie file such as `www.bilibili.com_cookies.txt` whenever available.
+   This comes first in the workflow because Bilibili subtitle availability is often clearer with cookies than from an initial metadata-only pass.
+
+2. Use the fixed PowerShell launcher for manual probing:
+
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist --list-subs $URL
+```
+
+3. Use a generic Python command format when the probe is being orchestrated programmatically:
+
+```python
+import subprocess
+
+cookie_file = "/path/to/www.bilibili.com_cookies.txt"
+url = "https://www.bilibili.com/video/BVxxxxxxxxx/"
+
+subprocess.run(
+    [
+        r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe",
+        "-m",
+        "yt_dlp",
+        "--cookies",
+        cookie_file,
+        "--no-playlist",
+        "--list-subs",
+        url,
+    ],
+    check=True,
+)
+```
+
+4. If the cookie-assisted subtitle probe shows usable tracks, immediately prefer the same cookie file for subtitle download as well.
+   Keep the raw timestamped subtitle file; do not flatten it too early.
+
+5. If a cookie file is expected and the probe fails because the cookie is missing, expired, or authentication-gated, ask the user for a refreshed cookie before concluding that CC subtitles are unavailable.
+
 ### Metadata Inspection
 
-1. Inspect the video metadata first.
-   Prefer title, chapters, duration, thumbnail availability before writing.
-
-   Do NOT use metadata to determine subtitle availability.
-   Bilibili's metadata is unreliable about whether subtitles exist — especially
-   for AI-generated (ai-zh) subtitles, which are commonly available but rarely
-   listed in metadata. The only reliable way to check is to run the Priority 1
-   subtitle download command (with cookies) and see if it produces files.
+1. Only after the cookie-first subtitle probe, inspect the video metadata.
+   Prefer title, chapters, duration, thumbnail availability, and subtitle availability before writing.
 
 2. Detect multi-part (分P) videos.
    List all parts and ask the user which parts to process before downloading.
 
-
-
 ### Subtitle Acquisition (Three-Level Fallback)
 
-The subtitle acquisition process is a strict sequential pipeline. You MUST
-execute Priority 1 first and check its actual file output before deciding
-whether to proceed to Priority 2. Never skip Priority 1 based on metadata,
-assumptions, or partial information — Bilibili frequently provides AI-generated
-Chinese subtitles that are not advertised in video metadata.
+For English teaching, IELTS speaking, IELTS writing, TOEFL, pronunciation, grammar, vocabulary, or similar language-learning content, treat English wording as primary evidence:
 
-Decision rule: After running the Priority 1 command, list the working directory
-for `.srt` or `.vtt` files. If any subtitle file was produced, use it and stop.
-Only if zero subtitle files were produced, proceed to Priority 2.
+- list available subtitles first and prefer `en`, `en-US`, `en-GB`, or other English tracks when they exist
+- if English subtitles are unavailable or unusable, run local Whisper before relying on Chinese-only subtitles
+- keep Chinese `zh`, `zh-Hans`, or `ai-zh` subtitles as auxiliary timing and meaning checks when useful
+- preserve authentic phrases, collocations, sentence patterns, sample answers, examiner-style wording, and discourse markers in the final bilingual note
 
-**Priority 1: CC subtitles (platform-embedded) — always attempt this first**
+**Priority 1: CC subtitles (platform-embedded)**
 
-This step is mandatory. Run the download command below regardless of what
-metadata or any other source says about subtitle availability. Bilibili's
-AI-generated subtitles (ai-zh track) are present on most videos but are
-often invisible in metadata queries. The cookie file (`$COOKIE_FILE`) is
-required — without it, Bilibili may not expose available subtitles.
-
-After running the command, list the working directory for `.srt` or `.vtt`
-files. If any subtitle file was produced, use it — prefer manual subtitles
-over auto-generated when both exist, and prefer `zh-Hans` > `zh-CN` > `zh` >
-`ai-zh` tracks.
+Use manual subtitles over auto-generated subtitles when both are available.
+Prefer `zh-Hans`, `zh-CN`, `zh`, or `ai-zh` subtitle tracks.
 Preserve the subtitle timestamps; do not flatten subtitles into plain text too early if figures still need to be located.
+On Bilibili, AI subtitles such as `ai-zh` may only appear when auto-generated subtitles are requested, so include `--write-auto-subs` alongside `--write-subs`.
+When a cookie file is available, reuse it for subtitle download.
 
-```
-yt-dlp --cookies "$COOKIE_FILE" --write-subs  --write-auto-subs --sub-langs "zh-Hans,zh-CN,zh,ai-zh" --convert-subs srt \
-  --skip-download -o "%(title)s.%(ext)s" "<URL>"
-```
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
 
-
-
-**Priority 2: Whisper speech-to-text (only if Priority 1 produced zero subtitle files)**
-
-Before proceeding, verify: did the Priority 1 yt-dlp command produce any
-`.srt` or `.vtt` files in the working directory? If yes, stop here and use
-those files — do not run Whisper. Only if the answer is definitively no
-(no subtitle files were created), proceed with audio extraction and Whisper
-transcription below.
-
-Extract audio first, then transcribe with the GPU Whisper wrapper to produce a timestamped SRT file.
-
-**For short audio (<8 minutes):**
-```
-yt-dlp -x --audio-format wav -o "audio.%(ext)s" "<URL>"
-D:\Project\video2pdf\kimi\tools\whisper_gpu.bat audio.wav --format srt --language zh
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist `
+  --write-subs --write-auto-subs `
+  --sub-langs 'zh-Hans,zh-CN,zh,ai-zh' --convert-subs srt `
+  --skip-download -o '%(title)s.%(ext)s' $URL
 ```
 
-**For audio ≥8 minutes (strongly recommended):**
-Use the chunked transcriber. It uses `int8` (more stable than `float16`), writes file logs, and saves per-chunk checkpoints so a crash does not lose progress.
-```
-yt-dlp -x --audio-format wav -o "audio.%(ext)s" "<URL>"
-D:\Project\video2pdf\kimi\tools\whisper_chunked.bat audio.wav --language zh -o audio.srt
+For English-learning videos, check and download English tracks first:
+
+```powershell
+$COOKIE_FILE = 'C:\path\to\www.bilibili.com_cookies.txt'
+$URL = 'https://www.bilibili.com/video/BVxxxxxxxxx/'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist --list-subs $URL
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp --cookies $COOKIE_FILE --no-playlist `
+  --write-subs --write-auto-subs `
+  --sub-langs 'en,en-US,en-GB,zh-Hans,zh-CN,zh,ai-zh' --convert-subs srt `
+  --skip-download -o '%(title)s.%(ext)s' $URL
 ```
 
-**Checkpoint / resume behavior:** `whisper_chunked.bat` automatically saves a `chunk_NNN.srt` checkpoint file after each chunk finishes. If the process is killed or hangs, re-run the exact same command and it will skip already-completed chunks. Checkpoints are cleaned up only after the final merged `audio.srt` is successfully written.
+**Priority 2: Whisper speech-to-text (when no CC subtitles are available)**
 
-**Monitoring progress and detecting hangs:** Both scripts write real-time logs to `.whisper_log` in the working directory. Poll this file to check progress instead of relying on buffered stdout.
-```
-# In a separate terminal / polling loop:
-tail -f .whisper_log
-```
-If `.whisper_log` shows no new chunk completion for **more than 15 minutes**, the faster-whisper generator has likely hung. Terminate the process and re-run the same command — checkpoint resume will pick up where it left off.
+Extract audio first, then transcribe with Whisper to produce a timestamped SRT file.
 
-**Why chunking is necessary:** On this machine (RTX 3080 + Windows), loading the medium model with float16 on audio longer than ~10 minutes frequently hangs or silently crashes. The chunked script:
-1. Splits audio into 5-minute segments via ffmpeg (merges the last segment if it is under 60 seconds)
-2. Cleans up competing GPU processes before loading the model
-3. Loads the model once with `int8` compute type (more stable than `float16`)
-4. Transcribes each segment sequentially and saves a checkpoint after each one
-5. Merges all SRT segments with correct timestamp offsets
-6. Handles both standard `-->` and non-standard `-->` arrow formats (the latter occurs with some faster-whisper int8 builds)
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp -x --audio-format wav -o 'audio.%(ext)s' '<URL>'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe' audio.wav --model medium --language zh --output_format srt --output_dir .
+```
 
 **Priority 3: Visual-only mode (when audio quality is too poor)**
 
 Skip subtitles entirely and rely on dense frame sampling to extract teaching content from the video frames alone.
 
-
 ### Video and Cover Download
 
-1. **Validate cookie first.** Before downloading anything, run a quick `--list-formats` probe with cookies. If the command returns zero formats or only low-resolution options, the cookie has likely expired. Stop and ask the user to refresh the cookie file before proceeding.
-
-2. Acquire the video's original cover image before writing the `.tex`.
+1. Acquire the video's original cover image before writing the `.tex`.
    Prefer the highest-resolution thumbnail exposed by the platform metadata.
    Save the selected cover locally and reference that local asset from the front page.
 
-3. Prefer the best usable video source for figure extraction.
+2. Prefer the best usable video source for figure extraction.
    Probe formats and choose the highest resolution that is actually downloadable in the current environment.
-   On Bilibili, use this strategy:
-   - First try `30080+30216` (1080P + audio) — requires working cookies
-   - If that fails, fall back to `30064+30216` (720P + audio)
-   - If that also fails, fall back to `bestvideo[height<=720]+bestaudio/best`
-   The specific format IDs above are the reliable Bilibili DASH codes on this host.
+   Note that 1080P+ on Bilibili typically requires login cookies.
 
-4. Keep all source artifacts local when practical.
+3. Keep all source artifacts local when practical.
    Typical working artifacts are metadata, the downloaded cover image, a timestamped subtitle file (CC or Whisper-generated), optional cleaned transcript text, a local video file, and extracted frames.
+
+## Output Naming
+
+Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
+
+```text
+D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
+```
+
+The `workspace` directory is the default parent for new Bilibili PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
+
+Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
+
+The final delivered PDF basename must come from the PDF article title when one exists, or the original video title when no separate article title exists. Apply the same normalization before appending `.pdf`.
+
+### Windows and Sandbox Acquisition Safeguards
+
+Use these safeguards when running inside this project workspace:
+
+- copy cookie files from `C:\Users\juju\Downloads` into the output directory's `待删除` tree before passing them to `yt-dlp`; Bilibili cookie jars may be written back during use
+- add `--no-cache-dir` to `yt-dlp` commands to avoid cache writes outside the workspace
+- when a `.part` rename or merge rename fails, rerun the download with `--no-part`; if a complete `.temp.mp4` or format-specific media file already exists, validate it with `ffprobe` before reusing it
+- when a downloaded merged temp file contains both video and audio streams, copy it to a stable workspace filename for downstream frame extraction
+- keep the failed temp files in `待删除` for audit; permanent cleanup belongs to the user
+- pass Chinese paths to Python tools through command-line arguments or environment variables; avoid embedding those paths inside stdin scripts because Windows console encodings may replace characters with `?`
+- compile through the LaTeX Compile Guard with `scripts/compile_latex_ascii.py`; pass the engine path with `--engine` and keep direct engine shell calls out of the workflow
 
 ## Long Video Strategy
 
-For longer videos, do not rely on a single monolithic pass. A single agent writing the full document from scratch accumulates unbounded context and produces increasingly incoherent output as it approaches its limits. The bigger risk is subtler: the main agent's judgment degrades when it is simultaneously tracking environment setup, outline decisions, frame extraction, and prose drafting all at once. Isolate concerns into roles.
+For longer videos, do not rely on a single monolithic pass.
 
-### Role-based orchestration (preferred)
+- If the video is longer than 20 minutes, or the subtitle file contains more than 300 subtitle entries, split the work into smaller segments.
+- Prefer chapter boundaries or 分P boundaries for splitting. If those are unavailable or too uneven, split by coherent time windows or subtitle ranges.
+- When subagents are available, spawn multiple subagents in parallel for different segments so coverage stays high and detail is not lost.
+- Give each subagent a concrete segment boundary and require it to return: the segment's teaching goal, the core claims, important formulas or code, required figures with time provenance, and any ambiguities that need integration-time resolution.
+- Keep a small overlap between neighboring segments when the explanation crosses boundaries, then deduplicate during integration.
+- The main agent must integrate the segment outputs into one unified outline and one coherent final narrative. The final PDF must read like a single lecture note, not a concatenation of chunk summaries.
 
-When subagents are available, split by **role** rather than by segment. Four roles cover a full lecture note:
+## Terminology Glossary Workflow
 
-1. **Outline agent** (1 instance, runs first). Reads all subtitles and the chapter list (or builds a chapter list from subtitle topics if Bilibili chapters are absent). Produces a complete global outline: section titles, subsection structure, a shared terminology table, a symbol legend, and the boundary timestamps for each chapter. This is the contract the other agents work against. The main agent must not start any other subagents until the outline agent returns.
+After Bilibili source acquisition and subtitle acquisition have established the usable source language, decide whether the Delivery Glossary applies before the outline is finalized.
 
-2. **Writer agents** (one per chapter or one per 2–3 short chapters). Each receives the global outline, the subtitle slice for its chapters, and the terminology table. Produces a complete `.tex` fragment for its chapters — from the first `\section{}` to the `\subsection{本章小结}` — saved to disk as `section_N.tex`. Writers must not duplicate definitions or background that other sections own; the outline contract prevents this.
+This workflow applies to non-English teaching PDFs whose final reader mode is a standalone Chinese learning note while the source video contains core English expressions that carry explanatory work. English-learning, IELTS, TOEFL, pronunciation, grammar, vocabulary, and similar language-learning Bilibili content keeps the existing English-primary behavior: preserve authentic English wording, sample answers, collocations, sentence patterns, and examiner-style phrasing in the PDF body when useful.
 
-3. **Figure agents** (one per chapter, or merged with the writer when the chapter is short). Responsible only for locating, extracting, inspecting, cropping, and writing figure `\includegraphics{}` blocks with captions and footnotes. Figures must not be inserted by the writer until the figure agent confirms the local file path and a semantic description of what the frame actually shows. Running figure agents in parallel with writers is acceptable as long as figure paths are confirmed before the writer finalises its section.
+When this workflow applies, the Outline agent must create the initial global Delivery Glossary at `review/acceptance/delivery_glossary.json` before writer agents begin. The outline contract must include the intended term boundary and source-preservation strategy for every core English expression that will drive explanations across chapters. The JSON contract must use:
 
-4. **Consistency agent** (1 instance, runs after all writers complete). Reads all `section_*.tex` files and checks: duplicate term definitions, notation that shifts between sections, forward references to concepts introduced later than assumed, and chapter transitions that leave a logical gap. Returns a diff-style list of fixes. The main agent applies the fixes before assembly.
+- `schema_version`: `delivery_glossary.v1`
+- `language_profile`: `non_english_teaching_pdf`
+- `default_reader_mode`: `standalone_readable_video_learning_note`
+- `terms`: a non-empty list of core English expressions with `english`, `chinese_primary`, `plain_language_boundary`, `related_terms`, `opposed_terms`, `first_use_expected_location`, `body_display_strategy`, `where_to_preserve_english`, and `required_after_first_use`
 
-The main agent's role is orchestration: issue the outline subagent, distribute the contracts, collect the section files, apply the consistency fixes, assemble the final `.tex`, and compile.
+Use `body_display_strategy` to decide how the term appears in reader-facing body prose. Use `where_to_preserve_english` to decide where the original English expression remains recoverable for source alignment. Product names, company names, person names, code identifiers, commands, file extensions, and familiar abbreviations stay outside the glossary unless they define a new core concept in this video.
 
-### Segment-based fallback
+Writer agents must follow the global Delivery Glossary while writing `section_*.tex`. Writer agents must include `new_term_candidates` in every handoff note when discovering a new core English expression after the outline stage, including the proposed `chinese_primary`, `plain_language_boundary`, `body_display_strategy`, and `where_to_preserve_english`. If no new core English expressions were found, the handoff must state `new_term_candidates: none`.
 
-If role-based orchestration is not available (no subagents or too many context limits), fall back to segment-based monolithic passes:
+The workflow coordinator must accept or reject each candidate before consistency review. The coordinator must merge accepted candidates into `review/acceptance/delivery_glossary.json`; rejected candidates remain outside the body terminology contract. After each merge, validate the glossary before consistency review and final acceptance:
 
-- Split at chapter boundaries, or at coherent time windows if chapters are missing.
-- Keep a small overlap between neighboring segments when an explanation crosses the boundary.
-- Deduplicate the overlap during integration.
-- Integrate segment outputs into one unified narrative; the final document must read like a single lecture note, not concatenated summaries.
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\final-delivery-acceptance\scripts\validate_delivery_glossary.py `
+  "<video-name>\review\acceptance\delivery_glossary.json"
+```
+
+The Consistency agent must check `section_*.tex` and `main.tex` against the Delivery Glossary and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
+
+The final allowed artifact manifest must include the Delivery Glossary when this workflow applies. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `--include-delivery-glossary` so the Acceptance Reviewer can read the glossary within the allowed final-artifact boundary.
+
+The Delivery Glossary is a workflow contract artifact and is not a PDF appendix unless the user or task explicitly requests one. A visible reader-facing glossary, concept index, or appendix is opt-in and must be written as polished teaching content, separate from the JSON contract fields.
+
+## Pyramid Gate Workflow
+
+Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here.
+
+Canonical Pyramid Gate artifacts for each video output directory:
+
+- `<video-name>\outline_contract.md`
+- `<video-name>\section_*.tex`
+- `<video-name>\main.tex`
+- `<video-name>\review\pyramid\outline.pyramid.json`
+- `<video-name>\review\pyramid\section_*.pyramid.json`
+- `<video-name>\review\pyramid\main.pyramid.json`
+- `<video-name>\review\pyramid\summary.md`
+
+The JSON reports are the machine decision source. The output-level hook writes or refreshes `summary.md` as human review evidence after the JSON reports validate against the current source files.
+
+### Outline Gate
+
+After `<video-name>\outline_contract.md` exists and before any writer agent starts, run:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  "<video-name>\outline_contract.md" `
+  "<video-name>\review\pyramid\outline.pyramid.json" `
+  --artifact-type "outline_contract" `
+  --context-label "outline" `
+  --evaluation-context "Teaching-PDF outline checkpoint: validate that the Bilibili note outline states the teaching goal, chapter hierarchy, terminology contract, figure plan, and reader progression before writer agents start."
+
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  "<video-name>\review\pyramid\outline.pyramid.json" `
+  --input-file "<video-name>\outline_contract.md" `
+  --enforce-gate
+```
+
+If the outline report status is `needs_revision` or `blocked`, stop writer work. Revise `outline_contract.md`, rerun the evaluator, and continue only after validation exits successfully or explicit waiver evidence is recorded.
+
+### Section Gate
+
+After each `<video-name>\section_*.tex` exists and before integration, run the same checkpoint with the matching section stem. For example, for `section_01.tex`:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  "<video-name>\section_01.tex" `
+  "<video-name>\review\pyramid\section_01.pyramid.json" `
+  --artifact-type "tex_section" `
+  --context-label "section_01" `
+  --evaluation-context "Teaching-PDF section checkpoint: validate that this Bilibili chapter draft has a clear teaching claim, coherent subsection hierarchy, distinct same-level groups, source-grounded examples, and a reader-facing takeaway before integration."
+
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  "<video-name>\review\pyramid\section_01.pyramid.json" `
+  --input-file "<video-name>\section_01.tex" `
+  --enforce-gate
+```
+
+Repeat for every root-level `section_*.tex`. The `context_label` and report filename must use the same section stem, such as `section_02` and `section_02.pyramid.json`.
+
+If any section report status is `needs_revision` or `blocked`, stop integration. Revise the failing section, rerun its evaluator, and continue only after validation exits successfully or explicit waiver evidence is recorded.
+
+### Main Gate
+
+After the integrated `<video-name>\main.tex` exists and before PDF compilation, run:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  "<video-name>\main.tex" `
+  "<video-name>\review\pyramid\main.pyramid.json" `
+  --artifact-type "tex_document" `
+  --context-label "main" `
+  --evaluation-context "Teaching-PDF main checkpoint: validate that the integrated Bilibili note has a conclusion-first document structure, coherent chapter sequence, complete teaching progression, aligned titles, and source-faithful synthesis before PDF compilation."
+
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  "<video-name>\review\pyramid\main.pyramid.json" `
+  --input-file "<video-name>\main.tex" `
+  --enforce-gate
+```
+
+If the main report status is `needs_revision` or `blocked`, stop PDF compilation. Revise `main.tex`, rerun the evaluator, and compile only after validation exits successfully or explicit waiver evidence is recorded.
+
+### Waivers And Output-Level Check
+
+A waiver is valid only when the workflow owner explicitly approves continuing despite a `needs_revision` or `blocked` report. The evaluator wrapper owns the waiver metadata:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  "<video-name>\main.tex" `
+  "<video-name>\review\pyramid\main.pyramid.json" `
+  --artifact-type "tex_document" `
+  --context-label "main" `
+  --evaluation-context "Teaching-PDF main checkpoint: validate that the integrated Bilibili note has a conclusion-first document structure, coherent chapter sequence, complete teaching progression, aligned titles, and source-faithful synthesis before PDF compilation." `
+  --waiver-approved-by "<approver>" `
+  --waiver-reason "<specific reason for continuing despite the report>"
+
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  "<video-name>\review\pyramid\main.pyramid.json" `
+  --input-file "<video-name>\main.tex" `
+  --enforce-gate `
+  --allow-waiver
+```
+
+Run the output-level gate after the outline, every section, and main report exist, and before accepting the output as ready for PDF compilation or delivery:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\check_output_gate.py `
+  "<video-name>" `
+  --enforce-gate
+```
+
+If approved waivers are part of the evidence, the output-level check must opt into them:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\pyramid-principle-validate\scripts\check_output_gate.py `
+  "<video-name>" `
+  --enforce-gate `
+  --allow-waivers
+```
+
+The output-level check validates source fingerprints, checkpoint identity metadata, required reports, and waiver metadata. It writes or refreshes `<video-name>\review\pyramid\summary.md`; the workflow must still treat the JSON reports as the authoritative gate decisions.
 
 ## Teaching Content Rules
 
@@ -216,12 +369,14 @@ Build the notes from all of the following when available:
 - the video's original cover image and key metadata
 - on-screen diagrams, formulas, tables, plots, and architecture slides
 - subtitle explanations, examples, and verbal emphasis
+- short high-signal original dialogue segments in interview, panel, podcast, or conversation videos, when the exact wording adds presence, humor, intuition, or unusually compact information
 - code snippets shown or described in the talk
 
-Skip content that does not contribute to the actual lesson:
+Skip content outside the actual lesson:
 
 - greetings
 - small talk
+- routine back-and-forth that does not add information, tension, humor, intuition, or teaching value
 - sponsorship
 - channel logistics (一键三连, 关注投币, etc.)
 - closing pleasantries
@@ -235,6 +390,12 @@ Keep the speaker's closing discussion when it carries actual teaching value, suc
 2. Organize the document with `\section{...}` and `\subsection{...}`.
    Reconstruct the teaching flow when needed; do not blindly mirror subtitle order.
    Each section should answer, in order when applicable: what problem is being solved, why simpler views are insufficient, what the core idea is, how it works, and what the reader should retain.
+
+   Avoid overusing binary contrast sentence patterns that deny one framing and then pivot to another.
+   Use it only when the video itself establishes a real contrast and that contrast materially clarifies the mechanism.
+
+   Do not use vague or overly abstract phrasing.
+   Ground claims in concrete mechanisms, examples, variables, steps, observed phenomena, timestamps, figures, or speaker-provided evidence whenever possible.
 
 3. Start from `assets/notes-template.tex`.
    Fill in the metadata block, including the local cover image path, and replace the body content block with the generated notes.
@@ -264,11 +425,15 @@ Keep the speaker's closing discussion when it carries actual teaching value, suc
    use `importantbox` for core concepts the reader must walk away with, including formal definitions, central claims, key mechanism summaries, theorem-like statements, critical algorithm steps, and compact restatements of the main idea after a dense explanation
    use `knowledgebox` for background and side knowledge that improves understanding without being the main thread, including prerequisite reminders, historical lineage, engineering context, design tradeoffs, terminology comparisons, and intuition-building analogies
    use `warningbox` for common misunderstandings and failure points, including notation overload, hidden assumptions, misleading heuristics, easy-to-make implementation mistakes, causal confusions, off-by-one style reasoning errors, and places where the speaker contrasts a wrong intuition with the correct one
+   use `dialoguebox` only for conversation-heavy videos when a brief original dialogue segment is high-information, funny, vivid, or especially intuitive, and preserving the speaker's wording gives the reader a stronger sense of being present in the discussion
+   a `dialoguebox` may contain either one exchange or several tightly connected turns, such as a question, follow-up, pushback, clarification, and answer sequence
+   keep `dialoguebox` snippets short: preserve speaker labels and a concrete timestamp or interval, lightly clean obvious ASR errors only when confident, and follow the box with prose that explains why the dialogue segment matters
+   do not use `dialoguebox` for greetings, filler, long transcript dumps, or dialogue that would be clearer as ordinary summarized exposition
    there is no quota of one box per section; add multiple boxes in a section when the material contains multiple distinct teaching signals
    each box should carry a specific pedagogical payload rather than generic emphasis
    prefer placing a box immediately after the paragraph, derivation, or example that motivates it
    routine exposition should stay in normal prose; boxes are for high-signal takeaways, not decoration
-   figures must stay outside `importantbox`, `knowledgebox`, and `warningbox`
+   figures must stay outside `importantbox`, `knowledgebox`, `warningbox`, and `dialoguebox`
 
 10. End every major section with `\subsection{本章小结}`.
     Add `\subsection{拓展阅读}` when there are one or two worthwhile external links.
@@ -346,6 +511,30 @@ Whenever the `.tex` or PDF references a specific video frame, or a crop derived 
 - If several nearby frames in one figure all come from the same subtitle interval, one clear footnote is enough.
 - Keep the figure and its time footnote anchored to the same page; prefer layouts such as `[H]`, a non-floating block, or another stable placement when ordinary floats would separate them.
 
+## LaTeX Layout Guardrails
+
+Treat layout as part of the deliverable, not a final cosmetic pass. Figure-heavy notes fail most often when large forced-position floats accumulate, then LaTeX moves the next text block to a later page and leaves a large blank region behind. Apply these rules before the first compile:
+
+1. Do not place `\clearpage`, `\newpage`, `\pagebreak`, or `\vfill` inside generated chapter fragments or figure fragments. Only the main assembly may insert structural page breaks for the title page, table of contents, or a deliberately reviewed major boundary.
+
+2. Use bounded image dimensions by default:
+   `\includegraphics[width=0.76\linewidth,height=0.34\textheight,keepaspectratio]{...}`.
+   For wide dense slides, allow up to `width=0.86\linewidth,height=0.42\textheight` only when the page contains one figure plus explanatory prose. For small crops, prefer `width=0.68\linewidth,height=0.30\textheight`.
+
+3. Avoid three or more consecutive figure environments without prose between them. Interleave figures with explanatory text, or combine related frames into a compact subfigure layout when the comparison matters.
+
+4. Prefer `figure` placement `[htbp]` for ordinary figures. Use `[H]` only when provenance footnotes or nearby explanation would become confusing if the float moved. Never combine repeated `[H]` figures with large image heights.
+
+5. If a subsection needs many screenshots, keep each screenshot smaller and add one or two sentences of explanation between figure blocks. The goal is a readable learning rhythm: text establishes the question, the figure supplies evidence, the next text explains what to see.
+
+6. After assembling `main.tex`, scan all included `.tex` fragments for forbidden layout commands and oversized graphics before compiling:
+   `rg -n "\\clearpage|\\newpage|\\pagebreak|\\vfill|height=0\\.[5-9][0-9]*\\textheight|width=\\textwidth" . -g "*.tex"`.
+   If matches appear in generated body or figure fragments, fix them before rendering unless they are intentional title-page or template code.
+
+7. Run a guarded quick mode compile for temporary diagnostic compile checks, then run the bundled layout checker on the generated diagnostic PDF:
+   `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe <skill-dir>\scripts\check_pdf_layout.py "<diagnostic.pdf>" --max-bottom-blank 0.35`.
+   If it flags pages, render those pages to images, inspect them, reduce figure sizes or remove forced placement, and compile again. Do not deliver a PDF while flagged pages remain unexplained.
+
 ## Visualization
 
 For concepts that remain hard to explain with only screenshots and prose, add accurate visualizations.
@@ -376,24 +565,132 @@ Use visualizations for:
 
 Do not add decorative graphics that do not teach anything.
 
+## PDF Verification
+
+Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
+
+Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py --help
+```
+
+When a physical build directory is too long for a Windows process `cwd`, the wrapper uses an automatic short launch alias. Copied inputs, logs, compile reports, and other disposable evidence remain physically under the owning video output directory's `待删除\latex-build\` subtree.
+
+Use quick mode only as the temporary diagnostic compile path for TeX errors, layout investigation, and intermediate PDF inspection. Quick mode leaves its diagnostic `compile_report.json` under `待删除\latex-build\<run-id>\` and cannot satisfy final delivery.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode quick `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe"
+```
+
+Use final mode as the delivery compile path. Final mode writes the durable PDF and the latest final compile provenance report at `review\latex\compile_report.json`; `delivery_guard.py check` verifies that report before delivery. The final report must bind current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode final `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --final-pdf "D:\Project\video2pdf\newskill-kimi\workspace\<video>\<normalized-title>.pdf" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe" `
+  --source-skill "bilibili-render-pdf"
+```
+
+The wrapper copies TeX, section files, covers, and figure assets into a guarded build directory under the video output directory's `待删除\latex-build\` area, invokes the configured engine through structured arguments, enforces bounded runtime, writes logs, and preserves build evidence for audit. Raw direct engine calls are blocked workflow bypasses.
+
+Use the bundled `scripts/check_pdf_layout.py` for a first pass when PyMuPDF is available:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\check_pdf_layout.py "<final.pdf>" --max-bottom-blank 0.35
+```
+
+If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Adobe-GB1`, treat that renderer as unreliable for Chinese layout checking. Render with PyMuPDF instead, then inspect representative pages with `view_image`, especially pages containing tables, dense bilingual text, TikZ diagrams, video screenshots, and the final page.
+
+When using Python to render a PDF whose path contains Chinese characters, pass the PDF path and output directory as command-line arguments or environment variables. This avoids stdin script encoding loss on Windows.
+
+## Final Delivery Acceptance Gate
+
+After PDF rendering and PDF verification, run the Final Delivery Acceptance Gate before delivery.
+
+Required evidence paths:
+
+- `docs/acceptance/acceptance_criteria.v1.json`
+- `review/acceptance/allowed_artifacts_manifest.json`
+- `review/acceptance/delivery_glossary.json` when the non-English teaching PDF Delivery Glossary workflow applies
+- `review/acceptance/acceptance_report.skeleton.json`
+- `review/acceptance/rendered_pages/`
+- `review/acceptance/acceptance_report.json`
+- optional `review/acceptance/acceptance_summary.md`
+
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. When the non-English teaching PDF Delivery Glossary workflow applies, validate `review/acceptance/delivery_glossary.json` first and pass `--include-delivery-glossary` while creating the manifest. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+
+Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
+
+### Guarded Target Lifecycle
+
+The render workflow must create the session-scoped active target `.codex/delivery-targets/sessions/<session_id>/current.json` at `generating`, update `.codex/delivery-targets/task-index.json`, and create the video-level `review/acceptance/delivery_target.json` before final delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+
+The task index records task-index ownership for startup, recovery, and observability. It is not a Stop hook blocking source; the Stop hook does not scan all active tasks. A different session may continue this video output directory only through explicit handoff recorded in `.codex/delivery-targets/task-index.json`.
+
+After rendering the final PDF, set the active target to `ready_for_delivery`, run the Acceptance Reviewer in a separate read-only role, and set the stage to `accepted` only after acceptance passes. If acceptance fails, run bounded repair with repair subagents, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, rerender or regenerate changed final artifacts, refresh rendered page evidence, and rerun a fresh Acceptance Reviewer. Continue through `attempt_02/` and `attempt_03/` only when needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md`, set the target to `blocked`, and stop delivery.
+
+Before the final response, run `delivery_guard.py check` against `.codex/delivery-targets/sessions/<session_id>/current.json`. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Do not deliver this PDF until delivery_guard.py records a fresh pass. After successful delivery, run `clear-target --session-id` so stale `delivered` state cannot affect later work.
+
+The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
+
+Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+
 ## Final Checklist
 
 Before delivery, verify all of the following:
 
+- `check_output_gate.py "<video-name>" --enforce-gate` has passed, or `--allow-waivers` has passed with explicit waiver evidence in the relevant JSON reports
+- `<video-name>\review\pyramid\summary.md` is current, and the matching JSON reports remain the machine decision source
+- `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
+- `review\acceptance\delivery_glossary.json` exists, validates with `validate_delivery_glossary.py`, and appears in the manifest when the non-English teaching PDF Delivery Glossary workflow applies
+- `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
+- `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
+- `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, matches the current main TeX and final PDF, and carries current guarded wrapper provenance
+- `acceptance_report.json is the only machine-readable acceptance decision`; `acceptance_summary.md` is optional explanatory text
+- missing, failed, malformed, stale, or forbidden-context report blocks final delivery
 - no important teaching content has been dropped, and no concrete but critical detail has been lost during condensation, restructuring, or summarization
 - the text and figures are aligned: each inserted frame supports the surrounding explanation, necessary crops have been applied, and the chosen frame shows the fullest relevant information rather than a transitional or incomplete state
 - the document is visually rich enough for teaching: check whether more high-information key frames should be added, and whether additional LaTeX-native or Python-script-generated illustrations would improve clarity
+- the LaTeX log has no hard errors and no unresolved layout warnings that affect the rendered document
+- the generated PDF passes `scripts/check_pdf_layout.py` or every flagged page has been rendered and manually justified as an intentional section ending
 
 ## Delivery
 
 Deliver all of the following:
 
-- the final `.tex` file
+- the Whisper-generated SRT subtitle file, if speech-to-text was used
 - the downloaded cover image referenced on the front page
 - any extracted or generated figure assets referenced by the document
-- the compiled PDF
-- the Whisper-generated SRT subtitle file, if speech-to-text was used
+- the final `.tex` file and the compiled `.pdf` file (must use a reasonable Chinese filename, e.g., `[中文视频标题]_notes.tex` and `[中文视频标题]_notes.pdf`)
 
 ## Asset
 
 - `assets/notes-template.tex`: default LaTeX template to copy and fill
+- `scripts/compile_latex_ascii.py`: compile a TeX file from ASCII staging and copy outputs back
+- `scripts/check_pdf_layout.py`: post-compile PDF layout checker for blank-page and large-empty-region regressions

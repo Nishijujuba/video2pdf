@@ -20,7 +20,7 @@ Required subagent roles:
 - **Figure agents**: use one or more figure agents depending on the number of chapters. Figure agents are responsible for frame extraction, image selection, cropping, generating new explanatory diagrams or scripts, writing captions, and adding timestamp footnotes.
 - **Consistency agent**: check for duplicate definitions, inconsistent terminology, broken transitions between chapters, missing cross-references, and unclear notation. When a Delivery Glossary exists, the Consistency agent must check `section_*.tex` and `main.tex` against it and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
 - **Independent review agent**: after the first PDF is delivered, spawn an independent review agent. This agent must compare the draft against the original subtitle files and check for missing important details or subtle information. The workflow must continue through interaction and revision until the review agent judges that the TeX content is complete enough.
-- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, and a fresh Acceptance Reviewer run decides delivery.
+- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. Before launch, create or refresh `review/acceptance/acceptance_report.skeleton.json` from the project validator so the reviewer receives the fixed report shape, current artifact fingerprints, and rendered-page slots. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.skeleton.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, a fresh skeleton is generated, and a fresh Acceptance Reviewer run decides delivery.
 
 ### Subagent Wait Policy
 
@@ -53,6 +53,20 @@ When acceptance fails, preserve attempt evidence under `review/acceptance/attemp
 After successful delivery, archive the session target with `clear-target --session-id` so stale delivered state cannot affect later work.
 
 The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

@@ -210,6 +210,10 @@ A reviewer-authored JSON artifact that records the acceptance result against an 
 
 The minimal JSON contract for an Acceptance Report. It records the criteria file, overall status, decision source, review context used, artifact fingerprints, criterion results, visual scan evidence, failed criteria, and whether revision is required.
 
+## Acceptance Report Skeleton
+
+A fail-closed template for an Acceptance Report. It gives the Acceptance Reviewer the fixed report shape, current artifact fingerprints, and rendered-page coverage slots before judgment begins, while still requiring the reviewer to replace placeholder judgments with artifact-grounded evidence.
+
 ## Acceptance Decision Source
 
 The Acceptance Report JSON is the only machine-readable source of truth for whether an artifact passes acceptance. Human-readable Markdown summaries may explain the result, but they cannot override the JSON decision.

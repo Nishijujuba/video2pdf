@@ -36,6 +36,19 @@ class RunBatchFailureRecoveryTests(unittest.TestCase):
 
         self.assertEqual("A_B_ C_20260702_104530", name)
 
+    def test_yt_dlp_runtime_is_fixed_and_has_no_cli_override(self) -> None:
+        args = self.run_batch.parse_args(["--manifest", "manifest.json"])
+
+        self.assertFalse(hasattr(args, "venv_python"))
+        self.assertEqual(
+            Path(r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe"),
+            self.run_batch.YT_DLP_PYTHON,
+        )
+        with self.assertRaises(SystemExit):
+            self.run_batch.parse_args(
+                ["--manifest", "manifest.json", "--venv-python", r"C:\other\python.exe"]
+            )
+
     def write_pyramid_report(
         self,
         review_dir: Path,

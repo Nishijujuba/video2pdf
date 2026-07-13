@@ -20,6 +20,7 @@ from validate_delivery_glossary import validate_delivery_glossary
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DELIVERY_GLOSSARY_ROLE = "delivery_glossary"
 DELIVERY_GLOSSARY_PATH = "review/acceptance/delivery_glossary.json"
+ACCEPTANCE_REPORT_SKELETON_NAME = "acceptance_report.skeleton.json"
 REPORT_KEYS = {
     "schema_version",
     "criteria_version",
@@ -195,6 +196,11 @@ def compute_artifact_fingerprint(path: Path, relative_path: str) -> dict[str, An
     }
 
 
+def _skeleton_path_from_manifest(manifest: dict[str, Any]) -> str:
+    review_output_dir = _normalize_relative_path(manifest["review_output_dir"], "manifest.review_output_dir")
+    return f"{review_output_dir}/{ACCEPTANCE_REPORT_SKELETON_NAME}"
+
+
 def create_allowed_artifacts_manifest(
     video_output_dir: Path,
     criteria_path: Path,
@@ -240,6 +246,164 @@ def create_allowed_artifacts_manifest(
     manifest_path = acceptance_dir / "allowed_artifacts_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest_path
+
+
+def _skeleton_evidence(criteria_file: str) -> list[dict[str, str]]:
+    return [
+        {
+            "artifact_path": criteria_file,
+            "location": "acceptance report skeleton",
+            "summary": "REVIEW_REQUIRED: replace this placeholder with artifact-grounded reviewer evidence.",
+        }
+    ]
+
+
+def _skeleton_revision_guidance() -> dict[str, Any]:
+    return {
+        "required_change": "Complete the independent acceptance review and replace all skeleton placeholders.",
+        "allowed_fix_types": ["reviewer_report_completion"],
+    }
+
+
+def _skeleton_scan_evidence(item: dict[str, Any], manifest: dict[str, Any], criteria_file: str) -> dict[str, Any]:
+    category = item["category"]
+    artifact_paths = [artifact["path"] for artifact in manifest["final_artifacts"]]
+    if category in FORMULA_CATEGORIES:
+        return {
+            "scan_policy": item["scan_policy"],
+            "scanned_artifacts": artifact_paths,
+            "formulas_checked": [
+                {
+                    "location": "acceptance report skeleton",
+                    "formula_excerpt": "REVIEW_REQUIRED",
+                    "source_type": "interpretive_teaching_model",
+                    "status": "fail",
+                    "information_gain_summary": "Placeholder entry; reviewer must replace it with the full formula scan result.",
+                }
+            ],
+            "no_body_formula_found": False,
+        }
+    return {
+        "scan_policy": item.get("scan_policy", "acceptance_report_skeleton"),
+        "scanned_artifacts": artifact_paths + [criteria_file],
+        "skeleton_placeholder": True,
+    }
+
+
+def _skeleton_visual_scan(
+    *,
+    video_output_dir: Path,
+    manifest: dict[str, Any],
+    criteria_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    visual_items = {
+        criterion_id: item for criterion_id, item in criteria_by_id.items() if item["category"] in VISUAL_CATEGORIES
+    }
+    if not visual_items:
+        return None
+
+    pdf_artifacts = [artifact["path"] for artifact in manifest["final_artifacts"] if artifact["role"] == "pdf"]
+    if not pdf_artifacts:
+        raise ValidationError("skeleton requires a manifest PDF artifact when visual criteria are configured")
+    pdf = pdf_artifacts[0]
+    page_count = _pdf_page_count(video_output_dir / pdf)
+    rendered_pages_dir = f"{manifest['review_output_dir']}/rendered_pages"
+    visual_categories = sorted({item["category"] for item in visual_items.values()})
+
+    pages_checked: list[dict[str, Any]] = []
+    for page in range(1, page_count + 1):
+        rendered_page_image = f"{rendered_pages_dir}/page_{page:04d}.png"
+        if not (video_output_dir / rendered_page_image).exists():
+            raise ValidationError(f"rendered page image is missing: {rendered_page_image}")
+        failures = []
+        if page == 1:
+            failures = [
+                {
+                    "criterion_id": criterion_id,
+                    "category": item["category"],
+                    "visible_defect": "REVIEW_REQUIRED: replace this placeholder with page-specific visual evidence.",
+                    "rendered_page_image": rendered_page_image,
+                    "pdf_page": page,
+                }
+                for criterion_id, item in visual_items.items()
+            ]
+        pages_checked.append(
+            {
+                "page": page,
+                "rendered_page_image": rendered_page_image,
+                "status": "fail" if failures else "pass",
+                "criteria_checked": visual_categories,
+                "failures": failures,
+            }
+        )
+
+    return {
+        "pdf": pdf,
+        "page_count": page_count,
+        "rendered_pages_dir": rendered_pages_dir,
+        "pages_checked": pages_checked,
+    }
+
+
+def create_acceptance_report_skeleton(
+    video_output_dir: Path,
+    *,
+    criteria_path: Path,
+    manifest_path: Path | None = None,
+) -> Path:
+    """Create a fail-closed Acceptance Report skeleton for the reviewer to fill."""
+
+    video_output_dir = video_output_dir.resolve()
+    manifest_path = manifest_path or video_output_dir / "review" / "acceptance" / "allowed_artifacts_manifest.json"
+    manifest = _load_manifest(manifest_path)
+    _validate_manifest_artifacts(manifest, video_output_dir)
+    criteria, criteria_by_id = _criteria_items(criteria_path)
+    criteria_file = _repo_relative(criteria_path)
+    if manifest["criteria_file"] != criteria_file:
+        raise ValidationError("manifest.criteria_file does not match criteria path")
+
+    skeleton_relative = _skeleton_path_from_manifest(manifest)
+    skeleton_path = video_output_dir / skeleton_relative
+    skeleton_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_paths = [artifact["path"] for artifact in manifest["final_artifacts"]]
+    criterion_results = [
+        {
+            "criterion_id": criterion_id,
+            "category": item["category"],
+            "status": "fail",
+            "evidence": _skeleton_evidence(criteria_file),
+            "scan_evidence": _skeleton_scan_evidence(item, manifest, criteria_file),
+            "revision_guidance": _skeleton_revision_guidance(),
+        }
+        for criterion_id, item in criteria_by_id.items()
+    ]
+    report = {
+        "schema_version": "1.0",
+        "criteria_version": criteria["criteria_version"],
+        "criteria_file": criteria_file,
+        "overall_status": "fail",
+        "decision_source": "acceptance_report_json",
+        "review_context_used": {
+            "allowed_artifacts_manifest": f"{manifest['review_output_dir']}/allowed_artifacts_manifest.json",
+            "final_artifacts_only": True,
+            "generation_process_used": False,
+            "artifacts_read": artifact_paths + [criteria_file, skeleton_relative],
+        },
+        "artifact_fingerprints": [
+            compute_artifact_fingerprint(video_output_dir / artifact_path, artifact_path)
+            for artifact_path in artifact_paths
+        ],
+        "criterion_results": criterion_results,
+        "visual_scan_evidence": _skeleton_visual_scan(
+            video_output_dir=video_output_dir,
+            manifest=manifest,
+            criteria_by_id=criteria_by_id,
+        ),
+        "failed_criteria": list(criteria_by_id),
+        "revision_required": True,
+    }
+    skeleton_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return skeleton_path
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:
@@ -301,7 +465,7 @@ def _load_report(report_path: Path) -> dict[str, Any]:
     return report
 
 
-def _validate_review_context(report: dict[str, Any], manifest: dict[str, Any]) -> None:
+def _validate_review_context(report: dict[str, Any], manifest: dict[str, Any], video_output_dir: Path) -> None:
     context = _require_object(report["review_context_used"], "review_context_used")
     _validate_keys(context, REVIEW_CONTEXT_KEYS, "review_context_used")
     expected_manifest = f"{manifest['review_output_dir']}/allowed_artifacts_manifest.json"
@@ -315,11 +479,15 @@ def _validate_review_context(report: dict[str, Any], manifest: dict[str, Any]) -
 
     allowed = {artifact["path"] for artifact in manifest["final_artifacts"]}
     allowed.add(manifest["criteria_file"])
+    skeleton_path = _skeleton_path_from_manifest(manifest)
+    allowed.add(skeleton_path)
     artifacts_read = _require_string_array(context["artifacts_read"], "review_context_used.artifacts_read")
     for index, item in enumerate(artifacts_read):
         path = _normalize_relative_path(item, f"review_context_used.artifacts_read[{index}]")
         if path not in allowed:
             raise ValidationError(f"review_context_used.artifacts_read[{index}] is outside allowed artifacts")
+        if path == skeleton_path and not (video_output_dir / skeleton_path).exists():
+            raise ValidationError("review_context_used acceptance report skeleton is missing")
 
 
 def _validate_fingerprints(report: dict[str, Any], manifest: dict[str, Any], video_output_dir: Path) -> None:
@@ -657,7 +825,7 @@ def validate_acceptance_report(
     if report["criteria_file"] != expected_criteria_file or manifest["criteria_file"] != expected_criteria_file:
         raise ValidationError("criteria_file does not match criteria path")
 
-    _validate_review_context(report, manifest)
+    _validate_review_context(report, manifest, video_output_dir)
     _validate_fingerprints(report, manifest, video_output_dir)
     failed_criterion_ids = _validate_criterion_results(report, criteria_by_id, manifest)
     _validate_decision_consistency(report, failed_criterion_ids)
@@ -720,6 +888,11 @@ def main() -> int:
         help=f"Include {DELIVERY_GLOSSARY_PATH} as a delivery_glossary final artifact.",
     )
 
+    skeleton_parser = subparsers.add_parser("skeleton", help="Create a fail-closed acceptance_report skeleton.")
+    skeleton_parser.add_argument("video_output_dir", type=Path)
+    skeleton_parser.add_argument("--criteria", type=Path, default=REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json")
+    skeleton_parser.add_argument("--manifest", type=Path)
+
     validate_parser = subparsers.add_parser("validate", help="Validate an Acceptance Report.")
     validate_parser.add_argument("report", type=Path)
     validate_parser.add_argument("--criteria", type=Path, required=True)
@@ -738,6 +911,15 @@ def main() -> int:
                 include_delivery_glossary=args.include_delivery_glossary,
             )
             print(manifest_path)
+            return EXIT_VALID
+
+        if args.command == "skeleton":
+            skeleton_path = create_acceptance_report_skeleton(
+                args.video_output_dir,
+                criteria_path=args.criteria,
+                manifest_path=args.manifest,
+            )
+            print(skeleton_path)
             return EXIT_VALID
 
         manifest_path = args.manifest or args.video_output_dir / "review" / "acceptance" / "allowed_artifacts_manifest.json"

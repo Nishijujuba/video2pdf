@@ -1,8 +1,8 @@
 ---
-generated_at: 2026-07-07T16:41:03Z
+generated_at: 2026-07-10T05:57:13Z
 source_feature_count: 7
-source_issue_count: 44
-source_issue_fingerprint: 817a653bd23267a85cac0405fc7245c9c5417313778525f6928cb5d452e93807
+source_issue_count: 45
+source_issue_fingerprint: 7bc0baa6f6cf8c1d254161f91cb85eacebc811d05fe654876c93eeecf32e94cb
 ---
 
 # Issue Dependency Index
@@ -54,9 +54,9 @@ source_issue_fingerprint: 817a653bd23267a85cac0405fc7245c9c5417313778525f6928cb5
 ## latex-compile-guard
 
 - View: [[issues/_views/latex-compile-guard-dependencies]]
-- Issue count: 6
-- Status distribution: done=6
-- Root issues: [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]]
+- Issue count: 7
+- Status distribution: done=7
+- Root issues: [[issues/latex-compile-guard/01-establish-guarded-compile-wrapper-quick-path]], [[issues/latex-compile-guard/07-repair-long-path-startup-and-help-discovery]]
 - Currently executable: None
 - Status-blocked: None
 - Dependency-blocked: None

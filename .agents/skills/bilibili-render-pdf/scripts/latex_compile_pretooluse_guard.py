@@ -44,6 +44,7 @@ SCAN_SKIP_DIRS = {
 COMMAND_FIELD_NAMES = ("command", "cmd", "shell_command", "bash_command")
 SHELL_CONTROL_TOKENS = {";", "&&", "||", "|", "&"}
 COMMAND_PREFIX_TOKENS = {"command", "env", "exec", "nohup", "time"}
+PYTHON_RUNNERS = {"python", "python.exe", "python3", "python3.exe", "py", "py.exe"}
 
 
 def command_from_hook(hook_input: dict[str, Any]) -> str:
@@ -126,9 +127,45 @@ def dangerous_output_directory(command: str, project_root: Path) -> str | None:
     return None
 
 
+def guarded_wrapper_invocation(command: str) -> list[str] | None:
+    segment: list[str] = []
+    for token in [*command_tokens(command), ";"]:
+        cleaned = normalized_arg_value(token)
+        if cleaned in SHELL_CONTROL_TOKENS:
+            meaningful = [item for item in segment if normalized_arg_value(item) not in {"&"}]
+            segment = []
+            if not meaningful:
+                continue
+            command_name = token_basename(meaningful[0])
+            if command_name == GUARDED_WRAPPER_NAME:
+                return meaningful
+            if command_name in PYTHON_RUNNERS:
+                index = 1
+                while index < len(meaningful):
+                    value = normalized_arg_value(meaningful[index])
+                    if value == "--":
+                        index += 1
+                        break
+                    if value in {"-m", "-c"}:
+                        index = len(meaningful)
+                        break
+                    if value in {"-X", "-W"}:
+                        index += 2
+                        continue
+                    if value.startswith("-"):
+                        index += 1
+                        continue
+                    break
+                if index < len(meaningful) and token_basename(meaningful[index]) == GUARDED_WRAPPER_NAME:
+                    return meaningful
+            continue
+        segment.append(token)
+    return None
+
+
 def guarded_wrapper_mode(command: str) -> str | None:
-    tokens = command_tokens(command)
-    if not has_guarded_wrapper(command):
+    tokens = guarded_wrapper_invocation(command)
+    if tokens is None:
         return None
     for index, token in enumerate(tokens):
         if token == "--mode" and index + 1 < len(tokens):
@@ -143,7 +180,14 @@ def guarded_wrapper_mode(command: str) -> str | None:
 
 
 def has_guarded_wrapper(command: str) -> bool:
-    return any(token_basename(token) == GUARDED_WRAPPER_NAME for token in command_tokens(command))
+    return guarded_wrapper_invocation(command) is not None
+
+
+def guarded_wrapper_help(command: str) -> bool:
+    tokens = guarded_wrapper_invocation(command)
+    if tokens is None:
+        return False
+    return any(normalized_arg_value(token).lower() in {"-h", "--help"} for token in tokens)
 
 
 def iter_scan_paths(root: Path, max_entries: int, deadline_seconds: float) -> list[Path]:
@@ -252,6 +296,8 @@ def decide_hook(
     mode = guarded_wrapper_mode(command)
     if mode:
         return allow(f"Guarded LaTeX compile wrapper allowed in {mode} mode.", anomalies)
+    if guarded_wrapper_help(command):
+        return allow("Guarded LaTeX compile wrapper help is read-only and allowed.", anomalies)
     if has_guarded_wrapper(command):
         return block(
             "Blocked compile_latex_ascii.py without an allowed guarded wrapper mode. "

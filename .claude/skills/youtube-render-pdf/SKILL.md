@@ -21,6 +21,35 @@ The output must:
 - be a complete `.tex` document from `\documentclass` to `\end{document}`
 - be compiled successfully to PDF as part of the final delivery
 
+## Local Environment On This Machine
+
+When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
+
+- Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
+- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
+- Node.js for YouTube JavaScript challenge solving: `C:\Program Files\nodejs\node.exe`
+- `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
+- `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
+- ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
+- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
+
+Use the shared `kimi` uv environment as the default local runtime for Python-based helper work. If a command is unavailable on PATH, call the absolute path above directly.
+
+For every YouTube `yt-dlp` command that inspects metadata, lists formats, downloads subtitles, downloads thumbnails, or downloads video streams, pass `--js-runtimes node`. YouTube may require JavaScript challenge solving for the `n` challenge; without a JS runtime, `yt-dlp` can miss normal video formats and report only image or storyboard formats. Keep this flag in routine commands even when a metadata-only call appears to work.
+
+Preferred YouTube extraction command shape:
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -m yt_dlp `
+  --cookies '<localized-cookie-file>' `
+  --js-runtimes node `
+  --no-cache-dir `
+  --no-part `
+  --no-playlist `
+  <other workflow-specific flags> `
+  '<youtube-url>'
+```
+
 ## Pedagogical Standard
 
 The notes must read like a strong human teacher is guiding the reader through the material.
@@ -31,34 +60,15 @@ The notes must read like a strong human teacher is guiding the reader through th
 - when a section is dense, break it into smaller subsections that progressively build understanding rather than compressing everything into one long derivation
 - do not dump subtitle content in chronological order; rewrite it into a teaching sequence with clear intent, contrast, and buildup
 
-## Source Acquisition Preflight
-
-Source acquisition fails for predictable, environment-specific reasons. Resolve them first — every later step depends on having the local video, subtitles, and cover. Trying to plan or write before the source files exist wastes the main agent's context on debugging that a small preflight subagent could handle in isolation.
-
-When subagents are available, delegate this step. The preflight subagent's only job is to produce a verified yt-dlp command line plus the local `info.json`, subtitle file, cover image, and video file. The main agent then reuses that command line for any later yt-dlp calls and never debugs the environment itself.
-
-For YouTube specifically, three independent gates have to be cleared. Diagnose them in this order — the symptoms are characteristic and the order matters because gate 1 makes gate 2 untestable:
-
-1. **Network egress.** If you see `tls handshake eof`, `[SSL: UNEXPECTED_EOF_WHILE_READING]`, or repeated `Read timed out` against `youtube.com` or `pythonhosted.org`, direct egress is restricted. Route through a local HTTP proxy (commonly `http://127.0.0.1:7897` in CN dev setups behind Clash/Mihomo). Apply it to **both** `yt-dlp` (`--proxy ...`) and `uv pip install` (`HTTPS_PROXY=...`). If the proxy address is unknown, ask the user once rather than retrying without it.
-
-2. **JS-challenge runtime.** If `--list-formats` shows only `sb0..sb3` storyboard images plus `n challenge solving failed`, yt-dlp cannot decrypt YouTube's signature. Required combination: yt-dlp **nightly 2026.04 or later** (the 2026.03 stable predates EJS hooks), the `yt-dlp-ejs` Python package installed into the same env, and a working JS runtime via `--js-runtimes`. Bun ≥ 1.3 works on Windows. **Node 18 is reported as "unsupported"** by yt-dlp's check; use bun, deno, or upgrade Node to ≥ 20.
-
-3. **Plugin discovery.** A standalone `yt-dlp.exe` will not pick up Python plugins like `yt-dlp-ejs`. When EJS is needed, drive yt-dlp through `python -m yt_dlp` from the venv where `yt-dlp-ejs` is installed. The standalone exe and the venv module are independent installs and their versions can diverge by months.
-
-Two anti-patterns observed in the past, do not repeat:
-
-- Cycling through `--extractor-args "youtube:player_client=..."` permutations. The n-challenge is independent of the player client.
-- Adding `--no-check-certificate` or `--legacy-server-connect` to chase SSL errors that are actually egress issues.
-
-For concrete diagnostic commands, the verified end-to-end command line, and detail on each gate, read `references/youtube-preflight.md` before debugging from scratch.
-
 ## Source Acquisition
 
 1. Inspect the video metadata first.
    Prefer title, chapters, duration, thumbnail availability, and subtitle availability before writing.
+   Use the preferred YouTube extraction command shape above, including `--js-runtimes node`, for metadata inspection as well as later subtitle, thumbnail, format, and video downloads.
 
 2. Prefer the best usable video source for figure extraction.
    Probe formats and choose the highest resolution that is actually downloadable in the current environment.
+   Format probing must include `--js-runtimes node` so YouTube's `n` challenge does not hide usable video formats.
 
 3. Acquire the video's original cover image before writing the `.tex`.
    Prefer the highest-resolution thumbnail exposed by the platform metadata.
@@ -71,37 +81,197 @@ For concrete diagnostic commands, the verified end-to-end command line, and deta
    Fall back to the closest available subtitle track only when needed.
    Preserve the subtitle timestamps; do not flatten subtitles into plain text too early if figures still need to be located.
 
-5. **Whisper fallback when no subtitles exist.** If yt-dlp reports no subtitle tracks (manual or auto), extract audio and run Whisper. Use `D:\Project\video2pdf\kimi\tools\whisper_chunked.bat` for any audio ≥8 minutes — it uses `int8` (more stable than `float16`), writes `.whisper_log`, and saves per-chunk checkpoints so a crash does not lose progress. Re-run the same command to resume from checkpoints. Treat `.whisper_log` silence >15 minutes as a hang, terminate, and retry.
+5. Keep all source artifacts local when practical.
+   Typical working artifacts are metadata, the downloaded cover image, a timestamped subtitle file, optional cleaned transcript text, a local video file, and extracted frames.
 
-6. Keep all source artifacts local when practical.
-   Typical working artifacts are metadata, the downloaded cover image, a timestamped subtitle file (CC or Whisper-generated), optional cleaned transcript text, a local video file, and extracted frames.
+## Output Naming
+
+Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original YouTube title plus the task start timestamp from the local machine timezone:
+
+```text
+D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
+```
+
+The `workspace` directory is the default parent for new YouTube PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
+
+Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
+
+The final delivered PDF basename must come from the PDF article title when one exists, or the original video title when no separate article title exists. Apply the same normalization before appending `.pdf`.
 
 ## Long Video Strategy
 
-For longer videos, do not rely on a single monolithic pass. A single agent writing the full document from scratch accumulates unbounded context and produces increasingly incoherent output as it approaches its limits. The bigger risk is subtler: the main agent's judgment degrades when it is simultaneously tracking environment setup, outline decisions, frame extraction, and prose drafting all at once. Isolate concerns into roles.
+For longer videos, do not rely on a single monolithic pass.
 
-### Role-based orchestration (preferred)
+- If the video is longer than 20 minutes, or the subtitle file contains more than 300 subtitle entries, split the work into smaller segments.
+- Prefer chapter boundaries for splitting. If chapters are unavailable or too uneven, split by coherent time windows or subtitle ranges.
+- When subagents are available, spawn multiple subagents in parallel for different segments so coverage stays high and detail is not lost.
+- Give each subagent a concrete segment boundary and require it to return: the segment's teaching goal, the core claims, important formulas or code, required figures with time provenance, and any ambiguities that need integration-time resolution.
+- Keep a small overlap between neighboring segments when the explanation crosses boundaries, then deduplicate during integration.
+- The main agent must integrate the segment outputs into one unified outline and one coherent final narrative. The final PDF must read like a single lecture note, not a concatenation of chunk summaries.
 
-When subagents are available, split by **role** rather than by segment. Four roles cover a full lecture note:
+## Pyramid Gate Workflow
 
-1. **Outline agent** (1 instance, runs first). Reads all subtitles and the chapter list. Produces a complete global outline: section titles, subsection structure, a shared terminology table, a symbol legend, and the boundary timestamps for each chapter. This is the contract the other agents work against. The main agent must not start any other subagents until the outline agent returns.
+Run the Pyramid Gate for every YouTube single-video render. The gate protects the teaching structure before expensive downstream work starts: the outline gate protects chapter planning, section gates protect local drafts, and the main gate protects the integrated PDF source before compilation.
 
-2. **Writer agents** (one per chapter or one per 2–3 short chapters). Each receives the global outline, the subtitle slice for its chapters, and the terminology table. Produces a complete `.tex` fragment for its chapters — from the first `\section{}` to the `\subsection{本章小结}` — saved to disk as `section_N.tex`. Writers must not duplicate definitions or background that other sections own; the outline contract prevents this.
+Canonical gate artifacts for one output directory are:
 
-3. **Figure agents** (one per chapter, or merged with the writer when the chapter is short). Responsible only for locating, extracting, inspecting, cropping, and writing figure `\includegraphics{}` blocks with captions and footnotes. Figures must not be inserted by the writer until the figure agent confirms the local file path and a semantic description of what the frame actually shows. Running figure agents in parallel with writers is acceptable as long as figure paths are confirmed before the writer finalises its section.
+- `<video-name>\outline_contract.md`
+- `<video-name>\section_*.tex`
+- `<video-name>\main.tex`
+- `<video-name>\review\pyramid\outline.pyramid.json`
+- `<video-name>\review\pyramid\section_*.pyramid.json`
+- `<video-name>\review\pyramid\main.pyramid.json`
+- `<video-name>\review\pyramid\summary.md`
 
-4. **Consistency agent** (1 instance, runs after all writers complete). Reads all `section_*.tex` files and checks: duplicate term definitions, notation that shifts between sections, forward references to concepts introduced later than assumed, and chapter transitions that leave a logical gap. Returns a diff-style list of fixes. The main agent applies the fixes before assembly.
+Create the review directory before the first gate report:
 
-The main agent's role is orchestration: issue the outline subagent, distribute the contracts, collect the section files, apply the consistency fixes, assemble the final `.tex`, and compile.
+```powershell
+New-Item -ItemType Directory -Force -Path '<video-name>\review\pyramid' | Out-Null
+```
 
-### Segment-based fallback
+Use this Teaching-PDF evaluation context for every evaluator call:
 
-If role-based orchestration is not available (no subagents or too many context limits), fall back to segment-based monolithic passes:
+```powershell
+$teachingPdfContext = 'Teaching-PDF: evaluate the artifact as a Chinese teaching PDF for a YouTube source. Enforce The Pyramid Principle: a clear top-level answer, logically ordered support, MECE grouping, learner-facing progression from motivation to mechanism to examples to takeaway, title-body alignment, faithful use of subtitles and inspected figures, explicit assumptions, and no chronological transcript dump.'
+```
 
-- Split at chapter boundaries, or at coherent time windows if chapters are missing.
-- Keep a small overlap between neighboring segments when an explanation crosses the boundary.
-- Deduplicate the overlap during integration.
-- Integrate segment outputs into one unified narrative; the final document must read like a single lecture note, not concatenated summaries.
+### Outline Gate
+
+Run this after `<video-name>\outline_contract.md` exists and before writer agents start:
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  --artifact-type outline_contract `
+  --context-label outline `
+  --evaluation-context $teachingPdfContext `
+  '<video-name>\outline_contract.md' `
+  '<video-name>\review\pyramid\outline.pyramid.json'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  --enforce-gate `
+  --input-file '<video-name>\outline_contract.md' `
+  '<video-name>\review\pyramid\outline.pyramid.json'
+```
+
+If the outline report is `needs_revision` or `blocked`, stop writer work. Revise `outline_contract.md`, rerun the evaluator, and validate the refreshed JSON before spawning writer agents.
+
+### Section Gate
+
+Run this after each `<video-name>\section_*.tex` exists and before integration into `main.tex`. The `context_label` and report filename must match the section stem, such as `section_01`.
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  --artifact-type tex_section `
+  --context-label section_01 `
+  --evaluation-context $teachingPdfContext `
+  '<video-name>\section_01.tex' `
+  '<video-name>\review\pyramid\section_01.pyramid.json'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  --enforce-gate `
+  --input-file '<video-name>\section_01.tex' `
+  '<video-name>\review\pyramid\section_01.pyramid.json'
+```
+
+If any section report is `needs_revision` or `blocked`, stop integration. Revise that section draft, rerun its evaluator, and validate the refreshed JSON before integrating sections.
+
+### Main Gate
+
+Run this after the integrated `<video-name>\main.tex` exists and before PDF compilation:
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  --artifact-type tex_document `
+  --context-label main `
+  --evaluation-context $teachingPdfContext `
+  '<video-name>\main.tex' `
+  '<video-name>\review\pyramid\main.pyramid.json'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  --enforce-gate `
+  --input-file '<video-name>\main.tex' `
+  '<video-name>\review\pyramid\main.pyramid.json'
+```
+
+If the main report is `needs_revision` or `blocked`, stop PDF compilation. Revise `main.tex`, rerun the evaluator, and validate the refreshed JSON before running the guarded final compile.
+
+### Waivers
+
+Waivers are exceptional evidence for continuing through a `needs_revision` or `blocked` report. Record the waiver through the evaluator wrapper; never hand-edit the JSON report.
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.py `
+  --artifact-type tex_document `
+  --context-label main `
+  --evaluation-context $teachingPdfContext `
+  --waiver-approved-by '<human-or-workflow-owner>' `
+  --waiver-reason '<specific reason continuation is approved despite the gate status>' `
+  '<video-name>\main.tex' `
+  '<video-name>\review\pyramid\main.pyramid.json'
+
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\validate_report.py `
+  --enforce-gate `
+  --allow-waiver `
+  --input-file '<video-name>\main.tex' `
+  '<video-name>\review\pyramid\main.pyramid.json'
+```
+
+Apply the same waiver pattern to `outline` or `section_*` only when explicit approval evidence exists for that checkpoint. A waiver does not make the artifact good; it records an approved decision to continue with known structural risk.
+
+### Final Output-Level Check
+
+After outline, section, and main reports exist, run the output-level gate check before delivery. This validates canonical report names, `artifact_type`, `context_label`, input fingerprints, and gate status, then writes or refreshes `<video-name>\review\pyramid\summary.md`.
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\check_output_gate.py `
+  --enforce-gate `
+  '<video-name>'
+```
+
+If approved waivers exist and continuation is intentional, run the output-level check with waiver enforcement enabled:
+
+```powershell
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' .agents\skills\pyramid-principle-validate\scripts\check_output_gate.py `
+  --enforce-gate `
+  --allow-waivers `
+  '<video-name>'
+```
+
+Treat the JSON reports as the machine decision source. Treat `summary.md` as the human-readable digest that must be refreshed by the final output-level check.
+
+## Terminology Glossary Workflow
+
+Apply this workflow to non-English teaching PDFs whose default reader-facing output is a Chinese learning note about non-language-learning source material.
+
+English-learning and IELTS YouTube content keeps existing English-primary behavior. This exclusion also covers TOEFL, pronunciation, grammar, vocabulary, speaking, writing, and similar language-learning videos. These PDFs preserve source English as primary evidence and do not use this Chinese-primary glossary behavior unless the user explicitly asks.
+
+For applicable non-English teaching PDFs:
+
+- The Outline agent must create a global Delivery Glossary at `review/acceptance/delivery_glossary.json` before writer agents start. The outline contract must define each core English expression that carries explanatory work, its Chinese primary name, plain-language boundary, related or opposed concepts when useful, first-use location, `body_display_strategy`, `where_to_preserve_english`, and required wording after first use.
+- The Delivery Glossary must use `schema_version: "delivery_glossary.v1"`, `language_profile: "non_english_teaching_pdf"`, and `default_reader_mode: "standalone_readable_video_learning_note"`.
+- Validate the initial glossary before writer work:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -B .agents\skills\final-delivery-acceptance\scripts\validate_delivery_glossary.py `
+  '<video-name>\review\acceptance\delivery_glossary.json'
+```
+
+- Writer agents must follow the global Delivery Glossary when writing `section_*.tex`. Each Writer agent handoff note must include `new_term_candidates`, or the literal line `new_term_candidates: none` when that section adds no candidate terms. Each candidate must include the source English expression, proposed Chinese primary name, plain-language boundary, proposed body display strategy, preservation location, and first-use location.
+- The workflow coordinator must accept or reject `new_term_candidates` before consistency review. The coordinator merges accepted candidates into `review/acceptance/delivery_glossary.json`, keeps rejected candidates outside the terminology contract, and reruns `validate_delivery_glossary.py` after each merge.
+- The Consistency agent must check `section_*.tex` and `main.tex` against the Delivery Glossary and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
+- The glossary is not a PDF appendix unless explicitly requested. It is workflow evidence for coordination, consistency review, and final acceptance; a reader-facing glossary, concept index, or appendix appears only when the user or task asks for one.
+
+Before Final Delivery Acceptance Gate, validate the final glossary again and include it in the allowed artifact manifest when this workflow applies. The final manifest must include the glossary when applicable by passing `--include-delivery-glossary`:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+& 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe' -B .agents\skills\final-delivery-acceptance\scripts\validate_acceptance_report.py manifest `
+  '<video-name>' `
+  --artifact tex=main.tex `
+  --artifact pdf='<normalized-title>.pdf' `
+  --include-delivery-glossary
+```
 
 ## Teaching Content Rules
 
@@ -111,12 +281,14 @@ Build the notes from all of the following when available:
 - the video's original cover image and key metadata
 - on-screen diagrams, formulas, tables, plots, and architecture slides
 - subtitle explanations, examples, and verbal emphasis
+- short high-signal original dialogue segments in interview, panel, podcast, or conversation videos, when the exact wording adds presence, humor, intuition, or unusually compact information
 - code snippets shown or described in the talk
 
-Skip content that does not contribute to the actual lesson:
+Skip content outside the actual lesson:
 
 - greetings
 - small talk
+- routine back-and-forth that does not add information, tension, humor, intuition, or teaching value
 - sponsorship
 - channel logistics
 - closing pleasantries
@@ -130,6 +302,12 @@ Keep the speaker's closing discussion when it carries actual teaching value, suc
 2. Organize the document with `\section{...}` and `\subsection{...}`.
    Reconstruct the teaching flow when needed; do not blindly mirror subtitle order.
    Each section should answer, in order when applicable: what problem is being solved, why simpler views are insufficient, what the core idea is, how it works, and what the reader should retain.
+
+   Avoid overusing binary contrast sentence patterns that deny one framing and then pivot to another.
+   Use that pattern only when the video itself establishes a real contrast and that contrast materially clarifies the mechanism.
+
+   Do not use vague or overly abstract phrasing.
+   Ground claims in concrete mechanisms, examples, variables, steps, observed phenomena, timestamps, figures, or speaker-provided evidence whenever possible.
 
 3. Start from `assets/notes-template.tex`.
    Fill in the metadata block, including the local cover image path, and replace the body content block with the generated notes.
@@ -159,11 +337,15 @@ Keep the speaker's closing discussion when it carries actual teaching value, suc
    use `importantbox` for core concepts the reader must walk away with, including formal definitions, central claims, key mechanism summaries, theorem-like statements, critical algorithm steps, and compact restatements of the main idea after a dense explanation
    use `knowledgebox` for background and side knowledge that improves understanding without being the main thread, including prerequisite reminders, historical lineage, engineering context, design tradeoffs, terminology comparisons, and intuition-building analogies
    use `warningbox` for common misunderstandings and failure points, including notation overload, hidden assumptions, misleading heuristics, easy-to-make implementation mistakes, causal confusions, off-by-one style reasoning errors, and places where the speaker contrasts a wrong intuition with the correct one
+   use `dialoguebox` only for conversation-heavy videos when a brief original dialogue segment is high-information, funny, vivid, or especially intuitive, and preserving the speaker's wording gives the reader a stronger sense of being present in the discussion
+   a `dialoguebox` may contain either one exchange or several tightly connected turns, such as a question, follow-up, pushback, clarification, and answer sequence
+   keep `dialoguebox` snippets short: preserve speaker labels and a concrete timestamp or interval, lightly clean obvious ASR errors only when confident, and follow the box with prose that explains why the dialogue segment matters
+   do not use `dialoguebox` for greetings, filler, long transcript dumps, or dialogue that would be clearer as ordinary summarized exposition
    there is no quota of one box per section; add multiple boxes in a section when the material contains multiple distinct teaching signals
    each box should carry a specific pedagogical payload rather than generic emphasis
    prefer placing a box immediately after the paragraph, derivation, or example that motivates it
    routine exposition should stay in normal prose; boxes are for high-signal takeaways, not decoration
-   figures must stay outside `importantbox`, `knowledgebox`, and `warningbox`
+   figures must stay outside `importantbox`, `knowledgebox`, `warningbox`, and `dialoguebox`
 
 10. End every major section with `\subsection{本章小结}`.
    Add `\subsection{拓展阅读}` when there are one or two worthwhile external links.
@@ -271,10 +453,111 @@ Use visualizations for:
 
 Do not add decorative graphics that do not teach anything.
 
+## PDF Verification
+
+Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
+
+Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py --help
+```
+
+When a physical build directory is too long for a Windows process `cwd`, the wrapper uses an automatic short launch alias. Copied inputs, logs, compile reports, and other disposable evidence remain physically under the owning video output directory's `待删除\latex-build\` subtree.
+
+Use quick mode only as the temporary diagnostic compile path for TeX errors, layout investigation, and intermediate PDF inspection. Quick mode leaves its diagnostic `compile_report.json` under `待删除\latex-build\<run-id>\` and cannot satisfy final delivery.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode quick `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe"
+```
+
+Use final mode as the delivery compile path. Final mode writes the durable PDF and the latest final compile provenance report at `review\latex\compile_report.json`; `delivery_guard.py check` verifies that report before delivery. The final report must bind current TeX/PDF fingerprints plus guarded wrapper producer, wrapper contract, wrapper mode, wrapper script fingerprint, and final-mode invocation arguments.
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\compile_latex_ascii.py `
+  --mode final `
+  --tex "D:\Project\video2pdf\newskill-kimi\workspace\<video>\main.tex" `
+  --final-pdf "D:\Project\video2pdf\newskill-kimi\workspace\<video>\<normalized-title>.pdf" `
+  --engine "D:\kits\MiKTex\miktex\bin\x64\xelatex.exe" `
+  --source-skill "youtube-render-pdf"
+```
+
+The wrapper copies TeX, section files, covers, and figure assets into a guarded build directory under the video output directory's `待删除\latex-build\` area, invokes the configured engine through structured arguments, enforces bounded runtime, writes logs, and preserves build evidence for audit. Raw direct engine calls are blocked workflow bypasses.
+
+Use the bundled `scripts/check_pdf_layout.py` for a first pass when PyMuPDF is available:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-render-pdf\scripts\check_pdf_layout.py "<final.pdf>" --max-bottom-blank 0.35
+```
+
+If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Adobe-GB1`, treat that renderer as unreliable for Chinese layout checking. Render with PyMuPDF instead, then inspect representative pages with `view_image`, especially pages containing tables, dense bilingual text, TikZ diagrams, video screenshots, and the final page.
+
+## Final Delivery Acceptance Gate
+
+After the final PDF is rendered and visual verification is complete, run the Final Delivery Acceptance Gate before delivery.
+
+Required evidence paths:
+
+- `docs/acceptance/acceptance_criteria.v1.json`
+- `review/acceptance/allowed_artifacts_manifest.json`
+- `review/acceptance/acceptance_report.skeleton.json`
+- `review/acceptance/rendered_pages/`
+- `review/acceptance/acceptance_report.json`
+- optional `review/acceptance/acceptance_summary.md`
+
+Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+
+Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
+
+### Guarded Target Lifecycle
+
+The render workflow must create the session-scoped active target `.codex/delivery-targets/sessions/<session_id>/current.json` at `generating`, update `.codex/delivery-targets/task-index.json`, and create the video-level `review/acceptance/delivery_target.json` before final delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
+
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`.
+
+The task index records task-index ownership for startup, recovery, and observability. It is not a Stop hook blocking source; the Stop hook does not scan all active tasks. A different session may continue this video output directory only through explicit handoff recorded in `.codex/delivery-targets/task-index.json`.
+
+After rendering the final PDF, set the active target to `ready_for_delivery`, run the Acceptance Reviewer in a separate read-only role, and set the stage to `accepted` only after acceptance passes. If acceptance fails, run bounded repair with repair subagents, preserve attempt evidence under `review/acceptance/attempts/attempt_01/`, rerender or regenerate changed final artifacts, refresh rendered page evidence, and rerun a fresh Acceptance Reviewer. Continue through `attempt_02/` and `attempt_03/` only when needed. After the third failed attempt, write `review/acceptance/manual_repair_brief.md`, set the target to `blocked`, and stop delivery.
+
+Before the final response, run `delivery_guard.py check` against `.codex/delivery-targets/sessions/<session_id>/current.json`. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Do not deliver this PDF until delivery_guard.py records a fresh pass. After successful delivery, run `clear-target --session-id` so stale `delivered` state cannot affect later work.
+
+The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
+
+Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
+
 ## Final Checklist
 
 Before delivery, verify all of the following:
 
+- `check_output_gate.py "<video-name>" --enforce-gate` has passed, or `--allow-waivers` has passed with explicit waiver evidence in the relevant JSON reports
+- `<video-name>\review\pyramid\summary.md` is current, and the matching JSON reports remain the machine decision source
+- `review\acceptance\allowed_artifacts_manifest.json` is current and lists the final delivered artifacts
+- `review\acceptance\rendered_pages\page_0001.png` and subsequent page images cover every rendered PDF page
+- `review\acceptance\acceptance_report.json` exists, validates against the current final artifact fingerprints, and reports `overall_status: "pass"`
+- `review\latex\compile_report.json` exists, records `mode: "final"` and `status: "passed"`, matches the current main TeX and final PDF, and carries current guarded wrapper provenance
+- `acceptance_report.json is the only machine-readable acceptance decision`; `acceptance_summary.md` is optional explanatory text
+- missing, failed, malformed, stale, or forbidden-context report blocks final delivery
 - no important teaching content has been dropped, and no concrete but critical detail has been lost during condensation, restructuring, or summarization
 - the text and figures are aligned: each inserted frame supports the surrounding explanation, necessary crops have been applied, and the chosen frame shows the fullest relevant information rather than a transitional or incomplete state
 - the document is visually rich enough for teaching: check whether more high-information key frames should be added, and whether additional LaTeX-native or Python-script-generated illustrations would improve clarity
@@ -283,11 +566,12 @@ Before delivery, verify all of the following:
 
 Deliver all of the following:
 
-- the final `.tex` file
 - the downloaded cover image referenced on the front page
 - any extracted or generated figure assets referenced by the document
-- the compiled PDF
+- the final `.tex` file and the compiled `.pdf` file, with the PDF filename following the project output naming rule
 
 ## Asset
 
 - `assets/notes-template.tex`: default LaTeX template to copy and fill
+- `scripts/compile_latex_ascii.py`: guarded LaTeX Compile Guard wrapper
+- `scripts/check_pdf_layout.py`: post-compile PDF layout checker for blank-page and large-empty-region regressions

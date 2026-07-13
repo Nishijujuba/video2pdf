@@ -20,7 +20,7 @@ Required subagent roles:
 - **Figure agents**: use one or more figure agents depending on the number of chapters. Figure agents are responsible for frame extraction, image selection, cropping, generating new explanatory diagrams or scripts, writing captions, and adding timestamp footnotes.
 - **Consistency agent**: check for duplicate definitions, inconsistent terminology, broken transitions between chapters, missing cross-references, and unclear notation. When a Delivery Glossary exists, the Consistency agent must check `section_*.tex` and `main.tex` against it and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
 - **Independent review agent**: after the first PDF is delivered, spawn an independent review agent. This agent must compare the draft against the original subtitle files and check for missing important details or subtle information. The workflow must continue through interaction and revision until the review agent judges that the TeX content is complete enough.
-- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, and a fresh Acceptance Reviewer run decides delivery.
+- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. Before launch, create or refresh `review/acceptance/acceptance_report.skeleton.json` from the project validator so the reviewer receives the fixed report shape, current artifact fingerprints, and rendered-page slots. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.skeleton.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, a fresh skeleton is generated, and a fresh Acceptance Reviewer run decides delivery.
 
 ### Subagent Wait Policy
 
@@ -53,6 +53,20 @@ When acceptance fails, preserve attempt evidence under `review/acceptance/attemp
 After successful delivery, archive the session target with `clear-target --session-id` so stale delivered state cannot affect later work.
 
 The project Stop hook calls `delivery_guard.py hook-stop`. The Stop hook reads the official hook `session_id`, resolves `.codex/delivery-targets/sessions/<session_id>/current.json`, and may run `delivery_guard.py check` once for `ready_for_delivery` or `accepted`. The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation. UserPromptSubmit remains out of scope.
+
+Official Stop hook command on Windows:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B D:\Project\video2pdf\newskill-kimi\.agents\skills\final-delivery-acceptance\scripts\delivery_guard.py hook-stop
+```
+
+Official hook stdin payload:
+
+```json
+{"session_id":"<session_id>"}
+```
+
+The Stop hook resolves the active target from `.codex\delivery-targets\sessions\<session_id>\current.json`.
 
 Blocking text must include: Final Delivery Guard blocked delivery. Use a separate Acceptance Reviewer subagent and repair subagents. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 
@@ -128,7 +142,41 @@ Working language:
 - Use English when collecting materials, reasoning, planning, and organizing intermediate results.
 - Use Chinese for the final written PDF content.
 
+English teaching and IELTS videos:
+
+- When the source video is about English teaching, IELTS preparation, IELTS speaking, IELTS writing, or similar language-learning topics, prioritize English subtitles first.
+- If English subtitles are unavailable or unusable, use local Whisper transcription before relying on non-English subtitles or a purely translated transcript.
+- The final PDF for these videos should preserve as much original English wording as useful, especially authentic phrasing, high-scoring expressions, sample answers, model essays, sentence patterns, collocations, discourse markers, and examiner-style wording.
+- Explain advanced English expressions with Chinese explanations, usage notes, register, typical contexts, and learner-facing examples.
+- For IELTS writing or speaking model answers, include Chinese-English parallel presentation where helpful so the reader can compare the original expression with the Chinese meaning.
+- Avoid producing an all-Chinese PDF for these videos; the PDF should function as a bilingual learning note with the English source language treated as primary evidence.
+
 The final PDF should be comprehensive, technically precise, and faithful to the original subtitle content.
+
+### Formula Information-Gain Gate
+
+For important terms and concepts, provide necessary explanations using clear prose first. Use analogies, comparisons, contrasts, examples, tables, or diagrams when they improve understanding.
+
+Use LaTeX mathematical notation or formulas only when one of these conditions is met:
+
+1. the source material itself contains a formula, equation, algorithm, statistical relation, or quantitative model;
+2. the concept is inherently mathematical, computational, algorithmic, statistical, or physically quantitative;
+3. the formula adds reasoning value that prose cannot express as clearly, such as a constraint, trade-off, threshold, dependency, proportional relation, or reusable decision rule.
+
+Avoid inventing ad hoc formulas for qualitative life experience, business discussion, management reflection, creator growth, personal biography, or interview narratives when the formula only renames ideas already stated in prose.
+
+Before adding an invented teaching formula, apply this information-gain test:
+
+- What new relationship does the formula reveal beyond the previous sentence?
+- Can the reader use it to reason, compare, estimate, or make a decision?
+- Will the symbol definitions reduce cognitive load compared with a short sentence, list, or table?
+- Does the formula avoid repeating the same semantic content twice?
+
+If the answer is weak, use concise prose, a bullet list, or a table instead of a formula.
+
+When an invented formula is still useful, label it as an interpretive teaching model, keep variables minimal, define symbols only once, and avoid restating the same idea immediately after the formula.
+
+A formula is allowed only when it earns its cognitive cost.
 
 ## Agent skills
 

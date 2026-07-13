@@ -5,19 +5,19 @@
       "video_output_dir": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable",
       "target_file": "待删除/acceptance-e2e-20260707-session-guard/field-guide-fable/review/acceptance/delivery_target.json",
       "owner_session_id": "e2e-field-guide-fable-a",
-      "owner_status": "active",
+      "owner_status": "blocked",
       "last_session_id": "e2e-field-guide-fable-a",
-      "stage": "ready_for_delivery",
-      "updated_at": "2026-07-07T20:39:12+08:00"
+      "stage": "blocked",
+      "updated_at": "2026-07-13T15:17:21+08:00"
     },
     {
       "video_output_dir": "待删除/acceptance-e2e-20260707-session-guard/fable-5-usage",
       "target_file": "待删除/acceptance-e2e-20260707-session-guard/fable-5-usage/review/acceptance/delivery_target.json",
       "owner_session_id": "e2e-fable-5-usage-b",
-      "owner_status": "active",
+      "owner_status": "blocked",
       "last_session_id": "e2e-fable-5-usage-b",
-      "stage": "ready_for_delivery",
-      "updated_at": "2026-07-07T20:39:40+08:00"
+      "stage": "blocked",
+      "updated_at": "2026-07-13T15:17:21+08:00"
     },
     {
       "video_output_dir": "workspace/Inside Anthropic_ How Claude Tag Is Changing Agentic Work_20260708_090900",
@@ -27,6 +27,169 @@
       "last_session_id": "019f3f40-b7be-7ff2-8161-19c80776a929",
       "stage": "ready_for_delivery",
       "updated_at": "2026-07-08T11:05:12+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/02_Pablo Castro _Microsoft_ _ On AI and Knowledge/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/02_Pablo Castro _Microsoft_ _ On AI and Knowledge/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "codex-20260708-topic02-pablo",
+      "owner_status": "delivered",
+      "last_session_id": "codex-20260708-topic02-pablo",
+      "stage": "delivered",
+      "updated_at": "2026-07-08T19:29:58+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/03_Alexander Emiricos _ Roman Huitt _OpenAI_ _ Empowering Engineers _ The Codex App/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/03_Alexander Emiricos _ Roman Huitt _OpenAI_ _ Empowering Engineers _ The Codex App/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f4047-39fd-7703-af9f-301690141d97",
+      "owner_status": "blocked",
+      "last_session_id": "019f4047-39fd-7703-af9f-301690141d97",
+      "stage": "blocked",
+      "updated_at": "2026-07-09T09:03:26+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/04_Peter Steinberger _ Better Loops _ Orchestrating Agents/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/04_Peter Steinberger _ Better Loops _ Orchestrating Agents/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f4048-0d1c-7900-b1cb-d9940e5f405b",
+      "owner_status": "delivered",
+      "last_session_id": "019f4048-0d1c-7900-b1cb-d9940e5f405b",
+      "stage": "delivered",
+      "updated_at": "2026-07-08T19:12:41+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/03_Alexander Emiricos _ Roman Huitt _OpenAI_ _ Empowering Engineers _ The Codex App/pdf_output_5.6",
+      "target_file": "workspace/WF2026_20260708_095127/topics/03_Alexander Emiricos _ Roman Huitt _OpenAI_ _ Empowering Engineers _ The Codex App/pdf_output_5.6/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f490a-15fc-71c3-8fd0-c6bc9e5fedde",
+      "owner_status": "delivered",
+      "last_session_id": "019f490a-15fc-71c3-8fd0-c6bc9e5fedde",
+      "stage": "delivered",
+      "updated_at": "2026-07-10T22:27:43+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/05_Zishan Lee _Z_ai_ _ GLM 5_2 Keynote/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/05_Zishan Lee _Z_ai_ _ GLM 5_2 Keynote/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "wf2026-topic05-20260711",
+      "owner_status": "delivered",
+      "last_session_id": "wf2026-topic05-20260711",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T06:51:20+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/07_Randall Degges _Snyk_ _ AI Security Track Intro/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/07_Randall Degges _Snyk_ _ AI Security Track Intro/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "wf2026-topic07-20260711",
+      "owner_status": "delivered",
+      "last_session_id": "wf2026-topic07-20260711",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T08:22:05+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/12_Burak _cMutagent_ _ The Agentic AI Engineer/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/12_Burak _cMutagent_ _ The Agentic AI Engineer/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f4e94-c4c1-7971-9819-20ef685eb13e",
+      "owner_status": "delivered",
+      "last_session_id": "019f4e94-c4c1-7971-9819-20ef685eb13e",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T13:16:33+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/12_Burak _cMutagent_ _ The Agentic AI Engineer/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/12_Burak _cMutagent_ _ The Agentic AI Engineer/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f4e94-c4c1-7971-9819-20ef685eb13e",
+      "owner_status": "delivered",
+      "last_session_id": "019f4e94-c4c1-7971-9819-20ef685eb13e",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T13:19:52+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/20_Dominic Turno _Resonate_ _ From Specification to Implementation/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/20_Dominic Turno _Resonate_ _ From Specification to Implementation/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "wf2026-topic20-20260711",
+      "owner_status": "delivered",
+      "last_session_id": "wf2026-topic20-20260711",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T16:10:23+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/19_Kevin How _Google_ _ Anti_gravity 2_0 _ Agent Teams/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/19_Kevin How _Google_ _ Anti_gravity 2_0 _ Agent Teams/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f5010-8c36-7b02-a56e-ccae7249be14",
+      "owner_status": "delivered",
+      "last_session_id": "019f5010-8c36-7b02-a56e-ccae7249be14",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T16:06:40+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/13_Co_founder of Conductor _ Orchestras Not Factories _Stickfo Principles/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/13_Co_founder of Conductor _ Orchestras Not Factories _Stickfo Principles/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "5ffe076a-9ae9-49e2-9d38-8a7c8f664c43",
+      "owner_status": "blocked",
+      "last_session_id": "5ffe076a-9ae9-49e2-9d38-8a7c8f664c43",
+      "stage": "blocked",
+      "updated_at": "2026-07-11T17:48:35+08:00"
+    },
+    {
+      "video_output_dir": "workspace/From Writing Code to Designing Systems_ How the Developer Role is Changing _ Chris Noring_ Microsoft_20260711_223539",
+      "target_file": "workspace/From Writing Code to Designing Systems_ How the Developer Role is Changing _ Chris Noring_ Microsoft_20260711_223539/review/acceptance/delivery_target.json",
+      "owner_session_id": "youtube-GdvKNwMcfd0-20260711-223539",
+      "owner_status": "delivered",
+      "last_session_id": "youtube-GdvKNwMcfd0-20260711-223539",
+      "stage": "delivered",
+      "updated_at": "2026-07-11T23:53:40+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/27_Shan Gupta _Meta_ _ Production Evals for Agentic Systems/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/27_Shan Gupta _Meta_ _ Production Evals for Agentic Systems/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "wf2026-topic27-20260711",
+      "owner_status": "superseded",
+      "last_session_id": "wf2026-topic27-20260712-repair",
+      "stage": "ready_for_delivery",
+      "updated_at": "2026-07-12T08:22:34+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/27_Shan Gupta _Meta_ _ Production Evals for Agentic Systems/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/27_Shan Gupta _Meta_ _ Production Evals for Agentic Systems/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "wf2026-topic27-20260712-repair",
+      "owner_status": "delivered",
+      "last_session_id": "wf2026-topic27-20260712-repair",
+      "stage": "delivered",
+      "updated_at": "2026-07-12T08:41:55+08:00",
+      "continued_from_session_id": "wf2026-topic27-20260711"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/30_Jack _Human Layer_ _ Harness Engineering is Not Enough/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/30_Jack _Human Layer_ _ Harness Engineering is Not Enough/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f51cc-cd16-7542-bae2-89c234346fb7",
+      "owner_status": "delivered",
+      "last_session_id": "019f51cc-cd16-7542-bae2-89c234346fb7",
+      "stage": "delivered",
+      "updated_at": "2026-07-12T08:47:37+08:00"
+    },
+    {
+      "video_output_dir": "workspace/WF2026_20260708_095127/topics/31_Eric Meyer _Linet_s Labs_ _ Provably Safe Agentic Compute _Lean Verification/pdf_output",
+      "target_file": "workspace/WF2026_20260708_095127/topics/31_Eric Meyer _Linet_s Labs_ _ Provably Safe Agentic Compute _Lean Verification/pdf_output/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f587e-6974-7f60-8608-7a351b5f4f63",
+      "owner_status": "delivered",
+      "last_session_id": "019f587e-6974-7f60-8608-7a351b5f4f63",
+      "stage": "delivered",
+      "updated_at": "2026-07-13T09:16:43+08:00"
+    },
+    {
+      "video_output_dir": "workspace/A Song of Types and Agents _ Roberto Stagi Ratel_20260712_225002",
+      "target_file": "workspace/A Song of Types and Agents _ Roberto Stagi Ratel_20260712_225002/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f56cc-e4bb-7231-b267-99078bab26c6",
+      "owner_status": "delivered",
+      "last_session_id": "019f56cc-e4bb-7231-b267-99078bab26c6",
+      "stage": "delivered",
+      "updated_at": "2026-07-13T09:12:13+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Justin Cormack _ When Tests Lie_ Using Observability to Keep AI Honest _ AI Native DevCon June 2026_20260713_070046",
+      "target_file": "workspace/Justin Cormack _ When Tests Lie_ Using Observability to Keep AI Honest _ AI Native DevCon June 2026_20260713_070046/review/acceptance/delivery_target.json",
+      "owner_session_id": "youtube-xHxfeWtkXrM-20260713",
+      "owner_status": "delivered",
+      "last_session_id": "youtube-xHxfeWtkXrM-20260713",
+      "stage": "delivered",
+      "updated_at": "2026-07-13T09:19:10+08:00"
     }
   ]
 }

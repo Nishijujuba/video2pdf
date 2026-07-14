@@ -10,7 +10,7 @@ from legacy_baseline_contracts import (
     load_json_object,
     load_schema_contract,
     validate_json_schema_instance,
-    validate_legacy_baseline_definition,
+    validate_prevalidated_legacy_baseline_semantics,
 )
 
 
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         definition = load_json_object(args.definition.resolve())
         validate_json_schema_instance(definition, schema, "legacy baseline definition")
-        validate_legacy_baseline_definition(definition)
+        validate_prevalidated_legacy_baseline_semantics(definition)
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1

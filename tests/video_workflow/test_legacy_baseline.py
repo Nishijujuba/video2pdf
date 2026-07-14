@@ -377,6 +377,15 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
             (FIXTURES / "exit_evidence_manifest.valid.json").read_text(encoding="utf-8")
         )
         manifest["commands"][0]["timeout_seconds"] = 3601
+        schema = json.loads(
+            (PROJECT_ROOT / "schemas" / "exit-evidence-manifest.v1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with self.assertRaisesRegex(
+            ContractError, r"commands\[0\]\.timeout_seconds.*3600"
+        ):
+            validate_json_schema_instance(manifest, schema, "exit evidence manifest")
         manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
             f"schema-maximum-{time.time_ns()}.json"
         )
@@ -402,6 +411,60 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("commands[0].timeout_seconds", result.stderr)
         self.assertIn("3600", result.stderr)
+
+    def test_schema_only_accepts_structurally_valid_semantic_error_then_manual_rejects(self) -> None:
+        manifest = json.loads(
+            (FIXTURES / "exit_evidence_manifest.valid.json").read_text(encoding="utf-8")
+        )
+        manifest["commands"][0]["conforms"] = False
+        schema = json.loads(
+            (PROJECT_ROOT / "schemas" / "exit-evidence-manifest.v1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validate_json_schema_instance(manifest, schema, "exit evidence manifest")
+        manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
+            f"schema-only-semantic-{time.time_ns()}.json"
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        schema_only = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(MANIFEST_VALIDATOR),
+                str(manifest_path),
+                "--schema-only",
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(0, schema_only.returncode, schema_only.stderr)
+        with self.assertRaisesRegex(ContractError, "conforms does not match"):
+            legacy_baseline_contracts.validate_prevalidated_exit_evidence_semantics(manifest)
+
+    def test_prevalidated_baseline_semantics_rejects_cross_entry_category_drift(self) -> None:
+        definition = json.loads(
+            (FIXTURES / "legacy_baseline_definition.valid.json").read_text(encoding="utf-8")
+        )
+        definition["baselines"][1]["category"] = definition["baselines"][0]["category"]
+        schema = json.loads(
+            (PROJECT_ROOT / "schemas" / "legacy-baseline-definition.v1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validate_json_schema_instance(definition, schema, "legacy baseline definition")
+
+        with self.assertRaisesRegex(ContractError, "five Legacy categories"):
+            legacy_baseline_contracts.validate_prevalidated_legacy_baseline_semantics(
+                definition
+            )
 
     def test_schema_compatibility_layer_fails_closed_on_unknown_keyword(self) -> None:
         schema = {
@@ -445,7 +508,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         run_git(repo, "add", "evidence/result.json")
         run_git(repo, "commit", "-m", "evidence only")
 
-        legacy_baseline_contracts.validate_evidence_lineage(
+        legacy_baseline_contracts.validate_prevalidated_evidence_lineage(
             repo,
             implementation_commit,
             ["evidence/result.json"],
@@ -455,7 +518,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         run_git(repo, "add", "code.py")
         run_git(repo, "commit", "-m", "stale code descendant")
         with self.assertRaisesRegex(ContractError, "non-evidence path.*code.py"):
-            legacy_baseline_contracts.validate_evidence_lineage(
+            legacy_baseline_contracts.validate_prevalidated_evidence_lineage(
                 repo,
                 implementation_commit,
                 ["evidence/result.json"],

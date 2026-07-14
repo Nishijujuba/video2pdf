@@ -23,10 +23,10 @@ from legacy_baseline_contracts import (
     fingerprint_utf8_lf,
     load_json_object,
     load_schema_contract,
-    validate_exit_evidence_bindings,
-    validate_exit_evidence_manifest,
     validate_json_schema_instance,
-    validate_legacy_baseline_definition,
+    validate_prevalidated_exit_evidence_bindings,
+    validate_prevalidated_exit_evidence_semantics,
+    validate_prevalidated_legacy_baseline_semantics,
 )
 
 
@@ -282,7 +282,7 @@ def collect(
     manifest_schema = load_schema_contract(PROJECT_ROOT, MANIFEST_SCHEMA, MANIFEST_SCHEMA_ID)
     definition = load_json_object(definition_path)
     validate_json_schema_instance(definition, definition_schema, "legacy baseline definition")
-    validate_legacy_baseline_definition(definition)
+    validate_prevalidated_legacy_baseline_semantics(definition)
     implementation_commit = capture_clean_implementation_commit(PROJECT_ROOT)
     # The slice verification invokes this collector's CLI tests. Run it while
     # the implementation checkout is still clean, before tracked evidence logs
@@ -328,8 +328,8 @@ def collect(
         "overall_decision": overall_decision,
     }
     validate_json_schema_instance(manifest, manifest_schema, "exit evidence manifest")
-    validate_exit_evidence_manifest(manifest)
-    validate_exit_evidence_bindings(manifest, PROJECT_ROOT, output_path)
+    validate_prevalidated_exit_evidence_semantics(manifest)
+    validate_prevalidated_exit_evidence_bindings(manifest, PROJECT_ROOT, output_path)
     write_text_atomic(output_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
 

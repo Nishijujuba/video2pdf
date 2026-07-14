@@ -10,8 +10,8 @@ from legacy_baseline_contracts import (
     load_json_object,
     load_schema_contract,
     validate_json_schema_instance,
-    validate_exit_evidence_bindings,
-    validate_exit_evidence_manifest,
+    validate_prevalidated_exit_evidence_bindings,
+    validate_prevalidated_exit_evidence_semantics,
 )
 
 
@@ -35,9 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest = load_json_object(args.manifest.resolve())
         validate_json_schema_instance(manifest, schema, "exit evidence manifest")
-        validate_exit_evidence_manifest(manifest)
         if not args.schema_only:
-            validate_exit_evidence_bindings(manifest, PROJECT_ROOT, args.manifest.resolve())
+            validate_prevalidated_exit_evidence_semantics(manifest)
+            validate_prevalidated_exit_evidence_bindings(
+                manifest, PROJECT_ROOT, args.manifest.resolve()
+            )
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1

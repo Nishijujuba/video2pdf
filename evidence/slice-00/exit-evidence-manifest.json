@@ -7,7 +7,7 @@
     "number": 0,
     "name": "baseline-protection"
   },
-  "implementation_commit": "f7b012bd900d38cb04bff8c3a047e57cb274923f",
+  "implementation_commit": "70b6988e8e65c550dacec00e303288b496c5a89d",
   "evidence_paths": [
     "evidence/slice-00/exit-evidence-manifest.json",
     "evidence/slice-00/logs/slice-00-baseline-contracts.log",
@@ -23,7 +23,7 @@
     "evidence/slice-00/logs/legacy-batch-public-contract.log",
     "evidence/slice-00/logs/legacy-batch-public-contract.raw.log"
   ],
-  "generated_at": "2026-07-14T23:17:02Z",
+  "generated_at": "2026-07-14T23:59:06Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -32,7 +32,7 @@
   },
   "baseline_definition": {
     "path": "config/legacy-baseline.v1.json",
-    "sha256": "70673d69feb8b2f5c28d453ef6e463ec38fd242f0a9a05158177c189417790e0"
+    "sha256": "843bcf33151a63e56661ef1f38bab3cb724b4107a567a8916fe9670eacd70554"
   },
   "commands": [
     {
@@ -59,13 +59,13 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "exit_code": 0,
-      "expected_log_sha256": "456d978ea6ca8ee7fd41cd2e9abfea4004c3c94803b0a58aa621c932422cb809",
+      "expected_log_sha256": "94d2cc06c7148579a44d2320055204e10da0c8dba8b60c2bf45569398a4255d1",
       "log": {
         "normalization_version": 1,
         "normalized_path": "evidence/slice-00/logs/slice-00-baseline-contracts.log",
-        "normalized_sha256": "456d978ea6ca8ee7fd41cd2e9abfea4004c3c94803b0a58aa621c932422cb809",
+        "normalized_sha256": "94d2cc06c7148579a44d2320055204e10da0c8dba8b60c2bf45569398a4255d1",
         "raw_path": "evidence/slice-00/logs/slice-00-baseline-contracts.raw.log",
-        "raw_sha256": "8d746cba5eba5cc98faa3c633ac4a7c3741281f70fea6798f2e8773f404d70c1"
+        "raw_sha256": "dc1fd2d6e972925929c7c42a078d13d19d8106d6088dbb76547998104005e31a"
       },
       "conforms": true
     },
@@ -109,7 +109,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.log",
         "normalized_sha256": "8b9c4f473ee8096c19c20e8ddced73d8c98af1d5a5d3aa8f7730aab8eaaaa8ee",
         "raw_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.raw.log",
-        "raw_sha256": "a4a00e07d97b40a39c3a64b12b4ec0ec310f5005ad7a4dc1ce8cbbb27bd3e177"
+        "raw_sha256": "c1331809ffc1f223789a7ca9b0501629907095d0918e4458c1c04d707a228b68"
       },
       "conforms": true
     },
@@ -153,7 +153,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-compile-public-contract.log",
         "normalized_sha256": "ecb22a4e950e34603a42def0010c8d49c7237d61612562d17b5806e1ce52298f",
         "raw_path": "evidence/slice-00/logs/legacy-compile-public-contract.raw.log",
-        "raw_sha256": "82c6934027c9748eeb8a3c8be36eb1b1e516053e925f0d809025d6f31282551e"
+        "raw_sha256": "7d307a9b8f3606eb70afa9d2f04a19ebd6cbb12adb7ab461f63748169ba4a7a3"
       },
       "conforms": true
     },
@@ -197,7 +197,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.log",
         "normalized_sha256": "b029c744008c5409c737afe4d481f2e88bd8634e15fae78888d95d20eeca55b7",
         "raw_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.raw.log",
-        "raw_sha256": "d383907b15bd97e5eb8bd5046b67d30e459e5d6a65742487290f48731c0e5960"
+        "raw_sha256": "eaa08633904fae3a7e6728a5fd7e64871b08b7c9a1db8a950624f9ba25aeb427"
       },
       "conforms": true
     },
@@ -231,7 +231,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.log",
         "normalized_sha256": "baf04d6568a752b2a279c35000f020d8d14b422c64a1fd0157b3baf0ba557687",
         "raw_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.raw.log",
-        "raw_sha256": "c9065be0ab3034dac7429f9835584962a18a0c6da7525956a46165d805452ee6"
+        "raw_sha256": "0795ade4e2567ab5c6bc803b099f8bf67c45a8c25ff0d448d8b700b0e3d8c12d"
       },
       "conforms": true
     },
@@ -265,7 +265,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-batch-public-contract.log",
         "normalized_sha256": "4afcfc3d556ea76be4e4b29912851d2030ffe8439bf7ab45fc080b71fc7952b0",
         "raw_path": "evidence/slice-00/logs/legacy-batch-public-contract.raw.log",
-        "raw_sha256": "c4dd274e62799ea279415fcaf882d349168b64781a4671ae808660f13ba9fbbd"
+        "raw_sha256": "b6617adb984a97d4f07890b00db2f687674a9479e7854ba0e14d56d73971d9d9"
       },
       "conforms": true
     }
@@ -304,36 +304,50 @@
     {
       "role": "baseline_definition",
       "path": "config/legacy-baseline.v1.json",
-      "sha256": "70673d69feb8b2f5c28d453ef6e463ec38fd242f0a9a05158177c189417790e0"
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
+      "sha256": "843bcf33151a63e56661ef1f38bab3cb724b4107a567a8916fe9670eacd70554"
     },
     {
       "role": "baseline_definition_schema",
       "path": "schemas/legacy-baseline-definition.v1.schema.json",
-      "sha256": "dd6de5ff126b53d8514a68108c6a652ed608e65356e6daa101df2bd26f4aae88"
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
+      "sha256": "c25b5c0692993cfaf9a3dad92be086711a5f8669d6698f0d945e791a48208a76"
     },
     {
       "role": "exit_evidence_schema",
       "path": "schemas/exit-evidence-manifest.v1.schema.json",
-      "sha256": "dbd8bff3839e15e811c2bcb5cb3a33ebf9021cf4ede1b122768190d04b3b8d42"
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
+      "sha256": "4ef4e0f2b94ab978fbf57482ef62e5528b08fd75bb5c7216c53244054419025c"
     },
     {
       "role": "baseline_definition_positive_fixture",
       "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
-      "sha256": "3112e3286621b98d6f2267c29c5da3239bc193185c60ceef903fdbfa79e3124d"
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "valid",
+      "sha256": "1d4e84fb5ac7af3198c6364b757fff990732494ba2d956cdf2aedd7a16dd143e"
     },
     {
       "role": "baseline_definition_negative_fixture",
       "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "invalid",
       "sha256": "531bc691b95a9a028bb260983ffbd48f1dafe62f625e418e74ecbb5e18e58174"
     },
     {
       "role": "exit_evidence_positive_fixture",
       "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
-      "sha256": "081436a9c751cda77e00cfc5dd9b68ea2e7697ab1deee60c9842536852b70e35"
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "valid",
+      "sha256": "1ed61c5300674db4949e637018d9a6c0ae2bf2ae3e2a408571c341dac5680e40"
     },
     {
       "role": "exit_evidence_negative_fixture",
       "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "invalid",
       "sha256": "b2f070002913567f70e6159a465cd593e4277117bcb5d744c8e6ebf41a1bcb0b"
     }
   ],
@@ -353,8 +367,16 @@
       "schema_constraint_boundary_blocks",
       "unsupported_schema_keyword_blocks",
       "caller_supplied_implementation_commit_blocks",
-      "non_evidence_descendant_invalidates",
-      "atomic_publish_preserves_previous_evidence"
+      "atomic_publish_preserves_previous_evidence",
+      "authority_inventory_tampering_blocks",
+      "fixture_inventory_tampering_blocks",
+      "fixture_validity_tampering_blocks",
+      "evidence_head_retarget_blocks",
+      "non_evidence_publication_write_blocks",
+      "tampered_current_manifest_blob_blocks",
+      "unpublished_default_validation_blocks",
+      "prepublication_non_evidence_worktree_blocks",
+      "future_unrelated_descendant_preserves_publication_binding"
     ]
   },
   "unresolved_exceptions": [],

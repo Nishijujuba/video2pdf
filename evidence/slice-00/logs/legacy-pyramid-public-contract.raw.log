@@ -36,6 +36,6 @@ test_enforce_gate_blocks_needs_revision_and_blocked_without_waiver (test_validat
 test_rejects_invalid_generalized_reports (test_validate_report.ValidateReportTests.test_rejects_invalid_generalized_reports) ... ok
 
 ----------------------------------------------------------------------
-Ran 33 tests in 3.331s
+Ran 33 tests in 4.129s
 
 OK

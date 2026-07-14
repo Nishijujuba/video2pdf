@@ -17,7 +17,6 @@ SCRIPT_PATH = Path(__file__).resolve().with_name("validate_delivery_glossary.py"
 DOC_PATH = REPO_ROOT / "docs" / "acceptance" / "delivery_glossary.v1.md"
 SCHEMA_PATH = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "references" / "delivery-glossary.schema.json"
 SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "SKILL.md"
-CONTEXT_PATH = REPO_ROOT / "CONTEXT.md"
 
 
 def minimal_glossary() -> dict[str, object]:
@@ -213,19 +212,6 @@ class DeliveryGlossaryValidationTests(unittest.TestCase):
         self.assertIn("body_display_strategy", schema["properties"]["terms"]["items"]["required"])
         self.assertIn("where_to_preserve_english", schema["properties"]["terms"]["items"]["required"])
         self.assertIn("scripts/validate_delivery_glossary.py", skill)
-
-    def test_context_defines_delivery_glossary_terms(self) -> None:
-        context = CONTEXT_PATH.read_text(encoding="utf-8")
-
-        for heading in (
-            "## Delivery Glossary",
-            "## Core English Expression",
-            "## Body Display Strategy",
-            "## Source English Preservation Location",
-            "## New Term Candidate",
-        ):
-            with self.subTest(heading=heading):
-                self.assertIn(heading, context)
 
 
 if __name__ == "__main__":

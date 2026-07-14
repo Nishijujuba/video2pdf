@@ -9,6 +9,12 @@ These instructions apply whenever this project uses either of the following skil
 
 The goal is to produce a complete, accurate, figure-rich Chinese PDF from a video source while keeping long-running work split across isolated subagents.
 
+## Workflow Kernel 2.0 Activation Boundary
+
+`CONTEXT-MAP.md`, its active context glossaries under `docs/contexts/`, and ADRs beginning with ADR 0008 describe the accepted Workflow Kernel 2.0 target design. Until an explicit Global Gate Cutover or Platform Kernel Cutover activates the affected executable contracts, this file, `CLAUDE.md`, and the current skill implementations remain the active runtime policy for Legacy Track work.
+
+Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections. Agents must not mix target-design mechanics with a Legacy Track run or synthesize `workflow/run.json` for an existing output directory. Each cutover updates the relevant instructions, skills, schemas, providers, guards, and tests atomically.
+
 ## Multi-Agent Orchestration
 
 When using `/bilibili-render-pdf` or `/youtube-render-pdf`, the master agent must spawn multiple subagents to isolate context and reduce master-agent context pressure.
@@ -192,4 +198,4 @@ The repo uses the default five-label triage vocabulary: `needs-triage`, `needs-i
 
 ### Domain docs
 
-This repo uses a single-context domain-doc layout: root `CONTEXT.md` plus root `docs/adr/`. See `docs/agents/domain.md`.
+This repo uses a multi-context domain-doc layout: root `CONTEXT-MAP.md`, authoritative glossaries under `docs/contexts/`, and the global ADR ledger under `docs/adr/`. Archived context files are historical evidence and are not active terminology authorities. See `docs/agents/domain.md`.

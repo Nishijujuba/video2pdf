@@ -1,28 +1,40 @@
 # Domain Docs
 
-This repo uses a single-context domain-doc layout.
+This repo uses a multi-context domain-doc layout. `CONTEXT-MAP.md` is the routing and relationship authority; each active glossary under `docs/contexts/` owns only its context's terminology.
 
 ## Before Exploring, Read These
 
-- `CONTEXT.md` at the repo root
-- Relevant ADRs under `docs/adr/`
+1. Read `CONTEXT-MAP.md` at the repo root.
+2. Read only the relevant `docs/contexts/<context>/CONTEXT.md` files named by the map.
+3. Read relevant ADRs under the global `docs/adr/` ledger.
 
-If any of these files are missing, proceed silently. Domain docs are created lazily when terms or decisions are resolved.
+Archived context files under `docs/archive/` are historical evidence. They do not authorize current terminology, planning, or runtime behavior.
 
 ## File Structure
 
 ```text
 /
-|-- CONTEXT.md
-|-- docs/adr/
-`-- src/
+|-- CONTEXT-MAP.md
+`-- docs/
+    |-- contexts/
+    |   |-- project-governance/CONTEXT.md
+    |   |-- video-workflow/CONTEXT.md
+    |   |-- pyramid-evaluation/CONTEXT.md
+    |   |-- final-acceptance/CONTEXT.md
+    |   `-- legacy-workspace-maintenance/CONTEXT.md
+    |-- archive/
+    `-- adr/
 ```
 
-## Use The Glossary's Vocabulary
+## Use Context-Owned Vocabulary
 
-When output names a domain concept, use the term as defined in `CONTEXT.md`.
+Every canonical term has exactly one owning context. Consumers use the owner's term and follow the Published Language relationship recorded in `CONTEXT-MAP.md`; they do not redefine the term locally.
 
-If the concept is missing from the glossary, treat that as a domain-modeling signal: either the wording is drifting from project language, or the glossary needs expansion.
+If a concept is missing, treat that as a domain-modeling signal: the wording is drifting, an existing owner must be identified, or one context glossary needs a new concise definition.
+
+## Keep Runtime Status Separate
+
+Context glossaries define stable language and boundaries. Current component activation status lives in `docs/adr/video-workflow-kernel-2.0-decision-map.md`; target-design vocabulary does not activate executable behavior.
 
 ## Flag ADR Conflicts
 

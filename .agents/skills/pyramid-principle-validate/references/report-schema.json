@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Pyramid Principle Text Gate Report",
+  "title": "Pyramid Gate Report",
   "type": "object",
   "required": [
     "target",

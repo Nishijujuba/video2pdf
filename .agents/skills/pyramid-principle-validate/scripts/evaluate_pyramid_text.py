@@ -521,7 +521,7 @@ def evaluate_file(
 def main(argv: Sequence[str] | None = None, *, runner: CommandRunner = subprocess.run) -> int:
     parser = argparse.ArgumentParser(description="Evaluate one text artifact with the Pyramid Principle Text Standard.")
     parser.add_argument("input_artifact", type=Path, help="UTF-8 text artifact to evaluate.")
-    parser.add_argument("output_report", type=Path, help="JSON Gate Report path to write.")
+    parser.add_argument("output_report", type=Path, help="JSON Pyramid Gate Report path to write.")
     parser.add_argument("--artifact-type", required=True, help="General artifact type, such as tex_section or markdown.")
     parser.add_argument("--context-label", required=True, help="Caller-owned checkpoint label, such as outline or main.")
     parser.add_argument("--evaluation-context", required=True, help="Context that guides the semantic review.")

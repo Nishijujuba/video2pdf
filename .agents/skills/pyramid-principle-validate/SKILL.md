@@ -141,7 +141,7 @@ python .agents\skills\pyramid-principle-validate\scripts\evaluate_pyramid_text.p
   --evaluation-context "Teaching-PDF outline checkpoint supplied by the calling workflow."
 ```
 
-The wrapper reads the input artifact, computes its SHA-256 fingerprint and character size, runs a constrained `codex exec` semantic evaluation, validates the generated Gate Report, and writes the final JSON report itself.
+The wrapper reads the input artifact, computes its SHA-256 fingerprint and character size, runs a constrained `codex exec` semantic evaluation, validates the generated Pyramid Gate Report, and writes the final JSON report itself.
 The nested Codex command uses a read-only sandbox, `approval_policy="never"`, `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, and a schema-constrained final response so the evaluator stays a narrow semantic review subprocess.
 
 Inputs above `160000` characters fail by default. Continue only after explicit approval and record that approval with:

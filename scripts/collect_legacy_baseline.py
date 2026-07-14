@@ -73,20 +73,6 @@ def utc_now() -> str:
     return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def git_output(arguments: list[str]) -> str:
-    process = subprocess.run(
-        ["git", *arguments],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if process.returncode != 0:
-        raise ContractError(process.stderr.strip() or f"git {' '.join(arguments)} failed")
-    return process.stdout.strip()
-
-
 def compose_log(stdout: str, stderr: str) -> str:
     return (
         "===== STDOUT =====\n"

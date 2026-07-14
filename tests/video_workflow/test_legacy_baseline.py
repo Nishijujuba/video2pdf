@@ -238,7 +238,8 @@ class LegacyBaselineCliTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertFalse((self.run_root / "manifest-missing-category.json").exists())
-        self.assertIn("batch", result.stderr)
+        self.assertIn("baselines", result.stderr)
+        self.assertIn("at least 5", result.stderr)
 
     def test_collector_rejects_caller_supplied_ancestor_commit(self) -> None:
         definition_path = self.write_definition()

@@ -184,6 +184,8 @@ A formula is allowed only when it earns its cognitive cost.
 
 Project 2.0 specs and tickets are tracked as human-approved GitHub Issues in `Nishijujuba/video2pdf`. The completed local planning record under `docs/prd/` and `docs/issues/` is the read-only Project 1.0 archive. See `docs/agents/issue-tracker.md`.
 
+Project 2.0 Specs and Implementation Tickets must be written in English. See `docs/agents/issue-tracker.md`.
+
 ### Triage labels
 
 The repo uses the default five-label triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.

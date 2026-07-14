@@ -4,6 +4,13 @@ Project 2.0 specs and implementation tickets live as GitHub Issues in `Nishijuju
 
 All spec and ticket publication is human-supervised.
 
+## Planning Artifact Language
+
+All new Project 2.0 Specs and Implementation Tickets must be written in English.
+
+Use ASCII punctuation in GitHub publication payloads when practical.
+Existing Project 1.0 planning artifacts remain unchanged.
+
 ## Tracker Boundary
 
 - Existing files under `docs/prd/` and `docs/issues/` form the read-only Project 1.0 Legacy Planning Archive.

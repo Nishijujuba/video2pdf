@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from typing import Any
+from typing import Any, cast
 
 
 DEFINITION_SCHEMA_ID = "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json"
@@ -147,21 +147,26 @@ def validate_prevalidated_evidence_lineage(
         )
 
 
-def load_json_object(path: Path) -> dict[str, Any]:
+def load_json_value(path: Path) -> Any:
+    """Load a JSON value without imposing an instance shape before Schema."""
+
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ContractError(f"contract file does not exist: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ContractError(f"contract is invalid JSON: {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ContractError(f"contract root must be an object: {path}")
-    return value
 
 
-def load_schema_contract(project_root: Path, filename: str, expected_id: str) -> dict[str, Any]:
+def load_schema_object(
+    project_root: Path, filename: str, expected_id: str
+) -> dict[str, Any]:
+    """Load a registered Schema document and require its own object shape."""
+
     schema_path = project_root / "schemas" / filename
-    schema = load_json_object(schema_path)
+    schema = load_json_value(schema_path)
+    if not isinstance(schema, dict):
+        raise ContractError(f"schema document root must be an object: {schema_path}")
     if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
         raise ContractError(f"schema draft identity mismatch: {schema_path}")
     if schema.get("$id") != expected_id:
@@ -584,13 +589,16 @@ def validate_prevalidated_exit_evidence_bindings(
         definition_binding["sha256"],
         "baseline_definition",
     )
-    definition = load_json_object(definition_path)
-    definition_schema = load_schema_contract(
+    definition_value = load_json_value(definition_path)
+    definition_schema = load_schema_object(
         project_root,
         "legacy-baseline-definition.v1.schema.json",
         DEFINITION_SCHEMA_ID,
     )
-    validate_json_schema_instance(definition, definition_schema, "legacy baseline definition")
+    validate_json_schema_instance(
+        definition_value, definition_schema, "legacy baseline definition"
+    )
+    definition = cast(dict[str, Any], definition_value)
     validate_prevalidated_legacy_baseline_semantics(definition)
 
     bound_paths: set[str] = set()

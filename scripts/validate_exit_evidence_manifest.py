@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+from typing import Any, cast
 
 from legacy_baseline_contracts import (
     ContractError,
     MANIFEST_SCHEMA_ID,
-    load_json_object,
-    load_schema_contract,
+    load_json_value,
+    load_schema_object,
     validate_json_schema_instance,
     validate_prevalidated_exit_evidence_bindings,
     validate_prevalidated_exit_evidence_semantics,
@@ -28,14 +29,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv or sys.argv[1:])
     try:
-        schema = load_schema_contract(
+        schema = load_schema_object(
             PROJECT_ROOT,
             "exit-evidence-manifest.v1.schema.json",
             MANIFEST_SCHEMA_ID,
         )
-        manifest = load_json_object(args.manifest.resolve())
-        validate_json_schema_instance(manifest, schema, "exit evidence manifest")
+        manifest_value = load_json_value(args.manifest.resolve())
+        validate_json_schema_instance(
+            manifest_value, schema, "exit evidence manifest"
+        )
         if not args.schema_only:
+            manifest = cast(dict[str, Any], manifest_value)
             validate_prevalidated_exit_evidence_semantics(manifest)
             validate_prevalidated_exit_evidence_bindings(
                 manifest, PROJECT_ROOT, args.manifest.resolve()

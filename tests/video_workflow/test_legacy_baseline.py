@@ -412,6 +412,40 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         self.assertIn("commands[0].timeout_seconds", result.stderr)
         self.assertIn("3600", result.stderr)
 
+    def test_schema_only_routes_non_object_roots_to_schema_evaluator(self) -> None:
+        for label, value in (("array", []), ("null", None)):
+            with self.subTest(root=label):
+                manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
+                    f"schema-root-{label}-{time.time_ns()}.json"
+                )
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_text(
+                    json.dumps(value) + "\n", encoding="utf-8"
+                )
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-X",
+                        "utf8",
+                        "-B",
+                        str(MANIFEST_VALIDATOR),
+                        str(manifest_path),
+                        "--schema-only",
+                    ],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "exit evidence manifest must have JSON type ['object']",
+                    result.stderr,
+                )
+                self.assertNotIn("contract root must be an object", result.stderr)
+
     def test_schema_only_accepts_structurally_valid_semantic_error_then_manual_rejects(self) -> None:
         manifest = json.loads(
             (FIXTURES / "exit_evidence_manifest.valid.json").read_text(encoding="utf-8")

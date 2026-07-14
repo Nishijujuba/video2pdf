@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -21,8 +21,8 @@ from legacy_baseline_contracts import (
     MANIFEST_SCHEMA_ID,
     capture_clean_implementation_commit,
     fingerprint_utf8_lf,
-    load_json_object,
-    load_schema_contract,
+    load_json_value,
+    load_schema_object,
     validate_json_schema_instance,
     validate_prevalidated_exit_evidence_bindings,
     validate_prevalidated_exit_evidence_semantics,
@@ -278,10 +278,17 @@ def collect(
     project_relative(definition_path)
     project_relative(output_path)
     project_relative(log_dir)
-    definition_schema = load_schema_contract(PROJECT_ROOT, DEFINITION_SCHEMA, DEFINITION_SCHEMA_ID)
-    manifest_schema = load_schema_contract(PROJECT_ROOT, MANIFEST_SCHEMA, MANIFEST_SCHEMA_ID)
-    definition = load_json_object(definition_path)
-    validate_json_schema_instance(definition, definition_schema, "legacy baseline definition")
+    definition_schema = load_schema_object(
+        PROJECT_ROOT, DEFINITION_SCHEMA, DEFINITION_SCHEMA_ID
+    )
+    manifest_schema = load_schema_object(
+        PROJECT_ROOT, MANIFEST_SCHEMA, MANIFEST_SCHEMA_ID
+    )
+    definition_value = load_json_value(definition_path)
+    validate_json_schema_instance(
+        definition_value, definition_schema, "legacy baseline definition"
+    )
+    definition = cast(dict[str, Any], definition_value)
     validate_prevalidated_legacy_baseline_semantics(definition)
     implementation_commit = capture_clean_implementation_commit(PROJECT_ROOT)
     # The slice verification invokes this collector's CLI tests. Run it while

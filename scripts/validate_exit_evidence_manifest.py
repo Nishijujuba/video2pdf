@@ -9,6 +9,7 @@ from legacy_baseline_contracts import (
     MANIFEST_SCHEMA_ID,
     load_json_object,
     load_schema_contract,
+    validate_json_schema_instance,
     validate_exit_evidence_bindings,
     validate_exit_evidence_manifest,
 )
@@ -27,15 +28,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv or sys.argv[1:])
     try:
-        load_schema_contract(
+        schema = load_schema_contract(
             PROJECT_ROOT,
             "exit-evidence-manifest.v1.schema.json",
             MANIFEST_SCHEMA_ID,
         )
         manifest = load_json_object(args.manifest.resolve())
+        validate_json_schema_instance(manifest, schema, "exit evidence manifest")
         validate_exit_evidence_manifest(manifest)
         if not args.schema_only:
-            validate_exit_evidence_bindings(manifest, PROJECT_ROOT)
+            validate_exit_evidence_bindings(manifest, PROJECT_ROOT, args.manifest.resolve())
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1

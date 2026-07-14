@@ -8,7 +8,21 @@
     "name": "baseline-protection"
   },
   "implementation_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "evidence_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence_paths": [
+    "evidence/fixture/exit-evidence-manifest.json",
+    "evidence/fixture/pyramid.log",
+    "evidence/fixture/pyramid.raw.log",
+    "evidence/fixture/compile.log",
+    "evidence/fixture/compile.raw.log",
+    "evidence/fixture/acceptance.log",
+    "evidence/fixture/acceptance.raw.log",
+    "evidence/fixture/delivery_guard.log",
+    "evidence/fixture/delivery_guard.raw.log",
+    "evidence/fixture/batch.log",
+    "evidence/fixture/batch.raw.log",
+    "evidence/fixture/slice.log",
+    "evidence/fixture/slice.raw.log"
+  ],
   "generated_at": "2026-07-14T12:00:00Z",
   "activation_scope": {
     "kind": "none",

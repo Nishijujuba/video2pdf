@@ -10,7 +10,7 @@
     "fingerprint_algorithm",
     "slice",
     "implementation_commit",
-    "evidence_head",
+    "evidence_paths",
     "generated_at",
     "activation_scope",
     "baseline_definition",
@@ -38,8 +38,17 @@
       },
       "additionalProperties": false
     },
-    "implementation_commit": { "$ref": "#/$defs/gitCommit" },
-    "evidence_head": { "$ref": "#/$defs/gitCommit" },
+    "implementation_commit": {
+      "description": "Clean Git HEAD automatically captured before baseline commands execute. Post-collection descendants may change only evidence_paths.",
+      "$ref": "#/$defs/gitCommit"
+    },
+    "evidence_paths": {
+      "description": "Closed allowlist for the manifest and command logs that may differ after implementation_commit.",
+      "type": "array",
+      "minItems": 13,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/projectPath" }
+    },
     "generated_at": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"

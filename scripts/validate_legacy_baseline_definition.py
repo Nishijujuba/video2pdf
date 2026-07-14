@@ -9,6 +9,7 @@ from legacy_baseline_contracts import (
     DEFINITION_SCHEMA_ID,
     load_json_object,
     load_schema_contract,
+    validate_json_schema_instance,
     validate_legacy_baseline_definition,
 )
 
@@ -21,12 +22,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("definition", type=Path)
     args = parser.parse_args(argv or sys.argv[1:])
     try:
-        load_schema_contract(
+        schema = load_schema_contract(
             PROJECT_ROOT,
             "legacy-baseline-definition.v1.schema.json",
             DEFINITION_SCHEMA_ID,
         )
-        validate_legacy_baseline_definition(load_json_object(args.definition.resolve()))
+        definition = load_json_object(args.definition.resolve())
+        validate_json_schema_instance(definition, schema, "legacy baseline definition")
+        validate_legacy_baseline_definition(definition)
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1

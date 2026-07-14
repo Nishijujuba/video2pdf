@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,10 +19,13 @@ from legacy_baseline_contracts import (
     DEFINITION_SCHEMA_ID,
     FINGERPRINT_ALGORITHM,
     MANIFEST_SCHEMA_ID,
+    capture_clean_implementation_commit,
+    fingerprint_utf8_lf,
     load_json_object,
     load_schema_contract,
     validate_exit_evidence_bindings,
     validate_exit_evidence_manifest,
+    validate_json_schema_instance,
     validate_legacy_baseline_definition,
 )
 
@@ -35,21 +37,16 @@ NEGATIVE_RESULT_IDENTITIES = [
     "unexpected_status_blocks",
     "unexpected_log_fingerprint_blocks",
     "schema_invalid_blocks",
+    "schema_constraint_boundary_blocks",
+    "unsupported_schema_keyword_blocks",
+    "caller_supplied_implementation_commit_blocks",
+    "non_evidence_descendant_invalidates",
     "atomic_publish_preserves_previous_evidence",
 ]
 
 
-def sha256_bytes(value: bytes) -> str:
-    try:
-        text = value.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ContractError(f"bound evidence must be UTF-8 text for {FINGERPRINT_ALGORITHM}") from exc
-    canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
 def sha256_text(value: str) -> str:
-    return sha256_bytes(value.encode("utf-8"))
+    return fingerprint_utf8_lf(value.encode("utf-8"))
 
 
 def write_text_atomic(path: Path, value: str) -> None:
@@ -88,24 +85,6 @@ def git_output(arguments: list[str]) -> str:
     if process.returncode != 0:
         raise ContractError(process.stderr.strip() or f"git {' '.join(arguments)} failed")
     return process.stdout.strip()
-
-
-def validate_implementation_commit(commit: str) -> str:
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
-        raise ContractError("--implementation-commit must be a full lowercase Git commit SHA")
-    git_output(["cat-file", "-e", f"{commit}^{{commit}}"])
-    evidence_head = git_output(["rev-parse", "HEAD"])
-    process = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, evidence_head],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if process.returncode != 0:
-        raise ContractError("implementation commit must be an ancestor of the evidence HEAD")
-    return evidence_head
 
 
 def compose_log(stdout: str, stderr: str) -> str:
@@ -214,7 +193,7 @@ def collect_authority_evidence(guards: list[dict[str, Any]]) -> list[dict[str, A
         evidence.append(
             {
                 "path": project_relative(path),
-                "sha256": sha256_bytes(raw),
+                "sha256": fingerprint_utf8_lf(raw),
                 "required_substrings": list(guard["required_substrings"]),
                 "missing_substrings": missing,
                 "conforms": not missing,
@@ -246,9 +225,24 @@ def fixture_fingerprints(definition_path: Path) -> list[dict[str, str]]:
         ),
     ]
     return [
-        {"role": role, "path": project_relative(path), "sha256": sha256_bytes(path.read_bytes())}
+        {
+            "role": role,
+            "path": project_relative(path),
+            "sha256": fingerprint_utf8_lf(path.read_bytes()),
+        }
         for role, path in paths
     ]
+
+
+def declared_evidence_paths(
+    output_path: Path, commands: list[dict[str, Any]]
+) -> list[str]:
+    paths = [project_relative(output_path)]
+    for command in commands:
+        paths.extend(
+            [command["log"]["normalized_path"], command["log"]["raw_path"]]
+        )
+    return paths
 
 
 def mismatch_exceptions(
@@ -294,22 +288,25 @@ def collect(
     definition_path: Path,
     output_path: Path,
     log_dir: Path,
-    implementation_commit: str,
 ) -> dict[str, Any]:
     project_relative(definition_path)
     project_relative(output_path)
     project_relative(log_dir)
-    load_schema_contract(PROJECT_ROOT, DEFINITION_SCHEMA, DEFINITION_SCHEMA_ID)
-    load_schema_contract(PROJECT_ROOT, MANIFEST_SCHEMA, MANIFEST_SCHEMA_ID)
+    definition_schema = load_schema_contract(PROJECT_ROOT, DEFINITION_SCHEMA, DEFINITION_SCHEMA_ID)
+    manifest_schema = load_schema_contract(PROJECT_ROOT, MANIFEST_SCHEMA, MANIFEST_SCHEMA_ID)
     definition = load_json_object(definition_path)
+    validate_json_schema_instance(definition, definition_schema, "legacy baseline definition")
     validate_legacy_baseline_definition(definition)
-    evidence_head = validate_implementation_commit(implementation_commit)
+    implementation_commit = capture_clean_implementation_commit(PROJECT_ROOT)
+    # The slice verification invokes this collector's CLI tests. Run it while
+    # the implementation checkout is still clean, before tracked evidence logs
+    # from the outer collection are replaced.
     commands = [
-        run_command(entry, "legacy_baseline", log_dir) for entry in definition["baselines"]
-    ]
-    commands.extend(
         run_command(entry, "slice_verification", log_dir)
         for entry in definition["slice_verifications"]
+    ]
+    commands.extend(
+        run_command(entry, "legacy_baseline", log_dir) for entry in definition["baselines"]
     )
     authority_evidence = collect_authority_evidence(definition["authority_guards"])
     unresolved = mismatch_exceptions(commands, authority_evidence)
@@ -321,7 +318,7 @@ def collect(
         "fingerprint_algorithm": FINGERPRINT_ALGORITHM,
         "slice": {"number": 0, "name": "baseline-protection"},
         "implementation_commit": implementation_commit,
-        "evidence_head": evidence_head,
+        "evidence_paths": declared_evidence_paths(output_path, commands),
         "generated_at": utc_now(),
         "activation_scope": {
             "kind": "none",
@@ -331,7 +328,7 @@ def collect(
         },
         "baseline_definition": {
             "path": project_relative(definition_path),
-            "sha256": sha256_bytes(definition_path.read_bytes()),
+            "sha256": fingerprint_utf8_lf(definition_path.read_bytes()),
         },
         "commands": commands,
         "authority_evidence": authority_evidence,
@@ -344,8 +341,9 @@ def collect(
         "unresolved_exceptions": unresolved,
         "overall_decision": overall_decision,
     }
+    validate_json_schema_instance(manifest, manifest_schema, "exit evidence manifest")
     validate_exit_evidence_manifest(manifest)
-    validate_exit_evidence_bindings(manifest, PROJECT_ROOT)
+    validate_exit_evidence_bindings(manifest, PROJECT_ROOT, output_path)
     write_text_atomic(output_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
 
@@ -357,7 +355,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--definition", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
-    parser.add_argument("--implementation-commit", required=True)
     return parser.parse_args(argv)
 
 
@@ -368,7 +365,6 @@ def main(argv: list[str] | None = None) -> int:
             args.definition.resolve(),
             args.output.resolve(),
             args.log_dir.resolve(),
-            args.implementation_commit,
         )
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

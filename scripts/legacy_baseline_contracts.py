@@ -23,6 +23,133 @@ class ContractError(ValueError):
     pass
 
 
+def fingerprint_utf8_lf(value: bytes, *, label: str = "bound evidence") -> str:
+    """Return the canonical sha256-utf8-lf-v1 fingerprint for text bytes."""
+
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError(f"{label} must be UTF-8 text for {FINGERPRINT_ALGORITHM}") from exc
+    canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _git_output_bytes(project_root: Path, arguments: list[str], label: str) -> bytes:
+    process = subprocess.run(
+        ["git", *arguments],
+        cwd=project_root,
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.decode("utf-8", errors="replace").strip()
+        raise ContractError(f"{label}: {detail or 'Git check failed'}")
+    return process.stdout
+
+
+def capture_clean_implementation_commit(project_root: Path) -> str:
+    """Capture the exact clean Git HEAD whose checkout will be tested."""
+
+    status = _git_output_bytes(
+        project_root,
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+        "cannot inspect implementation worktree",
+    )
+    if status:
+        raise ContractError(
+            "baseline collection requires a clean implementation HEAD; "
+            "commit code, configuration, Schema, and tests before collecting evidence"
+        )
+    head = _git_output_bytes(
+        project_root, ["rev-parse", "HEAD"], "cannot resolve implementation HEAD"
+    ).decode("ascii", errors="strict").strip()
+    if not COMMIT_RE.fullmatch(head):
+        raise ContractError("implementation HEAD must resolve to a full lowercase Git commit SHA")
+    return head
+
+
+def _decode_git_path_list(raw: bytes, label: str) -> list[str]:
+    try:
+        return [item.decode("utf-8") for item in raw.split(b"\0") if item]
+    except UnicodeDecodeError as exc:
+        raise ContractError(f"{label} contains a non-UTF-8 project path") from exc
+
+
+def validate_evidence_lineage(
+    project_root: Path,
+    implementation_commit: str,
+    evidence_paths: list[str],
+) -> None:
+    """Prove every post-implementation change is confined to declared evidence."""
+
+    implementation_commit = _require_commit(implementation_commit, "implementation_commit")
+    allowed = {
+        _require_relative_path(path, f"evidence_paths[{index}]")
+        for index, path in enumerate(evidence_paths)
+    }
+    if not allowed:
+        raise ContractError("evidence_paths must declare at least one evidence path")
+    _git_output_bytes(
+        project_root,
+        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
+        "implementation_commit does not resolve to a commit",
+    )
+    current_head = _git_output_bytes(
+        project_root, ["rev-parse", "HEAD"], "cannot resolve evidence validation HEAD"
+    ).decode("ascii", errors="strict").strip()
+    _git_output_bytes(
+        project_root,
+        ["merge-base", "--is-ancestor", implementation_commit, current_head],
+        "implementation_commit is not an ancestor of the validation HEAD",
+    )
+
+    changed: set[str] = set()
+    descendants = _git_output_bytes(
+        project_root,
+        ["rev-list", "--reverse", f"{implementation_commit}..{current_head}"],
+        "cannot enumerate evidence descendant commits",
+    ).decode("ascii", errors="strict").splitlines()
+    for commit in descendants:
+        changed.update(
+            _decode_git_path_list(
+                _git_output_bytes(
+                    project_root,
+                    [
+                        "diff-tree",
+                        "--no-commit-id",
+                        "--name-only",
+                        "-r",
+                        "-m",
+                        "-z",
+                        "--no-renames",
+                        commit,
+                    ],
+                    f"cannot inspect evidence descendant {commit}",
+                ),
+                f"evidence descendant {commit}",
+            )
+        )
+
+    worktree_commands = [
+        ["diff", "--name-only", "-z", "--no-renames"],
+        ["diff", "--cached", "--name-only", "-z", "--no-renames"],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+    ]
+    for arguments in worktree_commands:
+        changed.update(
+            _decode_git_path_list(
+                _git_output_bytes(project_root, arguments, "cannot inspect evidence worktree"),
+                "evidence worktree",
+            )
+        )
+
+    forbidden = sorted(changed - allowed)
+    if forbidden:
+        raise ContractError(
+            "evidence is stale because lineage changed non-evidence path(s): "
+            f"{forbidden}"
+        )
+
+
 def load_json_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -43,6 +170,257 @@ def load_schema_contract(project_root: Path, filename: str, expected_id: str) ->
     if schema.get("$id") != expected_id:
         raise ContractError(f"schema $id mismatch: {schema_path}")
     return schema
+
+
+# Slice 1 / Issue #4 owns the standards-based jsonschema runtime and its lock.
+# Slice 0 still needs the Schema file to be the structural authority, so this
+# compatibility evaluator implements exactly the vocabulary used by the two
+# Slice 0 schemas and fails closed when that vocabulary changes.
+_SUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "$defs",
+        "$ref",
+        "title",
+        "description",
+        "type",
+        "required",
+        "properties",
+        "additionalProperties",
+        "const",
+        "enum",
+        "minLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "prefixItems",
+        "items",
+    }
+)
+_SUPPORTED_JSON_TYPES = frozenset(
+    {"null", "boolean", "object", "array", "number", "integer", "string"}
+)
+
+
+def _schema_error(path: str, detail: str) -> ContractError:
+    return ContractError(f"{path} {detail}")
+
+
+def _require_schema_object(value: Any, path: str) -> dict[str, Any] | bool:
+    if isinstance(value, bool) or isinstance(value, dict):
+        return value
+    raise _schema_error(path, "must be an object or boolean JSON Schema")
+
+
+def _check_schema_vocabulary(schema: Any, path: str = "$") -> None:
+    schema = _require_schema_object(schema, path)
+    if isinstance(schema, bool):
+        return
+    unsupported = sorted(set(schema) - _SUPPORTED_SCHEMA_KEYWORDS)
+    if unsupported:
+        raise _schema_error(path, f"uses unsupported JSON Schema keyword(s): {unsupported}")
+
+    for keyword in ("$defs", "properties"):
+        value = schema.get(keyword)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise _schema_error(f"{path}.{keyword}", "must be an object")
+        for name, child in value.items():
+            _check_schema_vocabulary(child, f"{path}.{keyword}.{name}")
+
+    prefix_items = schema.get("prefixItems")
+    if prefix_items is not None:
+        if not isinstance(prefix_items, list):
+            raise _schema_error(f"{path}.prefixItems", "must be an array")
+        for index, child in enumerate(prefix_items):
+            _check_schema_vocabulary(child, f"{path}.prefixItems[{index}]")
+
+    for keyword in ("items", "additionalProperties"):
+        child = schema.get(keyword)
+        if child is not None:
+            _check_schema_vocabulary(child, f"{path}.{keyword}")
+
+    type_value = schema.get("type")
+    if type_value is not None:
+        types = [type_value] if isinstance(type_value, str) else type_value
+        if (
+            not isinstance(types, list)
+            or not types
+            or any(not isinstance(item, str) or item not in _SUPPORTED_JSON_TYPES for item in types)
+        ):
+            raise _schema_error(f"{path}.type", "contains an unsupported JSON type")
+
+    required = schema.get("required")
+    if required is not None and (
+        not isinstance(required, list) or any(not isinstance(item, str) for item in required)
+    ):
+        raise _schema_error(f"{path}.required", "must be an array of strings")
+
+    enum = schema.get("enum")
+    if enum is not None and (not isinstance(enum, list) or not enum):
+        raise _schema_error(f"{path}.enum", "must be a non-empty array")
+
+    for keyword in ("minLength", "minItems", "maxItems"):
+        constraint = schema.get(keyword)
+        if constraint is not None and (
+            isinstance(constraint, bool) or not isinstance(constraint, int) or constraint < 0
+        ):
+            raise _schema_error(f"{path}.{keyword}", "must be a non-negative integer")
+    for keyword in ("minimum", "maximum"):
+        constraint = schema.get(keyword)
+        if constraint is not None and (
+            isinstance(constraint, bool) or not isinstance(constraint, (int, float))
+        ):
+            raise _schema_error(f"{path}.{keyword}", "must be a number")
+    if "uniqueItems" in schema and not isinstance(schema["uniqueItems"], bool):
+        raise _schema_error(f"{path}.uniqueItems", "must be a boolean")
+    if "pattern" in schema:
+        pattern = schema["pattern"]
+        if not isinstance(pattern, str):
+            raise _schema_error(f"{path}.pattern", "must be a string")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise _schema_error(f"{path}.pattern", f"is invalid: {exc}") from exc
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(_json_equal(left[key], right[key]) for key in left)
+    return left == right
+
+
+def _matches_json_type(value: Any, expected: str) -> bool:
+    if expected == "null":
+        return value is None
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "number":
+        return not isinstance(value, bool) and isinstance(value, (int, float))
+    if expected == "integer":
+        return not isinstance(value, bool) and isinstance(value, int)
+    if expected == "string":
+        return isinstance(value, str)
+    raise _schema_error("schema.type", f"is unsupported: {expected!r}")
+
+
+def _resolve_local_ref(root_schema: dict[str, Any], reference: Any, path: str) -> Any:
+    if not isinstance(reference, str) or not reference.startswith("#/"):
+        raise _schema_error(path, "must be a local JSON Pointer reference")
+    current: Any = root_schema
+    for raw_token in reference[2:].split("/"):
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if not isinstance(current, dict) or token not in current:
+            raise _schema_error(path, f"cannot resolve {reference!r}")
+        current = current[token]
+    return current
+
+
+def _validate_schema_instance(
+    value: Any,
+    schema: Any,
+    root_schema: dict[str, Any],
+    instance_path: str,
+) -> None:
+    if isinstance(schema, bool):
+        if not schema:
+            raise _schema_error(instance_path, "is rejected by a false JSON Schema")
+        return
+    if "$ref" in schema:
+        target = _resolve_local_ref(root_schema, schema["$ref"], f"{instance_path}.$ref")
+        _validate_schema_instance(value, target, root_schema, instance_path)
+
+    type_value = schema.get("type")
+    if type_value is not None:
+        expected_types = [type_value] if isinstance(type_value, str) else type_value
+        if not any(_matches_json_type(value, expected) for expected in expected_types):
+            raise _schema_error(instance_path, f"must have JSON type {expected_types}")
+    if "const" in schema and not _json_equal(value, schema["const"]):
+        raise _schema_error(instance_path, f"must equal schema const {schema['const']!r}")
+    if "enum" in schema and not any(_json_equal(value, item) for item in schema["enum"]):
+        raise _schema_error(instance_path, f"must be one of {schema['enum']!r}")
+
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise _schema_error(instance_path, f"must have length at least {schema['minLength']}")
+        if "pattern" in schema and re.search(schema["pattern"], value) is None:
+            raise _schema_error(instance_path, f"must match schema pattern {schema['pattern']!r}")
+
+    if not isinstance(value, bool) and isinstance(value, (int, float)):
+        if "minimum" in schema and value < schema["minimum"]:
+            raise _schema_error(instance_path, f"must be at least {schema['minimum']} (schema minimum)")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise _schema_error(instance_path, f"must be at most {schema['maximum']} (schema maximum)")
+
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            raise _schema_error(instance_path, f"must contain at least {schema['minItems']} item(s)")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise _schema_error(instance_path, f"must contain at most {schema['maxItems']} item(s)")
+        if schema.get("uniqueItems"):
+            for index, item in enumerate(value):
+                if any(_json_equal(item, previous) for previous in value[:index]):
+                    raise _schema_error(instance_path, "must contain unique items")
+        prefix_items = schema.get("prefixItems", [])
+        for index, item_schema in enumerate(prefix_items):
+            if index < len(value):
+                _validate_schema_instance(value[index], item_schema, root_schema, f"{instance_path}[{index}]")
+        if "items" in schema:
+            for index in range(len(prefix_items), len(value)):
+                _validate_schema_instance(
+                    value[index], schema["items"], root_schema, f"{instance_path}[{index}]"
+                )
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        missing = [name for name in required if name not in value]
+        if missing:
+            raise _schema_error(instance_path, f"is missing required properties {missing}")
+        properties = schema.get("properties", {})
+        for name, property_schema in properties.items():
+            if name in value:
+                _validate_schema_instance(
+                    value[name], property_schema, root_schema, f"{instance_path}.{name}"
+                )
+        extras = [name for name in value if name not in properties]
+        additional = schema.get("additionalProperties", True)
+        if additional is False and extras:
+            raise _schema_error(instance_path, f"contains additional properties {extras}")
+        if additional is not True and additional is not False:
+            for name in extras:
+                _validate_schema_instance(
+                    value[name], additional, root_schema, f"{instance_path}.{name}"
+                )
+
+
+def validate_json_schema_instance(value: Any, schema: dict[str, Any], label: str) -> None:
+    """Validate through the bounded Slice 0 Schema compatibility layer.
+
+    Issue #4 replaces this function with the locked standards-based runtime.
+    Cross-artifact and derived-value invariants remain separate validators.
+    """
+
+    _check_schema_vocabulary(schema)
+    _validate_schema_instance(value, schema, schema, label)
 
 
 def _require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -274,7 +652,7 @@ def validate_exit_evidence_manifest(value: dict[str, Any]) -> None:
             "fingerprint_algorithm",
             "slice",
             "implementation_commit",
-            "evidence_head",
+            "evidence_paths",
             "generated_at",
             "activation_scope",
             "baseline_definition",
@@ -302,7 +680,13 @@ def validate_exit_evidence_manifest(value: dict[str, Any]) -> None:
     if slice_value != {"number": 0, "name": "baseline-protection"}:
         raise ContractError("exit evidence manifest must identify Slice 0 baseline protection")
     _require_commit(value["implementation_commit"], "implementation_commit")
-    _require_commit(value["evidence_head"], "evidence_head")
+    evidence_paths = _require_list(value["evidence_paths"], "evidence_paths", minimum=13)
+    normalized_evidence_paths = [
+        _require_relative_path(path, f"evidence_paths[{index}]")
+        for index, path in enumerate(evidence_paths)
+    ]
+    if len(normalized_evidence_paths) != len(set(normalized_evidence_paths)):
+        raise ContractError("evidence_paths must be unique")
     generated_at = _require_string(value["generated_at"], "generated_at")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", generated_at):
         raise ContractError("generated_at must be a UTC second-resolution timestamp")
@@ -426,11 +810,7 @@ def _read_fingerprint_bound_file(
         raw = path.read_bytes()
     except OSError as exc:
         raise ContractError(f"{label} cannot be read: {path}: {exc}") from exc
-    try:
-        canonical = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ContractError(f"{label} must be UTF-8 text for {FINGERPRINT_ALGORITHM}") from exc
-    actual_sha = hashlib.sha256(canonical).hexdigest()
+    actual_sha = fingerprint_utf8_lf(raw, label=label)
     if actual_sha != expected_sha:
         raise ContractError(
             f"{label} fingerprint mismatch: expected {expected_sha}, actual {actual_sha}: {path}"
@@ -438,38 +818,30 @@ def _read_fingerprint_bound_file(
     return path, raw
 
 
-def _git_check(project_root: Path, arguments: list[str], label: str) -> None:
-    process = subprocess.run(
-        ["git", *arguments],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if process.returncode != 0:
-        detail = process.stderr.strip() or process.stdout.strip()
-        raise ContractError(f"{label}: {detail or 'Git check failed'}")
-
-
-def validate_exit_evidence_bindings(value: dict[str, Any], project_root: Path) -> None:
+def validate_exit_evidence_bindings(
+    value: dict[str, Any], project_root: Path, manifest_path: Path
+) -> None:
     implementation_commit = _require_commit(value.get("implementation_commit"), "implementation_commit")
-    evidence_head = _require_commit(value.get("evidence_head"), "evidence_head")
-    _git_check(
-        project_root,
-        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
-        "implementation_commit does not resolve to a commit",
-    )
-    _git_check(
-        project_root,
-        ["cat-file", "-e", f"{evidence_head}^{{commit}}"],
-        "evidence_head does not resolve to a commit",
-    )
-    _git_check(
-        project_root,
-        ["merge-base", "--is-ancestor", implementation_commit, evidence_head],
-        "implementation_commit is not an ancestor of evidence_head",
-    )
+    root = project_root.resolve()
+    try:
+        manifest_relative = manifest_path.resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ContractError("manifest path must stay within the project root") from exc
+    declared_evidence_paths = set(value["evidence_paths"])
+    log_evidence_paths = {
+        command["log"][f"{log_kind}_path"]
+        for command in value["commands"]
+        for log_kind in ("normalized", "raw")
+    }
+    expected_evidence_paths = {manifest_relative} | log_evidence_paths
+    if declared_evidence_paths != expected_evidence_paths:
+        missing = sorted(expected_evidence_paths - declared_evidence_paths)
+        unexpected = sorted(declared_evidence_paths - expected_evidence_paths)
+        raise ContractError(
+            "evidence_paths must exactly declare the manifest and command logs; "
+            f"missing={missing}; unexpected={unexpected}"
+        )
+    validate_evidence_lineage(project_root, implementation_commit, value["evidence_paths"])
 
     definition_binding = value["baseline_definition"]
     definition_path, _ = _read_fingerprint_bound_file(
@@ -479,6 +851,12 @@ def validate_exit_evidence_bindings(value: dict[str, Any], project_root: Path) -
         "baseline_definition",
     )
     definition = load_json_object(definition_path)
+    definition_schema = load_schema_contract(
+        project_root,
+        "legacy-baseline-definition.v1.schema.json",
+        DEFINITION_SCHEMA_ID,
+    )
+    validate_json_schema_instance(definition, definition_schema, "legacy baseline definition")
     validate_legacy_baseline_definition(definition)
 
     bound_paths: set[str] = set()

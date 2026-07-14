@@ -2,15 +2,21 @@
 
 ===== STDERR =====
 test_atomic_publish_failure_preserves_previous_evidence (__main__.LegacyBaselineCliTests.test_atomic_publish_failure_preserves_previous_evidence) ... ok
+test_collector_rejects_caller_supplied_ancestor_commit (__main__.LegacyBaselineCliTests.test_collector_rejects_caller_supplied_ancestor_commit) ... ok
 test_collects_repeatable_five_category_baseline_and_valid_manifest (__main__.LegacyBaselineCliTests.test_collects_repeatable_five_category_baseline_and_valid_manifest) ... ok
 test_manifest_validator_rejects_tampered_bound_log (__main__.LegacyBaselineCliTests.test_manifest_validator_rejects_tampered_bound_log) ... ok
 test_missing_legacy_category_is_rejected_before_execution (__main__.LegacyBaselineCliTests.test_missing_legacy_category_is_rejected_before_execution) ... ok
 test_normalization_removes_declared_run_identity_noise_only (__main__.LegacyBaselineCliTests.test_normalization_removes_declared_run_identity_noise_only) ... ok
 test_unapproved_status_or_log_drift_blocks_completion (__main__.LegacyBaselineCliTests.test_unapproved_status_or_log_drift_blocks_completion) ... ok
+test_canonical_fingerprint_normalizes_newlines_and_rejects_non_utf8 (__main__.LegacyBaselineContractFixtureTests.test_canonical_fingerprint_normalizes_newlines_and_rejects_non_utf8) ... ok
+test_evidence_lineage_allows_evidence_only_and_rejects_code_descendant (__main__.LegacyBaselineContractFixtureTests.test_evidence_lineage_allows_evidence_only_and_rejects_code_descendant) ... ok
+test_exit_manifest_schema_rejects_timeout_above_maximum (__main__.LegacyBaselineContractFixtureTests.test_exit_manifest_schema_rejects_timeout_above_maximum) ... ok
+test_implementation_commit_is_captured_only_from_a_clean_head (__main__.LegacyBaselineContractFixtureTests.test_implementation_commit_is_captured_only_from_a_clean_head) ... ok
 test_positive_and_negative_schema_fixtures (__main__.LegacyBaselineContractFixtureTests.test_positive_and_negative_schema_fixtures) ... ok
 test_repository_definition_covers_legacy_authority_without_cutover (__main__.LegacyBaselineContractFixtureTests.test_repository_definition_covers_legacy_authority_without_cutover) ... ok
+test_schema_compatibility_layer_fails_closed_on_unknown_keyword (__main__.LegacyBaselineContractFixtureTests.test_schema_compatibility_layer_fails_closed_on_unknown_keyword) ... ok
 
 ----------------------------------------------------------------------
-Ran 8 tests in <duration>s
+Ran 14 tests in <duration>s
 
 OK

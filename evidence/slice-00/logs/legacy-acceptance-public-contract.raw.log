@@ -33,6 +33,6 @@ test_skeleton_cli_writes_default_template_path (test_acceptance_report.Acceptanc
 test_skeleton_prepopulates_report_contract_and_blocks_until_reviewed (test_acceptance_report.AcceptanceReportValidationTests.test_skeleton_prepopulates_report_contract_and_blocks_until_reviewed) ... ok
 
 ----------------------------------------------------------------------
-Ran 30 tests in 1.967s
+Ran 30 tests in 1.969s
 
 OK

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import subprocess
 from typing import Any
 
 
@@ -398,3 +400,111 @@ def validate_exit_evidence_manifest(value: dict[str, Any]) -> None:
         raise ContractError("overall_decision does not match command, authority, and exception evidence")
     if value["overall_decision"] == "pass" and unresolved:
         raise ContractError("a passing manifest cannot contain unresolved exceptions")
+
+
+def _resolve_bound_path(project_root: Path, value: Any, label: str) -> Path:
+    relative = _require_relative_path(value, label)
+    root = project_root.resolve()
+    path = (root / relative).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ContractError(f"{label} escapes the project root") from exc
+    return path
+
+
+def _read_fingerprint_bound_file(
+    project_root: Path, path_value: Any, sha_value: Any, label: str
+) -> tuple[Path, bytes]:
+    path = _resolve_bound_path(project_root, path_value, f"{label}.path")
+    expected_sha = _require_sha256(sha_value, f"{label}.sha256")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ContractError(f"{label} cannot be read: {path}: {exc}") from exc
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    if actual_sha != expected_sha:
+        raise ContractError(
+            f"{label} fingerprint mismatch: expected {expected_sha}, actual {actual_sha}: {path}"
+        )
+    return path, raw
+
+
+def _git_check(project_root: Path, arguments: list[str], label: str) -> None:
+    process = subprocess.run(
+        ["git", *arguments],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if process.returncode != 0:
+        detail = process.stderr.strip() or process.stdout.strip()
+        raise ContractError(f"{label}: {detail or 'Git check failed'}")
+
+
+def validate_exit_evidence_bindings(value: dict[str, Any], project_root: Path) -> None:
+    implementation_commit = _require_commit(value.get("implementation_commit"), "implementation_commit")
+    evidence_head = _require_commit(value.get("evidence_head"), "evidence_head")
+    _git_check(
+        project_root,
+        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
+        "implementation_commit does not resolve to a commit",
+    )
+    _git_check(
+        project_root,
+        ["cat-file", "-e", f"{evidence_head}^{{commit}}"],
+        "evidence_head does not resolve to a commit",
+    )
+    _git_check(
+        project_root,
+        ["merge-base", "--is-ancestor", implementation_commit, evidence_head],
+        "implementation_commit is not an ancestor of evidence_head",
+    )
+
+    definition_binding = value["baseline_definition"]
+    definition_path, _ = _read_fingerprint_bound_file(
+        project_root,
+        definition_binding["path"],
+        definition_binding["sha256"],
+        "baseline_definition",
+    )
+    definition = load_json_object(definition_path)
+    validate_legacy_baseline_definition(definition)
+
+    bound_paths: set[str] = set()
+    for index, command in enumerate(value["commands"]):
+        for log_kind in ("normalized", "raw"):
+            label = f"commands[{index}].log.{log_kind}"
+            path_value = command["log"][f"{log_kind}_path"]
+            sha_value = command["log"][f"{log_kind}_sha256"]
+            path, _ = _read_fingerprint_bound_file(project_root, path_value, sha_value, label)
+            canonical_path = str(path).casefold()
+            if canonical_path in bound_paths:
+                raise ContractError(f"{label} reuses a log path already bound by another entry")
+            bound_paths.add(canonical_path)
+
+    for index, evidence in enumerate(value["authority_evidence"]):
+        label = f"authority_evidence[{index}]"
+        _, raw = _read_fingerprint_bound_file(
+            project_root, evidence["path"], evidence["sha256"], label
+        )
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ContractError(f"{label} must be UTF-8 text") from exc
+        actual_missing = [
+            item for item in evidence["required_substrings"] if item not in text
+        ]
+        if actual_missing != evidence["missing_substrings"]:
+            raise ContractError(f"{label}.missing_substrings is stale")
+
+    fixture_roles: set[str] = set()
+    for index, fixture in enumerate(value["fixtures"]):
+        label = f"fixtures[{index}]"
+        role = fixture["role"]
+        if role in fixture_roles:
+            raise ContractError(f"{label}.role must be unique")
+        fixture_roles.add(role)
+        _read_fingerprint_bound_file(project_root, fixture["path"], fixture["sha256"], label)

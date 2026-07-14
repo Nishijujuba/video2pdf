@@ -21,6 +21,7 @@ from legacy_baseline_contracts import (
     MANIFEST_SCHEMA_ID,
     load_json_object,
     load_schema_contract,
+    validate_exit_evidence_bindings,
     validate_exit_evidence_manifest,
     validate_legacy_baseline_definition,
 )
@@ -48,7 +49,7 @@ def sha256_text(value: str) -> str:
 def write_text_atomic(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(value, encoding="utf-8")
+    temp_path.write_bytes(value.encode("utf-8"))
     os.replace(temp_path, path)
 
 
@@ -337,6 +338,7 @@ def collect(
         "overall_decision": overall_decision,
     }
     validate_exit_evidence_manifest(manifest)
+    validate_exit_evidence_bindings(manifest, PROJECT_ROOT)
     write_text_atomic(output_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
 

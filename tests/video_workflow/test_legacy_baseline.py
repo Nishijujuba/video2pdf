@@ -203,6 +203,26 @@ class LegacyBaselineCliTests(unittest.TestCase):
         self.assertFalse((self.run_root / "manifest-missing-category.json").exists())
         self.assertIn("batch", result.stderr)
 
+    def test_manifest_validator_rejects_tampered_bound_log(self) -> None:
+        definition = self.write_definition()
+        collected = self.run_collector(definition, suffix="tampered-binding")
+        self.assertEqual(0, collected.returncode, collected.stderr)
+        manifest_path = self.run_root / "manifest-tampered-binding.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        log_path = PROJECT_ROOT / manifest["commands"][0]["log"]["normalized_path"]
+        log_path.write_text(log_path.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+
+        validated = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(manifest_path)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertNotEqual(0, validated.returncode)
+        self.assertIn("fingerprint mismatch", validated.stderr)
+
     def test_normalization_removes_declared_run_identity_noise_only(self) -> None:
         spec = importlib.util.spec_from_file_location("collect_legacy_baseline", COLLECTOR)
         self.assertIsNotNone(spec)
@@ -249,8 +269,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
 
 class LegacyBaselineContractFixtureTests(unittest.TestCase):
     def run_validator(self, script: Path, fixture: str) -> subprocess.CompletedProcess[str]:
+        extra = ["--schema-only"] if script == MANIFEST_VALIDATOR else []
         return subprocess.run(
-            [sys.executable, "-X", "utf8", "-B", str(script), str(FIXTURES / fixture)],
+            [sys.executable, "-X", "utf8", "-B", str(script), str(FIXTURES / fixture), *extra],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,

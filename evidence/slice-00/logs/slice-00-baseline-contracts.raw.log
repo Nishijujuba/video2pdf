@@ -13,10 +13,12 @@ test_evidence_lineage_allows_evidence_only_and_rejects_code_descendant (__main__
 test_exit_manifest_schema_rejects_timeout_above_maximum (__main__.LegacyBaselineContractFixtureTests.test_exit_manifest_schema_rejects_timeout_above_maximum) ... ok
 test_implementation_commit_is_captured_only_from_a_clean_head (__main__.LegacyBaselineContractFixtureTests.test_implementation_commit_is_captured_only_from_a_clean_head) ... ok
 test_positive_and_negative_schema_fixtures (__main__.LegacyBaselineContractFixtureTests.test_positive_and_negative_schema_fixtures) ... ok
+test_prevalidated_baseline_semantics_rejects_cross_entry_category_drift (__main__.LegacyBaselineContractFixtureTests.test_prevalidated_baseline_semantics_rejects_cross_entry_category_drift) ... ok
 test_repository_definition_covers_legacy_authority_without_cutover (__main__.LegacyBaselineContractFixtureTests.test_repository_definition_covers_legacy_authority_without_cutover) ... ok
 test_schema_compatibility_layer_fails_closed_on_unknown_keyword (__main__.LegacyBaselineContractFixtureTests.test_schema_compatibility_layer_fails_closed_on_unknown_keyword) ... ok
+test_schema_only_accepts_structurally_valid_semantic_error_then_manual_rejects (__main__.LegacyBaselineContractFixtureTests.test_schema_only_accepts_structurally_valid_semantic_error_then_manual_rejects) ... ok
 
 ----------------------------------------------------------------------
-Ran 14 tests in 32.004s
+Ran 16 tests in 32.379s
 
 OK

@@ -29,6 +29,6 @@ test_run_batch.py: error: unrecognized arguments: --venv-python C:\other\python.
 ok
 
 ----------------------------------------------------------------------
-Ran 7 tests in 0.596s
+Ran 7 tests in 0.594s
 
 OK

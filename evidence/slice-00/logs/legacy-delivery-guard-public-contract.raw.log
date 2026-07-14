@@ -63,6 +63,6 @@ test_task_index_schema_and_path_boundaries_are_validated (__main__.DeliveryGuard
 test_task_update_moves_active_owner_to_terminal_owner_statuses (__main__.DeliveryGuardTests.test_task_update_moves_active_owner_to_terminal_owner_statuses) ... ok
 
 ----------------------------------------------------------------------
-Ran 60 tests in 39.833s
+Ran 60 tests in 40.319s
 
 OK

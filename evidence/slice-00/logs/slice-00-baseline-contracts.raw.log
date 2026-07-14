@@ -17,6 +17,6 @@ test_repository_definition_covers_legacy_authority_without_cutover (__main__.Leg
 test_schema_compatibility_layer_fails_closed_on_unknown_keyword (__main__.LegacyBaselineContractFixtureTests.test_schema_compatibility_layer_fails_closed_on_unknown_keyword) ... ok
 
 ----------------------------------------------------------------------
-Ran 14 tests in 32.162s
+Ran 14 tests in 32.004s
 
 OK

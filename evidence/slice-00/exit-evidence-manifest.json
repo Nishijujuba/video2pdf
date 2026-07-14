@@ -7,7 +7,7 @@
     "number": 0,
     "name": "baseline-protection"
   },
-  "implementation_commit": "c0880eadb43a6dcc6bf12cc87b03048d7e2c2f98",
+  "implementation_commit": "6ab484260db571a42e893d5cc6e4e991ca114a9f",
   "evidence_paths": [
     "evidence/slice-00/exit-evidence-manifest.json",
     "evidence/slice-00/logs/slice-00-baseline-contracts.log",
@@ -23,7 +23,7 @@
     "evidence/slice-00/logs/legacy-batch-public-contract.log",
     "evidence/slice-00/logs/legacy-batch-public-contract.raw.log"
   ],
-  "generated_at": "2026-07-14T16:49:27Z",
+  "generated_at": "2026-07-14T16:58:25Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -65,7 +65,7 @@
         "normalized_path": "evidence/slice-00/logs/slice-00-baseline-contracts.log",
         "normalized_sha256": "f986b08855b4a89d785d92b74c6d1ee5a9f0bd93e0aa6def071195873e213dab",
         "raw_path": "evidence/slice-00/logs/slice-00-baseline-contracts.raw.log",
-        "raw_sha256": "a16d035ce1f9a36891bd7fc114ae679b13a93161b9b51be2a56434f53e6835ff"
+        "raw_sha256": "63c4a9aae5967766afbb0eaea5a3e61b1d39b4a4fd2019ef5750a0aba07e3a61"
       },
       "conforms": true
     },
@@ -109,7 +109,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.log",
         "normalized_sha256": "8b9c4f473ee8096c19c20e8ddced73d8c98af1d5a5d3aa8f7730aab8eaaaa8ee",
         "raw_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.raw.log",
-        "raw_sha256": "3b945af1becd1f82ed4bddc4323151631c5be81ea493dd6162c6aaa054e88422"
+        "raw_sha256": "c37e8ce633065b395e79407e85d7ed53fb982f183c4a49114c7296c79b1a48d0"
       },
       "conforms": true
     },
@@ -153,7 +153,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-compile-public-contract.log",
         "normalized_sha256": "ecb22a4e950e34603a42def0010c8d49c7237d61612562d17b5806e1ce52298f",
         "raw_path": "evidence/slice-00/logs/legacy-compile-public-contract.raw.log",
-        "raw_sha256": "c2ab3860c93ca33019b6dc71b8f288eef365d2605f77dab082bf29cf577271ea"
+        "raw_sha256": "798f30303e943482ec05c56ad4667e45e03a51568ca413100871cf0eaa0e7d7e"
       },
       "conforms": true
     },
@@ -197,7 +197,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.log",
         "normalized_sha256": "b029c744008c5409c737afe4d481f2e88bd8634e15fae78888d95d20eeca55b7",
         "raw_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.raw.log",
-        "raw_sha256": "2f80e516ae36ac6148970a11fa348ef883f9bac8146654af6586117aa74e50a2"
+        "raw_sha256": "6800908da2a6566bab4fd8838a80edb13c96de496fa92c6bc9f522105127dbce"
       },
       "conforms": true
     },
@@ -231,7 +231,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.log",
         "normalized_sha256": "baf04d6568a752b2a279c35000f020d8d14b422c64a1fd0157b3baf0ba557687",
         "raw_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.raw.log",
-        "raw_sha256": "42d87fefaabeccfcecc5646606366669be031538e7dc41ac469beab06fa4e2af"
+        "raw_sha256": "24e352172baebc8e8ee52d98c84cfa9136e4a3a66a106ca1d2ba493dd9fa30ab"
       },
       "conforms": true
     },
@@ -265,7 +265,7 @@
         "normalized_path": "evidence/slice-00/logs/legacy-batch-public-contract.log",
         "normalized_sha256": "4afcfc3d556ea76be4e4b29912851d2030ffe8439bf7ab45fc080b71fc7952b0",
         "raw_path": "evidence/slice-00/logs/legacy-batch-public-contract.raw.log",
-        "raw_sha256": "e113b095cde03ad30388f3116f6b346930aba4b6b9caa31f56c7edd4f797dc62"
+        "raw_sha256": "a843a806d7bde482456b62c9651f0d9bf06b33e6d51954c61acc7f6693d2d766"
       },
       "conforms": true
     }

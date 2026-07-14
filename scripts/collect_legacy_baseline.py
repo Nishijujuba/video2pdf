@@ -186,36 +186,19 @@ def collect_authority_evidence(guards: list[dict[str, Any]]) -> list[dict[str, A
     return evidence
 
 
-def fixture_fingerprints(definition_path: Path) -> list[dict[str, str]]:
-    paths = [
-        ("baseline_definition", definition_path),
-        ("baseline_definition_schema", PROJECT_ROOT / "schemas" / DEFINITION_SCHEMA),
-        ("exit_evidence_schema", PROJECT_ROOT / "schemas" / MANIFEST_SCHEMA),
-        (
-            "baseline_definition_positive_fixture",
-            PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "legacy_baseline_definition.valid.json",
-        ),
-        (
-            "baseline_definition_negative_fixture",
-            PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "legacy_baseline_definition.invalid.json",
-        ),
-        (
-            "exit_evidence_positive_fixture",
-            PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "exit_evidence_manifest.valid.json",
-        ),
-        (
-            "exit_evidence_negative_fixture",
-            PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "exit_evidence_manifest.invalid.json",
-        ),
-    ]
-    return [
-        {
-            "role": role,
-            "path": project_relative(path),
-            "sha256": fingerprint_utf8_lf(path.read_bytes()),
-        }
-        for role, path in paths
-    ]
+def fixture_fingerprints(
+    contracts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    fixtures: list[dict[str, Any]] = []
+    for contract in contracts:
+        path = resolve_project_path(contract["path"])
+        fixtures.append(
+            {
+                **contract,
+                "sha256": fingerprint_utf8_lf(path.read_bytes()),
+            }
+        )
+    return fixtures
 
 
 def declared_evidence_paths(
@@ -332,7 +315,7 @@ def collect(
         "commands": commands,
         "authority_evidence": authority_evidence,
         "expected_checkpoints": [],
-        "fixtures": fixture_fingerprints(definition_path),
+        "fixtures": fixture_fingerprints(definition["fixture_contracts"]),
         "results": {
             "positive": list(definition["result_identities"]["positive"]),
             "negative": list(definition["result_identities"]["negative"]),
@@ -342,7 +325,12 @@ def collect(
     }
     validate_json_schema_instance(manifest, manifest_schema, "exit evidence manifest")
     validate_prevalidated_exit_evidence_semantics(manifest)
-    validate_prevalidated_exit_evidence_bindings(manifest, PROJECT_ROOT, output_path)
+    validate_prevalidated_exit_evidence_bindings(
+        manifest,
+        PROJECT_ROOT,
+        output_path,
+        pre_publication=True,
+    )
     write_text_atomic(output_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
 

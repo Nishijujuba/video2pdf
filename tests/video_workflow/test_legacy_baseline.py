@@ -109,6 +109,32 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 ],
                 "negative": ["unexpected_status_blocks"],
             },
+            "fixture_contracts": [
+                {
+                    "role": "baseline_definition_positive_fixture",
+                    "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+                    "validation_kind": "legacy_baseline_definition_schema",
+                    "expected_validity": "valid",
+                },
+                {
+                    "role": "baseline_definition_negative_fixture",
+                    "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+                    "validation_kind": "legacy_baseline_definition_schema",
+                    "expected_validity": "invalid",
+                },
+                {
+                    "role": "exit_evidence_positive_fixture",
+                    "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+                    "validation_kind": "exit_evidence_manifest_schema",
+                    "expected_validity": "valid",
+                },
+                {
+                    "role": "exit_evidence_negative_fixture",
+                    "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+                    "validation_kind": "exit_evidence_manifest_schema",
+                    "expected_validity": "invalid",
+                },
+            ],
             "baselines": baselines,
             "slice_verifications": [verification],
             "authority_guards": [
@@ -192,7 +218,15 @@ class LegacyBaselineCliTests(unittest.TestCase):
             first_manifest["activation_scope"],
         )
         validated = subprocess.run(
-            [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(self.run_root / "manifest-repeatable.json")],
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(MANIFEST_VALIDATOR),
+                str(self.run_root / "manifest-repeatable.json"),
+                "--pre-publication",
+            ],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -280,8 +314,33 @@ class LegacyBaselineCliTests(unittest.TestCase):
         lf_bytes = log_path.read_bytes()
         log_path.write_bytes(lf_bytes.replace(b"\n", b"\r\n"))
 
+        unpublished_default = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(MANIFEST_VALIDATOR),
+                str(manifest_path),
+            ],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertNotEqual(0, unpublished_default.returncode)
+        self.assertIn("post-publication manifest is not tracked", unpublished_default.stderr)
+
         newline_only_change = subprocess.run(
-            [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(manifest_path)],
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(MANIFEST_VALIDATOR),
+                str(manifest_path),
+                "--pre-publication",
+            ],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -292,7 +351,15 @@ class LegacyBaselineCliTests(unittest.TestCase):
         log_path.write_bytes(log_path.read_bytes() + b"tampered\r\n")
 
         validated = subprocess.run(
-            [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(manifest_path)],
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(MANIFEST_VALIDATOR),
+                str(manifest_path),
+                "--pre-publication",
+            ],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -715,6 +782,201 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
                         python_executable="C:/Python/python.exe",
                     )
 
+    def test_manifest_authority_inventory_tampering_is_rejected(self) -> None:
+        definition = json.loads(
+            (FIXTURES / "legacy_baseline_definition.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = json.loads(
+            (FIXTURES / "exit_evidence_manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        definition["authority_guards"].append(
+            {"path": "CLAUDE.md", "required_substrings": ["Legacy Track"]}
+        )
+        second_evidence = copy.deepcopy(manifest["authority_evidence"][0])
+        second_evidence["path"] = "CLAUDE.md"
+        manifest["authority_evidence"].append(second_evidence)
+        definition_schema = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas"
+                / "legacy-baseline-definition.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        manifest_schema = json.loads(
+            (
+                PROJECT_ROOT / "schemas" / "exit-evidence-manifest.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validate_json_schema_instance(
+            definition, definition_schema, "legacy baseline definition"
+        )
+
+        cases = [
+            (
+                "replaced_path",
+                lambda value: value["authority_evidence"][0].__setitem__(
+                    "path", "docs/adr/video-workflow-kernel-2.0-decision-map.md"
+                ),
+            ),
+            (
+                "tampered_required_substrings",
+                lambda value: value["authority_evidence"][0].__setitem__(
+                    "required_substrings", ["forged authority text"]
+                ),
+            ),
+            (
+                "reduced_inventory",
+                lambda value: value["authority_evidence"].pop(),
+            ),
+        ]
+        for label, mutate in cases:
+            with self.subTest(field=label):
+                candidate = copy.deepcopy(manifest)
+                mutate(candidate)
+                validate_json_schema_instance(
+                    candidate, manifest_schema, "exit evidence manifest"
+                )
+                with self.assertRaisesRegex(
+                    ContractError,
+                    "authority evidence inventory does not match baseline definition",
+                ):
+                    legacy_baseline_contracts.validate_prevalidated_manifest_definition_bindings(
+                        candidate,
+                        definition,
+                        python_executable="C:/Python/python.exe",
+                    )
+
+    def test_manifest_fixture_inventory_tampering_is_rejected(self) -> None:
+        definition = json.loads(
+            (FIXTURES / "legacy_baseline_definition.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = json.loads(
+            (FIXTURES / "exit_evidence_manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        fixture_contracts = [
+            {
+                "role": "baseline_definition_positive_fixture",
+                "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+                "validation_kind": "legacy_baseline_definition_schema",
+                "expected_validity": "valid",
+            },
+            {
+                "role": "baseline_definition_negative_fixture",
+                "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+                "validation_kind": "legacy_baseline_definition_schema",
+                "expected_validity": "invalid",
+            },
+            {
+                "role": "exit_evidence_positive_fixture",
+                "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+                "validation_kind": "exit_evidence_manifest_schema",
+                "expected_validity": "valid",
+            },
+            {
+                "role": "exit_evidence_negative_fixture",
+                "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+                "validation_kind": "exit_evidence_manifest_schema",
+                "expected_validity": "invalid",
+            },
+        ]
+        definition["fixture_contracts"] = fixture_contracts
+        manifest["fixtures"] = [
+            {**contract, "sha256": "a" * 64} for contract in fixture_contracts
+        ]
+        definition_schema = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas"
+                / "legacy-baseline-definition.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        manifest_schema = json.loads(
+            (
+                PROJECT_ROOT / "schemas" / "exit-evidence-manifest.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validate_json_schema_instance(
+            definition, definition_schema, "legacy baseline definition"
+        )
+        validate_json_schema_instance(
+            manifest, manifest_schema, "exit evidence manifest"
+        )
+
+        cases = [
+            (
+                "agents_path_replacement",
+                lambda value: value["fixtures"][0].__setitem__(
+                    "path", "AGENTS.md"
+                ),
+            ),
+            ("reduced_inventory", lambda value: value["fixtures"].pop()),
+            (
+                "expected_validity",
+                lambda value: value["fixtures"][0].__setitem__(
+                    "expected_validity", "invalid"
+                ),
+            ),
+        ]
+        for label, mutate in cases:
+            with self.subTest(field=label):
+                candidate = copy.deepcopy(manifest)
+                mutate(candidate)
+                validate_json_schema_instance(
+                    candidate, manifest_schema, "exit evidence manifest"
+                )
+                with self.assertRaisesRegex(
+                    ContractError,
+                    "fixture inventory does not match baseline definition",
+                ):
+                    legacy_baseline_contracts.validate_prevalidated_manifest_definition_bindings(
+                        candidate,
+                        definition,
+                        python_executable="C:/Python/python.exe",
+                    )
+
+    def test_declared_fixture_schema_validity_is_enforced(self) -> None:
+        definition = json.loads(
+            (PROJECT_ROOT / "config" / "legacy-baseline.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        fixtures = []
+        for contract in definition["fixture_contracts"]:
+            path = PROJECT_ROOT / contract["path"]
+            fixtures.append(
+                {
+                    **contract,
+                    "sha256": legacy_baseline_contracts.fingerprint_utf8_lf(
+                        path.read_bytes()
+                    ),
+                }
+            )
+
+        legacy_baseline_contracts.validate_prevalidated_declared_fixture_validity(
+            fixtures, PROJECT_ROOT
+        )
+        tampered = copy.deepcopy(fixtures)
+        positive = next(
+            fixture
+            for fixture in tampered
+            if fixture["role"] == "baseline_definition_positive_fixture"
+        )
+        positive["expected_validity"] = "invalid"
+        with self.assertRaisesRegex(
+            ContractError, "fixture validity does not match baseline definition"
+        ):
+            legacy_baseline_contracts.validate_prevalidated_declared_fixture_validity(
+                tampered, PROJECT_ROOT
+            )
+
     def test_schema_compatibility_layer_fails_closed_on_unknown_keyword(self) -> None:
         schema = {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -748,29 +1010,156 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "clean implementation HEAD"):
             legacy_baseline_contracts.capture_clean_implementation_commit(repo)
 
-    def test_evidence_lineage_allows_evidence_only_and_rejects_code_descendant(self) -> None:
-        repo = self.make_git_repo("evidence-lineage")
+    def test_postpublication_lineage_anchors_publication_and_allows_future_descendant(
+        self,
+    ) -> None:
+        repo = self.make_git_repo("postpublication-lineage")
         implementation_commit = run_git(repo, "rev-parse", "HEAD")
-        evidence_path = repo / "evidence" / "result.json"
-        evidence_path.parent.mkdir(parents=True)
-        evidence_path.write_text('{"decision":"pass"}\n', encoding="utf-8")
-        run_git(repo, "add", "evidence/result.json")
-        run_git(repo, "commit", "-m", "evidence only")
+        manifest_path = repo / "evidence" / "manifest.json"
+        log_path = repo / "evidence" / "result.log"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_body = json.dumps(
+            {"implementation_commit": implementation_commit}
+        ) + "\n"
+        manifest_path.write_text(manifest_body, encoding="utf-8")
+        log_path.write_text("pass\n", encoding="utf-8")
+        run_git(repo, "add", "evidence/manifest.json", "evidence/result.log")
+        run_git(repo, "commit", "-m", "publish evidence")
 
-        legacy_baseline_contracts.validate_prevalidated_evidence_lineage(
+        legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
             repo,
             implementation_commit,
-            ["evidence/result.json"],
+            ["evidence/manifest.json", "evidence/result.log"],
+            manifest_path,
         )
 
-        (repo / "code.py").write_text("print('changed after evidence')\n", encoding="utf-8")
-        run_git(repo, "add", "code.py")
-        run_git(repo, "commit", "-m", "stale code descendant")
-        with self.assertRaisesRegex(ContractError, "non-evidence path.*code.py"):
-            legacy_baseline_contracts.validate_prevalidated_evidence_lineage(
+        (repo / "future.py").write_text("print('future slice')\n", encoding="utf-8")
+        run_git(repo, "add", "future.py")
+        run_git(repo, "commit", "-m", "future unrelated implementation")
+
+        legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
+            repo,
+            implementation_commit,
+            ["evidence/manifest.json", "evidence/result.log"],
+            manifest_path,
+        )
+
+        manifest_path.write_text('{"tampered":true}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ContractError, "tracked HEAD blob"):
+            legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
                 repo,
                 implementation_commit,
-                ["evidence/result.json"],
+                ["evidence/manifest.json", "evidence/result.log"],
+                manifest_path,
+            )
+        manifest_path.write_text(manifest_body, encoding="utf-8")
+
+    def test_postpublication_lineage_rejects_evidence_head_retarget(self) -> None:
+        repo = self.make_git_repo("publication-retarget")
+        implementation_commit = run_git(repo, "rev-parse", "HEAD")
+        manifest_path = repo / "evidence" / "manifest.json"
+        log_path = repo / "evidence" / "result.log"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            json.dumps({"implementation_commit": implementation_commit}) + "\n",
+            encoding="utf-8",
+        )
+        log_path.write_text("pass\n", encoding="utf-8")
+        run_git(repo, "add", "evidence/manifest.json", "evidence/result.log")
+        run_git(repo, "commit", "-m", "first evidence publication")
+        evidence_head = run_git(repo, "rev-parse", "HEAD")
+
+        manifest_path.write_text(
+            json.dumps({"implementation_commit": evidence_head}) + "\n",
+            encoding="utf-8",
+        )
+        run_git(repo, "add", "evidence/manifest.json")
+        run_git(repo, "commit", "-m", "retarget evidence head")
+
+        with self.assertRaisesRegex(
+            ContractError, "implementation_commit cannot be an evidence-only commit"
+        ):
+            legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
+                repo,
+                evidence_head,
+                ["evidence/manifest.json", "evidence/result.log"],
+                manifest_path,
+            )
+
+    def test_postpublication_lineage_rejects_non_evidence_publication_write(
+        self,
+    ) -> None:
+        repo = self.make_git_repo("publication-write-set")
+        implementation_commit = run_git(repo, "rev-parse", "HEAD")
+        manifest_path = repo / "evidence" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text("{}\n", encoding="utf-8")
+        (repo / "release.txt").write_text("forbidden\n", encoding="utf-8")
+        run_git(repo, "add", "evidence/manifest.json", "release.txt")
+        run_git(repo, "commit", "-m", "mixed publication")
+
+        with self.assertRaisesRegex(ContractError, "publication changed non-evidence"):
+            legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
+                repo,
+                implementation_commit,
+                ["evidence/manifest.json"],
+                manifest_path,
+            )
+
+    def test_postpublication_lineage_rejects_forged_ancestor_parent(self) -> None:
+        repo = self.make_git_repo("publication-parent")
+        forged_ancestor = run_git(repo, "rev-parse", "HEAD")
+        (repo / "code.py").write_text("print('implementation v2')\n", encoding="utf-8")
+        run_git(repo, "add", "code.py")
+        run_git(repo, "commit", "-m", "implementation")
+        manifest_path = repo / "evidence" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text("{}\n", encoding="utf-8")
+        run_git(repo, "add", "evidence/manifest.json")
+        run_git(repo, "commit", "-m", "publish evidence")
+
+        with self.assertRaisesRegex(ContractError, "publication parent"):
+            legacy_baseline_contracts.validate_prevalidated_postpublication_lineage(
+                repo,
+                forged_ancestor,
+                ["evidence/manifest.json"],
+                manifest_path,
+            )
+
+    def test_prepublication_lineage_requires_implementation_head_and_evidence_only_worktree(
+        self,
+    ) -> None:
+        repo = self.make_git_repo("prepublication-lineage")
+        implementation_commit = run_git(repo, "rev-parse", "HEAD")
+        manifest_path = repo / "evidence" / "manifest.json"
+        log_path = repo / "evidence" / "result.log"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text("{}\n", encoding="utf-8")
+        log_path.write_text("pass\n", encoding="utf-8")
+
+        legacy_baseline_contracts.validate_prevalidated_prepublication_lineage(
+            repo,
+            implementation_commit,
+            ["evidence/manifest.json", "evidence/result.log"],
+        )
+
+        (repo / "code.py").write_text("print('dirty implementation')\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            ContractError, "pre-publication worktree changed non-evidence"
+        ):
+            legacy_baseline_contracts.validate_prevalidated_prepublication_lineage(
+                repo,
+                implementation_commit,
+                ["evidence/manifest.json", "evidence/result.log"],
+            )
+
+        run_git(repo, "add", "code.py", "evidence/manifest.json", "evidence/result.log")
+        run_git(repo, "commit", "-m", "advance past implementation")
+        with self.assertRaisesRegex(ContractError, "HEAD to equal implementation_commit"):
+            legacy_baseline_contracts.validate_prevalidated_prepublication_lineage(
+                repo,
+                implementation_commit,
+                ["evidence/manifest.json", "evidence/result.log"],
             )
 
     def test_repository_definition_covers_legacy_authority_without_cutover(self) -> None:

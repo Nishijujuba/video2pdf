@@ -27,6 +27,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate only the self-contained Schema contract, for positive and negative fixtures.",
     )
+    parser.add_argument(
+        "--pre-publication",
+        action="store_true",
+        help=(
+            "Validate unpublished evidence against the exact implementation HEAD. "
+            "The default derives the committed evidence publication from Git history."
+        ),
+    )
     args = parser.parse_args(argv or sys.argv[1:])
     try:
         schema = load_schema_object(
@@ -42,7 +50,10 @@ def main(argv: list[str] | None = None) -> int:
             manifest = cast(dict[str, Any], manifest_value)
             validate_prevalidated_exit_evidence_semantics(manifest)
             validate_prevalidated_exit_evidence_bindings(
-                manifest, PROJECT_ROOT, args.manifest.resolve()
+                manifest,
+                PROJECT_ROOT,
+                args.manifest.resolve(),
+                pre_publication=args.pre_publication,
             )
     except (ContractError, OSError, UnicodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)

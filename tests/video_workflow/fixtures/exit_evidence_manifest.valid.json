@@ -218,18 +218,52 @@
   "expected_checkpoints": [],
   "fixtures": [
     {
-      "role": "definition",
+      "role": "baseline_definition",
       "path": "config/legacy-baseline.v1.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     {
-      "role": "definition_schema",
+      "role": "baseline_definition_schema",
       "path": "schemas/legacy-baseline-definition.v1.schema.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     {
-      "role": "manifest_schema",
+      "role": "exit_evidence_schema",
       "path": "schemas/exit-evidence-manifest.v1.schema.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "baseline_definition_positive_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "valid",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "baseline_definition_negative_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "invalid",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "exit_evidence_positive_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "valid",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "exit_evidence_negative_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "invalid",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ],

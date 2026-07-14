@@ -19,10 +19,62 @@
       "schema_constraint_boundary_blocks",
       "unsupported_schema_keyword_blocks",
       "caller_supplied_implementation_commit_blocks",
-      "non_evidence_descendant_invalidates",
-      "atomic_publish_preserves_previous_evidence"
+      "atomic_publish_preserves_previous_evidence",
+      "authority_inventory_tampering_blocks",
+      "fixture_inventory_tampering_blocks",
+      "fixture_validity_tampering_blocks",
+      "evidence_head_retarget_blocks",
+      "non_evidence_publication_write_blocks",
+      "tampered_current_manifest_blob_blocks",
+      "unpublished_default_validation_blocks",
+      "prepublication_non_evidence_worktree_blocks",
+      "future_unrelated_descendant_preserves_publication_binding"
     ]
   },
+  "fixture_contracts": [
+    {
+      "role": "baseline_definition",
+      "path": "config/legacy-baseline.v1.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable"
+    },
+    {
+      "role": "baseline_definition_schema",
+      "path": "schemas/legacy-baseline-definition.v1.schema.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable"
+    },
+    {
+      "role": "exit_evidence_schema",
+      "path": "schemas/exit-evidence-manifest.v1.schema.json",
+      "validation_kind": "fingerprint_only",
+      "expected_validity": "not_applicable"
+    },
+    {
+      "role": "baseline_definition_positive_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "valid"
+    },
+    {
+      "role": "baseline_definition_negative_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+      "validation_kind": "legacy_baseline_definition_schema",
+      "expected_validity": "invalid"
+    },
+    {
+      "role": "exit_evidence_positive_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "valid"
+    },
+    {
+      "role": "exit_evidence_negative_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+      "validation_kind": "exit_evidence_manifest_schema",
+      "expected_validity": "invalid"
+    }
+  ],
   "baselines": [
     {
       "test_id": "legacy-pyramid-public-contract",

@@ -39,11 +39,11 @@
       "additionalProperties": false
     },
     "implementation_commit": {
-      "description": "Clean Git HEAD automatically captured before baseline commands execute. Post-collection descendants may change only evidence_paths.",
+      "description": "Clean Git HEAD captured before baseline commands execute and proven as the direct parent of the evidence publication commit.",
       "$ref": "#/$defs/gitCommit"
     },
     "evidence_paths": {
-      "description": "Closed allowlist for the manifest and command logs that may differ after implementation_commit.",
+      "description": "Closed allowlist for the evidence publication commit write set and unpublished evidence worktree changes.",
       "type": "array",
       "minItems": 13,
       "uniqueItems": true,
@@ -102,13 +102,29 @@
     },
     "fixtures": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["role", "path", "sha256"],
+        "required": [
+          "role",
+          "path",
+          "validation_kind",
+          "expected_validity",
+          "sha256"
+        ],
         "properties": {
           "role": { "type": "string", "minLength": 1 },
           "path": { "$ref": "#/$defs/projectPath" },
+          "validation_kind": {
+            "enum": [
+              "fingerprint_only",
+              "legacy_baseline_definition_schema",
+              "exit_evidence_manifest_schema"
+            ]
+          },
+          "expected_validity": {
+            "enum": ["not_applicable", "valid", "invalid"]
+          },
           "sha256": { "$ref": "#/$defs/sha256" }
         },
         "additionalProperties": false

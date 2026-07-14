@@ -73,78 +73,202 @@ def _decode_git_path_list(raw: bytes, label: str) -> list[str]:
         raise ContractError(f"{label} contains a non-UTF-8 project path") from exc
 
 
-def validate_prevalidated_evidence_lineage(
-    project_root: Path,
-    implementation_commit: str,
-    evidence_paths: list[str],
-) -> None:
-    """Prove lineage after Schema validation of the commit and evidence paths.
-
-    The caller must first validate both inputs against the registered Exit
-    Evidence Manifest Schema. This function owns only Git ancestry and changed
-    path relationships.
-    """
-
-    allowed = set(evidence_paths)
-    _git_output_bytes(
-        project_root,
-        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
-        "implementation_commit does not resolve to a commit",
-    )
-    current_head = _git_output_bytes(
-        project_root, ["rev-parse", "HEAD"], "cannot resolve evidence validation HEAD"
-    ).decode("ascii", errors="strict").strip()
-    _git_output_bytes(
-        project_root,
-        ["merge-base", "--is-ancestor", implementation_commit, current_head],
-        "implementation_commit is not an ancestor of the validation HEAD",
-    )
-
+def _worktree_changed_paths(project_root: Path) -> set[str]:
     changed: set[str] = set()
-    descendants = _git_output_bytes(
-        project_root,
-        ["rev-list", "--reverse", f"{implementation_commit}..{current_head}"],
-        "cannot enumerate evidence descendant commits",
-    ).decode("ascii", errors="strict").splitlines()
-    for commit in descendants:
-        changed.update(
-            _decode_git_path_list(
-                _git_output_bytes(
-                    project_root,
-                    [
-                        "diff-tree",
-                        "--no-commit-id",
-                        "--name-only",
-                        "-r",
-                        "-m",
-                        "-z",
-                        "--no-renames",
-                        commit,
-                    ],
-                    f"cannot inspect evidence descendant {commit}",
-                ),
-                f"evidence descendant {commit}",
-            )
-        )
-
-    worktree_commands = [
+    for arguments in (
         ["diff", "--name-only", "-z", "--no-renames"],
         ["diff", "--cached", "--name-only", "-z", "--no-renames"],
         ["ls-files", "--others", "--exclude-standard", "-z"],
-    ]
-    for arguments in worktree_commands:
+    ):
         changed.update(
             _decode_git_path_list(
                 _git_output_bytes(project_root, arguments, "cannot inspect evidence worktree"),
                 "evidence worktree",
             )
         )
+    return changed
 
-    forbidden = sorted(changed - allowed)
+
+def _commit_changed_paths(project_root: Path, commit: str, label: str) -> set[str]:
+    return set(
+        _decode_git_path_list(
+            _git_output_bytes(
+                project_root,
+                [
+                    "diff-tree",
+                    "--root",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    commit,
+                ],
+                f"cannot inspect {label}",
+            ),
+            label,
+        )
+    )
+
+
+def _declared_evidence_worktree_changes(
+    project_root: Path, evidence_paths: list[str]
+) -> set[str]:
+    changed: set[str] = set()
+    for path_value in evidence_paths:
+        path = project_root / path_value
+        if not path.is_file():
+            continue
+        tracked = _git_output_bytes(
+            project_root,
+            ["ls-files", "-z", "--", path_value],
+            "cannot inspect declared evidence tracking state",
+        )
+        if not tracked:
+            changed.add(path_value)
+            continue
+        head_blob = _git_output_bytes(
+            project_root,
+            ["rev-parse", f"HEAD:{path_value}"],
+            "cannot inspect tracked evidence blob",
+        ).decode("ascii", errors="strict").strip()
+        worktree_blob = _git_output_bytes(
+            project_root,
+            ["hash-object", f"--path={path_value}", "--", path_value],
+            "cannot fingerprint declared evidence worktree blob",
+        ).decode("ascii", errors="strict").strip()
+        if worktree_blob != head_blob:
+            changed.add(path_value)
+    return changed
+
+
+def validate_prevalidated_prepublication_lineage(
+    project_root: Path,
+    implementation_commit: str,
+    evidence_paths: list[str],
+) -> None:
+    """Bind unpublished evidence to the clean implementation HEAD."""
+
+    _git_output_bytes(
+        project_root,
+        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
+        "implementation_commit does not resolve to a commit",
+    )
+    current_head = _git_output_bytes(
+        project_root,
+        ["rev-parse", "HEAD"],
+        "cannot resolve pre-publication implementation HEAD",
+    ).decode("ascii", errors="strict").strip()
+    if current_head != implementation_commit:
+        raise ContractError(
+            "pre-publication validation requires HEAD to equal implementation_commit"
+        )
+
+    changed = _worktree_changed_paths(project_root)
+    changed.update(
+        _declared_evidence_worktree_changes(project_root, evidence_paths)
+    )
+    if not changed:
+        raise ContractError(
+            "pre-publication validation requires unpublished evidence changes"
+        )
+    forbidden = sorted(changed - set(evidence_paths))
     if forbidden:
         raise ContractError(
-            "evidence is stale because lineage changed non-evidence path(s): "
+            "pre-publication worktree changed non-evidence path(s): "
             f"{forbidden}"
+        )
+
+
+def validate_prevalidated_postpublication_lineage(
+    project_root: Path,
+    implementation_commit: str,
+    evidence_paths: list[str],
+    manifest_path: Path,
+) -> None:
+    """Derive and prove the historical evidence publication commit."""
+
+    allowed = set(evidence_paths)
+    root = project_root.resolve()
+    try:
+        manifest_relative = manifest_path.resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ContractError("manifest path must stay within the project root") from exc
+
+    _git_output_bytes(
+        project_root,
+        ["cat-file", "-e", f"{implementation_commit}^{{commit}}"],
+        "implementation_commit does not resolve to a commit",
+    )
+    head_blob = _git_output_bytes(
+        project_root,
+        ["rev-parse", f"HEAD:{manifest_relative}"],
+        "post-publication manifest is not tracked at HEAD",
+    ).decode("ascii", errors="strict").strip()
+    worktree_blob = _git_output_bytes(
+        project_root,
+        ["hash-object", f"--path={manifest_relative}", "--", manifest_relative],
+        "cannot fingerprint current manifest worktree blob",
+    ).decode("ascii", errors="strict").strip()
+    if worktree_blob != head_blob:
+        raise ContractError(
+            "current manifest does not match its tracked HEAD blob"
+        )
+
+    candidates = _git_output_bytes(
+        project_root,
+        ["log", "--format=%H", "HEAD", "--", manifest_relative],
+        "cannot inspect manifest publication history",
+    ).decode("ascii", errors="strict").splitlines()
+    publication_commit: str | None = None
+    for candidate in candidates:
+        try:
+            candidate_blob = _git_output_bytes(
+                project_root,
+                ["rev-parse", f"{candidate}:{manifest_relative}"],
+                f"cannot inspect manifest blob at {candidate}",
+            ).decode("ascii", errors="strict").strip()
+        except ContractError:
+            continue
+        if candidate_blob == head_blob:
+            publication_commit = candidate
+            break
+    if publication_commit is None:
+        raise ContractError(
+            "cannot locate evidence publication commit for current manifest blob"
+        )
+
+    ancestry = _git_output_bytes(
+        project_root,
+        ["rev-list", "--parents", "-n", "1", publication_commit],
+        "cannot inspect evidence publication parent",
+    ).decode("ascii", errors="strict").split()
+    if len(ancestry) != 2:
+        raise ContractError("evidence publication commit must have one direct parent")
+    publication_parent = ancestry[1]
+    if publication_parent != implementation_commit:
+        raise ContractError(
+            "evidence publication parent does not match implementation_commit"
+        )
+
+    publication_paths = _commit_changed_paths(
+        project_root, publication_commit, "evidence publication commit"
+    )
+    if not publication_paths:
+        raise ContractError("evidence publication commit changed no paths")
+    forbidden_publication = sorted(publication_paths - allowed)
+    if forbidden_publication:
+        raise ContractError(
+            "evidence publication changed non-evidence path(s): "
+            f"{forbidden_publication}"
+        )
+
+    implementation_paths = _commit_changed_paths(
+        project_root, implementation_commit, "implementation_commit"
+    )
+    if not (implementation_paths - allowed):
+        raise ContractError(
+            "implementation_commit cannot be an evidence-only commit"
         )
 
 
@@ -476,6 +600,27 @@ def validate_prevalidated_legacy_baseline_semantics(value: dict[str, Any]) -> No
     if len(guard_paths) != len(set(guard_paths)):
         raise ContractError("authority guard paths must be unique")
 
+    fixture_contracts = value["fixture_contracts"]
+    fixture_roles = [fixture["role"] for fixture in fixture_contracts]
+    if len(fixture_roles) != len(set(fixture_roles)):
+        raise ContractError("fixture contract roles must be unique")
+    fixture_paths = [fixture["path"] for fixture in fixture_contracts]
+    if len(fixture_paths) != len(set(fixture_paths)):
+        raise ContractError("fixture contract paths must be unique")
+    for index, fixture in enumerate(fixture_contracts):
+        kind = fixture["validation_kind"]
+        expected = fixture["expected_validity"]
+        if kind == "fingerprint_only" and expected != "not_applicable":
+            raise ContractError(
+                f"fixture_contracts[{index}].expected_validity must be "
+                "'not_applicable' for fingerprint_only"
+            )
+        if kind != "fingerprint_only" and expected not in {"valid", "invalid"}:
+            raise ContractError(
+                f"fixture_contracts[{index}].expected_validity must declare "
+                "'valid' or 'invalid' for Schema validation"
+            )
+
 
 def _validate_prevalidated_command_evidence_semantics(
     value: dict[str, Any], label: str
@@ -523,6 +668,42 @@ def validate_prevalidated_manifest_definition_bindings(
     must also establish unique command identities before this cross-artifact
     invariant is called.
     """
+
+    expected_authority = [
+        {
+            "path": guard["path"],
+            "required_substrings": guard["required_substrings"],
+        }
+        for guard in definition["authority_guards"]
+    ]
+    actual_authority = [
+        {
+            "path": evidence["path"],
+            "required_substrings": evidence["required_substrings"],
+        }
+        for evidence in value["authority_evidence"]
+    ]
+    if actual_authority != expected_authority:
+        raise ContractError(
+            "authority evidence inventory does not match baseline definition"
+        )
+
+    fixture_fields = (
+        "role",
+        "path",
+        "validation_kind",
+        "expected_validity",
+    )
+    expected_fixtures = [
+        {field: fixture[field] for field in fixture_fields}
+        for fixture in definition["fixture_contracts"]
+    ]
+    actual_fixtures = [
+        {field: fixture[field] for field in fixture_fields}
+        for fixture in value["fixtures"]
+    ]
+    if actual_fixtures != expected_fixtures:
+        raise ContractError("fixture inventory does not match baseline definition")
 
     definition_commands: dict[str, tuple[str, dict[str, Any]]] = {}
     for scope, key in (
@@ -642,8 +823,61 @@ def _read_fingerprint_bound_file(
     return path, raw
 
 
+def validate_prevalidated_declared_fixture_validity(
+    fixtures: list[dict[str, Any]], project_root: Path
+) -> None:
+    """Verify definition-bound fixture fingerprints and declared Schema validity."""
+
+    schemas = {
+        "legacy_baseline_definition_schema": load_schema_object(
+            project_root,
+            "legacy-baseline-definition.v1.schema.json",
+            DEFINITION_SCHEMA_ID,
+        ),
+        "exit_evidence_manifest_schema": load_schema_object(
+            project_root,
+            "exit-evidence-manifest.v1.schema.json",
+            MANIFEST_SCHEMA_ID,
+        ),
+    }
+    for schema in schemas.values():
+        _check_schema_vocabulary(schema)
+
+    for index, fixture in enumerate(fixtures):
+        label = f"fixtures[{index}]"
+        _, raw = _read_fingerprint_bound_file(
+            project_root, fixture["path"], fixture["sha256"], label
+        )
+        kind = fixture["validation_kind"]
+        if kind == "fingerprint_only":
+            continue
+        try:
+            fixture_value = json.loads(raw.decode("utf-8"))
+            schema = schemas[kind]
+            _validate_schema_instance(
+                fixture_value,
+                schema,
+                schema,
+                f"{label} fixture",
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ContractError):
+            actual_validity = "invalid"
+        else:
+            actual_validity = "valid"
+        if actual_validity != fixture["expected_validity"]:
+            raise ContractError(
+                "fixture validity does not match baseline definition: "
+                f"{fixture['role']}: expected {fixture['expected_validity']}, "
+                f"actual {actual_validity}"
+            )
+
+
 def validate_prevalidated_exit_evidence_bindings(
-    value: dict[str, Any], project_root: Path, manifest_path: Path
+    value: dict[str, Any],
+    project_root: Path,
+    manifest_path: Path,
+    *,
+    pre_publication: bool = False,
 ) -> None:
     """Validate cross-artifact bindings after the manifest Schema has passed.
 
@@ -672,9 +906,17 @@ def validate_prevalidated_exit_evidence_bindings(
             "evidence_paths must exactly declare the manifest and command logs; "
             f"missing={missing}; unexpected={unexpected}"
         )
-    validate_prevalidated_evidence_lineage(
-        project_root, implementation_commit, value["evidence_paths"]
-    )
+    if pre_publication:
+        validate_prevalidated_prepublication_lineage(
+            project_root, implementation_commit, value["evidence_paths"]
+        )
+    else:
+        validate_prevalidated_postpublication_lineage(
+            project_root,
+            implementation_commit,
+            value["evidence_paths"],
+            manifest_path,
+        )
 
     definition_binding = value["baseline_definition"]
     definition_path, _ = _read_fingerprint_bound_file(
@@ -727,11 +969,6 @@ def validate_prevalidated_exit_evidence_bindings(
         if actual_missing != evidence["missing_substrings"]:
             raise ContractError(f"{label}.missing_substrings is stale")
 
-    fixture_roles: set[str] = set()
-    for index, fixture in enumerate(value["fixtures"]):
-        label = f"fixtures[{index}]"
-        role = fixture["role"]
-        if role in fixture_roles:
-            raise ContractError(f"{label}.role must be unique")
-        fixture_roles.add(role)
-        _read_fingerprint_bound_file(project_root, fixture["path"], fixture["sha256"], label)
+    validate_prevalidated_declared_fixture_validity(
+        value["fixtures"], project_root
+    )

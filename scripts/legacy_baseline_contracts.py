@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any, cast
 
 
@@ -455,6 +456,22 @@ def validate_prevalidated_legacy_baseline_semantics(value: dict[str, Any]) -> No
     if len(test_ids) != len(set(test_ids)):
         raise ContractError("all baseline and verification test_id values must be unique")
 
+    result_identities = value["result_identities"]
+    positive_identities = result_identities["positive"]
+    if set(positive_identities) != set(test_ids):
+        missing = sorted(set(test_ids) - set(positive_identities))
+        unexpected = sorted(set(positive_identities) - set(test_ids))
+        raise ContractError(
+            "positive result identities must exactly match baseline and verification "
+            f"test_id values; missing={missing}; unexpected={unexpected}"
+        )
+    overlap = sorted(set(positive_identities) & set(result_identities["negative"]))
+    if overlap:
+        raise ContractError(
+            "positive and negative result identities must be disjoint; "
+            f"overlap={overlap}"
+        )
+
     guard_paths = [guard["path"] for guard in value["authority_guards"]]
     if len(guard_paths) != len(set(guard_paths)):
         raise ContractError("authority guard paths must be unique")
@@ -468,6 +485,12 @@ def _validate_prevalidated_command_evidence_semantics(
         raise ContractError(f"{label}.category is not a Legacy baseline category")
     if value["scope"] == "slice_verification" and category != "slice_verification":
         raise ContractError(f"{label}.category must be 'slice_verification'")
+    exit_code = value["exit_code"]
+    derived_status = (
+        "timeout" if exit_code is None else "pass" if exit_code == 0 else "fail"
+    )
+    if value["actual_status"] != derived_status:
+        raise ContractError(f"{label}.actual_status does not match exit_code")
     log = value["log"]
     derived = (
         value["expected_status"] == value["actual_status"]
@@ -475,6 +498,77 @@ def _validate_prevalidated_command_evidence_semantics(
     )
     if value["conforms"] != derived:
         raise ContractError(f"{label}.conforms does not match expected/actual evidence")
+
+
+def expand_registered_runtime_command(
+    declared_command: list[str], *, python_executable: str
+) -> list[str]:
+    """Expand only the registered ``{python}`` token in a declared command."""
+
+    return [
+        python_executable if token == "{python}" else token
+        for token in declared_command
+    ]
+
+
+def validate_prevalidated_manifest_definition_bindings(
+    value: dict[str, Any],
+    definition: dict[str, Any],
+    *,
+    python_executable: str,
+) -> None:
+    """Bind manifest command and result evidence to its validated definition.
+
+    Both objects must first pass their registered Schemas. Definition semantics
+    must also establish unique command identities before this cross-artifact
+    invariant is called.
+    """
+
+    definition_commands: dict[str, tuple[str, dict[str, Any]]] = {}
+    for scope, key in (
+        ("slice_verification", "slice_verifications"),
+        ("legacy_baseline", "baselines"),
+    ):
+        for entry in definition[key]:
+            definition_commands[entry["test_id"]] = (scope, entry)
+
+    expected_test_ids = definition["result_identities"]["positive"]
+    actual_test_ids = [command["test_id"] for command in value["commands"]]
+    if actual_test_ids != expected_test_ids:
+        raise ContractError(
+            "command test identities do not match baseline definition; "
+            f"expected={expected_test_ids}; actual={actual_test_ids}"
+        )
+
+    for index, command in enumerate(value["commands"]):
+        label = f"commands[{index}]"
+        expected_scope, entry = definition_commands[command["test_id"]]
+        bindings = (
+            ("scope", expected_scope),
+            ("category", entry["category"]),
+            ("declared_command", entry["command"]),
+            ("timeout_seconds", entry["timeout_seconds"]),
+            ("expected_status", entry["expected_status"]),
+            ("expected_log_sha256", entry["expected_log_sha256"]),
+        )
+        for field, expected in bindings:
+            if command[field] != expected:
+                raise ContractError(
+                    f"{label}.{field} does not match baseline definition"
+                )
+        expected_executed = expand_registered_runtime_command(
+            entry["command"], python_executable=python_executable
+        )
+        if command["executed_command"] != expected_executed:
+            raise ContractError(
+                f"{label}.executed_command does not match runtime expansion"
+            )
+
+    result_identities = definition["result_identities"]
+    if value["results"]["positive"] != result_identities["positive"]:
+        raise ContractError("positive results do not match baseline definition")
+    if value["results"]["negative"] != result_identities["negative"]:
+        raise ContractError("negative results do not match baseline definition")
 
 
 def validate_prevalidated_exit_evidence_semantics(value: dict[str, Any]) -> None:
@@ -600,6 +694,11 @@ def validate_prevalidated_exit_evidence_bindings(
     )
     definition = cast(dict[str, Any], definition_value)
     validate_prevalidated_legacy_baseline_semantics(definition)
+    validate_prevalidated_manifest_definition_bindings(
+        value,
+        definition,
+        python_executable=sys.executable,
+    )
 
     bound_paths: set[str] = set()
     for index, command in enumerate(value["commands"]):

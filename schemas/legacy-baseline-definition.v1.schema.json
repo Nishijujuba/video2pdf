@@ -8,6 +8,7 @@
     "schema_version",
     "kind",
     "normalization_version",
+    "result_identities",
     "baselines",
     "slice_verifications",
     "authority_guards"
@@ -19,6 +20,25 @@
     "schema_version": { "const": 1 },
     "kind": { "const": "legacy-workflow-baseline-definition" },
     "normalization_version": { "const": 1 },
+    "result_identities": {
+      "type": "object",
+      "required": ["positive", "negative"],
+      "properties": {
+        "positive": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/resultIdentity" }
+        },
+        "negative": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/resultIdentity" }
+        }
+      },
+      "additionalProperties": false
+    },
     "baselines": {
       "type": "array",
       "minItems": 5,
@@ -54,6 +74,10 @@
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "resultIdentity": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"
     },
     "projectPath": {
       "type": "string",

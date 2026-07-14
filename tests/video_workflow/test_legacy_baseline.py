@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -101,6 +102,13 @@ class LegacyBaselineCliTests(unittest.TestCase):
             "schema_version": 1,
             "kind": "legacy-workflow-baseline-definition",
             "normalization_version": 1,
+            "result_identities": {
+                "positive": [
+                    verification["test_id"],
+                    *[entry["test_id"] for entry in baselines],
+                ],
+                "negative": ["unexpected_status_blocks"],
+            },
             "baselines": baselines,
             "slice_verifications": [verification],
             "authority_guards": [
@@ -306,17 +314,47 @@ class LegacyBaselineCliTests(unittest.TestCase):
             f"{PROJECT_ROOT}\\待删除\\skill-tests\\idle-timeout-1784043830963755900"
             "\\待删除\\latex-build\\20260714_234350_968754_9dd2f9a4\\compile_report.json\n"
             "alias: \\234350_fc6bf7\\main.tex\n"
+            "document_id=1234567890123456\n"
         )
         second = (
             "ERROR: idle timeout; report: "
             f"{PROJECT_ROOT}\\待删除\\skill-tests\\idle-timeout-1784043940086707600"
             "\\待删除\\latex-build\\20260714_234540_092708_81b5e789\\compile_report.json\n"
             "alias: \\234540_edf1b1\\main.tex\n"
+            "document_id=1234567890123456\n"
         )
 
-        self.assertEqual(module.normalize_log(first), module.normalize_log(second))
+        normalized_first = module.normalize_log(first)
+        normalized_second = module.normalize_log(second)
+        self.assertEqual(normalized_first, normalized_second)
+        self.assertIn("{TIME_NS}", normalized_first)
+        self.assertIn("document_id=1234567890123456", normalized_first)
+
+        changed_business_id = second.replace(
+            "document_id=1234567890123456",
+            "document_id=9876543210987654",
+        )
+        normalized_changed_business_id = module.normalize_log(changed_business_id)
         self.assertNotEqual(
-            module.normalize_log(first),
+            normalized_first,
+            normalized_changed_business_id,
+        )
+        self.assertNotEqual(
+            module.sha256_text(normalized_first),
+            module.sha256_text(normalized_changed_business_id),
+        )
+        self.assertIn(
+            "document_id=9876543210987654", normalized_changed_business_id
+        )
+        relative_disposable_lookalike = (
+            "待删除\\skill-tests\\idle-timeout-1234567890123456\\report.json"
+        )
+        self.assertEqual(
+            relative_disposable_lookalike,
+            module.normalize_log(relative_disposable_lookalike),
+        )
+        self.assertNotEqual(
+            normalized_first,
             module.normalize_log(second.replace("idle timeout", "engine failure")),
         )
 
@@ -499,6 +537,183 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
             legacy_baseline_contracts.validate_prevalidated_legacy_baseline_semantics(
                 definition
             )
+
+    def test_prevalidated_baseline_semantics_binds_declared_result_identities(self) -> None:
+        definition = json.loads(
+            (FIXTURES / "legacy_baseline_definition.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        schema = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas"
+                / "legacy-baseline-definition.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        definition["result_identities"]["positive"][0] = "forged-result-identity"
+        validate_json_schema_instance(
+            definition, schema, "legacy baseline definition"
+        )
+
+        with self.assertRaisesRegex(
+            ContractError, "positive result identities must exactly match"
+        ):
+            legacy_baseline_contracts.validate_prevalidated_legacy_baseline_semantics(
+                definition
+            )
+
+    def test_manifest_command_and_result_tampering_is_rejected(self) -> None:
+        definition = json.loads(
+            (FIXTURES / "legacy_baseline_definition.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = json.loads(
+            (FIXTURES / "exit_evidence_manifest.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        definition_schema = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas"
+                / "legacy-baseline-definition.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        manifest_schema = json.loads(
+            (
+                PROJECT_ROOT / "schemas" / "exit-evidence-manifest.v1.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validate_json_schema_instance(
+            definition, definition_schema, "legacy baseline definition"
+        )
+
+        def swap_categories(value: dict) -> None:
+            first = value["commands"][0]["category"]
+            value["commands"][0]["category"] = value["commands"][1]["category"]
+            value["commands"][1]["category"] = first
+
+        def swap_scope_and_category(value: dict) -> None:
+            first = value["commands"][0]
+            last = value["commands"][-1]
+            first["scope"], last["scope"] = last["scope"], first["scope"]
+            first["category"], last["category"] = (
+                last["category"],
+                first["category"],
+            )
+
+        def tamper_expected_status_consistently(value: dict) -> None:
+            command = value["commands"][0]
+            command["expected_status"] = "fail"
+            command["actual_status"] = "fail"
+            command["exit_code"] = 7
+
+        def tamper_expected_fingerprint_consistently(value: dict) -> None:
+            command = value["commands"][0]
+            forged = "c" * 64
+            command["expected_log_sha256"] = forged
+            command["log"]["normalized_sha256"] = forged
+
+        cases = [
+            (
+                "category",
+                swap_categories,
+                r"commands\[0\]\.category does not match baseline definition",
+            ),
+            (
+                "scope",
+                swap_scope_and_category,
+                r"commands\[0\]\.scope does not match baseline definition",
+            ),
+            (
+                "test_identity",
+                lambda value: value["commands"][0].__setitem__(
+                    "test_id", "forged-test-identity"
+                ),
+                "command test identities do not match baseline definition",
+            ),
+            (
+                "declared_command",
+                lambda value: value["commands"][0]["declared_command"].append(
+                    "--forged"
+                ),
+                r"commands\[0\]\.declared_command does not match baseline definition",
+            ),
+            (
+                "executed_command",
+                lambda value: value["commands"][0]["executed_command"].append(
+                    "--forged"
+                ),
+                r"commands\[0\]\.executed_command does not match runtime expansion",
+            ),
+            (
+                "timeout_seconds",
+                lambda value: value["commands"][0].__setitem__(
+                    "timeout_seconds", 31
+                ),
+                r"commands\[0\]\.timeout_seconds does not match baseline definition",
+            ),
+            (
+                "expected_status",
+                tamper_expected_status_consistently,
+                r"commands\[0\]\.expected_status does not match baseline definition",
+            ),
+            (
+                "expected_log_sha256",
+                tamper_expected_fingerprint_consistently,
+                r"commands\[0\]\.expected_log_sha256 does not match baseline definition",
+            ),
+            (
+                "exit_code",
+                lambda value: value["commands"][0].__setitem__("exit_code", 7),
+                r"commands\[0\]\.actual_status does not match exit_code",
+            ),
+            (
+                "actual_status",
+                lambda value: value["commands"][0].__setitem__(
+                    "actual_status", "fail"
+                ),
+                r"commands\[0\]\.actual_status does not match exit_code",
+            ),
+            (
+                "conforms",
+                lambda value: value["commands"][0].__setitem__("conforms", False),
+                r"commands\[0\]\.conforms does not match expected/actual evidence",
+            ),
+            (
+                "positive_results",
+                lambda value: value["results"]["positive"].__setitem__(
+                    0, "forged-positive-result"
+                ),
+                "positive results do not match baseline definition",
+            ),
+            (
+                "negative_results",
+                lambda value: value["results"]["negative"].__setitem__(
+                    0, "forged-negative-result"
+                ),
+                "negative results do not match baseline definition",
+            ),
+        ]
+
+        for label, mutate, expected_error in cases:
+            with self.subTest(field=label):
+                candidate = copy.deepcopy(manifest)
+                mutate(candidate)
+                validate_json_schema_instance(
+                    candidate, manifest_schema, "exit evidence manifest"
+                )
+                with self.assertRaisesRegex(ContractError, expected_error):
+                    legacy_baseline_contracts.validate_prevalidated_exit_evidence_semantics(
+                        candidate
+                    )
+                    legacy_baseline_contracts.validate_prevalidated_manifest_definition_bindings(
+                        candidate,
+                        definition,
+                        python_executable="C:/Python/python.exe",
+                    )
 
     def test_schema_compatibility_layer_fails_closed_on_unknown_keyword(self) -> None:
         schema = {

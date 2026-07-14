@@ -20,6 +20,7 @@ from legacy_baseline_contracts import (
     FINGERPRINT_ALGORITHM,
     MANIFEST_SCHEMA_ID,
     capture_clean_implementation_commit,
+    expand_registered_runtime_command,
     fingerprint_utf8_lf,
     load_json_value,
     load_schema_object,
@@ -33,16 +34,11 @@ from legacy_baseline_contracts import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFINITION_SCHEMA = "legacy-baseline-definition.v1.schema.json"
 MANIFEST_SCHEMA = "exit-evidence-manifest.v1.schema.json"
-NEGATIVE_RESULT_IDENTITIES = [
-    "unexpected_status_blocks",
-    "unexpected_log_fingerprint_blocks",
-    "schema_invalid_blocks",
-    "schema_constraint_boundary_blocks",
-    "unsupported_schema_keyword_blocks",
-    "caller_supplied_implementation_commit_blocks",
-    "non_evidence_descendant_invalidates",
-    "atomic_publish_preserves_previous_evidence",
-]
+DISPOSABLE_RUN_TIME_NS_RE = re.compile(
+    r"(?P<prefix>\{PROJECT_ROOT\}[\\/]待删除[\\/]"
+    r"(?:kernel-test-runs|skill-tests)[\\/][^\\/\r\n]*?[-_])"
+    r"\d{16,20}(?=[\\/\s]|$)"
+)
 
 
 def sha256_text(value: str) -> str:
@@ -93,7 +89,7 @@ def normalize_log(raw_log: str) -> str:
     for source in sorted(replacements, key=len, reverse=True):
         value = value.replace(source, replacements[source])
     value = re.sub(r"(Ran \d+ tests? in )\d+(?:\.\d+)?s", r"\1<duration>s", value)
-    value = re.sub(r"(?<!\d)\d{16,20}(?!\d)", "{TIME_NS}", value)
+    value = DISPOSABLE_RUN_TIME_NS_RE.sub(r"\g<prefix>{TIME_NS}", value)
     value = re.sub(
         r"(?<!\d)\d{8}_\d{6}_\d{6}_[0-9a-f]{8}(?![0-9a-f])",
         "{COMPILE_RUN_ID}",
@@ -108,7 +104,9 @@ def normalize_log(raw_log: str) -> str:
 
 
 def expand_command(declared: list[str]) -> list[str]:
-    return [sys.executable if token == "{python}" else token for token in declared]
+    return expand_registered_runtime_command(
+        declared, python_executable=sys.executable
+    )
 
 
 def run_command(entry: dict[str, Any], scope: str, log_dir: Path) -> dict[str, Any]:
@@ -291,16 +289,24 @@ def collect(
     definition = cast(dict[str, Any], definition_value)
     validate_prevalidated_legacy_baseline_semantics(definition)
     implementation_commit = capture_clean_implementation_commit(PROJECT_ROOT)
-    # The slice verification invokes this collector's CLI tests. Run it while
-    # the implementation checkout is still clean, before tracked evidence logs
-    # from the outer collection are replaced.
-    commands = [
-        run_command(entry, "slice_verification", log_dir)
+    # The result identity order is the definition-owned canonical execution
+    # order. The slice verification invokes this collector's CLI tests, so it
+    # remains first in the repository definition and runs while the
+    # implementation checkout is still clean.
+    command_entries = {
+        entry["test_id"]: ("slice_verification", entry)
         for entry in definition["slice_verifications"]
-    ]
-    commands.extend(
-        run_command(entry, "legacy_baseline", log_dir) for entry in definition["baselines"]
+    }
+    command_entries.update(
+        {
+            entry["test_id"]: ("legacy_baseline", entry)
+            for entry in definition["baselines"]
+        }
     )
+    commands = [
+        run_command(command_entries[test_id][1], command_entries[test_id][0], log_dir)
+        for test_id in definition["result_identities"]["positive"]
+    ]
     authority_evidence = collect_authority_evidence(definition["authority_guards"])
     unresolved = mismatch_exceptions(commands, authority_evidence)
     overall_decision = "pass" if not unresolved else "fail"
@@ -328,8 +334,8 @@ def collect(
         "expected_checkpoints": [],
         "fixtures": fixture_fingerprints(definition_path),
         "results": {
-            "positive": [command["test_id"] for command in commands if command["conforms"]],
-            "negative": list(NEGATIVE_RESULT_IDENTITIES),
+            "positive": list(definition["result_identities"]["positive"]),
+            "negative": list(definition["result_identities"]["negative"]),
         },
         "unresolved_exceptions": unresolved,
         "overall_decision": overall_decision,

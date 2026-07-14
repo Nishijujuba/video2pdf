@@ -3,6 +3,26 @@
   "schema_version": 1,
   "kind": "legacy-workflow-baseline-definition",
   "normalization_version": 1,
+  "result_identities": {
+    "positive": [
+      "slice-00-baseline-contracts",
+      "legacy-pyramid-public-contract",
+      "legacy-compile-public-contract",
+      "legacy-acceptance-public-contract",
+      "legacy-delivery-guard-public-contract",
+      "legacy-batch-public-contract"
+    ],
+    "negative": [
+      "unexpected_status_blocks",
+      "unexpected_log_fingerprint_blocks",
+      "schema_invalid_blocks",
+      "schema_constraint_boundary_blocks",
+      "unsupported_schema_keyword_blocks",
+      "caller_supplied_implementation_commit_blocks",
+      "non_evidence_descendant_invalidates",
+      "atomic_publish_preserves_previous_evidence"
+    ]
+  },
   "baselines": [
     {
       "test_id": "legacy-pyramid-public-contract",

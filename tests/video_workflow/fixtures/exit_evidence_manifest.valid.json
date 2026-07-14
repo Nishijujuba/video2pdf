@@ -1,0 +1,236 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json",
+  "schema_version": 1,
+  "kind": "video-workflow-exit-evidence",
+  "slice": {
+    "number": 0,
+    "name": "baseline-protection"
+  },
+  "implementation_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "generated_at": "2026-07-14T12:00:00Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "baseline_definition": {
+    "path": "config/legacy-baseline.v1.json",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "commands": [
+    {
+      "test_id": "fixture-pyramid",
+      "scope": "legacy_baseline",
+      "category": "pyramid",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/pyramid.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/pyramid.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "fixture-compile",
+      "scope": "legacy_baseline",
+      "category": "compile",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/compile.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/compile.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "fixture-acceptance",
+      "scope": "legacy_baseline",
+      "category": "acceptance",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/acceptance.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/acceptance.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "fixture-delivery-guard",
+      "scope": "legacy_baseline",
+      "category": "delivery_guard",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/delivery_guard.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/delivery_guard.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "fixture-batch",
+      "scope": "legacy_baseline",
+      "category": "batch",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/batch.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/batch.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "fixture-slice-verification",
+      "scope": "slice_verification",
+      "category": "slice_verification",
+      "declared_command": [
+        "{python}",
+        "-c",
+        "print('ok')"
+      ],
+      "executed_command": [
+        "C:/Python/python.exe",
+        "-c",
+        "print('ok')"
+      ],
+      "timeout_seconds": 30,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "待删除/fixture/slice.log",
+        "normalized_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "raw_path": "待删除/fixture/slice.raw.log",
+        "raw_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "conforms": true
+    }
+  ],
+  "authority_evidence": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "required_substrings": [
+        "Legacy Track"
+      ],
+      "missing_substrings": [],
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [],
+  "fixtures": [
+    {
+      "role": "definition",
+      "path": "config/legacy-baseline.v1.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "definition_schema",
+      "path": "schemas/legacy-baseline-definition.v1.schema.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "role": "manifest_schema",
+      "path": "schemas/exit-evidence-manifest.v1.schema.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "results": {
+    "positive": [
+      "fixture-pyramid",
+      "fixture-compile",
+      "fixture-acceptance",
+      "fixture-delivery-guard",
+      "fixture-batch",
+      "fixture-slice-verification"
+    ],
+    "negative": [
+      "unexpected_status_blocks"
+    ]
+  },
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

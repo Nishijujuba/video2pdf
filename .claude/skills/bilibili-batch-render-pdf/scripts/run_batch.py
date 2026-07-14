@@ -381,7 +381,7 @@ def build_manifest_from_url(args: argparse.Namespace) -> tuple[Path, dict[str, A
         "batch_dir": str(batch_dir),
         "control_dir": str(control_dir),
         "cookie_file": str(args.cookie_file),
-        "venv_python": str(args.venv_python),
+        "venv_python": str(YT_DLP_PYTHON),
         "tools_dir": str(DEFAULT_TOOLS_DIR),
         "xelatex": str(DEFAULT_XELATEX),
         "created_at": utc_now(),

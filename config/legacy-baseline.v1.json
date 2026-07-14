@@ -1,0 +1,78 @@
+{
+  "$schema": "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json",
+  "schema_version": 1,
+  "kind": "legacy-workflow-baseline-definition",
+  "normalization_version": 1,
+  "baselines": [
+    {
+      "test_id": "legacy-pyramid-public-contract",
+      "category": "pyramid",
+      "command": ["{python}", "-X", "utf8", "-B", "-m", "unittest", "discover", ".agents/skills/pyramid-principle-validate/scripts", "-p", "test_*.py", "-v"],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "expected_log_sha256": "8b9c4f473ee8096c19c20e8ddced73d8c98af1d5a5d3aa8f7730aab8eaaaa8ee"
+    },
+    {
+      "test_id": "legacy-compile-public-contract",
+      "category": "compile",
+      "command": ["{python}", "-X", "utf8", "-B", "-m", "unittest", "discover", ".agents/skills/bilibili-render-pdf/scripts", "-p", "test_*compile*.py", "-v"],
+      "timeout_seconds": 600,
+      "expected_status": "pass",
+      "expected_log_sha256": "ecb22a4e950e34603a42def0010c8d49c7237d61612562d17b5806e1ce52298f"
+    },
+    {
+      "test_id": "legacy-acceptance-public-contract",
+      "category": "acceptance",
+      "command": ["{python}", "-X", "utf8", "-B", "-m", "unittest", "discover", ".agents/skills/final-delivery-acceptance/scripts", "-p", "test_acceptance_*.py", "-v"],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "expected_log_sha256": "b029c744008c5409c737afe4d481f2e88bd8634e15fae78888d95d20eeca55b7"
+    },
+    {
+      "test_id": "legacy-delivery-guard-public-contract",
+      "category": "delivery_guard",
+      "command": ["{python}", "-X", "utf8", "-B", ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py", "-v"],
+      "timeout_seconds": 600,
+      "expected_status": "pass",
+      "expected_log_sha256": "baf04d6568a752b2a279c35000f020d8d14b422c64a1fd0157b3baf0ba557687"
+    },
+    {
+      "test_id": "legacy-batch-public-contract",
+      "category": "batch",
+      "command": ["{python}", "-X", "utf8", "-B", ".agents/skills/bilibili-batch-render-pdf/scripts/test_run_batch.py", "-v"],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "expected_log_sha256": "4afcfc3d556ea76be4e4b29912851d2030ffe8439bf7ab45fc080b71fc7952b0"
+    }
+  ],
+  "slice_verifications": [
+    {
+      "test_id": "slice-00-baseline-contracts",
+      "category": "slice_verification",
+      "command": ["{python}", "-X", "utf8", "-B", "tests/video_workflow/test_legacy_baseline.py", "-v"],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "expected_log_sha256": "b92cd0ede302de2e0d581eb695c7ad62dc085a0296393fd708124a0ce383289a"
+    }
+  ],
+  "authority_guards": [
+    {
+      "path": "AGENTS.md",
+      "required_substrings": [
+        "Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections."
+      ]
+    },
+    {
+      "path": "CLAUDE.md",
+      "required_substrings": [
+        "Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections."
+      ]
+    },
+    {
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "required_substrings": [
+        "No component currently has `active_global_gate` or `active_kernel` status."
+      ]
+    }
+  ]
+}

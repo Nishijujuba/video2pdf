@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import time
 import unittest
+from unittest import mock
 
 
 def load_run_batch():
@@ -48,6 +49,36 @@ class RunBatchFailureRecoveryTests(unittest.TestCase):
             self.run_batch.parse_args(
                 ["--manifest", "manifest.json", "--venv-python", r"C:\other\python.exe"]
             )
+
+    def test_new_batch_manifest_uses_project_runtime_without_removed_cli_state(self) -> None:
+        trash_root = Path.cwd() / "待删除" / "kernel-test-runs"
+        trash_root.mkdir(parents=True, exist_ok=True)
+        output_root = trash_root / f"batch-runtime-{time.time_ns()}"
+        args = self.run_batch.parse_args(
+            [
+                "--url",
+                "https://www.bilibili.com/video/BV1fixture",
+                "--out-root",
+                str(output_root),
+            ]
+        )
+        metadata = {
+            "id": "BV1fixture",
+            "title": "Fixture batch",
+            "entries": [
+                {
+                    "id": "part-1",
+                    "title": "Fixture part",
+                    "webpage_url": "https://www.bilibili.com/video/BV1fixture?p=1",
+                }
+            ],
+        }
+
+        with mock.patch.object(self.run_batch, "run_yt_dlp_metadata", return_value=metadata):
+            _, manifest = self.run_batch.build_manifest_from_url(args)
+
+        self.assertFalse(hasattr(args, "venv_python"))
+        self.assertEqual(str(self.run_batch.YT_DLP_PYTHON), manifest["venv_python"])
 
     def write_pyramid_report(
         self,

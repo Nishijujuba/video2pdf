@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json",
+  "title": "Video Workflow Exit Evidence Manifest v1",
+  "type": "object",
+  "required": [
+    "$schema",
+    "schema_version",
+    "kind",
+    "slice",
+    "implementation_commit",
+    "evidence_head",
+    "generated_at",
+    "activation_scope",
+    "baseline_definition",
+    "commands",
+    "authority_evidence",
+    "expected_checkpoints",
+    "fixtures",
+    "results",
+    "unresolved_exceptions",
+    "overall_decision"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json"
+    },
+    "schema_version": { "const": 1 },
+    "kind": { "const": "video-workflow-exit-evidence" },
+    "slice": {
+      "type": "object",
+      "required": ["number", "name"],
+      "properties": {
+        "number": { "const": 0 },
+        "name": { "const": "baseline-protection" }
+      },
+      "additionalProperties": false
+    },
+    "implementation_commit": { "$ref": "#/$defs/gitCommit" },
+    "evidence_head": { "$ref": "#/$defs/gitCommit" },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "activation_scope": {
+      "type": "object",
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority"],
+      "properties": {
+        "kind": { "const": "none" },
+        "runtime_authority_change": { "const": false },
+        "components_activated": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "legacy_track_authority": { "const": "preserved" }
+      },
+      "additionalProperties": false
+    },
+    "baseline_definition": { "$ref": "#/$defs/fingerprintedPath" },
+    "commands": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/commandEvidence" }
+    },
+    "authority_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "required_substrings", "missing_substrings", "conforms"],
+        "properties": {
+          "path": { "$ref": "#/$defs/projectPath" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "required_substrings": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "missing_substrings": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "conforms": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "expected_checkpoints": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["role", "path", "sha256"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "path": { "$ref": "#/$defs/projectPath" },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "results": {
+      "type": "object",
+      "required": ["positive", "negative"],
+      "properties": {
+        "positive": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "negative": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "unresolved_exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["blocking", "code", "message"],
+        "properties": {
+          "blocking": { "type": "boolean" },
+          "code": { "type": "string", "minLength": 1 },
+          "message": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "overall_decision": {
+      "enum": ["pass", "fail"]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "fingerprintedPath": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/projectPath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "commandEvidence": {
+      "type": "object",
+      "required": [
+        "test_id",
+        "scope",
+        "category",
+        "declared_command",
+        "executed_command",
+        "timeout_seconds",
+        "expected_status",
+        "actual_status",
+        "exit_code",
+        "expected_log_sha256",
+        "log",
+        "conforms"
+      ],
+      "properties": {
+        "test_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"
+        },
+        "scope": {
+          "enum": ["legacy_baseline", "slice_verification"]
+        },
+        "category": {
+          "enum": [
+            "pyramid",
+            "compile",
+            "acceptance",
+            "delivery_guard",
+            "batch",
+            "slice_verification"
+          ]
+        },
+        "declared_command": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "executed_command": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "expected_status": {
+          "enum": ["pass", "fail"]
+        },
+        "actual_status": {
+          "enum": ["pass", "fail", "timeout"]
+        },
+        "exit_code": {
+          "type": ["integer", "null"]
+        },
+        "expected_log_sha256": { "$ref": "#/$defs/sha256" },
+        "log": {
+          "type": "object",
+          "required": [
+            "normalization_version",
+            "normalized_path",
+            "normalized_sha256",
+            "raw_path",
+            "raw_sha256"
+          ],
+          "properties": {
+            "normalization_version": { "const": 1 },
+            "normalized_path": { "$ref": "#/$defs/projectPath" },
+            "normalized_sha256": { "$ref": "#/$defs/sha256" },
+            "raw_path": { "$ref": "#/$defs/projectPath" },
+            "raw_sha256": { "$ref": "#/$defs/sha256" }
+          },
+          "additionalProperties": false
+        },
+        "conforms": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

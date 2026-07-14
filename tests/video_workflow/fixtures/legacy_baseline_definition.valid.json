@@ -1,0 +1,19 @@
+{
+  "$schema": "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json",
+  "schema_version": 1,
+  "kind": "legacy-workflow-baseline-definition",
+  "normalization_version": 1,
+  "baselines": [
+    {"test_id": "fixture-pyramid", "category": "pyramid", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-compile", "category": "compile", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-acceptance", "category": "acceptance", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-delivery-guard", "category": "delivery_guard", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-batch", "category": "batch", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "slice_verifications": [
+    {"test_id": "fixture-slice-verification", "category": "slice_verification", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "authority_guards": [
+    {"path": "AGENTS.md", "required_substrings": ["Legacy Track"]}
+  ]
+}

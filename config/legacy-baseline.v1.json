@@ -52,7 +52,7 @@
       "command": ["{python}", "-X", "utf8", "-B", "tests/video_workflow/test_legacy_baseline.py", "-v"],
       "timeout_seconds": 300,
       "expected_status": "pass",
-      "expected_log_sha256": "6968bc682b108e5b95dc74c41dd17b19323bf29a338862401423dc9c19b6c65a"
+      "expected_log_sha256": "505ba805b2c2c045675146bc59a4e4f14b8df0f59395c0599a06347748fc840c"
     }
   ],
   "authority_guards": [

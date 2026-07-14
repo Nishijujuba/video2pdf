@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from legacy_baseline_contracts import (
     ContractError,
     DEFINITION_SCHEMA_ID,
+    FINGERPRINT_ALGORITHM,
     MANIFEST_SCHEMA_ID,
     load_json_object,
     load_schema_contract,
@@ -39,7 +40,12 @@ NEGATIVE_RESULT_IDENTITIES = [
 
 
 def sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError(f"bound evidence must be UTF-8 text for {FINGERPRINT_ALGORITHM}") from exc
+    canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def sha256_text(value: str) -> str:
@@ -312,6 +318,7 @@ def collect(
         "$schema": MANIFEST_SCHEMA_ID,
         "schema_version": 1,
         "kind": "video-workflow-exit-evidence",
+        "fingerprint_algorithm": FINGERPRINT_ALGORITHM,
         "slice": {"number": 0, "name": "baseline-protection"},
         "implementation_commit": implementation_commit,
         "evidence_head": evidence_head,

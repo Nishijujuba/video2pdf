@@ -10,6 +10,7 @@ from typing import Any
 
 DEFINITION_SCHEMA_ID = "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json"
 MANIFEST_SCHEMA_ID = "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json"
+FINGERPRINT_ALGORITHM = "sha256-utf8-lf-v1"
 REQUIRED_LEGACY_CATEGORIES = frozenset(
     {"pyramid", "compile", "acceptance", "delivery_guard", "batch"}
 )
@@ -270,6 +271,7 @@ def validate_exit_evidence_manifest(value: dict[str, Any]) -> None:
             "$schema",
             "schema_version",
             "kind",
+            "fingerprint_algorithm",
             "slice",
             "implementation_commit",
             "evidence_head",
@@ -290,6 +292,8 @@ def validate_exit_evidence_manifest(value: dict[str, Any]) -> None:
         raise ContractError("exit evidence manifest $schema is unsupported")
     if value["schema_version"] != 1 or value["kind"] != "video-workflow-exit-evidence":
         raise ContractError("exit evidence manifest identity is unsupported")
+    if value["fingerprint_algorithm"] != FINGERPRINT_ALGORITHM:
+        raise ContractError("exit evidence manifest fingerprint_algorithm is unsupported")
 
     slice_value = value["slice"]
     if not isinstance(slice_value, dict):
@@ -422,7 +426,11 @@ def _read_fingerprint_bound_file(
         raw = path.read_bytes()
     except OSError as exc:
         raise ContractError(f"{label} cannot be read: {path}: {exc}") from exc
-    actual_sha = hashlib.sha256(raw).hexdigest()
+    try:
+        canonical = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError(f"{label} must be UTF-8 text for {FINGERPRINT_ALGORITHM}") from exc
+    actual_sha = hashlib.sha256(canonical).hexdigest()
     if actual_sha != expected_sha:
         raise ContractError(
             f"{label} fingerprint mismatch: expected {expected_sha}, actual {actual_sha}: {path}"

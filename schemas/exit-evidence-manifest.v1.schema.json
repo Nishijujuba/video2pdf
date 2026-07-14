@@ -7,6 +7,7 @@
     "$schema",
     "schema_version",
     "kind",
+    "fingerprint_algorithm",
     "slice",
     "implementation_commit",
     "evidence_head",
@@ -27,6 +28,7 @@
     },
     "schema_version": { "const": 1 },
     "kind": { "const": "video-workflow-exit-evidence" },
+    "fingerprint_algorithm": { "const": "sha256-utf8-lf-v1" },
     "slice": {
       "type": "object",
       "required": ["number", "name"],

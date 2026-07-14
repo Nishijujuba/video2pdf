@@ -2,6 +2,7 @@
   "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json",
   "schema_version": 1,
   "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-utf8-lf-v1",
   "slice": {
     "number": 0,
     "name": "baseline-protection"

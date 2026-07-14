@@ -136,6 +136,7 @@ class LegacyBaselineCliTests(unittest.TestCase):
         self.assertEqual(5, len(baseline_commands))
         self.assertTrue(all(entry["conforms"] for entry in first_manifest["commands"]))
         self.assertEqual("pass", first_manifest["overall_decision"])
+        self.assertEqual("sha256-utf8-lf-v1", first_manifest["fingerprint_algorithm"])
         self.assertEqual(first_manifest["commands"], second_manifest["commands"])
         self.assertEqual(
             {
@@ -210,7 +211,19 @@ class LegacyBaselineCliTests(unittest.TestCase):
         manifest_path = self.run_root / "manifest-tampered-binding.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         log_path = PROJECT_ROOT / manifest["commands"][0]["log"]["normalized_path"]
-        log_path.write_text(log_path.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+        lf_bytes = log_path.read_bytes()
+        log_path.write_bytes(lf_bytes.replace(b"\n", b"\r\n"))
+
+        newline_only_change = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(manifest_path)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(0, newline_only_change.returncode, newline_only_change.stderr)
+
+        log_path.write_bytes(log_path.read_bytes() + b"tampered\r\n")
 
         validated = subprocess.run(
             [sys.executable, "-X", "utf8", "-B", str(MANIFEST_VALIDATOR), str(manifest_path)],

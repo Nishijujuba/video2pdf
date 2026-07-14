@@ -1,0 +1,344 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v1.schema.json",
+  "schema_version": 1,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-utf8-lf-v1",
+  "slice": {
+    "number": 0,
+    "name": "baseline-protection"
+  },
+  "implementation_commit": "26ae4526bded606642113295a50ba87b66c71fc0",
+  "evidence_head": "26ae4526bded606642113295a50ba87b66c71fc0",
+  "generated_at": "2026-07-14T16:11:52Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "baseline_definition": {
+    "path": "config/legacy-baseline.v1.json",
+    "sha256": "60900302f21c18f6b6338771ea55354aa4f69b0f8d210485d089cb943232a181"
+  },
+  "commands": [
+    {
+      "test_id": "legacy-pyramid-public-contract",
+      "scope": "legacy_baseline",
+      "category": "pyramid",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/pyramid-principle-validate/scripts",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/pyramid-principle-validate/scripts",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "8b9c4f473ee8096c19c20e8ddced73d8c98af1d5a5d3aa8f7730aab8eaaaa8ee",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.log",
+        "normalized_sha256": "8b9c4f473ee8096c19c20e8ddced73d8c98af1d5a5d3aa8f7730aab8eaaaa8ee",
+        "raw_path": "evidence/slice-00/logs/legacy-pyramid-public-contract.raw.log",
+        "raw_sha256": "568fecd042bf83277eca17fb2c1e68f46c7b296344684cda1882613c3f3baca1"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "legacy-compile-public-contract",
+      "scope": "legacy_baseline",
+      "category": "compile",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/bilibili-render-pdf/scripts",
+        "-p",
+        "test_*compile*.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/bilibili-render-pdf/scripts",
+        "-p",
+        "test_*compile*.py",
+        "-v"
+      ],
+      "timeout_seconds": 600,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "ecb22a4e950e34603a42def0010c8d49c7237d61612562d17b5806e1ce52298f",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/legacy-compile-public-contract.log",
+        "normalized_sha256": "ecb22a4e950e34603a42def0010c8d49c7237d61612562d17b5806e1ce52298f",
+        "raw_path": "evidence/slice-00/logs/legacy-compile-public-contract.raw.log",
+        "raw_sha256": "37d18f681320c15385903482661f90f479a2552106583d741621b18471c22a43"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "legacy-acceptance-public-contract",
+      "scope": "legacy_baseline",
+      "category": "acceptance",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/final-delivery-acceptance/scripts",
+        "-p",
+        "test_acceptance_*.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        ".agents/skills/final-delivery-acceptance/scripts",
+        "-p",
+        "test_acceptance_*.py",
+        "-v"
+      ],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "b029c744008c5409c737afe4d481f2e88bd8634e15fae78888d95d20eeca55b7",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.log",
+        "normalized_sha256": "b029c744008c5409c737afe4d481f2e88bd8634e15fae78888d95d20eeca55b7",
+        "raw_path": "evidence/slice-00/logs/legacy-acceptance-public-contract.raw.log",
+        "raw_sha256": "dcb6c00f0b567e62d0d601c016f22a93a00ba427778c3843220e5419c736236c"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "legacy-delivery-guard-public-contract",
+      "scope": "legacy_baseline",
+      "category": "delivery_guard",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py",
+        "-v"
+      ],
+      "timeout_seconds": 600,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "baf04d6568a752b2a279c35000f020d8d14b422c64a1fd0157b3baf0ba557687",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.log",
+        "normalized_sha256": "baf04d6568a752b2a279c35000f020d8d14b422c64a1fd0157b3baf0ba557687",
+        "raw_path": "evidence/slice-00/logs/legacy-delivery-guard-public-contract.raw.log",
+        "raw_sha256": "4b10abab4180838fb0da5f7d9e7eac077dde2cd2addf86de1f78656b27eb84bf"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "legacy-batch-public-contract",
+      "scope": "legacy_baseline",
+      "category": "batch",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        ".agents/skills/bilibili-batch-render-pdf/scripts/test_run_batch.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        ".agents/skills/bilibili-batch-render-pdf/scripts/test_run_batch.py",
+        "-v"
+      ],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "4afcfc3d556ea76be4e4b29912851d2030ffe8439bf7ab45fc080b71fc7952b0",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/legacy-batch-public-contract.log",
+        "normalized_sha256": "4afcfc3d556ea76be4e4b29912851d2030ffe8439bf7ab45fc080b71fc7952b0",
+        "raw_path": "evidence/slice-00/logs/legacy-batch-public-contract.raw.log",
+        "raw_sha256": "503e50a10dcbfbfce60c5a5a89bf4906c9d9c5e2f4eb33a9911baf792c155329"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice-00-baseline-contracts",
+      "scope": "slice_verification",
+      "category": "slice_verification",
+      "declared_command": [
+        "{python}",
+        "-X",
+        "utf8",
+        "-B",
+        "tests/video_workflow/test_legacy_baseline.py",
+        "-v"
+      ],
+      "executed_command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "tests/video_workflow/test_legacy_baseline.py",
+        "-v"
+      ],
+      "timeout_seconds": 300,
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "exit_code": 0,
+      "expected_log_sha256": "b28a4b09c537ecdce5bc0b02c8504b90aa124da3848ea7421d9660f3a5667e68",
+      "log": {
+        "normalization_version": 1,
+        "normalized_path": "evidence/slice-00/logs/slice-00-baseline-contracts.log",
+        "normalized_sha256": "b28a4b09c537ecdce5bc0b02c8504b90aa124da3848ea7421d9660f3a5667e68",
+        "raw_path": "evidence/slice-00/logs/slice-00-baseline-contracts.raw.log",
+        "raw_sha256": "f137d436ae173d7a1b95f9103dc646acb4a4aab672a55a72238d853f20c1e0bc"
+      },
+      "conforms": true
+    }
+  ],
+  "authority_evidence": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "22df09715e03bcb211854751f20ef96780be5043f27e1d8072eefbc6737a9ff6",
+      "required_substrings": [
+        "Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections."
+      ],
+      "missing_substrings": [],
+      "conforms": true
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "3bc26a1f674d33da7571c26a11246de441b31e71a5c552f90c6486579bb7a91a",
+      "required_substrings": [
+        "Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections."
+      ],
+      "missing_substrings": [],
+      "conforms": true
+    },
+    {
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "sha256": "6712131a31a47db195934f33a6d63d48f9dd57962f1ba940489d8209ab0b503c",
+      "required_substrings": [
+        "No component currently has `active_global_gate` or `active_kernel` status."
+      ],
+      "missing_substrings": [],
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [],
+  "fixtures": [
+    {
+      "role": "baseline_definition",
+      "path": "config/legacy-baseline.v1.json",
+      "sha256": "60900302f21c18f6b6338771ea55354aa4f69b0f8d210485d089cb943232a181"
+    },
+    {
+      "role": "baseline_definition_schema",
+      "path": "schemas/legacy-baseline-definition.v1.schema.json",
+      "sha256": "ded9564f4a9174b978f63d39e9bd5959b9c669d2018d4be5061a58b27587f189"
+    },
+    {
+      "role": "exit_evidence_schema",
+      "path": "schemas/exit-evidence-manifest.v1.schema.json",
+      "sha256": "78b7073acde83a09e6560f8280e705c1c20df39b75175862786e9fa468dbea9c"
+    },
+    {
+      "role": "baseline_definition_positive_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+      "sha256": "08981fee71242bd82e62f0a752a06cf6a5512897214246c7f515ee78af23bb24"
+    },
+    {
+      "role": "baseline_definition_negative_fixture",
+      "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+      "sha256": "531bc691b95a9a028bb260983ffbd48f1dafe62f625e418e74ecbb5e18e58174"
+    },
+    {
+      "role": "exit_evidence_positive_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+      "sha256": "f9f9460b509d1ef1dc6f18248ae8486c7ca85a35e5a5df0e142a714fe6bbcf8c"
+    },
+    {
+      "role": "exit_evidence_negative_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+      "sha256": "b2f070002913567f70e6159a465cd593e4277117bcb5d744c8e6ebf41a1bcb0b"
+    }
+  ],
+  "results": {
+    "positive": [
+      "legacy-pyramid-public-contract",
+      "legacy-compile-public-contract",
+      "legacy-acceptance-public-contract",
+      "legacy-delivery-guard-public-contract",
+      "legacy-batch-public-contract",
+      "slice-00-baseline-contracts"
+    ],
+    "negative": [
+      "unexpected_status_blocks",
+      "unexpected_log_fingerprint_blocks",
+      "schema_invalid_blocks",
+      "atomic_publish_preserves_previous_evidence"
+    ]
+  },
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

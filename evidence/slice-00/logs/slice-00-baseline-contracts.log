@@ -1,0 +1,16 @@
+===== STDOUT =====
+
+===== STDERR =====
+test_atomic_publish_failure_preserves_previous_evidence (__main__.LegacyBaselineCliTests.test_atomic_publish_failure_preserves_previous_evidence) ... ok
+test_collects_repeatable_five_category_baseline_and_valid_manifest (__main__.LegacyBaselineCliTests.test_collects_repeatable_five_category_baseline_and_valid_manifest) ... ok
+test_manifest_validator_rejects_tampered_bound_log (__main__.LegacyBaselineCliTests.test_manifest_validator_rejects_tampered_bound_log) ... ok
+test_missing_legacy_category_is_rejected_before_execution (__main__.LegacyBaselineCliTests.test_missing_legacy_category_is_rejected_before_execution) ... ok
+test_normalization_removes_declared_run_identity_noise_only (__main__.LegacyBaselineCliTests.test_normalization_removes_declared_run_identity_noise_only) ... ok
+test_unapproved_status_or_log_drift_blocks_completion (__main__.LegacyBaselineCliTests.test_unapproved_status_or_log_drift_blocks_completion) ... ok
+test_positive_and_negative_schema_fixtures (__main__.LegacyBaselineContractFixtureTests.test_positive_and_negative_schema_fixtures) ... ok
+test_repository_definition_covers_legacy_authority_without_cutover (__main__.LegacyBaselineContractFixtureTests.test_repository_definition_covers_legacy_authority_without_cutover) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in <duration>s
+
+OK

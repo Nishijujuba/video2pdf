@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
 import shutil
 import sqlite3
@@ -575,6 +576,26 @@ class ContractAndPathHardeningTests(unittest.TestCase):
 
 
 class HealthAndLauncherHardeningTests(unittest.TestCase):
+    def test_evidence_collector_appends_byte_safe_implementation_provenance(self) -> None:
+        collector_path = PROJECT_ROOT / "scripts/collect_slice1_exit_evidence.py"
+        spec = importlib.util.spec_from_file_location("slice1_collector_test", collector_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        completed = subprocess.CompletedProcess(
+            args=["command"], returncode=0, stdout=b"stdout\n", stderr=b""
+        )
+        with mock.patch.object(module.subprocess, "run", return_value=completed):
+            captured = module.run_commands("a" * 40)
+        self.assertEqual(len(captured), len(module.COMMANDS))
+        for item in captured:
+            self.assertIsInstance(item["raw"], bytes)
+            self.assertIn(
+                b"EVIDENCE_IMPLEMENTATION_COMMIT: " + b"a" * 40,
+                item["raw"],
+            )
+
     def test_health_proves_exact_timeout_lock_contention_and_same_volume_replace(self) -> None:
         from video2pdf_workflow_kernel import VideoWorkflowKernel
         from video2pdf_workflow_kernel.control_store import BUSY_TIMEOUT_MS

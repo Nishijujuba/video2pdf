@@ -42,6 +42,7 @@ class ContractEntry:
     positive_example: Path | None
     negative_example: Path | None
     invariants: tuple[str, ...]
+    canonical_instance: Path | None
 
 
 WINDOWS_DEVICE_NAMES = frozenset(
@@ -226,9 +227,11 @@ class ContractRegistry:
         contracts = self._manifest.get("contracts")
         if not isinstance(contracts, list) or not contracts:
             raise ContractError("Kernel Schema Registry contracts must be a non-empty array")
+        canonical_entries = {
+            item["schema_name"]: item for item in self._canonical["contracts"]
+        }
         known_versions = {
-            item["schema_name"]: item["schema_version"]
-            for item in self._canonical["contracts"]
+            name: item["schema_version"] for name, item in canonical_entries.items()
         }
         entries: list[ContractEntry] = []
         seen_names: set[str] = set()
@@ -252,6 +255,14 @@ class ContractRegistry:
             positive = raw.get("positive_example")
             negative = raw.get("negative_example")
             invariants = raw.get("invariants", [])
+            canonical_instance = raw.get("canonical_instance")
+            expected_canonical_instance = canonical_entries[name].get(
+                "canonical_instance"
+            )
+            if canonical_instance != expected_canonical_instance:
+                raise ContractError(
+                    f"registry canonical instance changed for {name!r}"
+                )
             if (
                 not isinstance(invariants, list)
                 or any(not isinstance(value, str) for value in invariants)
@@ -273,6 +284,11 @@ class ContractRegistry:
                     positive_example=(self.project_root / positive).resolve() if positive else None,
                     negative_example=(self.project_root / negative).resolve() if negative else None,
                     invariants=tuple(invariants),
+                    canonical_instance=(
+                        (self.project_root / canonical_instance).resolve()
+                        if canonical_instance
+                        else None
+                    ),
                 )
             )
         required_names = set(known_versions)
@@ -399,6 +415,24 @@ class ContractRegistry:
         if isinstance(instance, dict):
             for invariant in entry.invariants:
                 INVARIANT_VALIDATORS[invariant](instance)
+                if invariant == "scaffold-contract-directories-v1":
+                    if entry.canonical_instance is None:
+                        raise ContractError(
+                            "scaffold contract lacks its registered canonical instance"
+                        )
+                    canonical = read_json(entry.canonical_instance)
+                    if instance != canonical:
+                        raise ContractError(
+                            "scaffold contract differs from its registered canonical instance"
+                        )
+
+    def canonical_instance(self, schema_name: str) -> Any:
+        entry = next((item for item in self.entries if item.schema_name == schema_name), None)
+        if entry is None or entry.canonical_instance is None:
+            raise ContractError(f"contract has no canonical instance: {schema_name}")
+        value = read_json(entry.canonical_instance)
+        self.validate(schema_name, value)
+        return value
 
     def _prepare_registry(self) -> dict[str, Any]:
         """Prepare every registry entry through the same closed, locked path."""

@@ -86,6 +86,7 @@
       "schema_path": "schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
       "kind": "contract",
       "invariants": ["scaffold-contract-directories-v1"],
+      "canonical_instance": "schemas/video-workflow/v1/scaffold.v1.json",
       "positive_example": "schemas/video-workflow/v1/scaffold.v1.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-contract.invalid.json"
     },

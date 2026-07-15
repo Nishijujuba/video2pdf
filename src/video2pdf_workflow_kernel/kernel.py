@@ -472,6 +472,16 @@ class VideoWorkflowKernel:
         self.contracts.validate("run-record", record)
         if record["run_id"] != binding["run_id"]:
             raise KernelConflict("Run Record and Control Store binding disagree")
+        authority_sha = store.current_run_record_sha(record["run_id"])
+        actual_sha = sha256_file(record_path)
+        if authority_sha is None or actual_sha != authority_sha:
+            raise ArtifactDrift(
+                "Run Record differs from its committed authority predecessor",
+                data={
+                    "run_dir": str(run_dir),
+                    "drifted_paths": ["workflow/run.json"],
+                },
+            )
         try:
             self._verify_current_source(run_dir)
         except ArtifactDrift:

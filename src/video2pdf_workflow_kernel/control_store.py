@@ -11,7 +11,7 @@ from typing import Iterator
 import uuid
 
 from .contracts import ContractRegistry
-from .errors import ContractError, ControlStoreUnavailable, KernelConflict
+from .errors import ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict
 from .models import ControlStoreHealth
 from .utils import canonical_json_bytes, normalized_physical_path, read_json, write_json_atomic
 
@@ -801,6 +801,11 @@ class ControlStore:
             predecessor = self._current_run_record_sha(connection, run_id)
             if predecessor is None:
                 raise KernelConflict("run-state mutation has no committed predecessor")
+            if old_run_record_sha256 != predecessor:
+                raise ArtifactDrift(
+                    "Run Record differs from its committed authority predecessor",
+                    data={"drifted_paths": ["workflow/run.json"]},
+                )
             previous = connection.execute(
                 "SELECT expected_run_revision FROM run_state_mutation_intents "
                 "WHERE run_id=? AND state='COMMITTED' "
@@ -868,13 +873,53 @@ class ControlStore:
     def prepared_run_state_mutation(self, run_id: str) -> sqlite3.Row | None:
         connection = self._connect()
         try:
-            return connection.execute(
+            row = connection.execute(
                 "SELECT * FROM run_state_mutation_intents "
                 "WHERE run_id=? AND state='PREPARED'",
                 (run_id,),
             ).fetchone()
+            if row is not None:
+                self._validate_prepared_run_state_mutation(connection, row)
+            return row
         finally:
             connection.close()
+
+    def _validate_prepared_run_state_mutation(
+        self, connection: sqlite3.Connection, mutation: sqlite3.Row
+    ) -> None:
+        predecessor = self._current_run_record_sha(connection, mutation["run_id"])
+        previous = connection.execute(
+            "SELECT expected_run_revision FROM run_state_mutation_intents "
+            "WHERE run_id=? AND state='COMMITTED' "
+            "ORDER BY expected_run_revision DESC LIMIT 1",
+            (mutation["run_id"],),
+        ).fetchone()
+        expected_revision = 1 if previous is None else int(previous[0]) + 1
+        replacement_json = str(mutation["replacement_run_record_json"])
+        replacement_sha = hashlib.sha256(replacement_json.encode("utf-8")).hexdigest()
+        identity_payload = "\0".join(
+            (
+                str(mutation["operation"]),
+                str(mutation["run_id"]),
+                str(mutation["expected_run_revision"]),
+                str(mutation["old_run_record_sha256"]),
+                str(mutation["predecessor_committed_sha256"]),
+                str(mutation["replacement_run_record_sha256"]),
+            )
+        )
+        identity = hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+        if (
+            mutation["operation"] != "source_drift_invalidation"
+            or mutation["expected_run_revision"] != expected_revision
+            or mutation["old_run_record_sha256"] != predecessor
+            or mutation["predecessor_committed_sha256"] != predecessor
+            or replacement_sha != mutation["replacement_run_record_sha256"]
+            or identity != mutation["mutation_identity"]
+            or mutation["mutation_id"] != identity
+        ):
+            raise ControlStoreUnavailable(
+                "prepared run-state mutation authority evidence is invalid"
+            )
 
     def commit_run_state_mutation(self, mutation_id: str) -> None:
         with self._immediate() as connection:

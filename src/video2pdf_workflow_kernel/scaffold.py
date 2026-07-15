@@ -5,14 +5,11 @@ from pathlib import Path, PurePosixPath
 
 from .contracts import ContractRegistry, _validate_project_relative_path
 from .errors import ContractError, PathBudgetError
-from .utils import normalize_title, read_json, truncate_utf16, utf16_units
+from .utils import normalize_title, truncate_utf16, utf16_units
 
 
 def load_scaffold(project_root: Path, contracts: ContractRegistry) -> dict:
-    path = project_root / "schemas/video-workflow/v1/scaffold.v1.json"
-    scaffold = read_json(path)
-    contracts.validate("scaffold-contract", scaffold)
-    return scaffold
+    return contracts.canonical_instance("scaffold-contract")
 
 
 def stable_title_hash(adapter_id: str, item_id: str, original_title: str) -> str:

@@ -19,6 +19,51 @@ FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
 
 
 class ScaffoldContainmentTests(unittest.TestCase):
+    def test_scaffold_contract_is_the_exact_registered_canonical_instance(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        registry = ContractRegistry(PROJECT_ROOT)
+        scaffold = json.loads(
+            (PROJECT_ROOT / "schemas/video-workflow/v1/scaffold.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        mutations = []
+        rogue = json.loads(json.dumps(scaffold))
+        rogue["managed_directories"].append("rogue")
+        mutations.append(rogue)
+        missing = json.loads(json.dumps(scaffold))
+        missing["managed_directories"].pop()
+        mutations.append(missing)
+        reordered = json.loads(json.dumps(scaffold))
+        reordered["managed_directories"][0:2] = reversed(
+            reordered["managed_directories"][0:2]
+        )
+        mutations.append(reordered)
+        for mutated in mutations:
+            with self.assertRaises(ContractError):
+                registry.validate("scaffold-contract", mutated)
+
+        canonical = json.loads(
+            (PROJECT_ROOT / "schemas/video-workflow/registry.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        root = PROJECT_ROOT / "待删除" / f"gate5-registry-{uuid.uuid4().hex}"
+        root.mkdir(parents=True, exist_ok=False)
+        rogue_path = root / "rogue.json"
+        rogue_path.write_text(json.dumps(rogue), encoding="utf-8")
+        entry = next(
+            item for item in canonical["contracts"]
+            if item["schema_name"] == "scaffold-contract"
+        )
+        entry["canonical_instance"] = str(rogue_path)
+        alternate_path = root / "registry.json"
+        alternate_path.write_text(json.dumps(canonical), encoding="utf-8")
+        with self.assertRaises(ContractError):
+            ContractRegistry(PROJECT_ROOT, alternate_path)
+
     def test_schema_valid_parent_escape_is_rejected_by_registry_and_runtime(self) -> None:
         from video2pdf_workflow_kernel.contracts import ContractRegistry
         from video2pdf_workflow_kernel.errors import ContractError
@@ -124,6 +169,31 @@ class RunStateMutationSagaTests(unittest.TestCase):
         self.assertEqual(row[:3], ("source_drift_invalidation", 1, "COMMITTED"))
         self.assertEqual(row[3], hashlib.sha256(run_path.read_bytes()).hexdigest())
         self.assertEqual(kernel.control_store.current_run_record_sha(result.run_id), row[3])
+
+    def test_schema_valid_run_record_tamper_creates_no_mutation_and_is_not_written(self) -> None:
+        from video2pdf_workflow_kernel import ArtifactDrift
+        from video2pdf_workflow_kernel.utils import sha256_file, write_json_atomic
+
+        kernel, result = self._trace_and_drift("authority-tamper")
+        # Restore source bytes so the only drift is the schema-valid Run Record mutation.
+        subtitle = result.run_dir / "source/subtitles/subtitle.en.srt"
+        subtitle.write_bytes(subtitle.read_bytes()[: -len(b"\ndrift\n")])
+        run_path = result.run_dir / "workflow/run.json"
+        record = json.loads(run_path.read_text(encoding="utf-8"))
+        record["normalized_title"] = "schema_valid_tamper"
+        write_json_atomic(run_path, record)
+        tampered_sha = sha256_file(run_path)
+
+        with self.assertRaises(ArtifactDrift):
+            kernel.reconcile_run(result.run_dir)
+
+        self.assertEqual(sha256_file(run_path), tampered_sha)
+        with sqlite3.connect(kernel.control_store.path) as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM run_state_mutation_intents WHERE run_id=?",
+                (result.run_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
 
     def test_prepared_mutation_recovers_after_fault_without_uncoordinated_state(self) -> None:
         from video2pdf_workflow_kernel import ArtifactDrift, InitializationFault

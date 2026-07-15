@@ -248,7 +248,7 @@ class PersistenceHardeningTests(unittest.TestCase):
             kernel.control_store.intent_for_run(probe.run_id)["state"], "COMMITTED"
         )
 
-    def test_committed_self_consistent_rewrite_is_artifact_drift_and_stale(self) -> None:
+    def test_committed_self_consistent_rewrite_is_artifact_drift_without_run_mutation(self) -> None:
         from video2pdf_workflow_kernel import ArtifactDrift, VideoWorkflowKernel
         from video2pdf_workflow_kernel.utils import write_json_atomic
 
@@ -277,8 +277,14 @@ class PersistenceHardeningTests(unittest.TestCase):
 
         with self.assertRaises(ArtifactDrift):
             kernel.reconcile_run(result.run_dir)
-        stale = json.loads(run_path.read_text(encoding="utf-8"))
-        self.assertEqual(stale["checkpoints"]["source_ready"]["status"], "stale")
+        unchanged = json.loads(run_path.read_text(encoding="utf-8"))
+        self.assertEqual(unchanged["checkpoints"]["source_ready"]["status"], "current")
+        with sqlite3.connect(kernel.control_store.path) as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM run_state_mutation_intents WHERE run_id=?",
+                (result.run_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
 
     def test_live_kernel_preflight_detects_anchor_and_store_displacement(self) -> None:
         from video2pdf_workflow_kernel import VideoWorkflowKernel

@@ -8,7 +8,7 @@
     "name": "offline-source-ready-tracer"
   },
   "slice_base_commit": "96089b99c9ae63fff61107e1920fc3481ffc0802",
-  "implementation_commit": "2e1b5b9258830cb3be0d1369eb8b539c7b1ebe91",
+  "implementation_commit": "0739f8e04fe72595e38d7eff0a35470ba5161a7c",
   "evidence_paths": [
     "evidence/slice-01/exit-evidence-manifest.json",
     "evidence/slice-01/logs/slice0-regression.log",
@@ -21,7 +21,7 @@
     "evidence/slice-01/logs/slice1-syntax.log",
     "evidence/slice-01/logs/slice1-diff-check.log"
   ],
-  "generated_at": "2026-07-15T05:04:00Z",
+  "generated_at": "2026-07-15T05:14:22Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -45,7 +45,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-regression.log",
-        "sha256": "257117f57c9fd323b3a9d7dca8e03fe0ffd426b5673e46d1bfe63b6236875f1a"
+        "sha256": "9b6b436eb0e117b198370f345c56daf0d13b5de08879f5cad14400000362b4ef"
       },
       "conforms": true
     },
@@ -64,7 +64,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-contracts.log",
-        "sha256": "12cb6a4894dbcfacf21d4e6cff16628687884d308b515ca787464108854a58c8"
+        "sha256": "12bc90bf6f92203365b2d0aa30c78c8d74bea345e52496b15554714b98495f96"
       },
       "conforms": true
     },
@@ -84,7 +84,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-public-deep-tests.log",
-        "sha256": "2cc591032a5717e1ab84a3bcaf87a1cb9d290332132a7a6faee717690b105845"
+        "sha256": "fb6343f556cf3e5af504be98e3ca53930321c790100f5b9dfe7b40a307a88c06"
       },
       "conforms": true
     },
@@ -104,7 +104,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-review-hardening-tests.log",
-        "sha256": "edaf407d2032812b23ed6f47e2d8b688fe6032cf05679164849ad8e863ef5a54"
+        "sha256": "4dd92257b42c78bd1cc65c75eefd4b2535496f710fc87c3d480214c14b37986f"
       },
       "conforms": true
     },
@@ -124,7 +124,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-gate4-saga-containment-tests.log",
-        "sha256": "99c2dda88b11633b829324806672eaaf96ef4bf5fa5eb89bba353359dc7060d4"
+        "sha256": "413de32b998aebb5a718adfce2e6d413f4d7408821dc3ceb644dadf12b2f0efe"
       },
       "conforms": true
     },
@@ -144,7 +144,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-gate7-review-repair-tests.log",
-        "sha256": "679423030a956fd54db6725144700ebe9e79a5b0b7cdea80daea06ae56560238"
+        "sha256": "735abcfc9cf3e28ade74656afaeecfd01c4c8aeb8d1240053cad995da4c0c137"
       },
       "conforms": true
     },
@@ -163,7 +163,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-exit-evidence.log",
-        "sha256": "d0f7f3a176693a4cc30b861e34d0b9268664559ec0d879929e2d072067e2ab9e"
+        "sha256": "ee909e12c1db1eb6e57a1b30969a4d1b4f468c2a6ed1502fe6e832d550c25fbb"
       },
       "conforms": true
     },
@@ -182,7 +182,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-syntax.log",
-        "sha256": "bc3bea736cedcb5912d6b9caa8c1c8d883e9b0bc004f37b31de3f549ea2f3ecd"
+        "sha256": "d090a0f820d6c9520c747455e56324b44057a00753870191a4d09e570dc04a98"
       },
       "conforms": true
     },
@@ -199,7 +199,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-diff-check.log",
-        "sha256": "c0575d88091127d8b5520e4c62b97b378b51b5c6489f7f6a2ad32d1270aef058"
+        "sha256": "9612ebaba063d5897a4536b611d8454992899b58312a25449d58b7ba4be1395c"
       },
       "conforms": true
     }
@@ -378,7 +378,7 @@
     {
       "role": "implementation_artifact",
       "path": "scripts/collect_slice1_exit_evidence.py",
-      "sha256": "100af1b7a218a29976096b8c4a27b20d76a268957ac8b0eb9a0908e18279ba02"
+      "sha256": "7b4eb36f4bda9cdda978448c583a7085a380c486fb89838b33d5a84a3cb86369"
     },
     {
       "role": "implementation_artifact",
@@ -583,7 +583,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue4_gate7.py",
-      "sha256": "01378dde8fd610e71e688a7aa29beeaa4aa3784ae97838a9f209d284cb35629a"
+      "sha256": "e79a6831124ea53b09edf8e2725743e3ffb66a1b18774f1e705852d4a8edf4b5"
     },
     {
       "role": "implementation_artifact",

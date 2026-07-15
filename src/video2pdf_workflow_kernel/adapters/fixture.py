@@ -72,7 +72,7 @@ class FixturePlatformAdapter:
         imported: list[dict[str, Any]] = []
         for artifact in self.manifest["artifacts"]:
             source_relative = PurePosixPath(artifact["path"])
-            source = self.fixture_root.joinpath(*source_relative.parts)
+            source = self._contained_fixture_path(artifact["path"])
             if source_relative.parts[0] == "metadata":
                 target_relative = PurePosixPath("source/metadata") / PurePosixPath(
                     *source_relative.parts[1:]
@@ -80,6 +80,13 @@ class FixturePlatformAdapter:
             else:
                 target_relative = PurePosixPath("source") / source_relative
             target = staged_run_dir.joinpath(*target_relative.parts)
+            source_root = (staged_run_dir / "source").resolve()
+            try:
+                target.resolve(strict=False).relative_to(source_root)
+            except ValueError as exc:
+                raise ContractError(
+                    f"fixture import target escapes source root: {target_relative}"
+                ) from exc
             if not target.parent.is_dir():
                 raise ContractError(
                     f"Kernel scaffold did not create managed import directory: {target.parent}"
@@ -99,9 +106,7 @@ class FixturePlatformAdapter:
     def _verify_fixture_artifacts(self) -> None:
         for artifact in self.manifest["artifacts"]:
             relative = PurePosixPath(artifact["path"])
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ContractError(f"fixture artifact path escapes package: {relative}")
-            path = self.fixture_root.joinpath(*relative.parts)
+            path = self._contained_fixture_path(artifact["path"])
             if not path.is_file():
                 raise ContractError(f"fixture artifact is missing: {path}")
             actual = sha256_file(path)
@@ -110,3 +115,22 @@ class FixturePlatformAdapter:
                     f"immutable fixture artifact drift: {relative}: expected "
                     f"{artifact['sha256']}, got {actual}"
                 )
+
+    def _contained_fixture_path(self, value: str) -> Path:
+        if "\\" in value:
+            raise ContractError(f"fixture artifact path uses a backslash: {value!r}")
+        relative = PurePosixPath(value)
+        if (
+            relative.is_absolute()
+            or relative.as_posix() != value
+            or any(part in {".", ".."} for part in relative.parts)
+        ):
+            raise ContractError(f"fixture artifact path is noncanonical: {value!r}")
+        candidate = self.fixture_root.joinpath(*relative.parts).resolve(strict=False)
+        try:
+            candidate.relative_to(self.fixture_root)
+        except ValueError as exc:
+            raise ContractError(
+                f"fixture artifact path escapes package: {value!r}"
+            ) from exc
+        return candidate

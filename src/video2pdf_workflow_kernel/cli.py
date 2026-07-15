@@ -115,7 +115,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         registry = ContractRegistry(project_root, args.registry)
         return _ok(command, "contracts_valid", registry.check(), str(registry.registry_path))
     if command == "control-store-check":
-        health = ControlStore(args.workspace_root).check()
+        contracts = ContractRegistry(project_root)
+        contracts.check()
+        health = ControlStore(args.workspace_root, contracts).check()
         return _ok(
             command,
             "control_store_healthy",

@@ -102,7 +102,7 @@ def preserve_previous_evidence() -> None:
         os.replace(path, target)
 
 
-def run_commands() -> list[dict[str, Any]]:
+def run_commands(implementation_commit: str) -> list[dict[str, Any]]:
     captured: list[dict[str, Any]] = []
     for test_id, command in COMMANDS:
         completed = subprocess.run(
@@ -111,7 +111,11 @@ def run_commands() -> list[dict[str, Any]]:
             capture_output=True,
             check=False,
         )
-        raw = completed.stdout + completed.stderr
+        raw = (
+            completed.stdout
+            + completed.stderr
+            + f"\nEVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+        )
         captured.append(
             {
                 "test_id": test_id,
@@ -158,7 +162,7 @@ def main() -> int:
         )
         return 2
     implementation_commit = git("rev-parse", "HEAD")
-    captured = run_commands()
+    captured = run_commands(implementation_commit)
     preserve_previous_evidence()
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     command_evidence: list[dict[str, Any]] = []
@@ -215,25 +219,33 @@ def main() -> int:
         "fixtures": fixtures,
         "results": {
             "positive": [
-                "contracts_check_closed_registry_and_locked_runtime",
+                "registry_exact_canonical_set_and_locked_runtime_validated",
                 "bootstrap_initialization_verified_import_source_ready",
-                "deterministic_run_path_record_plan_and_generation",
+                "artifact_plan_exact_six_bindings_generated",
+                "fixture_schema_invariant_and_runtime_containment_validated",
+                "run_record_canonical_absolute_output_path_validated",
                 "utf16_239_and_240_pass",
                 "idempotent_rerun_and_collision_safe_same_second_run",
                 "fixture_adapter_deprived_of_production_capabilities",
                 "bootstrap_probe_schema_and_canonical_identity_exact_binding",
-                "control_store_marker_database_identity_and_health_probes",
+                "control_store_external_anchor_marker_database_identity_validated",
+                "control_store_lock_and_same_volume_atomic_replace_probes_pass",
                 "registered_path_fingerprint_and_freshness_invariants",
                 "locked_runtime_import_failure_returns_machine_envelope",
             ],
             "negative": [
                 "unknown_contract_and_run_versions_rejected",
                 "unknown_or_remote_schema_reference_rejected",
+                "partial_duplicate_or_extra_registry_rejected",
+                "artifact_plan_missing_or_extra_binding_rejected",
+                "fixture_backslash_traversal_device_and_trailing_paths_rejected",
+                "relative_or_noncanonical_run_output_path_rejected",
                 "utf16_241_fails_before_binding_intent_or_run",
                 "run_identity_path_and_true_same_second_collision_fail_closed",
                 "imported_source_drift_invalidates_source_ready",
                 "unknown_control_store_migration_blocks_startup",
-                "missing_or_incomplete_control_store_never_auto_recreated",
+                "full_or_partial_control_store_loss_never_auto_recreated",
+                "control_store_external_anchor_tamper_blocks_startup",
                 "published_or_committed_canonical_state_loss_blocks_retry",
             ],
             "recovery": [

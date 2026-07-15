@@ -10,7 +10,8 @@ import time
 from typing import Iterator
 import uuid
 
-from .errors import ControlStoreUnavailable, KernelConflict
+from .contracts import ContractRegistry
+from .errors import ContractError, ControlStoreUnavailable, KernelConflict
 from .models import ControlStoreHealth
 from .utils import normalized_physical_path, read_json, write_json_atomic
 
@@ -25,12 +26,13 @@ DATABASE_RELPATH = ".workflow-control/control.sqlite3"
 class ControlStore:
     """Cross-run transaction authority for Slice 1 bindings and init intents."""
 
-    def __init__(self, workspace_root: Path) -> None:
-        self._configure(workspace_root)
+    def __init__(self, workspace_root: Path, contracts: ContractRegistry) -> None:
+        self._configure(workspace_root, contracts)
         self._validate_existing()
 
-    def _configure(self, workspace_root: Path) -> None:
+    def _configure(self, workspace_root: Path, contracts: ContractRegistry) -> None:
         self.workspace_root = workspace_root.resolve()
+        self.contracts = contracts
         raw = str(self.workspace_root)
         if raw.startswith("\\\\"):
             raise ControlStoreUnavailable("UNC workspace roots are unsupported")
@@ -42,17 +44,38 @@ class ControlStore:
                 "utf-8"
             )
         ).hexdigest()
+        self.anchor_dir = self.workspace_root.parent / ".video-workflow-control-anchors"
+        self.anchor_path = self.anchor_dir / f"{self.store_id}.json"
 
     @classmethod
-    def initialize(cls, workspace_root: Path) -> "ControlStore":
+    def identity_evidence_exists(cls, workspace_root: Path) -> bool:
+        workspace = workspace_root.resolve()
+        store_id = hashlib.sha256(
+            f"video-workflow-control-store-v1\0{normalized_physical_path(workspace)}".encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        control_dir = workspace / ".workflow-control"
+        anchor = workspace.parent / ".video-workflow-control-anchors" / f"{store_id}.json"
+        return (
+            anchor.exists()
+            or control_dir.exists()
+            and any(control_dir.iterdir())
+        )
+
+    @classmethod
+    def initialize(
+        cls, workspace_root: Path, contracts: ContractRegistry
+    ) -> "ControlStore":
         store = cls.__new__(cls)
-        store._configure(workspace_root)
+        store._configure(workspace_root, contracts)
+        anchor_exists = store.anchor_path.is_file()
         marker_exists = store.marker_path.is_file()
         database_exists = store.path.is_file()
-        if marker_exists or database_exists:
-            if not (marker_exists and database_exists):
+        if anchor_exists or marker_exists or database_exists:
+            if not (anchor_exists and marker_exists and database_exists):
                 raise ControlStoreUnavailable(
-                    "Control Store marker/database pair is incomplete; automatic replacement is forbidden"
+                    "Control Store anchor/marker/database identity is incomplete; automatic replacement is forbidden"
                 )
             store._validate_existing()
             return store
@@ -60,23 +83,33 @@ class ControlStore:
             raise ControlStoreUnavailable(
                 "Control Store directory contains unrecognized state"
             )
-        store.control_dir.mkdir(parents=True, exist_ok=True)
+        anchor = store._identity_record("anchor")
+        marker = store._identity_record("marker")
+        store.contracts.validate("control-store-identity", anchor)
+        store.contracts.validate("control-store-identity", marker)
         try:
+            store.anchor_dir.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(store.anchor_path, anchor)
+            store.control_dir.mkdir(parents=True, exist_ok=True)
             store._create_database()
+            write_json_atomic(store.marker_path, marker)
         except (sqlite3.Error, OSError) as exc:
             raise ControlStoreUnavailable(
                 f"Control Store initialization failed: {exc}"
             ) from exc
-        marker = {
-            "schema_name": "control-store-marker",
-            "schema_version": "1.0.0",
-            "kernel_version": "2.0.0",
-            "store_id": store.store_id,
-            "database_relpath": DATABASE_RELPATH,
-        }
-        write_json_atomic(store.marker_path, marker)
         store._validate_existing()
         return store
+
+    def _identity_record(self, record_kind: str) -> dict[str, str]:
+        return {
+            "schema_name": "control-store-identity",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "record_kind": record_kind,
+            "store_id": self.store_id,
+            "workspace_path": str(self.workspace_root),
+            "database_relpath": DATABASE_RELPATH,
+        }
 
     def _connect_raw(self, *, create: bool = False) -> sqlite3.Connection:
         if create:
@@ -163,22 +196,31 @@ class ControlStore:
             connection.close()
 
     def _validate_existing(self) -> None:
-        if not self.marker_path.is_file() or not self.path.is_file():
+        if (
+            not self.anchor_path.is_file()
+            or not self.marker_path.is_file()
+            or not self.path.is_file()
+        ):
             raise ControlStoreUnavailable(
-                "Control Store is absent or incomplete; Bootstrap must initialize it explicitly"
+                "Control Store anchor/marker/database identity is absent or incomplete"
             )
         try:
+            anchor = read_json(self.anchor_path)
             marker = read_json(self.marker_path)
         except (OSError, json.JSONDecodeError) as exc:
-            raise ControlStoreUnavailable(f"Control Store marker is unreadable: {exc}") from exc
-        expected = {
-            "schema_name": "control-store-marker",
-            "schema_version": "1.0.0",
-            "kernel_version": "2.0.0",
-            "store_id": self.store_id,
-            "database_relpath": DATABASE_RELPATH,
-        }
-        if marker != expected:
+            raise ControlStoreUnavailable(
+                f"Control Store identity JSON is unreadable: {exc}"
+            ) from exc
+        try:
+            self.contracts.validate("control-store-identity", anchor)
+            self.contracts.validate("control-store-identity", marker)
+        except ContractError as exc:
+            raise ControlStoreUnavailable(
+                f"Control Store identity contract is invalid: {exc}"
+            ) from exc
+        if anchor != self._identity_record("anchor"):
+            raise ControlStoreUnavailable("Control Store anchor identity is invalid")
+        if marker != self._identity_record("marker"):
             raise ControlStoreUnavailable("Control Store marker identity is invalid")
         try:
             connection = self._connect_raw()

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
 import unittest
 import uuid
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -81,7 +83,8 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         database_path = workspace / ".workflow-control" / "control.sqlite3"
 
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        self.assertEqual(marker["schema_name"], "control-store-marker")
+        self.assertEqual(marker["schema_name"], "control-store-identity")
+        self.assertEqual(marker["record_kind"], "marker")
         self.assertEqual(marker["database_relpath"], ".workflow-control/control.sqlite3")
         with sqlite3.connect(database_path) as connection:
             stored_id = connection.execute(
@@ -105,6 +108,49 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 50)
         self.assertEqual(envelope["classification"], "control_store_unavailable")
         self.assertFalse(database_path.exists())
+
+    def test_external_identity_anchor_blocks_recreation_after_full_store_loss(self) -> None:
+        from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
+        from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+
+        root = new_test_root("store-full-loss")
+        workspace = root / "workspace"
+        self._probe(workspace)
+        anchors = list((root / ".video-workflow-control-anchors").glob("*.json"))
+        self.assertEqual(len(anchors), 1)
+        anchor = json.loads(anchors[0].read_text(encoding="utf-8"))
+        self.assertEqual(anchor["schema_name"], "control-store-identity")
+        self.assertEqual(anchor["record_kind"], "anchor")
+
+        displaced = root / "待删除" / "lost-control-store"
+        displaced.parent.mkdir(parents=True, exist_ok=True)
+        (workspace / ".workflow-control").replace(displaced)
+
+        with self.assertRaises(ControlStoreUnavailable):
+            kernel = VideoWorkflowKernel(workspace)
+            kernel.bootstrap_probe(
+                fixture=FIXTURE,
+                task_start="2026-07-15T01:02:03+08:00",
+                request_id="must-not-recreate",
+            )
+        self.assertFalse((workspace / ".workflow-control").exists())
+
+    def test_anchor_identity_tamper_blocks_existing_store(self) -> None:
+        from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
+        from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+
+        root = new_test_root("store-anchor-tamper")
+        workspace = root / "workspace"
+        self._probe(workspace)
+        anchor_path = next(
+            (root / ".video-workflow-control-anchors").glob("*.json")
+        )
+        anchor = json.loads(anchor_path.read_text(encoding="utf-8"))
+        anchor["store_id"] = "0" * 64
+        anchor_path.write_text(json.dumps(anchor), encoding="utf-8")
+
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(workspace)
 
     def test_loaded_probe_schema_and_exact_fixture_identity_are_both_enforced(self) -> None:
         root = new_test_root("probe-tamper")
@@ -228,6 +274,151 @@ class PersistenceHardeningTests(unittest.TestCase):
 
 
 class ContractAndPathHardeningTests(unittest.TestCase):
+    def test_registry_requires_exact_canonical_contract_name_version_set(self) -> None:
+        canonical = json.loads(
+            (PROJECT_ROOT / "schemas/video-workflow/registry.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        root = new_test_root("registry-closed-set")
+        partial = json.loads(json.dumps(canonical))
+        partial["contracts"].pop()
+        partial_path = root / "partial.json"
+        partial_path.write_text(json.dumps(partial), encoding="utf-8")
+
+        completed, envelope = run_cli(
+            "contracts-check", "--registry", str(partial_path)
+        )
+
+        self.assertEqual(completed.returncode, 20)
+        self.assertEqual(envelope["classification"], "contract_invalid")
+
+        duplicate = json.loads(json.dumps(canonical))
+        duplicate["contracts"].append(dict(duplicate["contracts"][-1]))
+        duplicate_path = root / "duplicate.json"
+        duplicate_path.write_text(json.dumps(duplicate), encoding="utf-8")
+        completed, envelope = run_cli(
+            "contracts-check", "--registry", str(duplicate_path)
+        )
+        self.assertEqual(completed.returncode, 20)
+        self.assertEqual(envelope["classification"], "contract_invalid")
+
+    def test_contracts_check_reports_registry_closed_set_completeness(self) -> None:
+        completed, envelope = run_cli("contracts-check")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(envelope["data"]["registry_complete"])
+        self.assertEqual(
+            set(envelope["data"]["registered_schema_names"]),
+            {
+                "artifact-plan",
+                "bootstrap-record",
+                "common-definitions",
+                "control-store-identity",
+                "fixture-package",
+                "run-record",
+                "scaffold-contract",
+                "scaffold-ledger",
+                "source-manifest",
+                "workflow-result",
+            },
+        )
+
+    def test_control_store_anchor_and_marker_share_a_registered_schema(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+
+        root = new_test_root("store-identity-schema")
+        workspace = root / "workspace"
+        completed, _ = run_cli(
+            "bootstrap-probe",
+            "--workspace-root",
+            str(workspace),
+            "--fixture",
+            str(FIXTURE),
+            "--task-start",
+            "2026-07-15T01:02:03+08:00",
+            "--request-id",
+            "store-identity-schema",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.check()
+        marker = json.loads(
+            (workspace / ".workflow-control/control-store.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        anchor_path = next(
+            (root / ".video-workflow-control-anchors").glob("*.json")
+        )
+        anchor = json.loads(anchor_path.read_text(encoding="utf-8"))
+        contracts.validate("control-store-identity", marker)
+        contracts.validate("control-store-identity", anchor)
+        self.assertEqual(marker["record_kind"], "marker")
+        self.assertEqual(anchor["record_kind"], "anchor")
+
+    def test_artifact_plan_is_the_exact_slice1_artifact_set(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.check()
+        positive = json.loads(
+            (CONTRACT_FIXTURES / "artifact-plan.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        expected = {
+            "artifact_plan",
+            "bootstrap_record",
+            "run_record",
+            "scaffold_contract",
+            "scaffold_ledger",
+            "source_manifest",
+        }
+        self.assertEqual(
+            {item["logical_id"] for item in positive["artifacts"]}, expected
+        )
+        contracts.validate("artifact-plan", positive)
+
+        missing = json.loads(json.dumps(positive))
+        missing["artifacts"].pop()
+        with self.assertRaises(ContractError):
+            contracts.validate("artifact-plan", missing)
+        extra = json.loads(json.dumps(positive))
+        extra["artifacts"].append(
+            {
+                "logical_id": "unexpected",
+                "path": "workflow/unexpected.json",
+                "schema_name": "run-record",
+                "generator": "kernel:init-run",
+                "earliest_checkpoint": "run_initialized",
+            }
+        )
+        with self.assertRaises(ContractError):
+            contracts.validate("artifact-plan", extra)
+
+        root = new_test_root("ap")
+        completed, envelope = run_cli(
+            "trace-source-ready",
+            "--workspace-root",
+            str(root / "w"),
+            "--fixture",
+            str(FIXTURE),
+            "--task-start",
+            "2026-07-15T01:02:03+08:00",
+            "--request-id",
+            "artifact-plan-runtime",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        run_dir = Path(envelope["data"]["run_dir"])
+        generated = json.loads(
+            (run_dir / "workflow/artifact-plan.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            {item["logical_id"] for item in generated["artifacts"]}, expected
+        )
+        self.assertTrue((run_dir / "workflow/scaffold-contract.json").is_file())
+
     def test_collision_suffix_preserves_full_timestamp_at_96_utf16_units(self) -> None:
         from video2pdf_workflow_kernel.scaffold import output_name
         from video2pdf_workflow_kernel.utils import utf16_units
@@ -302,6 +493,85 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         )
         with self.assertRaises(ContractError):
             contracts.validate("run-record", run_record)
+
+    def test_fixture_paths_are_schema_and_semantically_contained(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.check()
+        fixture = json.loads(
+            (CONTRACT_FIXTURES / "fixture-package.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        invalid_paths = (
+            "media/..\\..\\outside.bin",
+            "/absolute.bin",
+            "media/./video.fixture",
+            "media/../video.fixture",
+            "media/CON/file.bin",
+            "media/con/file.bin",
+            "media/trailing. ",
+        )
+        for path in invalid_paths:
+            with self.subTest(path=path), self.assertRaises(ContractError):
+                mutated = json.loads(json.dumps(fixture))
+                mutated["artifacts"][0]["path"] = path
+                contracts.validate("fixture-package", mutated)
+
+    def test_fixture_adapter_runtime_rejects_backslash_escape_even_with_matching_hash(self) -> None:
+        from video2pdf_workflow_kernel.adapters import FixturePlatformAdapter
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        root = new_test_root("fixture-runtime-escape")
+        copied = root / "fixture"
+        shutil.copytree(FIXTURE, copied)
+        outside = root / f"outside-{uuid.uuid4().hex}.bin"
+        outside.write_bytes(b"outside fixture root")
+        manifest_path = copied / "fixture.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"][0]["path"] = (
+            f"media/..\\..\\{outside.name}"
+        )
+        manifest["artifacts"][0]["sha256"] = __import__("hashlib").sha256(
+            outside.read_bytes()
+        ).hexdigest()
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.check()
+        with mock.patch.object(contracts, "validate", return_value=None):
+            with self.assertRaises(ContractError):
+                FixturePlatformAdapter(copied, contracts)
+
+    def test_run_record_output_path_must_be_canonical_absolute(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.check()
+        run_record = json.loads(
+            (CONTRACT_FIXTURES / "run-record.valid.json").read_text(encoding="utf-8")
+        )
+        for output_path in (
+            str((PROJECT_ROOT / "待删除" / "absolute-run").resolve()),
+            r"\\server\share\workspace\run",
+        ):
+            accepted = json.loads(json.dumps(run_record))
+            accepted["output_path"] = output_path
+            contracts.validate("run-record", accepted)
+        for output_path in (
+            "abc",
+            "relative/workspace/run",
+            "D:\\workspace\\..\\escape",
+            "D:drive-relative",
+        ):
+            with self.subTest(output_path=output_path), self.assertRaises(ContractError):
+                mutated = json.loads(json.dumps(run_record))
+                mutated["output_path"] = output_path
+                contracts.validate("run-record", mutated)
 
 
 class HealthAndLauncherHardeningTests(unittest.TestCase):

@@ -50,9 +50,10 @@ class VideoWorkflowKernel:
         self.contracts = ContractRegistry(self.project_root)
         self.contracts.check()
         self.scaffold = load_scaffold(self.project_root, self.contracts)
-        control_dir = self.workspace_root / ".workflow-control"
-        if control_dir.exists() and any(control_dir.iterdir()):
-            self.control_store: ControlStore | None = ControlStore(self.workspace_root)
+        if ControlStore.identity_evidence_exists(self.workspace_root):
+            self.control_store: ControlStore | None = ControlStore(
+                self.workspace_root, self.contracts
+            )
             self.control_store.check()
         else:
             self.control_store = None
@@ -72,7 +73,9 @@ class VideoWorkflowKernel:
         title_override: str | None = None,
     ) -> BootstrapProbeResult:
         if self.control_store is None:
-            self.control_store = ControlStore.initialize(self.workspace_root)
+            self.control_store = ControlStore.initialize(
+                self.workspace_root, self.contracts
+            )
             self.control_store.check()
         adapter = FixturePlatformAdapter(fixture, self.contracts)
         record = self._derive_bootstrap_record(
@@ -272,6 +275,10 @@ class VideoWorkflowKernel:
         ledger = create_scaffold(staging_path, self.scaffold, probe.run_id)
         self.contracts.validate("scaffold-ledger", ledger)
         write_json_atomic(staging_path / "workflow/scaffold-ledger.json", ledger)
+        self.contracts.validate("scaffold-contract", self.scaffold)
+        write_json_atomic(
+            staging_path / "workflow/scaffold-contract.json", self.scaffold
+        )
         self._inject(fault_point, "after_scaffold_staged")
 
         imported = adapter.verified_import(staging_path)
@@ -488,10 +495,48 @@ class VideoWorkflowKernel:
     @staticmethod
     def _artifact_plan(run_id: str) -> dict[str, Any]:
         artifacts = [
-            ("run_record", "workflow/run.json", "run-record", "run_initialized"),
-            ("artifact_plan", "workflow/artifact-plan.json", "artifact-plan", "run_initialized"),
-            ("scaffold_ledger", "workflow/scaffold-ledger.json", "scaffold-ledger", "run_initialized"),
-            ("source_manifest", "source/manifest.json", "source-manifest", "source_ready"),
+            (
+                "run_record",
+                "workflow/run.json",
+                "run-record",
+                "kernel:init-run",
+                "run_initialized",
+            ),
+            (
+                "artifact_plan",
+                "workflow/artifact-plan.json",
+                "artifact-plan",
+                "kernel:init-run",
+                "run_initialized",
+            ),
+            (
+                "bootstrap_record",
+                "待删除/bootstrap/probe.json",
+                "bootstrap-record",
+                "kernel:bootstrap",
+                "run_initialized",
+            ),
+            (
+                "scaffold_contract",
+                "workflow/scaffold-contract.json",
+                "scaffold-contract",
+                "kernel:init-run",
+                "run_initialized",
+            ),
+            (
+                "scaffold_ledger",
+                "workflow/scaffold-ledger.json",
+                "scaffold-ledger",
+                "kernel:init-run",
+                "run_initialized",
+            ),
+            (
+                "source_manifest",
+                "source/manifest.json",
+                "source-manifest",
+                "kernel:verified-import",
+                "source_ready",
+            ),
         ]
         return {
             "schema_name": "artifact-plan",
@@ -503,10 +548,10 @@ class VideoWorkflowKernel:
                     "logical_id": logical_id,
                     "path": path,
                     "schema_name": schema_name,
-                    "generator": "kernel:init-run" if checkpoint == "run_initialized" else "kernel:verified-import",
+                    "generator": generator,
                     "earliest_checkpoint": checkpoint,
                 }
-                for logical_id, path, schema_name, checkpoint in artifacts
+                for logical_id, path, schema_name, generator, checkpoint in artifacts
             ],
         }
 

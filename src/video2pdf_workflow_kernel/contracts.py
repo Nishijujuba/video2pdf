@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib.metadata
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import tomllib
 from typing import Any, Iterator
@@ -50,6 +50,8 @@ WINDOWS_DEVICE_NAMES = frozenset(
 KNOWN_INVARIANTS = frozenset(
     {
         "artifact-plan-paths-v1",
+        "control-store-identity-path-v1",
+        "fixture-package-paths-v1",
         "run-record-freshness-v1",
         "source-manifest-paths-and-fingerprints-v1",
     }
@@ -73,12 +75,43 @@ def _validate_project_relative_path(value: str, *, prefix: str | None = None) ->
         raise ContractError(f"path must stay under {prefix}/: {value!r}")
 
 
+def _validate_canonical_absolute_path(value: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ContractError(f"path is not canonical absolute: {value!r}")
+    if re.match(r"^[A-Za-z]:", value) or value.startswith("\\\\"):
+        pure: PureWindowsPath | PurePosixPath = PureWindowsPath(value)
+    else:
+        pure = PurePosixPath(value)
+    if not pure.is_absolute() or str(pure) != value:
+        raise ContractError(f"path is not canonical absolute: {value!r}")
+    for part in pure.parts[1:]:
+        if part in {".", ".."} or part.endswith((" ", ".")):
+            raise ContractError(f"absolute path contains a noncanonical component: {value!r}")
+        stem = part.split(".", 1)[0].upper()
+        if stem in WINDOWS_DEVICE_NAMES:
+            raise ContractError(f"absolute path contains a reserved component: {value!r}")
+
+
 def _validate_artifact_plan(instance: dict[str, Any]) -> None:
-    expected_paths = {
-        "run_record": "workflow/run.json",
-        "artifact_plan": "workflow/artifact-plan.json",
-        "scaffold_ledger": "workflow/scaffold-ledger.json",
-        "source_manifest": "source/manifest.json",
+    expected = {
+        "run_record": (
+            "workflow/run.json", "run-record", "kernel:init-run", "run_initialized"
+        ),
+        "artifact_plan": (
+            "workflow/artifact-plan.json", "artifact-plan", "kernel:init-run", "run_initialized"
+        ),
+        "bootstrap_record": (
+            "待删除/bootstrap/probe.json", "bootstrap-record", "kernel:bootstrap", "run_initialized"
+        ),
+        "scaffold_contract": (
+            "workflow/scaffold-contract.json", "scaffold-contract", "kernel:init-run", "run_initialized"
+        ),
+        "scaffold_ledger": (
+            "workflow/scaffold-ledger.json", "scaffold-ledger", "kernel:init-run", "run_initialized"
+        ),
+        "source_manifest": (
+            "source/manifest.json", "source-manifest", "kernel:verified-import", "source_ready"
+        ),
     }
     logical_ids: set[str] = set()
     paths: set[str] = set()
@@ -88,10 +121,18 @@ def _validate_artifact_plan(instance: dict[str, Any]) -> None:
         _validate_project_relative_path(path)
         if logical_id in logical_ids or path in paths:
             raise ContractError("Artifact Plan logical identities and paths must be unique")
-        if expected_paths.get(logical_id) != path:
-            raise ContractError(f"Artifact Plan path binding is invalid for {logical_id!r}")
+        actual = (
+            path,
+            artifact["schema_name"],
+            artifact["generator"],
+            artifact["earliest_checkpoint"],
+        )
+        if expected.get(logical_id) != actual:
+            raise ContractError(f"Artifact Plan binding is invalid for {logical_id!r}")
         logical_ids.add(logical_id)
         paths.add(path)
+    if logical_ids != set(expected):
+        raise ContractError("Artifact Plan does not contain the exact Slice 1 artifact set")
 
 
 def _validate_source_manifest(instance: dict[str, Any]) -> None:
@@ -107,11 +148,28 @@ def _validate_source_manifest(instance: dict[str, Any]) -> None:
         paths.add(path)
 
 
+def _validate_fixture_package(instance: dict[str, Any]) -> None:
+    logical_ids: set[str] = set()
+    paths: set[str] = set()
+    allowed_roots = {"metadata", "subtitles", "media", "cover"}
+    for artifact in instance["artifacts"]:
+        logical_id = artifact["logical_id"]
+        path = artifact["path"]
+        _validate_project_relative_path(path)
+        if PurePosixPath(path).parts[0] not in allowed_roots:
+            raise ContractError(f"fixture artifact path has an unapproved root: {path!r}")
+        if logical_id in logical_ids or path in paths:
+            raise ContractError("fixture artifact identities and paths must be unique")
+        logical_ids.add(logical_id)
+        paths.add(path)
+
+
 def _validate_run_record(instance: dict[str, Any]) -> None:
     generation = instance["artifact_generations"]["source_manifest"]
     checkpoint = instance["checkpoints"]["source_ready"]
     _validate_project_relative_path(generation["path"], prefix="source")
     _validate_project_relative_path(instance["artifact_plan"])
+    _validate_canonical_absolute_path(instance["output_path"])
     if checkpoint["artifact_generations"]["source_manifest"] != generation["generation"]:
         raise ContractError("source_ready generation does not bind to Source Manifest generation")
     if checkpoint["evidence_sha256"] != generation["sha256"]:
@@ -120,6 +178,10 @@ def _validate_run_record(instance: dict[str, Any]) -> None:
 
 INVARIANT_VALIDATORS = {
     "artifact-plan-paths-v1": _validate_artifact_plan,
+    "control-store-identity-path-v1": lambda value: _validate_canonical_absolute_path(
+        value["workspace_path"]
+    ),
+    "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,
     "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
 }
@@ -208,6 +270,13 @@ class ContractRegistry:
                     invariants=tuple(invariants),
                 )
             )
+        required_names = set(known_versions)
+        if seen_names != required_names:
+            raise ContractError(
+                "registry must contain the exact canonical contract name/version set: "
+                f"missing={sorted(required_names - seen_names)}, "
+                f"extra={sorted(seen_names - required_names)}"
+            )
         return tuple(entries)
 
     def check(self) -> dict[str, Any]:
@@ -276,6 +345,8 @@ class ContractRegistry:
             "positive_examples_validated": positive_count,
             "negative_examples_rejected": negative_count,
             "registry_path": str(self.registry_path),
+            "registry_complete": True,
+            "registered_schema_names": sorted(entry.schema_name for entry in self.entries),
             "runtime_lock": runtime,
         }
 

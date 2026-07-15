@@ -21,6 +21,16 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/workflow-result.invalid.json"
     },
     {
+      "schema_name": "control-store-identity",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-identity.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-identity.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["control-store-identity-path-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-identity.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-identity.invalid.json"
+    },
+    {
       "schema_name": "bootstrap-record",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/bootstrap-record.v1.schema.json",
@@ -65,6 +75,7 @@
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/fixture-package.v1.schema.json",
       "schema_path": "schemas/video-workflow/v1/fixture-package.v1.schema.json",
       "kind": "contract",
+      "invariants": ["fixture-package-paths-v1"],
       "positive_example": "tests/video_workflow/fixtures/contracts/fixture-package.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/fixture-package.invalid.json"
     },

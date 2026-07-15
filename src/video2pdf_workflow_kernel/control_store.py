@@ -69,6 +69,12 @@ TASK_ATTEMPTS_TABLE_SQL = (
     "completion_sha256 TEXT, "
     "UNIQUE(task_id, claim_generation))"
 )
+TASK_ATTEMPT_AUTHORITIES_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS task_attempt_authorities ("
+    "attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id), "
+    "attempt_record_json TEXT NOT NULL, "
+    "attempt_record_sha256 TEXT NOT NULL UNIQUE)"
+)
 TASK_COMPLETION_AUTHORITIES_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS task_completion_authorities ("
     "attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id), "
@@ -412,6 +418,7 @@ class ControlStore:
     def _create_task_tables(connection: sqlite3.Connection) -> None:
         connection.execute(TASK_CLAIMS_TABLE_SQL)
         connection.execute(TASK_ATTEMPTS_TABLE_SQL)
+        connection.execute(TASK_ATTEMPT_AUTHORITIES_TABLE_SQL)
         connection.execute(TASK_COMPLETION_AUTHORITIES_TABLE_SQL)
         connection.execute(TASK_PROMOTION_TABLE_SQL)
         connection.execute(TASK_PROMOTION_INDEX_SQL)
@@ -454,6 +461,9 @@ class ControlStore:
             },
         }
         if completion_record_authority:
+            expected["task_attempt_authorities"] = {
+                "attempt_id", "attempt_record_json", "attempt_record_sha256",
+            }
             expected["task_completion_authorities"] = {
                 "attempt_id", "completion_record_json",
             }
@@ -486,6 +496,9 @@ class ControlStore:
             "one_nonterminal_task_promotion_per_run": TASK_PROMOTION_INDEX_SQL,
         }
         if completion_record_authority:
+            expected_sql["task_attempt_authorities"] = (
+                TASK_ATTEMPT_AUTHORITIES_TABLE_SQL
+            )
             expected_sql["task_completion_authorities"] = (
                 TASK_COMPLETION_AUTHORITIES_TABLE_SQL
             )
@@ -500,6 +513,130 @@ class ControlStore:
                 raise ControlStoreUnavailable(
                     f"Control Store SQL authority differs for {name}"
                 )
+
+    @staticmethod
+    def _task_attempt_record(
+        *,
+        task_id: str,
+        attempt_id: str,
+        claim_generation: int,
+        envelope_sha256: str,
+        attempt_path: str,
+        coordinator_session_id: str,
+        worker_id: str,
+        claimed_at: str,
+    ) -> dict:
+        return {
+            "schema_name": "task-attempt",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "claim_generation": claim_generation,
+            "task_envelope_sha256": envelope_sha256,
+            "attempt_path": attempt_path,
+            "coordinator_session_id": coordinator_session_id,
+            "worker_id": worker_id,
+            "claimed_at": claimed_at,
+            "state": "claimed",
+        }
+
+    def _backfill_task_attempt_authorities(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        rows = connection.execute(
+            "SELECT a.*, c.authority_id, c.envelope_sha256, "
+            "c.attempt_id AS current_attempt_id, c.coordinator_session_id, "
+            "c.worker_id, c.updated_at, b.output_path "
+            "FROM task_attempts a JOIN task_claims c ON c.task_id=a.task_id "
+            "JOIN run_bindings b ON b.run_id=c.authority_id"
+        ).fetchall()
+        for row in rows:
+            relative = PurePosixPath(str(row["attempt_path"]))
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != "workflow"
+            ):
+                raise ControlStoreUnavailable(
+                    "Control Store v4 Task Attempt path is invalid"
+                )
+            run_root = Path(str(row["output_path"])).resolve()
+            record_path = run_root.joinpath(*relative.parts) / "attempt.json"
+            try:
+                record_path.resolve(strict=False).relative_to(run_root)
+            except ValueError as exc:
+                raise ControlStoreUnavailable(
+                    "Control Store v4 Task Attempt evidence escapes its Run"
+                ) from exc
+            if record_path.is_symlink():
+                raise ControlStoreUnavailable(
+                    "Control Store v4 Task Attempt evidence is linked"
+                )
+            if record_path.is_file():
+                try:
+                    record = read_json(record_path)
+                    self.contracts.validate("task-attempt", record)
+                except (OSError, json.JSONDecodeError, ContractError) as exc:
+                    raise ControlStoreUnavailable(
+                        "Control Store v4 Task Attempt evidence is invalid"
+                    ) from exc
+                canonical = canonical_json_bytes(record)
+                expected = {
+                    "task_id": str(row["task_id"]),
+                    "attempt_id": str(row["attempt_id"]),
+                    "claim_generation": int(row["claim_generation"]),
+                    "task_envelope_sha256": str(row["envelope_sha256"]),
+                    "attempt_path": str(row["attempt_path"]),
+                    "state": "claimed",
+                }
+                if (
+                    record_path.read_bytes() != canonical
+                    or any(record.get(key) != value for key, value in expected.items())
+                ):
+                    raise ControlStoreUnavailable(
+                        "Control Store v4 Task Attempt evidence binding is invalid"
+                    )
+                if row["attempt_id"] == row["current_attempt_id"] and (
+                    record.get("coordinator_session_id")
+                    != row["coordinator_session_id"]
+                    or record.get("worker_id") != row["worker_id"]
+                    or record.get("claimed_at") != row["updated_at"]
+                ):
+                    raise ControlStoreUnavailable(
+                        "Control Store v4 current Task Attempt identity is invalid"
+                    )
+            elif (
+                row["attempt_id"] == row["current_attempt_id"]
+                and row["state"] == "CLAIMED"
+            ):
+                record = self._task_attempt_record(
+                    task_id=str(row["task_id"]),
+                    attempt_id=str(row["attempt_id"]),
+                    claim_generation=int(row["claim_generation"]),
+                    envelope_sha256=str(row["envelope_sha256"]),
+                    attempt_path=str(row["attempt_path"]),
+                    coordinator_session_id=str(row["coordinator_session_id"]),
+                    worker_id=str(row["worker_id"]),
+                    claimed_at=str(row["updated_at"]),
+                )
+                self.contracts.validate("task-attempt", record)
+                canonical = canonical_json_bytes(record)
+            else:
+                raise ControlStoreUnavailable(
+                    "Control Store v4 Task Attempt evidence is absent"
+                )
+            connection.execute(
+                "INSERT INTO task_attempt_authorities("
+                "attempt_id, attempt_record_json, attempt_record_sha256) "
+                "VALUES (?, ?, ?)",
+                (
+                    row["attempt_id"],
+                    canonical.decode("utf-8"),
+                    hashlib.sha256(canonical).hexdigest(),
+                ),
+            )
 
     def _backfill_task_completion_authorities(
         self, connection: sqlite3.Connection
@@ -567,6 +704,59 @@ class ControlStore:
                 "attempt_id, completion_record_json) VALUES (?, ?)",
                 (row["attempt_id"], canonical.decode("utf-8")),
             )
+
+    def _validate_task_attempt_authority_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        rows = connection.execute(
+            "SELECT a.*, c.envelope_sha256, "
+            "c.attempt_id AS current_attempt_id, c.coordinator_session_id, "
+            "c.worker_id, c.updated_at, aa.attempt_record_json, "
+            "aa.attempt_record_sha256 FROM task_attempts a "
+            "JOIN task_claims c ON c.task_id=a.task_id "
+            "LEFT JOIN task_attempt_authorities aa "
+            "ON aa.attempt_id=a.attempt_id"
+        ).fetchall()
+        for row in rows:
+            authority_json = row["attempt_record_json"]
+            authority_sha = row["attempt_record_sha256"]
+            if authority_json is None or authority_sha is None:
+                raise ControlStoreUnavailable(
+                    "Task Attempt lacks immutable record authority"
+                )
+            try:
+                record = json.loads(str(authority_json))
+                self.contracts.validate("task-attempt", record)
+            except (json.JSONDecodeError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "Task Attempt record authority is invalid"
+                ) from exc
+            canonical = canonical_json_bytes(record)
+            expected = {
+                "task_id": str(row["task_id"]),
+                "attempt_id": str(row["attempt_id"]),
+                "claim_generation": int(row["claim_generation"]),
+                "task_envelope_sha256": str(row["envelope_sha256"]),
+                "attempt_path": str(row["attempt_path"]),
+                "state": "claimed",
+            }
+            if (
+                canonical.decode("utf-8") != authority_json
+                or hashlib.sha256(canonical).hexdigest() != authority_sha
+                or any(record.get(key) != value for key, value in expected.items())
+            ):
+                raise ControlStoreUnavailable(
+                    "Task Attempt record authority binding is invalid"
+                )
+            if row["attempt_id"] == row["current_attempt_id"] and (
+                record.get("coordinator_session_id")
+                != row["coordinator_session_id"]
+                or record.get("worker_id") != row["worker_id"]
+                or record.get("claimed_at") != row["updated_at"]
+            ):
+                raise ControlStoreUnavailable(
+                    "current Task Attempt record authority identity drifted"
+                )
 
     @staticmethod
     def _derive_legacy_task_promotion_intent_id(
@@ -915,6 +1105,7 @@ class ControlStore:
                         ).fetchall()
                     }
                     if {
+                        "task_attempt_authorities",
                         "task_completion_authorities",
                         "task_promotion_identity_versions",
                     } & tables:
@@ -925,13 +1116,16 @@ class ControlStore:
                         connection,
                         completion_record_authority=False,
                     )
+                    connection.execute(TASK_ATTEMPT_AUTHORITIES_TABLE_SQL)
                     connection.execute(TASK_COMPLETION_AUTHORITIES_TABLE_SQL)
                     connection.execute(
                         TASK_PROMOTION_IDENTITY_VERSIONS_TABLE_SQL
                     )
+                    self._backfill_task_attempt_authorities(connection)
                     self._backfill_task_completion_authorities(connection)
                     self._migrate_task_promotion_identity_versions(connection)
                     self._validate_task_tables(connection)
+                    self._validate_task_attempt_authority_rows(connection)
                     connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (5)"
                     )
@@ -943,6 +1137,7 @@ class ControlStore:
                         )
                     self._validate_run_state_mutation_table(connection)
                     self._validate_task_tables(connection)
+                    self._validate_task_attempt_authority_rows(connection)
                     if self._migration_versions(connection) != [1, 2, 3, 4, 5]:
                         raise ControlStoreUnavailable(
                             "Control Store v5 migration ledger is incomplete"
@@ -1002,6 +1197,7 @@ class ControlStore:
                     "run_state_mutation_intents",
                     "task_claims",
                     "task_attempts",
+                    "task_attempt_authorities",
                     "task_completion_authorities",
                     "task_promotion_identity_versions",
                     "task_promotion_intents",
@@ -1033,6 +1229,7 @@ class ControlStore:
                     )
                 self._validate_run_state_mutation_table(connection)
                 self._validate_task_tables(connection)
+                self._validate_task_attempt_authority_rows(connection)
                 self._probe_lock_contention(connection)
             finally:
                 connection.close()
@@ -1699,6 +1896,21 @@ class ControlStore:
             attempt_id = hashlib.sha256(
                 f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
             ).hexdigest()[:24]
+            attempt_record = self._task_attempt_record(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                claim_generation=generation,
+                envelope_sha256=envelope_sha256,
+                attempt_path=attempt_path,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                claimed_at=claimed_at,
+            )
+            self.contracts.validate("task-attempt", attempt_record)
+            attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
+            attempt_record_sha = hashlib.sha256(
+                attempt_record_json.encode("utf-8")
+            ).hexdigest()
             try:
                 connection.execute(
                     "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
@@ -1715,6 +1927,12 @@ class ControlStore:
                     "attempt_path, state, completion_sha256) "
                     "VALUES (?, ?, ?, ?, 'CLAIMED', NULL)",
                     (attempt_id, task_id, generation, attempt_path),
+                )
+                connection.execute(
+                    "INSERT INTO task_attempt_authorities("
+                    "attempt_id, attempt_record_json, attempt_record_sha256) "
+                    "VALUES (?, ?, ?)",
+                    (attempt_id, attempt_record_json, attempt_record_sha),
                 )
             except sqlite3.IntegrityError as exc:
                 raise KernelConflict("Task Claim compare-and-set failed") from exc
@@ -1807,6 +2025,21 @@ class ControlStore:
             )
             if abandoned.rowcount != 1:
                 raise KernelConflict("Task reclaim prior Attempt is not replaceable")
+            attempt_record = self._task_attempt_record(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                claim_generation=generation,
+                envelope_sha256=str(claim["envelope_sha256"]),
+                attempt_path=attempt_path,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                claimed_at=reclaimed_at,
+            )
+            self.contracts.validate("task-attempt", attempt_record)
+            attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
+            attempt_record_sha = hashlib.sha256(
+                attempt_record_json.encode("utf-8")
+            ).hexdigest()
             cursor = connection.execute(
                 "UPDATE task_claims SET claim_generation=?, attempt_id=?, "
                 "coordinator_session_id=?, worker_id=?, reclaim_reason=?, updated_at=? "
@@ -1823,6 +2056,12 @@ class ControlStore:
                 "attempt_path, state, completion_sha256) "
                 "VALUES (?, ?, ?, ?, 'CLAIMED', NULL)",
                 (attempt_id, task_id, generation, attempt_path),
+            )
+            connection.execute(
+                "INSERT INTO task_attempt_authorities("
+                "attempt_id, attempt_record_json, attempt_record_sha256) "
+                "VALUES (?, ?, ?)",
+                (attempt_id, attempt_record_json, attempt_record_sha),
             )
             return connection.execute(
                 "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
@@ -1865,6 +2104,17 @@ class ControlStore:
                 "ORDER BY a.claim_generation",
                 (task_id,),
             ).fetchall()
+        finally:
+            connection.close()
+
+    def task_attempt_authority(self, attempt_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            return connection.execute(
+                "SELECT attempt_record_json, attempt_record_sha256 "
+                "FROM task_attempt_authorities WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
         finally:
             connection.close()
 

@@ -69,6 +69,50 @@ class Issue5RepairHarness:
             worker_id="repair-worker",
         )
 
+    def claim_disjoint(self, prepared):
+        envelope = read_json(prepared.envelope_path)
+        run = read_json(self.run_dir / "workflow/run.json")
+        attempt_id = hashlib.sha256(
+            f"task-attempt\0{prepared.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        attempt_path = (
+            f"workflow/tasks/{prepared.task_id}/attempts/{attempt_id}"
+        )
+        claim = self.kernel.control_store.claim_task(
+            authority_id=run["run_id"],
+            task_id=prepared.task_id,
+            envelope_sha256=sha256_file(prepared.envelope_path),
+            write_set=(f"workflow/disjoint-{prepared.task_id}.json",),
+            attempt_path=attempt_path,
+            coordinator_session_id="disjoint-coordinator",
+            worker_id="disjoint-worker",
+            claimed_at="2026-07-15T04:00:00+00:00",
+        )
+        TaskExecution(self.kernel)._create_attempt_record(
+            self.run_dir,
+            envelope,
+            claim,
+            fault_point=None,
+            after_write_fault_point="unused",
+        )
+        return claim, self.run_dir / attempt_path
+
+    @staticmethod
+    def leave_atomic_output_temp(attempt_dir: Path) -> Path:
+        output = attempt_dir / "o/p.json"
+        output.parent.mkdir(parents=False, exist_ok=False)
+        with mock.patch(
+            "video2pdf_workflow_kernel.utils.os.replace",
+            side_effect=OSError("simulated worker crash before atomic replace"),
+        ):
+            try:
+                write_json_atomic(output, {"partial": "durable temporary bytes"})
+            except OSError:
+                pass
+            else:
+                raise AssertionError("atomic write crash simulation did not fail")
+        return attempt_dir / "o/.p.json.kernel-new"
+
     def write_patch(self, prepared, claimed) -> Path:
         envelope = read_json(prepared.envelope_path)
         path = claimed.attempt_dir / "o/p.json"
@@ -195,6 +239,7 @@ class Issue5RepairHarness:
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_attempt_authorities")
             connection.execute(
                 "UPDATE task_promotion_intents SET intent_id=?, "
                 "replacement_run_record_sha256=?, replacement_run_record_json=?, "
@@ -445,6 +490,36 @@ class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
                 self.assertEqual(state, expected_state)
                 self.assertNotEqual(state, "COMMITTED")
 
+    def test_every_nonterminal_recovery_rejects_cross_task_corruption(self) -> None:
+        cases = {
+            "after_promotion_intent_prepared": "ABORTED",
+            "after_outputs_state_commit": "FILES_PUBLISHED",
+            "after_record_state_commit": "RECORD_COMMITTED",
+        }
+        for fault_point, expected_state in cases.items():
+            with self.subTest(fault_point=fault_point):
+                prepared, claimed = self.ready(
+                    f"recovery-cross-task-{fault_point}"
+                )
+                other = self.prepare(f"other-{fault_point.replace('_', '-')}")
+                _, other_attempt = self.claim_disjoint(other)
+                with self.assertRaises(TaskFault):
+                    self.promote(prepared, claimed, fault_point=fault_point)
+
+                (other_attempt / "cross-task-corruption.txt").write_text(
+                    "undeclared cross-task write during promotion recovery",
+                    encoding="utf-8",
+                )
+
+                run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+                with self.assertRaises(ContractError):
+                    self.kernel.reconcile_authority("kernel_run", run_id)
+                intent = self.kernel.control_store.task_promotion_for_attempt(
+                    prepared.task_id, claimed.attempt_id
+                )
+                self.assertEqual(intent["state"], expected_state)
+                self.assertNotEqual(intent["state"], "COMMITTED")
+
     def test_files_published_recovery_accepts_old_or_replacement_marker(self) -> None:
         for fault_point in (
             "after_outputs_state_commit",
@@ -456,6 +531,42 @@ class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
                     self.promote(prepared, claimed, fault_point=fault_point)
                 run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
                 self.kernel.reconcile_authority("kernel_run", run_id)
+                intent = self.kernel.control_store.task_promotion_for_attempt(
+                    prepared.task_id, claimed.attempt_id
+                )
+                self.assertEqual(intent["state"], "COMMITTED")
+
+    def test_disjoint_atomic_output_temp_does_not_block_promotion(self) -> None:
+        for state in ("CLAIMED", "ABANDONED", "FAILED"):
+            with self.subTest(state=state):
+                prepared, claimed = self.ready(f"atomic-temp-{state.lower()}")
+                other = self.prepare(f"atomic-temp-other-{state.lower()}")
+                other_claim, other_attempt = self.claim_disjoint(other)
+                temporary = self.leave_atomic_output_temp(other_attempt)
+                self.assertTrue(temporary.is_file())
+                if state == "ABANDONED":
+                    self.kernel.reclaim_task(
+                        self.run_dir,
+                        task_id=other.task_id,
+                        expected_attempt_id=str(other_claim["attempt_id"]),
+                        expected_claim_generation=int(
+                            other_claim["claim_generation"]
+                        ),
+                        coordinator_session_id="replacement-coordinator",
+                        worker_id="replacement-worker",
+                        reason="recover crashed atomic output write",
+                    )
+                elif state == "FAILED":
+                    with sqlite3.connect(
+                        self.kernel.control_store.path
+                    ) as connection:
+                        connection.execute(
+                            "UPDATE task_attempts SET state='FAILED' "
+                            "WHERE attempt_id=?",
+                            (other_claim["attempt_id"],),
+                        )
+
+                self.promote(prepared, claimed)
                 intent = self.kernel.control_store.task_promotion_for_attempt(
                     prepared.task_id, claimed.attempt_id
                 )
@@ -517,6 +628,34 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
         )
         with self.assertRaises((ArtifactDrift, ContractError)):
             self.complete(prepared, claimed)
+
+    def test_reclaimed_attempt_identity_remains_immutable_authority(self) -> None:
+        tampered_values = {
+            "coordinator_session_id": "tampered-coordinator",
+            "worker_id": "tampered-worker",
+            "claimed_at": "2026-07-15T23:59:59+00:00",
+        }
+        for field, value in tampered_values.items():
+            with self.subTest(field=field):
+                self.initialize(f"reclaimed-attempt-{field.replace('_', '-')}")
+                prepared = self.prepare()
+                first = self.claim(prepared)
+                replacement = self.kernel.reclaim_task(
+                    self.run_dir,
+                    task_id=prepared.task_id,
+                    expected_attempt_id=first.attempt_id,
+                    expected_claim_generation=first.claim_generation,
+                    coordinator_session_id="replacement-coordinator",
+                    worker_id="replacement-worker",
+                    reason="replace abandoned worker",
+                )
+                self.write_patch(prepared, replacement)
+                record_path = first.attempt_dir / "attempt.json"
+                record = read_json(record_path)
+                record[field] = value
+                write_json_atomic(record_path, record)
+                with self.assertRaises(ArtifactDrift):
+                    self.complete(prepared, replacement)
 
     def test_validation_and_commit_timestamps_are_runtime_events(self) -> None:
         prepared, claimed = self.ready("event-times")
@@ -727,6 +866,50 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         with self.assertRaises(ControlStoreUnavailable):
             self.kernel.control_store.check()
 
+        self.initialize("weak-attempt-authority")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_attempt_authorities")
+            connection.execute(
+                "CREATE TABLE task_attempt_authorities ("
+                "attempt_id TEXT, attempt_record_json TEXT, "
+                "attempt_record_sha256 TEXT)"
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+
+    def test_claim_fault_recovers_from_durable_attempt_record_authority(self) -> None:
+        self.initialize("claim-attempt-authority")
+        prepared = self.prepare()
+        with self.assertRaises(TaskFault):
+            self.kernel.claim_task(
+                self.run_dir,
+                prepared.task_id,
+                coordinator_session_id="repair-coordinator",
+                worker_id="repair-worker",
+                fault_point="after_claim_committed",
+            )
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            authority = connection.execute(
+                "SELECT aa.attempt_record_json, aa.attempt_record_sha256 "
+                "FROM task_attempt_authorities aa JOIN task_attempts a "
+                "ON a.attempt_id=aa.attempt_id WHERE a.task_id=?",
+                (prepared.task_id,),
+            ).fetchone()
+        self.assertIsNotNone(authority)
+        resumed = self.claim(prepared)
+        record_path = resumed.attempt_dir / "attempt.json"
+        self.assertEqual(record_path.read_text(encoding="utf-8"), authority[0])
+        self.assertEqual(sha256_file(record_path), authority[1])
+
+    def test_claim_retry_rejects_noncanonical_attempt_record_bytes(self) -> None:
+        self.initialize("claim-attempt-noncanonical")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        record_path = claimed.attempt_dir / "attempt.json"
+        record_path.write_bytes(record_path.read_bytes() + b" ")
+        with self.assertRaises(ArtifactDrift):
+            self.claim(prepared)
+
     def test_partial_v5_migration_fails_closed(self) -> None:
         self.initialize("partial-v5")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
@@ -740,6 +923,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             connection.execute("PRAGMA foreign_keys=OFF")
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_attempt_authorities")
             connection.execute("DROP TABLE task_promotion_intents")
             connection.execute("DROP TABLE task_attempts")
             connection.execute("DROP TABLE task_claims")
@@ -755,7 +939,11 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                     "SELECT version FROM schema_migrations ORDER BY version"
                 )
             ]
+            attempt_authority_count = connection.execute(
+                "SELECT COUNT(*) FROM task_attempt_authorities"
+            ).fetchone()[0]
         self.assertEqual(versions, [1, 2, 3, 4, 5])
+        self.assertEqual(attempt_authority_count, 0)
 
         prepared, claimed = self.ready("v4-committed-upgrade")
         self.promote(prepared, claimed)
@@ -781,13 +969,26 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 "WHERE intent_id=?",
                 (legacy_id,),
             ).fetchone()[0]
+            authority = connection.execute(
+                "SELECT attempt_record_json, attempt_record_sha256 "
+                "FROM task_attempt_authorities WHERE attempt_id=?",
+                (claimed.attempt_id,),
+            ).fetchone()
         self.assertEqual(version, "legacy-v1")
+        self.assertEqual(
+            authority[0],
+            (claimed.attempt_dir / "attempt.json").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            authority[1], sha256_file(claimed.attempt_dir / "attempt.json")
+        )
 
     def test_v4_completion_backfill_tamper_rolls_back(self) -> None:
         prepared, claimed = self.ready("v4-backfill-tamper")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_attempt_authorities")
             connection.execute("DELETE FROM schema_migrations WHERE version=5")
         completion = read_json(claimed.attempt_dir / "completion.json")
         completion["validated_at"] = "2026-07-15T09:00:00+00:00"
@@ -799,6 +1000,34 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 connection.execute(
                     "SELECT name FROM sqlite_master "
                     "WHERE type='table' AND name='task_completion_authorities'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                4,
+            )
+
+    def test_v4_attempt_authority_backfill_tamper_rolls_back(self) -> None:
+        self.initialize("v4-attempt-backfill-tamper")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_promotion_identity_versions")
+            connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_attempt_authorities")
+            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+        attempt = read_json(claimed.attempt_dir / "attempt.json")
+        attempt["worker_id"] = "tampered-before-v5-backfill"
+        write_json_atomic(claimed.attempt_dir / "attempt.json", attempt)
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='task_attempt_authorities'"
                 ).fetchone()
             )
             self.assertEqual(

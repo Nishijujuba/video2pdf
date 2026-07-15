@@ -314,9 +314,17 @@ class TaskExecution:
             or envelope["task_id"] != task_id
             or envelope["task_root_path"] != f"workflow/tasks/{task_id}"
             or envelope["authority_binding"]["run_id"] != run_id
-            or envelope["generated_prompt"]
-            != {"path": f"workflow/tasks/{task_id}/prompt.md", **provenance}
-            or prompt_path.read_bytes() != prompt
+            or (
+                current_attempt_id is None
+                and (
+                    envelope["generated_prompt"]
+                    != {
+                        "path": f"workflow/tasks/{task_id}/prompt.md",
+                        **provenance,
+                    }
+                    or prompt_path.read_bytes() != prompt
+                )
+            )
         ):
             raise ArtifactDrift(
                 "Task namespace Envelope or Generated Prompt authority drifted"
@@ -367,6 +375,29 @@ class TaskExecution:
             raise ArtifactDrift("Task Attempt record is absent or linked")
         record = read_json(path)
         self.contracts.validate("task-attempt", record)
+        store = self.kernel._preflight_control_store()
+        authority = store.task_attempt_authority(str(attempt["attempt_id"]))
+        if authority is None:
+            raise ControlStoreUnavailable(
+                "Task Attempt lacks immutable record authority"
+            )
+        try:
+            authority_record = json.loads(str(authority["attempt_record_json"]))
+        except json.JSONDecodeError as exc:
+            raise ControlStoreUnavailable(
+                "Task Attempt record authority is invalid"
+            ) from exc
+        canonical = canonical_json_bytes(authority_record)
+        if (
+            canonical.decode("utf-8") != authority["attempt_record_json"]
+            or hashlib.sha256(canonical).hexdigest()
+            != authority["attempt_record_sha256"]
+            or path.read_bytes() != canonical
+            or record != authority_record
+        ):
+            raise ArtifactDrift(
+                "Task Attempt record differs from immutable durable authority"
+            )
         expected = {
             "task_id": envelope["task_id"],
             "attempt_id": str(attempt["attempt_id"]),
@@ -428,8 +459,11 @@ class TaskExecution:
         current_claim: Any,
     ) -> None:
         actual_dirs, actual_files = self._attempt_entries(attempt_dir)
+        state = str(attempt["state"])
         allowed_dirs = {"o"}
         allowed_files = {"attempt.json", "o/p.json"}
+        if state in {"CLAIMED", "ABANDONED", "FAILED"}:
+            allowed_files.add("o/.p.json.kernel-new")
         completion_json = attempt["completion_record_json"]
         promotion_journal_sha = attempt["promotion_journal_sha256"]
         if completion_json is not None:
@@ -451,7 +485,6 @@ class TaskExecution:
             attempt=attempt,
             current_claim=current_claim,
         )
-        state = str(attempt["state"])
         if state in {"VALIDATED_WAITING_FOR_PROMOTION", "COMMITTED_COMPLETE"}:
             expected_files = {
                 "attempt.json",
@@ -727,7 +760,7 @@ class TaskExecution:
         if claim["attempt_path"] != attempt_rel:
             raise ControlStoreUnavailable("Task Attempt path binding in Control Store is invalid")
         attempt_dir = self._safe_run_path(run_dir, attempt_rel, prefix="workflow")
-        attempt_record = {
+        expected_attempt_record = {
             "schema_name": "task-attempt",
             "schema_version": "1.0.0",
             "kernel_version": "2.0.0",
@@ -741,10 +774,37 @@ class TaskExecution:
             "claimed_at": str(claim["updated_at"]),
             "state": "claimed",
         }
+        authority = self.kernel._preflight_control_store().task_attempt_authority(
+            attempt_id
+        )
+        if authority is None:
+            raise ControlStoreUnavailable(
+                "Task Attempt lacks immutable record authority"
+            )
+        try:
+            attempt_record = json.loads(str(authority["attempt_record_json"]))
+        except json.JSONDecodeError as exc:
+            raise ControlStoreUnavailable(
+                "Task Attempt record authority is invalid"
+            ) from exc
+        canonical = canonical_json_bytes(attempt_record)
+        if (
+            attempt_record != expected_attempt_record
+            or canonical.decode("utf-8") != authority["attempt_record_json"]
+            or hashlib.sha256(canonical).hexdigest()
+            != authority["attempt_record_sha256"]
+        ):
+            raise ControlStoreUnavailable(
+                "Task Attempt record authority disagrees with its Claim"
+            )
         self.contracts.validate("task-attempt", attempt_record)
         if attempt_dir.exists():
             path = attempt_dir / "attempt.json"
-            if not path.is_file() or _is_link_or_reparse(path) or read_json(path) != attempt_record:
+            if (
+                not path.is_file()
+                or _is_link_or_reparse(path)
+                or path.read_bytes() != canonical
+            ):
                 raise ArtifactDrift("Task Attempt record drifted")
         else:
             staging = (
@@ -1235,6 +1295,12 @@ class TaskExecution:
             or int(claim["claim_generation"]) != int(intent["claim_generation"])
         ):
             raise KernelConflict("Task promotion Claim/Attempt lifecycle binding drifted")
+        self._verify_task_root_inventory(
+            run_dir,
+            run_id=str(intent["run_id"]),
+            task_id=str(intent["task_id"]),
+            current_attempt_id=str(intent["attempt_id"]),
+        )
         task_root = f"workflow/tasks/{intent['task_id']}"
         task_dir = self._safe_run_path(run_dir, task_root, prefix="workflow")
         envelope_path = task_dir / "task.json"

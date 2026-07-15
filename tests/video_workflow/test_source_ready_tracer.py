@@ -238,12 +238,6 @@ class SourceReadyCliTests(unittest.TestCase):
     def test_split_public_commands_cover_probe_import_init_reconcile_and_store_health(self) -> None:
         root = new_test_root("public-commands")
         workspace = root / "workspace"
-        completed, envelope = run_cli(
-            "control-store-check", "--workspace-root", str(workspace)
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(envelope["classification"], "control_store_healthy")
-
         completed, probe_envelope = run_cli(
             "bootstrap-probe",
             "--workspace-root",
@@ -258,6 +252,12 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(probe_envelope["classification"], "probe_complete")
         probe_path = probe_envelope["data"]["probe_record"]
+
+        completed, envelope = run_cli(
+            "control-store-check", "--workspace-root", str(workspace)
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(envelope["classification"], "control_store_healthy")
 
         completed, import_envelope = run_cli(
             "source-import",
@@ -680,6 +680,11 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
 
         root = new_test_root("control-store")
         kernel = VideoWorkflowKernel(root / "workspace")
+        kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="control-store-health",
+        )
         report = kernel.control_store.check()
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.schema_version, 1)
@@ -696,6 +701,11 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
 
         root = new_test_root("unknown-store-version")
         kernel = VideoWorkflowKernel(root / "workspace")
+        kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="unknown-store-version",
+        )
         with sqlite3.connect(kernel.control_store.path) as connection:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (99)")
         with self.assertRaises(ControlStoreUnavailable):

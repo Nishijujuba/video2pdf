@@ -35,6 +35,7 @@
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/run-record.v1.schema.json",
       "schema_path": "schemas/video-workflow/v1/run-record.v1.schema.json",
       "kind": "contract",
+      "invariants": ["run-record-freshness-v1"],
       "positive_example": "tests/video_workflow/fixtures/contracts/run-record.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/run-record.invalid.json"
     },
@@ -44,6 +45,7 @@
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/artifact-plan.v1.schema.json",
       "schema_path": "schemas/video-workflow/v1/artifact-plan.v1.schema.json",
       "kind": "contract",
+      "invariants": ["artifact-plan-paths-v1"],
       "positive_example": "tests/video_workflow/fixtures/contracts/artifact-plan.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/artifact-plan.invalid.json"
     },
@@ -53,6 +55,7 @@
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/source-manifest.v1.schema.json",
       "schema_path": "schemas/video-workflow/v1/source-manifest.v1.schema.json",
       "kind": "contract",
+      "invariants": ["source-manifest-paths-and-fingerprints-v1"],
       "positive_example": "tests/video_workflow/fixtures/contracts/source-manifest.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/source-manifest.invalid.json"
     },

@@ -27,9 +27,10 @@ def output_name(
     adapter_id: str,
     item_id: str,
     max_units: int,
+    collision_suffix: str = "",
 ) -> str:
     title = normalize_title(original_title)
-    suffix = f"_{timestamp}"
+    suffix = f"_{timestamp}{collision_suffix}"
     candidate = f"{title}{suffix}"
     if utf16_units(candidate) <= max_units:
         return candidate

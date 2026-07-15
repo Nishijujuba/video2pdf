@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib.metadata
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import tomllib
 from typing import Any, Iterator
 
@@ -38,6 +39,90 @@ class ContractEntry:
     kind: str
     positive_example: Path | None
     negative_example: Path | None
+    invariants: tuple[str, ...]
+
+
+WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
+KNOWN_INVARIANTS = frozenset(
+    {
+        "artifact-plan-paths-v1",
+        "run-record-freshness-v1",
+        "source-manifest-paths-and-fingerprints-v1",
+    }
+)
+
+
+def _validate_project_relative_path(value: str, *, prefix: str | None = None) -> None:
+    if not isinstance(value, str) or not value or "\\" in value or re.match(r"^[A-Za-z]:", value):
+        raise ContractError(f"path is not a canonical project-relative path: {value!r}")
+    pure = PurePosixPath(value)
+    parts = pure.parts
+    if pure.is_absolute() or pure.as_posix() != value or any(part in {".", ".."} for part in parts):
+        raise ContractError(f"path is not a canonical project-relative path: {value!r}")
+    for part in parts:
+        if part.endswith((" ", ".")) or ":" in part:
+            raise ContractError(f"path contains an unsupported Windows component: {value!r}")
+        stem = part.split(".", 1)[0].upper()
+        if stem in WINDOWS_DEVICE_NAMES:
+            raise ContractError(f"path contains a reserved Windows device name: {value!r}")
+    if prefix is not None and (not parts or parts[0] != prefix):
+        raise ContractError(f"path must stay under {prefix}/: {value!r}")
+
+
+def _validate_artifact_plan(instance: dict[str, Any]) -> None:
+    expected_paths = {
+        "run_record": "workflow/run.json",
+        "artifact_plan": "workflow/artifact-plan.json",
+        "scaffold_ledger": "workflow/scaffold-ledger.json",
+        "source_manifest": "source/manifest.json",
+    }
+    logical_ids: set[str] = set()
+    paths: set[str] = set()
+    for artifact in instance["artifacts"]:
+        logical_id = artifact["logical_id"]
+        path = artifact["path"]
+        _validate_project_relative_path(path)
+        if logical_id in logical_ids or path in paths:
+            raise ContractError("Artifact Plan logical identities and paths must be unique")
+        if expected_paths.get(logical_id) != path:
+            raise ContractError(f"Artifact Plan path binding is invalid for {logical_id!r}")
+        logical_ids.add(logical_id)
+        paths.add(path)
+
+
+def _validate_source_manifest(instance: dict[str, Any]) -> None:
+    logical_ids: set[str] = set()
+    paths: set[str] = set()
+    for artifact in instance["artifacts"]:
+        logical_id = artifact["logical_id"]
+        path = artifact["path"]
+        _validate_project_relative_path(path, prefix="source")
+        if logical_id in logical_ids or path in paths:
+            raise ContractError("Source Manifest artifact identities and paths must be unique")
+        logical_ids.add(logical_id)
+        paths.add(path)
+
+
+def _validate_run_record(instance: dict[str, Any]) -> None:
+    generation = instance["artifact_generations"]["source_manifest"]
+    checkpoint = instance["checkpoints"]["source_ready"]
+    _validate_project_relative_path(generation["path"], prefix="source")
+    _validate_project_relative_path(instance["artifact_plan"])
+    if checkpoint["artifact_generations"]["source_manifest"] != generation["generation"]:
+        raise ContractError("source_ready generation does not bind to Source Manifest generation")
+    if checkpoint["evidence_sha256"] != generation["sha256"]:
+        raise ContractError("source_ready evidence fingerprint does not bind to Source Manifest")
+
+
+INVARIANT_VALIDATORS = {
+    "artifact-plan-paths-v1": _validate_artifact_plan,
+    "run-record-freshness-v1": _validate_run_record,
+    "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
+}
 
 
 def _walk_refs(value: Any) -> Iterator[str]:
@@ -99,6 +184,18 @@ class ContractRegistry:
             schema_path = raw_path if raw_path.is_absolute() else self.project_root / raw_path
             positive = raw.get("positive_example")
             negative = raw.get("negative_example")
+            invariants = raw.get("invariants", [])
+            if (
+                not isinstance(invariants, list)
+                or any(not isinstance(value, str) for value in invariants)
+                or len(set(invariants)) != len(invariants)
+            ):
+                raise ContractError(f"registry invariants are invalid for {name!r}")
+            unknown_invariants = sorted(set(invariants) - KNOWN_INVARIANTS)
+            if unknown_invariants:
+                raise ContractError(
+                    f"registry declares unknown contract invariants: {unknown_invariants}"
+                )
             entries.append(
                 ContractEntry(
                     schema_name=name,
@@ -108,6 +205,7 @@ class ContractRegistry:
                     kind=str(raw.get("kind")),
                     positive_example=(self.project_root / positive).resolve() if positive else None,
                     negative_example=(self.project_root / negative).resolve() if negative else None,
+                    invariants=tuple(invariants),
                 )
             )
         return tuple(entries)
@@ -259,6 +357,9 @@ class ContractRegistry:
         except ValidationError as exc:
             path = "/".join(str(part) for part in exc.absolute_path) or "$"
             raise ContractError(f"{schema_name} instance invalid at {path}: {exc.message}") from exc
+        if isinstance(instance, dict):
+            for invariant in entry.invariants:
+                INVARIANT_VALIDATORS[invariant](instance)
 
     def _prepare_without_examples(self) -> None:
         registered_ids = {entry.schema_id for entry in self.entries}

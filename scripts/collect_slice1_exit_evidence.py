@@ -31,6 +31,10 @@ COMMANDS = (
         [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_source_ready_tracer"],
     ),
     (
+        "slice1-review-hardening-tests",
+        [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_source_ready_hardening"],
+    ),
+    (
         "slice0-exit-evidence",
         [sys.executable, "-X", "utf8", "-B", "scripts/validate_exit_evidence_manifest.py", "evidence/slice-00/exit-evidence-manifest.json"],
     ),
@@ -217,6 +221,10 @@ def main() -> int:
                 "utf16_239_and_240_pass",
                 "idempotent_rerun_and_collision_safe_same_second_run",
                 "fixture_adapter_deprived_of_production_capabilities",
+                "bootstrap_probe_schema_and_canonical_identity_exact_binding",
+                "control_store_marker_database_identity_and_health_probes",
+                "registered_path_fingerprint_and_freshness_invariants",
+                "locked_runtime_import_failure_returns_machine_envelope",
             ],
             "negative": [
                 "unknown_contract_and_run_versions_rejected",
@@ -225,11 +233,14 @@ def main() -> int:
                 "run_identity_path_and_true_same_second_collision_fail_closed",
                 "imported_source_drift_invalidates_source_ready",
                 "unknown_control_store_migration_blocks_startup",
+                "missing_or_incomplete_control_store_never_auto_recreated",
+                "published_or_committed_canonical_state_loss_blocks_retry",
             ],
             "recovery": [
                 "every_initialization_persistence_boundary_converges_old_or_new_complete",
                 "public_reconcile_run_completes_published_initialization",
                 "prepublication_abort_can_retry_to_source_ready",
+                "initialization_intent_transitions_use_compare_and_swap",
             ],
         },
         "artifact_fingerprints": implementation_artifacts(implementation_commit),

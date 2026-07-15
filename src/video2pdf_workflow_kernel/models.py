@@ -38,3 +38,5 @@ class ControlStoreHealth:
     pragmas: dict[str, int | str]
     quick_check: str
     path: Path
+    lock_contention_checked: bool
+    atomic_replace_checked: bool

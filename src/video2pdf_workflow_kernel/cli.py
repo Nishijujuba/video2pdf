@@ -8,6 +8,7 @@ from typing import Any
 
 from .adapters import FixturePlatformAdapter
 from .contracts import ContractRegistry
+from .control_store import ControlStore
 from .errors import CliUsageError, KernelError
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult
@@ -67,8 +68,9 @@ def _add_trace_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--title-override")
 
 
-def _probe_from_path(path: Path) -> BootstrapProbeResult:
+def _probe_from_path(path: Path, contracts: ContractRegistry) -> BootstrapProbeResult:
     value = read_json(path)
+    contracts.validate("bootstrap-record", value)
     return BootstrapProbeResult(
         run_id=value["run_id"],
         request_id=value["request_id"],
@@ -113,7 +115,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         registry = ContractRegistry(project_root, args.registry)
         return _ok(command, "contracts_valid", registry.check(), str(registry.registry_path))
     if command == "control-store-check":
-        health = VideoWorkflowKernel(args.workspace_root).control_store.check()
+        health = ControlStore(args.workspace_root).check()
         return _ok(
             command,
             "control_store_healthy",
@@ -122,6 +124,8 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "schema_version": health.schema_version,
                 "pragmas": health.pragmas,
                 "quick_check": health.quick_check,
+                "lock_contention_checked": health.lock_contention_checked,
+                "atomic_replace_checked": health.atomic_replace_checked,
             },
             str(health.path),
         )
@@ -142,7 +146,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command in {"init-run", "source-import"}:
         kernel = VideoWorkflowKernel(args.workspace_root)
         result = kernel.initialize_verified_import(
-            probe=_probe_from_path(args.probe),
+            probe=_probe_from_path(args.probe, kernel.contracts),
             fixture=args.fixture,
             fault_point=args.fault_point,
         )

@@ -805,6 +805,98 @@ class ControlStore:
                     "current Task Attempt record authority identity drifted"
                 )
 
+    def _validate_task_completion_authority_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        orphan = connection.execute(
+            "SELECT ca.attempt_id FROM task_completion_authorities ca "
+            "LEFT JOIN task_attempts a ON a.attempt_id=ca.attempt_id "
+            "WHERE a.attempt_id IS NULL LIMIT 1"
+        ).fetchone()
+        if orphan is not None:
+            raise ControlStoreUnavailable(
+                "Task Completion authority lacks a Task Attempt"
+            )
+        rows = connection.execute(
+            "SELECT a.attempt_id, a.task_id, a.claim_generation, a.state, "
+            "a.completion_sha256, c.envelope_sha256, "
+            "ca.completion_record_json FROM task_attempts a "
+            "JOIN task_claims c ON c.task_id=a.task_id "
+            "LEFT JOIN task_completion_authorities ca "
+            "ON ca.attempt_id=a.attempt_id ORDER BY a.attempt_id"
+        ).fetchall()
+        for row in rows:
+            completion_sha = row["completion_sha256"]
+            authority_json = row["completion_record_json"]
+            if (completion_sha is None) != (authority_json is None):
+                raise ControlStoreUnavailable(
+                    "Task Completion fingerprint and record authority coverage disagree"
+                )
+            if row["state"] in {
+                "VALIDATED_WAITING_FOR_PROMOTION",
+                "COMMITTED_COMPLETE",
+            } and completion_sha is None:
+                raise ControlStoreUnavailable(
+                    "Task Attempt state requires a Completion authority"
+                )
+            if authority_json is None:
+                continue
+            try:
+                record = json.loads(str(authority_json))
+                self.contracts.validate("task-completion-record", record)
+            except (TypeError, json.JSONDecodeError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "Task Completion record authority is invalid"
+                ) from exc
+            canonical = canonical_json_bytes(record)
+            if (
+                canonical.decode("utf-8") != authority_json
+                or hashlib.sha256(canonical).hexdigest() != completion_sha
+                or record.get("task_id") != row["task_id"]
+                or record.get("attempt_id") != row["attempt_id"]
+                or int(record.get("claim_generation", 0))
+                != int(row["claim_generation"])
+                or record.get("task_envelope_sha256") != row["envelope_sha256"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Task Completion record authority binding is invalid"
+                )
+
+    def _validate_task_promotion_identity_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        orphan = connection.execute(
+            "SELECT v.intent_id FROM task_promotion_identity_versions v "
+            "LEFT JOIN task_promotion_intents i ON i.intent_id=v.intent_id "
+            "WHERE i.intent_id IS NULL LIMIT 1"
+        ).fetchone()
+        if orphan is not None:
+            raise ControlStoreUnavailable(
+                "Task promotion identity version lacks an intent"
+            )
+        intents = connection.execute(
+            "SELECT i.* FROM task_promotion_intents i "
+            "LEFT JOIN task_promotion_identity_versions v "
+            "ON v.intent_id=i.intent_id WHERE v.intent_id IS NOT NULL "
+            "ORDER BY i.intent_id"
+        ).fetchall()
+        intent_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM task_promotion_intents"
+            ).fetchone()[0]
+        )
+        if len(intents) != intent_count:
+            raise ControlStoreUnavailable(
+                "Task promotion intents and identity versions lack complete coverage"
+            )
+        for intent in intents:
+            try:
+                self._validate_task_promotion_intent(connection, intent)
+            except ContractError as exc:
+                raise ControlStoreUnavailable(
+                    "Task promotion intent contract is invalid"
+                ) from exc
+
     @staticmethod
     def _derive_legacy_task_promotion_intent_id(
         intent: sqlite3.Row, outputs: list[dict]
@@ -1239,6 +1331,8 @@ class ControlStore:
                     self._validate_run_state_mutation_rows(connection)
                     self._validate_task_tables(connection)
                     self._validate_task_attempt_authority_rows(connection)
+                    self._validate_task_completion_authority_rows(connection)
+                    self._validate_task_promotion_identity_rows(connection)
                     connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (5)"
                     )
@@ -1253,6 +1347,8 @@ class ControlStore:
                     self._validate_run_state_mutation_rows(connection)
                     self._validate_task_tables(connection)
                     self._validate_task_attempt_authority_rows(connection)
+                    self._validate_task_completion_authority_rows(connection)
+                    self._validate_task_promotion_identity_rows(connection)
                     if self._migration_versions(connection) != [1, 2, 3, 4, 5]:
                         raise ControlStoreUnavailable(
                             "Control Store v5 migration ledger is incomplete"
@@ -1348,6 +1444,8 @@ class ControlStore:
                 self._validate_run_state_mutation_rows(connection)
                 self._validate_task_tables(connection)
                 self._validate_task_attempt_authority_rows(connection)
+                self._validate_task_completion_authority_rows(connection)
+                self._validate_task_promotion_identity_rows(connection)
                 self._probe_lock_contention(connection)
             finally:
                 connection.close()
@@ -2609,8 +2707,6 @@ class ControlStore:
             claim is None
             or attempt is None
             or claim["authority_id"] != intent["run_id"]
-            or claim["attempt_id"] != intent["attempt_id"]
-            or int(claim["claim_generation"]) != int(intent["claim_generation"])
             or attempt["task_id"] != intent["task_id"]
             or int(attempt["claim_generation"]) != int(intent["claim_generation"])
             or attempt["completion_sha256"] is None
@@ -2618,6 +2714,37 @@ class ControlStore:
         ):
             raise ControlStoreUnavailable(
                 "Task promotion intent Claim or Completion binding is invalid"
+            )
+        state = str(intent["state"])
+        if state == "COMMITTED":
+            lifecycle_is_valid = (
+                claim["state"] == "TERMINAL"
+                and claim["attempt_id"] == intent["attempt_id"]
+                and int(claim["claim_generation"])
+                == int(intent["claim_generation"])
+                and attempt["state"] == "COMMITTED_COMPLETE"
+            )
+        elif state == "ABORTED":
+            lifecycle_is_valid = attempt["state"] in {
+                "VALIDATED_WAITING_FOR_PROMOTION",
+                "STALE",
+                "ABANDONED",
+                "FAILED",
+            }
+        else:
+            lifecycle_is_valid = (
+                claim["state"] == "ACTIVE"
+                and claim["attempt_id"] == intent["attempt_id"]
+                and int(claim["claim_generation"])
+                == int(intent["claim_generation"])
+                and attempt["state"] == "VALIDATED_WAITING_FOR_PROMOTION"
+            )
+        if not lifecycle_is_valid or (
+            state in {"FILES_PUBLISHED", "RECORD_COMMITTED", "COMMITTED"}
+            and intent["journal_sha256"] is None
+        ):
+            raise ControlStoreUnavailable(
+                "Task promotion intent lifecycle authority is invalid"
             )
         replacement_sha = hashlib.sha256(
             replacement_json.encode("utf-8")

@@ -1527,6 +1527,153 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                     )
 
 
+class GlobalTaskAuthorityHealthTests(unittest.TestCase, Issue5RepairHarness):
+    def test_completion_authority_content_drift_blocks_global_check_and_other_claim(
+        self,
+    ) -> None:
+        prepared, claimed = self.ready("completion-authority-global-drift")
+        other = self.prepare("other-completion-authority-claim")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            row = connection.execute(
+                "SELECT completion_record_json FROM task_completion_authorities "
+                "WHERE attempt_id=?",
+                (claimed.attempt_id,),
+            ).fetchone()
+            completion = json.loads(row[0])
+            completion["validated_at"] = "2026-07-15T23:59:59+00:00"
+            connection.execute(
+                "UPDATE task_completion_authorities SET completion_record_json=? "
+                "WHERE attempt_id=?",
+                (
+                    canonical_json_bytes(completion).decode("utf-8"),
+                    claimed.attempt_id,
+                ),
+            )
+
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+        with self.assertRaises(ControlStoreUnavailable):
+            self.claim(other)
+
+    def test_missing_promotion_identity_version_blocks_global_check_and_other_claim(
+        self,
+    ) -> None:
+        prepared, claimed = self.ready("promotion-version-global-gap")
+        self.promote(prepared, claimed)
+        other = self.prepare("other-promotion-version-claim")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DELETE FROM task_promotion_identity_versions WHERE intent_id IN "
+                "(SELECT intent_id FROM task_promotion_intents WHERE task_id=?)",
+                (prepared.task_id,),
+            )
+
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+        with self.assertRaises(ControlStoreUnavailable):
+            self.claim(other)
+
+    def test_completion_authority_coverage_rejects_missing_extra_and_partial_rows(
+        self,
+    ) -> None:
+        cases = ("missing", "extra", "authority-without-fingerprint")
+        for case in cases:
+            with self.subTest(case=case):
+                if case == "authority-without-fingerprint":
+                    self.initialize(f"completion-coverage-{case}")
+                    prepared = self.prepare()
+                    claimed = self.claim(prepared)
+                    completion = {
+                        "schema_name": "task-completion-record",
+                        "schema_version": "1.0.0",
+                        "kernel_version": "2.0.0",
+                        "task_id": prepared.task_id,
+                        "attempt_id": claimed.attempt_id,
+                        "claim_generation": claimed.claim_generation,
+                        "task_envelope_sha256": sha256_file(prepared.envelope_path),
+                        "validated_authority_revision": 1,
+                        "validated_run_record_sha256": sha256_file(
+                            self.run_dir / "workflow/run.json"
+                        ),
+                        "validated_inputs": [
+                            {
+                                "logical_id": "source_manifest",
+                                "generation": 1,
+                                "sha256": read_json(prepared.envelope_path)[
+                                    "input_artifacts"
+                                ][0]["sha256"],
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "logical_id": "source_acquisition_decision",
+                                "attempt_path": "o/p.json",
+                                "canonical_path": PATCH_CANONICAL,
+                                "sha256": "0" * 64,
+                            }
+                        ],
+                        "gate_status": "pass",
+                        "validated_at": "2026-07-15T04:00:00+00:00",
+                    }
+                    authority_attempt_id = claimed.attempt_id
+                    authority_json = canonical_json_bytes(completion).decode("utf-8")
+                else:
+                    _, claimed = self.ready(f"completion-coverage-{case}")
+                    authority_attempt_id = claimed.attempt_id
+                    authority_json = None
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    if case == "missing":
+                        connection.execute(
+                            "DELETE FROM task_completion_authorities WHERE attempt_id=?",
+                            (authority_attempt_id,),
+                        )
+                    elif case == "extra":
+                        connection.execute("PRAGMA foreign_keys=OFF")
+                        existing = connection.execute(
+                            "SELECT completion_record_json FROM "
+                            "task_completion_authorities WHERE attempt_id=?",
+                            (authority_attempt_id,),
+                        ).fetchone()[0]
+                        connection.execute(
+                            "INSERT INTO task_completion_authorities("
+                            "attempt_id, completion_record_json) VALUES (?, ?)",
+                            ("f" * 24, existing),
+                        )
+                    else:
+                        connection.execute(
+                            "INSERT INTO task_completion_authorities("
+                            "attempt_id, completion_record_json) VALUES (?, ?)",
+                            (authority_attempt_id, authority_json),
+                        )
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.check()
+
+    def test_promotion_identity_coverage_rejects_orphan_version_row(self) -> None:
+        self.initialize("promotion-version-orphan")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute(
+                "INSERT INTO task_promotion_identity_versions("
+                "intent_id, identity_version) VALUES (?, 'evidence-v2')",
+                ("f" * 64,),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+
+    def test_global_task_authority_validation_accepts_fresh_and_v4_migrated_rows(
+        self,
+    ) -> None:
+        prepared, claimed = self.ready("global-authority-fresh")
+        self.promote(prepared, claimed)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 5)
+
+        prepared, claimed = self.ready("global-authority-v4")
+        self.promote(prepared, claimed)
+        self.downgrade_promotion_to_real_legacy_v4(prepared, claimed)
+        migrated = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated.control_store.check().schema_version, 5)
+
+
 class ContractAndPromptRepairTests(unittest.TestCase):
     def test_run_record_versions_share_true_identity_and_major_paths(self) -> None:
         manifest = read_json(PROJECT_ROOT / "schemas/video-workflow/registry.v1.json")

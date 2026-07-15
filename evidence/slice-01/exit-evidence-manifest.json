@@ -7,7 +7,7 @@
     "number": 1,
     "name": "offline-source-ready-tracer"
   },
-  "implementation_commit": "32c983cecdd02ca22d1ed5c9d558507e4c85cbab",
+  "implementation_commit": "c5551c2f06f596c2e7fa3dcd11c19365b473db6f",
   "evidence_paths": [
     "evidence/slice-01/exit-evidence-manifest.json",
     "evidence/slice-01/logs/slice0-regression.log",
@@ -19,7 +19,7 @@
     "evidence/slice-01/logs/slice1-syntax.log",
     "evidence/slice-01/logs/slice1-diff-check.log"
   ],
-  "generated_at": "2026-07-15T03:57:30Z",
+  "generated_at": "2026-07-15T04:19:15Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -43,7 +43,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-regression.log",
-        "sha256": "278210bf23be56d0deb0510ce170003131ed7d47c8106a0a28c419774ebbae21"
+        "sha256": "2d3f2774c85fc83aeff2822df69fd516b89ef1125aa0e0f6984722eabd399aa9"
       },
       "conforms": true
     },
@@ -62,7 +62,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-contracts.log",
-        "sha256": "7afb5ebafc9082e6d7ad644f2f700634803fe1c8cb547d57e7b1c7695380dcdf"
+        "sha256": "26a6fd0629999ab9ee4ccf3660de33a71fd1301de7ec154e87e99070f257014e"
       },
       "conforms": true
     },
@@ -82,7 +82,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-public-deep-tests.log",
-        "sha256": "70216dc4fd72d47193f70e76551eb47e89ca512e2ffe2a10889bb4f116b74ca9"
+        "sha256": "7b934da888ffdabaddd2b2ab640a488bd3c544357094f96f1a0d79def273bbba"
       },
       "conforms": true
     },
@@ -102,7 +102,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-review-hardening-tests.log",
-        "sha256": "c8d0b130c0420ec9e60eb1e07d03c14ed80eccb57343dc5786068fbffb337647"
+        "sha256": "77ed7babf77f96f5ddff858374e0d75985fc723aae7bbee438c2515d9f6e0f80"
       },
       "conforms": true
     },
@@ -122,7 +122,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-gate4-saga-containment-tests.log",
-        "sha256": "4af272cf28af438ff0446b00e32fd6ad640664f46600e750c01ed9d2592a3eab"
+        "sha256": "51b419b984c8993d56dc04f8dc116dd6bc1fbf404e61ff183b09611a742dc912"
       },
       "conforms": true
     },
@@ -141,7 +141,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-exit-evidence.log",
-        "sha256": "e8d533af6eee59906b53c54674ed2606c02ccf026c99b616f47a31924c1b5471"
+        "sha256": "6cf5115a1740263a900dd99aefe9823cba808c590b239aaa62604e89dfd796bd"
       },
       "conforms": true
     },
@@ -160,7 +160,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-syntax.log",
-        "sha256": "61b63b59f9f06eac387429f6d5600aa45248a0a50a8af5726436f6a7d1507723"
+        "sha256": "a4e5fbf3dcd0c46e6bc2bc2e256c956a3f7c1fa1511e0497e0569af26557f36a"
       },
       "conforms": true
     },
@@ -178,7 +178,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-diff-check.log",
-        "sha256": "e0de5290abd248ba6be161999d8aba6f07b25a59e70e83352114429842fc891d"
+        "sha256": "a3a33e34c201d1c60b657ed2dbe194b4221beb16f22581642ccc44b6e9408f88"
       },
       "conforms": true
     }
@@ -237,6 +237,7 @@
       "scaffold_contract_and_runtime_root_containment_validated",
       "scaffold_contract_exact_registered_canonical_instance_validated",
       "contract_registry_single_locked_preparation_path_validated",
+      "alternate_registry_exact_authority_metadata_and_file_completeness_validated",
       "source_drift_run_state_mutation_saga_committed",
       "run_record_authority_predecessor_checked_before_source_drift",
       "locked_runtime_import_failure_returns_machine_envelope"
@@ -245,6 +246,7 @@
       "unknown_contract_and_run_versions_rejected",
       "unknown_or_remote_schema_reference_rejected",
       "partial_duplicate_or_extra_registry_rejected",
+      "same_version_weaker_or_retargeted_alternate_registry_rejected_before_validation",
       "artifact_plan_missing_or_extra_binding_rejected",
       "fixture_backslash_traversal_device_and_trailing_paths_rejected",
       "relative_or_noncanonical_run_output_path_rejected",
@@ -274,43 +276,8 @@
   "artifact_fingerprints": [
     {
       "role": "implementation_artifact",
-      "path": "schemas/video-workflow/registry.v1.json",
-      "sha256": "1f161b45a3dff0039de45e06c1e05602b34b5016783d340cf1895f31196062a7"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "scripts/collect_slice1_exit_evidence.py",
-      "sha256": "67a54d3f270365decadc87419a87d8c299246bf2ce79dfe5f3179060518ede31"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/contracts.py",
-      "sha256": "dd2434d98b00d5b7133d8d18c5ba5c9cb5f8a3b469947230a11872ad9b28d7bb"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/control_store.py",
-      "sha256": "5b0626fb936a7684a3a7f8c76e8690b899ecbdbf88fff27f9e41c0ff241bbb1d"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/kernel.py",
-      "sha256": "ad6f9a0d02b84875ef7e59ad4fde46c3cd0889ad78cd0bc8a81b01696b3ca076"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/scaffold.py",
-      "sha256": "20068407a9f06ad0b7f3a8251cc010f6613fa1e02b8e3b8600c179fdb23e4083"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "tests/video_workflow/test_issue4_gate4.py",
-      "sha256": "3ead765b9709e4f431d14c2489adea9772f0ec50fc8ec85cd63622ebcd820f5c"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "tests/video_workflow/test_source_ready_hardening.py",
-      "sha256": "d2042f46cf4ed426070960a13923b14b8177b5ae4968faf3896f941bc719e0e0"
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "19f4531eb745325182fd1263339dcf9d63edc058347f3af2462d127c3e063a92"
     }
   ],
   "unresolved_exceptions": [],

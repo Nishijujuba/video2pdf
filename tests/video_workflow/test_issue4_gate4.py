@@ -103,7 +103,49 @@ class ScaffoldContainmentTests(unittest.TestCase):
 
 
 class RegistryPreparationTests(unittest.TestCase):
-    def test_alternate_registry_validate_uses_the_single_full_preparation_path(self) -> None:
+    def test_alternate_registry_must_be_an_exact_authority_copy(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        from video2pdf_workflow_kernel.errors import ContractError
+
+        canonical = json.loads(
+            (PROJECT_ROOT / "schemas/video-workflow/registry.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        root = PROJECT_ROOT / "待删除" / f"gate6-registry-{uuid.uuid4().hex}"
+        root.mkdir(parents=True, exist_ok=False)
+        exact_path = root / "exact.json"
+        exact_path.write_text(json.dumps(canonical), encoding="utf-8")
+        ContractRegistry(PROJECT_ROOT, exact_path).check()
+
+        mutations = []
+        for field, value in (
+            ("kind", "supporting_schema"),
+            ("schema_id", "https://example.invalid/weaker.json"),
+            ("schema_path", "schemas/video-workflow/v1/common.v1.schema.json"),
+            ("positive_example", None),
+            ("invariants", []),
+        ):
+            mutated = json.loads(json.dumps(canonical))
+            entry = next(
+                item for item in mutated["contracts"]
+                if item["schema_name"] == "scaffold-contract"
+            )
+            if value is None:
+                entry.pop(field)
+            else:
+                entry[field] = value
+            mutations.append(mutated)
+        top_level = json.loads(json.dumps(canonical))
+        top_level["schema_version"] = "1.0.1"
+        mutations.append(top_level)
+        for index, mutated in enumerate(mutations):
+            path = root / f"tampered-{index}.json"
+            path.write_text(json.dumps(mutated), encoding="utf-8")
+            with self.assertRaises(ContractError):
+                ContractRegistry(PROJECT_ROOT, path)
+
+    def test_weaker_alternate_registry_fails_before_schema_preparation(self) -> None:
         from video2pdf_workflow_kernel.contracts import ContractRegistry
         from video2pdf_workflow_kernel.errors import ContractError
 
@@ -127,11 +169,8 @@ class RegistryPreparationTests(unittest.TestCase):
         registry_path = root / "registry.json"
         registry_path.write_text(json.dumps(alternate), encoding="utf-8")
 
-        registry = ContractRegistry(PROJECT_ROOT, registry_path)
-        with mock.patch.object(registry, "_check_locked_runtime", wraps=registry._check_locked_runtime) as locked:
-            with self.assertRaises(ContractError):
-                registry.validate("workflow-result", {})
-            locked.assert_called_once_with()
+        with self.assertRaises(ContractError):
+            ContractRegistry(PROJECT_ROOT, registry_path)
 
 
 class RunStateMutationSagaTests(unittest.TestCase):

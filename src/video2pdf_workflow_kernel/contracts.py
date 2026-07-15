@@ -213,6 +213,10 @@ class ContractRegistry:
         self.registry_path = (registry_path or self.project_root / REGISTRY_RELATIVE_PATH).resolve()
         self._canonical = read_json(self.project_root / REGISTRY_RELATIVE_PATH)
         self._manifest = read_json(self.registry_path)
+        if self._manifest != self._canonical:
+            raise ContractError(
+                "alternate registry authority metadata differs from the canonical registry"
+            )
         self.entries = self._load_entries()
         self.schemas: dict[str, dict[str, Any]] = {}
         self._registry: Registry | None = None
@@ -467,18 +471,17 @@ class ContractRegistry:
             self.schemas[entry.schema_name] = schema
             resources.append((entry.schema_id, Resource.from_contents(schema)))
         self._registry = Registry().with_resources(resources)
-        if self.registry_path == (self.project_root / REGISTRY_RELATIVE_PATH).resolve():
-            registered_paths = {entry.schema_path for entry in self.entries}
-            disk_paths = {
-                path.resolve()
-                for path in (self.project_root / "schemas/video-workflow/v1").glob(
-                    "*.schema.json"
-                )
-            }
-            if registered_paths != disk_paths:
-                missing = sorted(str(path) for path in disk_paths - registered_paths)
-                extra = sorted(str(path) for path in registered_paths - disk_paths)
-                raise ContractError(
-                    f"registry completeness mismatch: missing={missing}, extra={extra}"
-                )
+        registered_paths = {entry.schema_path for entry in self.entries}
+        disk_paths = {
+            path.resolve()
+            for path in (self.project_root / "schemas/video-workflow/v1").glob(
+                "*.schema.json"
+            )
+        }
+        if registered_paths != disk_paths:
+            missing = sorted(str(path) for path in disk_paths - registered_paths)
+            extra = sorted(str(path) for path in registered_paths - disk_paths)
+            raise ContractError(
+                f"registry completeness mismatch: missing={missing}, extra={extra}"
+            )
         return runtime

@@ -178,6 +178,64 @@ class Issue5RepairHarness:
             replacement_run_record=replacement,
         )
 
+    def commit_source_mutation(self):
+        record_path = self.run_dir / "workflow/run.json"
+        record = read_json(record_path)
+        replacement = copy.deepcopy(record)
+        replacement["coordination_revision"] += 1
+        for checkpoint in replacement["checkpoints"].values():
+            checkpoint["status"] = "stale"
+        mutation_id = self.kernel.control_store.derive_run_state_mutation_id(
+            run_id=record["run_id"],
+            expected_run_revision=record["coordination_revision"],
+            old_run_record_sha256=sha256_file(record_path),
+        )
+        if replacement.get("schema_version") == "2.0.0":
+            replacement["last_mutation_intent_id"] = mutation_id
+        mutation = self.kernel.control_store.prepare_run_state_mutation(
+            run_id=record["run_id"],
+            expected_run_revision=record["coordination_revision"],
+            old_run_record_sha256=sha256_file(record_path),
+            replacement_run_record=replacement,
+        )
+        self.assertEqual(
+            write_json_atomic(record_path, replacement),
+            mutation["replacement_run_record_sha256"],
+        )
+        self.kernel.control_store.commit_run_state_mutation(
+            mutation["mutation_id"]
+        )
+        return mutation
+
+    def downgrade_source_mutation_to_real_legacy_v4(self, mutation) -> str:
+        legacy_identity = hashlib.sha256(
+            "\0".join(
+                (
+                    mutation["operation"],
+                    mutation["run_id"],
+                    str(mutation["expected_run_revision"]),
+                    mutation["old_run_record_sha256"],
+                    mutation["predecessor_committed_sha256"],
+                    mutation["replacement_run_record_sha256"],
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute(
+                "DROP TABLE IF EXISTS run_state_mutation_identity_versions"
+            )
+            connection.execute("DROP TABLE task_promotion_identity_versions")
+            connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_attempt_authorities")
+            connection.execute(
+                "UPDATE run_state_mutation_intents SET mutation_id=?, "
+                "mutation_identity=? WHERE mutation_id=?",
+                (legacy_identity, legacy_identity, mutation["mutation_id"]),
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+        return legacy_identity
+
     def downgrade_promotion_to_real_legacy_v4(
         self, prepared, claimed
     ) -> str:
@@ -237,6 +295,9 @@ class Issue5RepairHarness:
         if sha256_file(run_path) == intent["replacement_run_record_sha256"]:
             self.assertEqual(write_json_atomic(run_path, replacement), replacement_sha)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DROP TABLE run_state_mutation_identity_versions"
+            )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
@@ -629,6 +690,17 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
         with self.assertRaises((ArtifactDrift, ContractError)):
             self.complete(prepared, claimed)
 
+    def test_completion_rejects_noncanonical_current_attempt_record(self) -> None:
+        self.initialize("completion-current-attempt-noncanonical")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        record_path = claimed.attempt_dir / "attempt.json"
+        record_path.write_bytes(record_path.read_bytes() + b" ")
+
+        with self.assertRaises(ArtifactDrift):
+            self.complete(prepared, claimed)
+
     def test_reclaimed_attempt_identity_remains_immutable_authority(self) -> None:
         tampered_values = {
             "coordinator_session_id": "tampered-coordinator",
@@ -917,10 +989,166 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         with self.assertRaises(ControlStoreUnavailable):
             VideoWorkflowKernel(self.workspace)
 
+    def test_source_mutation_rows_reject_consistent_replacement_tamper(
+        self,
+    ) -> None:
+        for state in ("PREPARED", "COMMITTED"):
+            with self.subTest(state=state):
+                self.initialize(f"{state.lower()}-source-mutation-tamper")
+                mutation = (
+                    self.prepare_source_mutation()
+                    if state == "PREPARED"
+                    else self.commit_source_mutation()
+                )
+                replacement = json.loads(
+                    mutation["replacement_run_record_json"]
+                )
+                replacement["normalized_title"] = (
+                    "internally_consistent_tamper"
+                )
+                replacement_json = canonical_json_bytes(replacement).decode(
+                    "utf-8"
+                )
+                replacement_sha = hashlib.sha256(
+                    replacement_json.encode("utf-8")
+                ).hexdigest()
+                with sqlite3.connect(
+                    self.kernel.control_store.path
+                ) as connection:
+                    connection.execute(
+                        "UPDATE run_state_mutation_intents SET "
+                        "replacement_run_record_json=?, "
+                        "replacement_run_record_sha256=? WHERE mutation_id=?",
+                        (
+                            replacement_json,
+                            replacement_sha,
+                            mutation["mutation_id"],
+                        ),
+                    )
+
+                checks = {
+                    "health": self.kernel.control_store.check,
+                    "reconciliation": lambda: self.kernel.reconcile_authority(
+                        "kernel_run", mutation["run_id"]
+                    ),
+                }
+                if state == "COMMITTED":
+                    checks["hash-chain"] = (
+                        lambda: self.kernel.control_store.current_run_record_sha(
+                            mutation["run_id"]
+                        )
+                    )
+                for label, check in checks.items():
+                    with self.subTest(state=state, entrypoint=label):
+                        with self.assertRaises(ControlStoreUnavailable):
+                            check()
+
+    def test_v5_source_mutation_identity_table_and_rows_are_mandatory(
+        self,
+    ) -> None:
+        self.initialize("missing-source-mutation-identity-table")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DROP TABLE IF EXISTS run_state_mutation_identity_versions"
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+
+        self.initialize("partial-source-mutation-identity-table")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DROP TABLE run_state_mutation_identity_versions"
+            )
+            connection.execute(
+                "CREATE TABLE run_state_mutation_identity_versions ("
+                "mutation_id TEXT PRIMARY KEY REFERENCES "
+                "run_state_mutation_intents(mutation_id), "
+                "identity_version TEXT NOT NULL CHECK(identity_version IN "
+                "('legacy-v1','evidence-v2')))"
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+
+        self.initialize("missing-source-mutation-identity-row")
+        mutation = self.commit_source_mutation()
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS "
+                "run_state_mutation_identity_versions ("
+                "mutation_id TEXT PRIMARY KEY REFERENCES "
+                "run_state_mutation_intents(mutation_id), "
+                "identity_version TEXT NOT NULL CHECK(identity_version IN "
+                "('legacy-v1','evidence-v2')), "
+                "row_identity TEXT NOT NULL UNIQUE)"
+            )
+            connection.execute(
+                "DELETE FROM run_state_mutation_identity_versions "
+                "WHERE mutation_id=?",
+                (mutation["mutation_id"],),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+
+    def test_real_v4_source_mutation_identity_migrates_or_fails_closed(
+        self,
+    ) -> None:
+        self.initialize("legacy-source-mutation-positive")
+        mutation = self.commit_source_mutation()
+        legacy_id = self.downgrade_source_mutation_to_real_legacy_v4(mutation)
+        migrated = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated.control_store.check().schema_version, 5)
+        with sqlite3.connect(migrated.control_store.path) as connection:
+            version_row = connection.execute(
+                "SELECT identity_version, row_identity FROM "
+                "run_state_mutation_identity_versions WHERE mutation_id=?",
+                (legacy_id,),
+            ).fetchone()
+        self.assertEqual(version_row, ("legacy-v1", legacy_id))
+
+        self.initialize("legacy-source-mutation-negative")
+        mutation = self.commit_source_mutation()
+        legacy_id = self.downgrade_source_mutation_to_real_legacy_v4(mutation)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            row = connection.execute(
+                "SELECT replacement_run_record_json FROM "
+                "run_state_mutation_intents WHERE mutation_id=?",
+                (legacy_id,),
+            ).fetchone()
+            replacement = json.loads(row[0])
+            replacement["normalized_title"] = "legacy_tamper"
+            replacement_json = canonical_json_bytes(replacement).decode("utf-8")
+            replacement_sha = hashlib.sha256(
+                replacement_json.encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "UPDATE run_state_mutation_intents SET "
+                "replacement_run_record_json=?, "
+                "replacement_run_record_sha256=? WHERE mutation_id=?",
+                (replacement_json, replacement_sha, legacy_id),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND "
+                    "name='run_state_mutation_identity_versions'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                4,
+            )
+
     def test_real_v3_and_v4_stores_migrate_atomically_to_v5(self) -> None:
         self.initialize("v3-upgrade")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute(
+                "DROP TABLE run_state_mutation_identity_versions"
+            )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
@@ -986,6 +1214,9 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
     def test_v4_completion_backfill_tamper_rolls_back(self) -> None:
         prepared, claimed = self.ready("v4-backfill-tamper")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DROP TABLE run_state_mutation_identity_versions"
+            )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
@@ -1014,6 +1245,9 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         prepared = self.prepare()
         claimed = self.claim(prepared)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "DROP TABLE run_state_mutation_identity_versions"
+            )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
@@ -1036,6 +1270,66 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 ).fetchone()[0],
                 4,
             )
+
+    def test_v4_historical_attempt_identity_cannot_be_backfilled_from_disk(
+        self,
+    ) -> None:
+        tampered_values = {
+            "coordinator_session_id": "forged-historical-coordinator",
+            "worker_id": "forged-historical-worker",
+            "claimed_at": "2026-07-15T23:59:59+00:00",
+        }
+        for field, value in tampered_values.items():
+            with self.subTest(field=field):
+                self.initialize(f"v4-historical-attempt-{field}")
+                prepared = self.prepare()
+                first = self.claim(prepared)
+                self.kernel.reclaim_task(
+                    self.run_dir,
+                    task_id=prepared.task_id,
+                    expected_attempt_id=first.attempt_id,
+                    expected_claim_generation=first.claim_generation,
+                    coordinator_session_id="replacement-coordinator",
+                    worker_id="replacement-worker",
+                    reason="replace first generation before migration",
+                )
+                with sqlite3.connect(
+                    self.kernel.control_store.path
+                ) as connection:
+                    connection.execute(
+                        "DROP TABLE run_state_mutation_identity_versions"
+                    )
+                    connection.execute(
+                        "DROP TABLE task_promotion_identity_versions"
+                    )
+                    connection.execute("DROP TABLE task_completion_authorities")
+                    connection.execute("DROP TABLE task_attempt_authorities")
+                    connection.execute(
+                        "DELETE FROM schema_migrations WHERE version=5"
+                    )
+                record_path = first.attempt_dir / "attempt.json"
+                record = read_json(record_path)
+                record[field] = value
+                write_json_atomic(record_path, record)
+
+                with self.assertRaises(ControlStoreUnavailable):
+                    VideoWorkflowKernel(self.workspace)
+                with sqlite3.connect(
+                    self.kernel.control_store.path
+                ) as connection:
+                    self.assertIsNone(
+                        connection.execute(
+                            "SELECT name FROM sqlite_master WHERE "
+                            "type='table' AND "
+                            "name='task_attempt_authorities'"
+                        ).fetchone()
+                    )
+                    self.assertEqual(
+                        connection.execute(
+                            "SELECT MAX(version) FROM schema_migrations"
+                        ).fetchone()[0],
+                        4,
+                    )
 
     def test_legacy_v4_nonterminal_promotion_is_blocked(self) -> None:
         prepared, claimed = self.ready("legacy-v4-prepared")

@@ -355,6 +355,9 @@ class PersistenceHardeningTests(unittest.TestCase):
                     connection.execute(
                         f"ALTER TABLE initialization_intents DROP COLUMN {column}"
                     )
+                connection.execute(
+                    "DROP TABLE run_state_mutation_identity_versions"
+                )
                 connection.execute("DROP TABLE task_promotion_identity_versions")
                 connection.execute("DROP TABLE task_completion_authorities")
                 connection.execute("DROP TABLE task_attempt_authorities")

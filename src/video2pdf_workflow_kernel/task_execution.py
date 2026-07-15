@@ -1004,22 +1004,12 @@ class TaskExecution:
             task_id=task_id,
             current_attempt_id=attempt_id,
         )
-        attempt_record = read_json(attempt_dir / "attempt.json")
-        self.contracts.validate("task-attempt", attempt_record)
-        expected_attempt = {
-            "task_id": task_id,
-            "attempt_id": attempt_id,
-            "claim_generation": claim_generation,
-            "task_envelope_sha256": claim["envelope_sha256"],
-            "attempt_path": claim["attempt_path"],
-            "coordinator_session_id": claim["coordinator_session_id"],
-            "worker_id": claim["worker_id"],
-            "claimed_at": claim["updated_at"],
-            "state": "claimed",
-        }
-        for key, value in expected_attempt.items():
-            if attempt_record[key] != value:
-                raise ArtifactDrift("Task Attempt record disagrees with its Claim")
+        self._verify_attempt_record(
+            attempt_dir,
+            envelope=envelope,
+            attempt=claim,
+            current_claim=claim,
+        )
         self._verify_protected_run_snapshot(run_dir, envelope)
         output_spec = envelope["required_outputs"][0]
         patch_path = attempt_dir / output_spec["attempt_relative_path"]

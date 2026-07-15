@@ -99,7 +99,7 @@ class ContractsCliTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 20)
         self.assertEqual(envelope["status"], "error")
-        self.assertEqual(envelope["classification"], "unknown_contract_version")
+        self.assertEqual(envelope["classification"], "contract_invalid")
 
     def test_contracts_check_rejects_unresolved_or_remote_reference(self) -> None:
         root = new_test_root("bad-schema-ref")
@@ -126,7 +126,7 @@ class ContractsCliTests(unittest.TestCase):
         )
 
         self.assertEqual(completed.returncode, 20)
-        self.assertEqual(envelope["classification"], "unresolved_schema_reference")
+        self.assertEqual(envelope["classification"], "contract_invalid")
 
     def test_registered_schema_examples_are_positive_and_negative(self) -> None:
         registry = json.loads(

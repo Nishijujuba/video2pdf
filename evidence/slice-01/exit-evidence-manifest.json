@@ -7,7 +7,7 @@
     "number": 1,
     "name": "offline-source-ready-tracer"
   },
-  "implementation_commit": "792bec96818fadfa5bb37f55f06413fe1cfba224",
+  "implementation_commit": "5ec3ba367053a00aeb36934bea48227344ee89d5",
   "evidence_paths": [
     "evidence/slice-01/exit-evidence-manifest.json",
     "evidence/slice-01/logs/slice0-regression.log",
@@ -18,7 +18,7 @@
     "evidence/slice-01/logs/slice1-syntax.log",
     "evidence/slice-01/logs/slice1-diff-check.log"
   ],
-  "generated_at": "2026-07-15T02:23:58Z",
+  "generated_at": "2026-07-15T02:56:01Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -42,7 +42,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-regression.log",
-        "sha256": "fe451205308fcd396cbbad238e07c4a12558a991798369c071fe9d1d60056caf"
+        "sha256": "d11bf3c3d646fb467cfece10adf68b8708c45a6239274b36420ccbeb6267e23a"
       },
       "conforms": true
     },
@@ -61,7 +61,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-contracts.log",
-        "sha256": "a98524782f65dc7bade7ed3acdba8f3bac071ba7913126cebc9331e544719883"
+        "sha256": "cc3ebcd1e2010346c9d43cd99a3fcfe42fc57182b3a45dafd168968d6817b49c"
       },
       "conforms": true
     },
@@ -81,7 +81,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-public-deep-tests.log",
-        "sha256": "2da3ea29cc970130c55df23f9eb3cf22692fde64b03e0276fdcf9a775d3afd4c"
+        "sha256": "54bacb2b2e6b3d1f4ac862ab4dabdb0b28bbcb414ac1c6b804110fd5558b35bb"
       },
       "conforms": true
     },
@@ -101,7 +101,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-review-hardening-tests.log",
-        "sha256": "6e5d09511384370ed759714579bae4136cfe30d27814910d41e2d4dd22413aee"
+        "sha256": "af0c6e96ba65b5f526085e7433211ddb263c34c765a7961e2e9882e28b3f1eb1"
       },
       "conforms": true
     },
@@ -120,7 +120,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-exit-evidence.log",
-        "sha256": "074bcbeb1db9fc7132c9e5189be298f9c7054922316d916624b717ae3d7cf2d7"
+        "sha256": "3cdbaddd55e46af842520b2e36535ca647d40e68cefb3c2f2e855811a57ed9a4"
       },
       "conforms": true
     },
@@ -139,7 +139,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-syntax.log",
-        "sha256": "f2369a8d2fd5de22ba25e10e415ab37714095d46f407557f476fa940273dfc78"
+        "sha256": "4c9e2b6d4039c3d8051de5747ba04a42ec8f2326f37d13b43a3b49a324dbe9f7"
       },
       "conforms": true
     },
@@ -157,7 +157,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-diff-check.log",
-        "sha256": "cfe57a1826b1ef3a17769883ecd7de5dbba6e5e0a79974587b293bde769fca74"
+        "sha256": "c9dbdb58f7ead4f486c67ff284e2021d718e906b7496cfad6085c42f4083ceeb"
       },
       "conforms": true
     }
@@ -200,6 +200,7 @@
       "registry_exact_canonical_set_and_locked_runtime_validated",
       "bootstrap_initialization_verified_import_source_ready",
       "artifact_plan_exact_six_bindings_generated",
+      "artifact_plan_builder_and_invariant_share_one_immutable_binding_source",
       "fixture_schema_invariant_and_runtime_containment_validated",
       "run_record_canonical_absolute_output_path_validated",
       "utf16_239_and_240_pass",
@@ -208,6 +209,9 @@
       "bootstrap_probe_schema_and_canonical_identity_exact_binding",
       "control_store_external_anchor_marker_database_identity_validated",
       "control_store_lock_and_same_volume_atomic_replace_probes_pass",
+      "initialization_intent_binds_expected_run_and_source_identity_before_publication",
+      "control_store_v1_intent_schema_migrates_safely_to_v2",
+      "workflow_entries_run_full_control_store_preflight_before_queries",
       "registered_path_fingerprint_and_freshness_invariants",
       "locked_runtime_import_failure_returns_machine_envelope"
     ],
@@ -224,7 +228,10 @@
       "unknown_control_store_migration_blocks_startup",
       "full_or_partial_control_store_loss_never_auto_recreated",
       "control_store_external_anchor_tamper_blocks_startup",
-      "published_or_committed_canonical_state_loss_blocks_retry"
+      "published_or_committed_canonical_state_loss_blocks_retry",
+      "published_prepared_run_identity_tamper_blocks_recovery",
+      "committed_coordinated_source_manifest_run_rewrite_becomes_stale",
+      "live_anchor_or_store_displacement_returns_control_store_unavailable"
     ],
     "recovery": [
       "every_initialization_persistence_boundary_converges_old_or_new_complete",
@@ -236,13 +243,48 @@
   "artifact_fingerprints": [
     {
       "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/run-record.v1.schema.json",
+      "sha256": "c14de2347b9b99286d4728c1a577fe7d40bdba8199db522d67b8b6269d720c32"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "scripts/collect_slice1_exit_evidence.py",
-      "sha256": "97a37c7d3d7d7a56c190547d1a00ce6c8ae5f9039d950c9eabb997abcfb04a43"
+      "sha256": "521dd49ef4c9221529d6ba31aaa01cce872f8b86ac63009ee7ff256fb59b055f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/artifact_plan.py",
+      "sha256": "7b6849f98ddb3baa3d5503f99ca6b51c32349ceb5c1a1b5ddc15d0c8ca8c09da"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/contracts.py",
+      "sha256": "147d378e372b2b12a7606195f78d475b1f7e52b87172b42e4329662dfccd006c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/control_store.py",
+      "sha256": "ac34b1d516d971b4c3b3724336db0cce33061517b7422722e87a8e0af1aa00b3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "55aa5197d0c23b104b57ea3e08f4b0f6a571b8fbe902c849ffd2c17d1033a672"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/run-record.valid.json",
+      "sha256": "ff1fd4855bbd2f984bc2e48154a09653df2c4c4006d667ea69eb2e99ce2eb9fe"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_source_ready_hardening.py",
-      "sha256": "355c65ad0f0b11320eb77319cec2eb974a8a8322578b326f519a62725e179c3a"
+      "sha256": "9a375a17a88aaf0c735156c3111d4f55c0e419f68581471624d5227d4330965d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "53d58132f98b99c7396d9ae53db4608962a459687e5fea950aee7c541872070e"
     }
   ],
   "unresolved_exceptions": [],

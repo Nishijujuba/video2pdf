@@ -35,6 +35,10 @@ COMMANDS = (
         [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_source_ready_hardening"],
     ),
     (
+        "slice1-gate4-saga-containment-tests",
+        [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_issue4_gate4"],
+    ),
+    (
         "slice0-exit-evidence",
         [sys.executable, "-X", "utf8", "-B", "scripts/validate_exit_evidence_manifest.py", "evidence/slice-00/exit-evidence-manifest.json"],
     ),
@@ -234,9 +238,12 @@ def main() -> int:
                 "control_store_external_anchor_marker_database_identity_validated",
                 "control_store_lock_and_same_volume_atomic_replace_probes_pass",
                 "initialization_intent_binds_expected_run_and_source_identity_before_publication",
-                "control_store_v1_intent_schema_migrates_safely_to_v2",
+                "control_store_v1_intent_schema_migrates_safely_to_v3",
                 "workflow_entries_run_full_control_store_preflight_before_queries",
                 "registered_path_fingerprint_and_freshness_invariants",
+                "scaffold_contract_and_runtime_root_containment_validated",
+                "contract_registry_single_locked_preparation_path_validated",
+                "source_drift_run_state_mutation_saga_committed",
                 "locked_runtime_import_failure_returns_machine_envelope",
             ],
             "negative": [
@@ -255,6 +262,7 @@ def main() -> int:
                 "published_or_committed_canonical_state_loss_blocks_retry",
                 "published_prepared_run_identity_tamper_blocks_recovery",
                 "committed_coordinated_source_manifest_run_rewrite_becomes_stale",
+                "schema_valid_scaffold_parent_escape_rejected_before_creation",
                 "live_anchor_or_store_displacement_returns_control_store_unavailable",
             ],
             "recovery": [
@@ -262,6 +270,8 @@ def main() -> int:
                 "public_reconcile_run_completes_published_initialization",
                 "prepublication_abort_can_retry_to_source_ready",
                 "initialization_intent_transitions_use_compare_and_swap",
+                "source_drift_mutation_faults_converge_to_committed_stale_state",
+                "run_record_current_hash_is_proven_by_committed_mutation_chain",
             ],
         },
         "artifact_fingerprints": implementation_artifacts(implementation_commit),

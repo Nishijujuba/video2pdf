@@ -31,8 +31,15 @@ from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atom
 CLAIM_FAULT_POINTS = frozenset(
     {"after_claim_committed", "after_attempt_record_written"}
 )
+RECLAIM_FAULT_POINTS = frozenset(
+    {"after_reclaim_committed", "after_reclaim_attempt_record_written"}
+)
 COMPLETION_FAULT_POINTS = frozenset(
-    {"after_completion_record_written", "after_completion_state_commit"}
+    {
+        "after_completion_prepared",
+        "after_completion_record_written",
+        "after_completion_state_commit",
+    }
 )
 PROMOTION_FAULT_POINTS = frozenset(
     {
@@ -88,6 +95,12 @@ class TaskExecution:
         self.contracts: ContractRegistry = kernel.contracts
 
     @staticmethod
+    def _snapshot_directory_sha(relative: str) -> str:
+        return hashlib.sha256(
+            b"video-workflow-protected-directory-v1\0" + relative.encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
     def _safe_run_path(run_dir: Path, relative: str, *, prefix: str | None = None) -> Path:
         _validate_project_relative_path(relative, prefix=prefix)
         root = run_dir.resolve()
@@ -116,6 +129,223 @@ class TaskExecution:
         if Path(record["output_path"]).resolve() != run_dir:
             raise KernelConflict("Task authority Run Record path binding disagrees")
         return record, path, sha256_file(path)
+
+    def _protected_run_snapshot(
+        self, run_dir: Path, *, task_root_path: str
+    ) -> list[dict[str, str]]:
+        root = run_dir.resolve()
+        dynamic_kernel_namespaces = ("workflow/tasks",)
+        snapshot: list[dict[str, str]] = []
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            for entry in os.scandir(directory):
+                path = Path(entry.path)
+                relative = path.relative_to(root).as_posix()
+                info = entry.stat(follow_symlinks=False)
+                if entry.is_symlink() or (
+                    getattr(info, "st_file_attributes", 0)
+                    & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    raise ContractError(
+                        f"protected Run boundary contains a link or reparse point: {relative}"
+                    )
+                if any(
+                    relative == prefix or relative.startswith(f"{prefix}/")
+                    for prefix in dynamic_kernel_namespaces
+                ):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    snapshot.append(
+                        {
+                            "path": relative,
+                            "sha256": self._snapshot_directory_sha(relative),
+                        }
+                    )
+                    pending.append(path)
+                elif entry.is_file(follow_symlinks=False):
+                    snapshot.append({"path": relative, "sha256": sha256_file(path)})
+                else:
+                    raise ContractError(
+                        f"protected Run boundary contains an unsupported entry: {relative}"
+                    )
+        return sorted(snapshot, key=lambda item: item["path"])
+
+    def _verify_protected_run_snapshot(
+        self,
+        run_dir: Path,
+        envelope: dict[str, Any],
+        *,
+        allowed_replacements: dict[str, tuple[str | None, str]] | None = None,
+    ) -> None:
+        actual = self._protected_run_snapshot(
+            run_dir, task_root_path=envelope["task_root_path"]
+        )
+        expected = {
+            item["path"]: item["sha256"]
+            for item in envelope["protected_run_snapshot"]
+        }
+        observed = {item["path"]: item["sha256"] for item in actual}
+        for path, (prior_sha, new_sha) in (allowed_replacements or {}).items():
+            expected_prior = expected.get(path)
+            actual_sha = observed.get(path)
+            if expected_prior == prior_sha and actual_sha in {prior_sha, new_sha}:
+                if actual_sha is None:
+                    expected.pop(path, None)
+                else:
+                    expected[path] = actual_sha
+        if observed != expected:
+            protected_outputs = set(envelope["write_set"])
+            output_violations = sorted(
+                path
+                for path in protected_outputs
+                if observed.get(path) != expected.get(path)
+            )
+            if output_violations:
+                raise ArtifactDrift(
+                    "Worker wrote a canonical output before promotion",
+                    data={"drifted_paths": output_violations},
+                )
+            raise ContractError(
+                "Run-wide worker write boundary differs from the Task Envelope snapshot",
+                data={
+                    "unexpected_paths": sorted(set(observed) - set(expected)),
+                    "missing_paths": sorted(set(expected) - set(observed)),
+                    "changed_paths": sorted(
+                        path
+                        for path in set(expected) & set(observed)
+                        if expected[path] != observed[path]
+                    ),
+                },
+            )
+
+    def _verify_task_root_inventory(
+        self,
+        run_dir: Path,
+        *,
+        run_id: str,
+        task_id: str,
+        current_attempt_id: str,
+    ) -> None:
+        store = self.kernel._preflight_control_store()
+        namespace = run_dir / "workflow/tasks"
+        durable_task_ids = store.task_ids_for_authority(run_id)
+        observed_task_ids: set[str] = set()
+        for entry in os.scandir(namespace):
+            info = entry.stat(follow_symlinks=False)
+            if (
+                entry.is_symlink()
+                or not entry.is_dir(follow_symlinks=False)
+                or getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise ContractError(
+                    f"Task namespace contains an invalid entry: {entry.name}"
+                )
+            observed_task_ids.add(entry.name)
+        if observed_task_ids != durable_task_ids:
+            raise ContractError(
+                "Task namespace differs from durable Claim authority",
+                data={
+                    "unexpected_task_roots": sorted(
+                        observed_task_ids - durable_task_ids
+                    ),
+                    "missing_task_roots": sorted(
+                        durable_task_ids - observed_task_ids
+                    ),
+                },
+            )
+        for durable_task_id in sorted(durable_task_ids):
+            task_dir = namespace / durable_task_id
+            self._verify_one_task_root(
+                task_dir,
+                run_id=run_id,
+                task_id=durable_task_id,
+                current_attempt_id=(
+                    current_attempt_id if durable_task_id == task_id else None
+                ),
+            )
+
+    def _verify_one_task_root(
+        self,
+        task_dir: Path,
+        *,
+        run_id: str,
+        task_id: str,
+        current_attempt_id: str | None,
+    ) -> None:
+        expected_root_files = {"task.json", "prompt.md"}
+        expected_root_dirs = {"attempts"}
+        actual_root_files: set[str] = set()
+        actual_root_dirs: set[str] = set()
+        for entry in os.scandir(task_dir):
+            info = entry.stat(follow_symlinks=False)
+            if entry.is_symlink() or (
+                getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise ContractError(
+                    f"Task root contains a link or reparse point: {entry.name}"
+                )
+            if entry.is_dir(follow_symlinks=False):
+                actual_root_dirs.add(entry.name)
+            elif entry.is_file(follow_symlinks=False):
+                actual_root_files.add(entry.name)
+            else:
+                raise ContractError(
+                    f"Task root contains an unsupported entry: {entry.name}"
+                )
+        if (
+            actual_root_files != expected_root_files
+            or actual_root_dirs != expected_root_dirs
+        ):
+            raise ContractError("Task root inventory contains undeclared entries")
+        envelope_path = task_dir / "task.json"
+        prompt_path = task_dir / "prompt.md"
+        envelope = read_json(envelope_path)
+        self.contracts.validate("subagent-task-envelope", envelope)
+        prompt, provenance = generate_source_acquisition_prompt(self.project_root)
+        claim = self.kernel._preflight_control_store().task_claim_for_task(task_id)
+        if (
+            claim is None
+            or claim["authority_id"] != run_id
+            or claim["envelope_sha256"] != sha256_file(envelope_path)
+            or envelope["task_id"] != task_id
+            or envelope["task_root_path"] != f"workflow/tasks/{task_id}"
+            or envelope["authority_binding"]["run_id"] != run_id
+            or envelope["generated_prompt"]
+            != {"path": f"workflow/tasks/{task_id}/prompt.md", **provenance}
+            or prompt_path.read_bytes() != prompt
+        ):
+            raise ArtifactDrift(
+                "Task namespace Envelope or Generated Prompt authority drifted"
+            )
+        attempts_root = task_dir / "attempts"
+        known_attempts = {
+            str(row["attempt_id"])
+            for row in self.kernel._preflight_control_store().task_attempts_for_task(
+                task_id
+            )
+        }
+        if current_attempt_id is not None and current_attempt_id not in known_attempts:
+            raise ControlStoreUnavailable("current Task Attempt lacks durable authority")
+        observed_attempts: set[str] = set()
+        for entry in os.scandir(attempts_root):
+            info = entry.stat(follow_symlinks=False)
+            if (
+                entry.is_symlink()
+                or not entry.is_dir(follow_symlinks=False)
+                or getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise ContractError(
+                    f"Task attempts namespace contains an invalid entry: {entry.name}"
+                )
+            observed_attempts.add(entry.name)
+        if observed_attempts != known_attempts:
+            raise ContractError(
+                "Task attempts namespace differs from durable Attempt authority"
+            )
 
     def _build_envelope(
         self,
@@ -188,6 +418,9 @@ class TaskExecution:
                 }
             ],
             "allowed_read_paths": allowed_read_paths,
+            "protected_run_snapshot": self._protected_run_snapshot(
+                run_dir, task_root_path=task_root
+            ),
             "write_set": ["workflow/source-acquisition-judgment-patch.json"],
             "required_outputs": [
                 {
@@ -226,6 +459,8 @@ class TaskExecution:
         record, _, _ = self._run_record(run_dir)
         if store.active_task_promotion(record["run_id"]) is not None:
             raise KernelConflict("Task preparation is blocked by a non-terminal promotion")
+        (run_dir / "待删除/task-preparations").mkdir(parents=True, exist_ok=True)
+        (run_dir / "待删除/task-attempts").mkdir(parents=True, exist_ok=True)
         envelope, prompt = self._build_envelope(
             run_dir,
             record,
@@ -244,7 +479,6 @@ class TaskExecution:
             staging = (
                 run_dir
                 / "待删除/task-preparations"
-                / task_id
                 / uuid.uuid4().hex
             )
             staging.mkdir(parents=True, exist_ok=False)
@@ -288,7 +522,11 @@ class TaskExecution:
             raise ArtifactDrift("Generated Task Prompt fingerprint drifted")
 
     def _load_current_task(
-        self, run_dir: Path, task_id: str
+        self,
+        run_dir: Path,
+        task_id: str,
+        *,
+        use_persisted_protected_snapshot: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], Path, Path]:
         _validate_project_relative_path(f"workflow/tasks/{task_id}", prefix="workflow")
         record, run_path, _ = self._run_record(run_dir)
@@ -308,6 +546,13 @@ class TaskExecution:
             logical_task_key=envelope["logical_task_key"],
             prepared_at=envelope["prepared_at"],
         )
+        if use_persisted_protected_snapshot:
+            # Once a Claim durably binds the Envelope fingerprint, the prepared
+            # snapshot is the immutable write-boundary authority. Rebuilding it
+            # from the live Run here would turn an undeclared worker write into
+            # an apparent Envelope drift before the boundary comparison can
+            # identify the actual violation.
+            expected["protected_run_snapshot"] = envelope["protected_run_snapshot"]
         self._verify_task_files(run_dir, expected, prompt)
         return envelope, record, task_dir, run_path
 
@@ -318,6 +563,7 @@ class TaskExecution:
         claim: Any,
         *,
         fault_point: str | None,
+        after_write_fault_point: str,
     ) -> TaskClaimResult:
         task_id = envelope["task_id"]
         attempt_id = str(claim["attempt_id"])
@@ -346,13 +592,13 @@ class TaskExecution:
                 raise ArtifactDrift("Task Attempt record drifted")
         else:
             staging = (
-                run_dir / "待删除/task-attempts" / task_id / uuid.uuid4().hex
+                run_dir / "待删除/task-attempts" / uuid.uuid4().hex
             )
             staging.mkdir(parents=True, exist_ok=False)
             write_json_atomic(staging / "attempt.json", attempt_record)
             attempt_dir.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging, attempt_dir)
-        _inject(fault_point, "after_attempt_record_written")
+        _inject(fault_point, after_write_fault_point)
         return TaskClaimResult(
             run_id=envelope["authority_binding"]["run_id"],
             run_dir=run_dir,
@@ -394,7 +640,11 @@ class TaskExecution:
         )
         _inject(fault_point, "after_claim_committed")
         return self._create_attempt_record(
-            run_dir, envelope, claim, fault_point=fault_point
+            run_dir,
+            envelope,
+            claim,
+            fault_point=fault_point,
+            after_write_fault_point="after_attempt_record_written",
         )
 
     def reclaim_task(
@@ -409,7 +659,7 @@ class TaskExecution:
         reason: str,
         fault_point: str | None = None,
     ) -> TaskClaimResult:
-        if fault_point is not None and fault_point not in CLAIM_FAULT_POINTS:
+        if fault_point is not None and fault_point not in RECLAIM_FAULT_POINTS:
             raise ContractError(f"unknown Task reclaim fault point: {fault_point}")
         run_dir = run_dir.resolve()
         self.kernel._verify_current_source(run_dir)
@@ -430,9 +680,13 @@ class TaskExecution:
             reason=reason,
             reclaimed_at=_utc_now(),
         )
-        _inject(fault_point, "after_claim_committed")
+        _inject(fault_point, "after_reclaim_committed")
         return self._create_attempt_record(
-            run_dir, envelope, claim, fault_point=fault_point
+            run_dir,
+            envelope,
+            claim,
+            fault_point=fault_point,
+            after_write_fault_point="after_reclaim_attempt_record_written",
         )
 
     def _attempt_inventory(
@@ -481,10 +735,14 @@ class TaskExecution:
         task_id: str,
         attempt_id: str,
         claim_generation: int,
-        completion_allowed: bool,
+        validation_time: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Path, dict[str, Any]]:
         self.kernel._verify_current_source(run_dir)
-        envelope, record, task_dir, run_path = self._load_current_task(run_dir, task_id)
+        envelope, record, task_dir, run_path = self._load_current_task(
+            run_dir,
+            task_id,
+            use_persisted_protected_snapshot=True,
+        )
         store = self.kernel._preflight_control_store()
         claim = store.task_claim_for_attempt(task_id, attempt_id)
         if (
@@ -520,7 +778,30 @@ class TaskExecution:
             f"workflow/tasks/{task_id}/attempts/{attempt_id}",
             prefix="workflow",
         )
-        self._attempt_inventory(attempt_dir, completion_allowed=completion_allowed)
+        completion_path = attempt_dir / "completion.json"
+        prepared_completion_json = claim["completion_record_json"]
+        if (
+            claim["attempt_state"] == "CLAIMED"
+            and completion_path.exists()
+            and prepared_completion_json is None
+        ):
+            raise ArtifactDrift("Worker prewrote Kernel-owned Completion evidence")
+        if (
+            claim["attempt_state"] == "VALIDATED_WAITING_FOR_PROMOTION"
+            and prepared_completion_json is None
+        ):
+            raise ControlStoreUnavailable(
+                "validated Task Attempt lacks prepared Completion authority"
+            )
+        self._attempt_inventory(
+            attempt_dir, completion_allowed=completion_path.exists()
+        )
+        self._verify_task_root_inventory(
+            run_dir,
+            run_id=record["run_id"],
+            task_id=task_id,
+            current_attempt_id=attempt_id,
+        )
         attempt_record = read_json(attempt_dir / "attempt.json")
         self.contracts.validate("task-attempt", attempt_record)
         expected_attempt = {
@@ -537,6 +818,7 @@ class TaskExecution:
         for key, value in expected_attempt.items():
             if attempt_record[key] != value:
                 raise ArtifactDrift("Task Attempt record disagrees with its Claim")
+        self._verify_protected_run_snapshot(run_dir, envelope)
         output_spec = envelope["required_outputs"][0]
         patch_path = attempt_dir / output_spec["attempt_relative_path"]
         if _is_link_or_reparse(patch_path) or not patch_path.is_file():
@@ -577,6 +859,32 @@ class TaskExecution:
                 "canonical prior Artifact Generation drifted",
                 data={"drifted_paths": [output_spec["canonical_path"]]},
             )
+        if prepared_completion_json is None:
+            if validation_time is None:
+                raise ControlStoreUnavailable(
+                    "new Task Completion requires a trusted validation event time"
+                )
+            validated_at = validation_time
+        else:
+            try:
+                prepared_completion = json.loads(str(prepared_completion_json))
+            except json.JSONDecodeError as exc:
+                raise ControlStoreUnavailable(
+                    "prepared Task Completion JSON is invalid"
+                ) from exc
+            self.contracts.validate("task-completion-record", prepared_completion)
+            if (
+                canonical_json_bytes(prepared_completion).decode("utf-8")
+                != prepared_completion_json
+                or hashlib.sha256(
+                    str(prepared_completion_json).encode("utf-8")
+                ).hexdigest()
+                != claim["completion_sha256"]
+            ):
+                raise ControlStoreUnavailable(
+                    "prepared Task Completion authority is not canonical"
+                )
+            validated_at = prepared_completion["validated_at"]
         completion = {
             "schema_name": "task-completion-record",
             "schema_version": "1.0.0",
@@ -603,9 +911,14 @@ class TaskExecution:
                 }
             ],
             "gate_status": "pass",
-            "validated_at": envelope["prepared_at"],
+            "validated_at": validated_at,
         }
         self.contracts.validate("task-completion-record", completion)
+        if prepared_completion_json is not None and prepared_completion != completion:
+            raise ArtifactDrift("prepared Task Completion bindings drifted")
+        if completion_path.exists():
+            if _is_link_or_reparse(completion_path) or read_json(completion_path) != completion:
+                raise ArtifactDrift("Task Completion evidence drifted")
         return envelope, record, completion, attempt_dir, patch
 
     def complete_task(
@@ -625,9 +938,16 @@ class TaskExecution:
             task_id=task_id,
             attempt_id=attempt_id,
             claim_generation=claim_generation,
-            completion_allowed=True,
+            validation_time=_utc_now(),
         )
         completion_path = attempt_dir / "completion.json"
+        self.kernel._preflight_control_store().prepare_task_completion(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            claim_generation=claim_generation,
+            completion_record=completion,
+        )
+        _inject(fault_point, "after_completion_prepared")
         if completion_path.exists():
             if _is_link_or_reparse(completion_path) or read_json(completion_path) != completion:
                 raise ArtifactDrift("Task Completion evidence drifted")
@@ -651,26 +971,6 @@ class TaskExecution:
             completion_path=completion_path,
         )
 
-    @staticmethod
-    def _intent_id(
-        *,
-        run_id: str,
-        task_id: str,
-        attempt_id: str,
-        claim_generation: int,
-        expected_revision: int,
-        old_run_sha: str,
-        output_sha: str,
-    ) -> str:
-        return hashlib.sha256(
-            "\0".join(
-                (
-                    "task_artifact_promotion", run_id, task_id, attempt_id,
-                    str(claim_generation), str(expected_revision), old_run_sha, output_sha,
-                )
-            ).encode("utf-8")
-        ).hexdigest()
-
     def _replacement_run_record(
         self,
         record: dict[str, Any],
@@ -679,6 +979,7 @@ class TaskExecution:
         attempt_id: str,
         intent_id: str,
         output_sha: str,
+        committed_at: str,
     ) -> dict[str, Any]:
         replacement = copy.deepcopy(record)
         previous = replacement["artifact_generations"].get(
@@ -696,7 +997,7 @@ class TaskExecution:
             "generation": generation,
             "sha256": output_sha,
             "producer": f"task:{envelope['task_id']}/{attempt_id}",
-            "committed_at": envelope["prepared_at"],
+            "committed_at": committed_at,
         }
         replacement["checkpoint_dependencies"] = {
             "source_acquisition_decision_ready": ["source_ready"]
@@ -761,6 +1062,166 @@ class TaskExecution:
         self.contracts.validate("task-promotion-journal", journal)
         return journal
 
+    def _authenticate_promotion_evidence(
+        self,
+        run_dir: Path,
+        intent: Any,
+        outputs: list[dict[str, Any]],
+        *,
+        verify_run_boundary: bool,
+        allow_published_outputs: bool = False,
+        allow_replacement_run_record: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any], Path, dict[str, bytes]]:
+        store = self.kernel._preflight_control_store()
+        claim = store.task_claim_for_attempt(
+            str(intent["task_id"]), str(intent["attempt_id"])
+        )
+        if claim is None or claim["authority_id"] != intent["run_id"]:
+            raise ControlStoreUnavailable(
+                "Task promotion evidence lacks its Claim authority"
+            )
+        expected_claim_state = "TERMINAL" if intent["state"] == "COMMITTED" else "ACTIVE"
+        expected_attempt_state = (
+            "COMMITTED_COMPLETE"
+            if intent["state"] == "COMMITTED"
+            else "VALIDATED_WAITING_FOR_PROMOTION"
+        )
+        if (
+            claim["state"] != expected_claim_state
+            or claim["attempt_state"] != expected_attempt_state
+            or int(claim["claim_generation"]) != int(intent["claim_generation"])
+        ):
+            raise KernelConflict("Task promotion Claim/Attempt lifecycle binding drifted")
+        task_root = f"workflow/tasks/{intent['task_id']}"
+        task_dir = self._safe_run_path(run_dir, task_root, prefix="workflow")
+        envelope_path = task_dir / "task.json"
+        prompt_path = task_dir / "prompt.md"
+        if (
+            _is_link_or_reparse(envelope_path)
+            or _is_link_or_reparse(prompt_path)
+            or not envelope_path.is_file()
+            or not prompt_path.is_file()
+        ):
+            raise ArtifactDrift("Task promotion Envelope or Prompt is absent or linked")
+        envelope = read_json(envelope_path)
+        self.contracts.validate("subagent-task-envelope", envelope)
+        identity_version = store.task_promotion_identity_version(
+            str(intent["intent_id"])
+        )
+        if (
+            envelope["task_id"] != intent["task_id"]
+            or envelope["authority_binding"]["run_id"] != intent["run_id"]
+            or sha256_file(envelope_path) != claim["envelope_sha256"]
+        ):
+            raise ArtifactDrift(
+                "Task promotion immutable Envelope or Generated Prompt drifted"
+            )
+        if identity_version == "evidence-v2":
+            prompt_bytes, provenance = generate_source_acquisition_prompt(
+                self.project_root
+            )
+            expected_prompt = {"path": f"{task_root}/prompt.md", **provenance}
+            if (
+                envelope["generated_prompt"] != expected_prompt
+                or prompt_path.read_bytes() != prompt_bytes
+            ):
+                raise ArtifactDrift(
+                    "Task promotion current Prompt authority drifted"
+                )
+        elif identity_version == "legacy-v1":
+            if (
+                envelope["generated_prompt"]["path"] != f"{task_root}/prompt.md"
+                or sha256_file(prompt_path)
+                != envelope["generated_prompt"]["sha256"]
+            ):
+                raise ArtifactDrift(
+                    "legacy Task promotion historical Prompt authority drifted"
+                )
+        else:
+            raise ControlStoreUnavailable(
+                "Task promotion identity version is absent or unsupported"
+            )
+        attempt_dir = self._safe_run_path(
+            run_dir,
+            f"{task_root}/attempts/{intent['attempt_id']}",
+            prefix="workflow",
+        )
+        completion_path = attempt_dir / "completion.json"
+        if _is_link_or_reparse(completion_path) or not completion_path.is_file():
+            raise ArtifactDrift("Task promotion Completion evidence is absent or linked")
+        completion = read_json(completion_path)
+        self.contracts.validate("task-completion-record", completion)
+        if (
+            canonical_json_bytes(completion).decode("utf-8")
+            != claim["completion_record_json"]
+            or sha256_file(completion_path) != claim["completion_sha256"]
+            or completion["task_envelope_sha256"] != claim["envelope_sha256"]
+            or completion["task_id"] != intent["task_id"]
+            or completion["attempt_id"] != intent["attempt_id"]
+            or int(completion["claim_generation"]) != int(intent["claim_generation"])
+        ):
+            raise ArtifactDrift("Task promotion Completion evidence drifted")
+        expected_outputs = self._promotion_outputs(
+            envelope,
+            completion,
+            claim_generation=int(intent["claim_generation"]),
+        )
+        if outputs != expected_outputs or {
+            output["canonical_path"] for output in outputs
+        } != set(envelope["write_set"]):
+            raise ControlStoreUnavailable(
+                "Task promotion outputs are outside immutable Completion/write-set authority"
+            )
+        if verify_run_boundary:
+            allowed = None
+            if allow_published_outputs:
+                allowed = {
+                    output["canonical_path"]: (
+                        output["prior_sha256"],
+                        output["sha256"],
+                    )
+                    for output in outputs
+                }
+                protected = {
+                    item["path"]: item["sha256"]
+                    for item in envelope["protected_run_snapshot"]
+                }
+                for output in outputs:
+                    preservation = PurePosixPath(output["preservation_path"])
+                    allowed[output["preservation_path"]] = (
+                        protected.get(output["preservation_path"]),
+                        output["prior_sha256"],
+                    )
+                    parent = preservation.parent
+                    while str(parent) not in {".", "待删除"}:
+                        relative = parent.as_posix()
+                        allowed[relative] = (
+                            protected.get(relative),
+                            self._snapshot_directory_sha(relative),
+                        )
+                        parent = parent.parent
+            if allow_replacement_run_record:
+                allowed = dict(allowed or {})
+                allowed["workflow/run.json"] = (
+                    str(intent["old_run_record_sha256"]),
+                    str(intent["replacement_run_record_sha256"]),
+                )
+            self._verify_protected_run_snapshot(
+                run_dir, envelope, allowed_replacements=allowed
+            )
+        candidates: dict[str, bytes] = {}
+        for output in outputs:
+            source = self._safe_run_path(attempt_dir, output["attempt_path"])
+            if _is_link_or_reparse(source) or not source.is_file():
+                raise ArtifactDrift("validated Task Attempt output is absent or linked")
+            candidate = source.read_bytes()
+            if hashlib.sha256(candidate).hexdigest() != output["sha256"]:
+                raise ArtifactDrift(
+                    "validated Task Attempt output fingerprint drifted"
+                )
+            candidates[output["logical_id"]] = candidate
+        return envelope, completion, attempt_dir, candidates
+
     def _preserve_and_publish_output(
         self,
         run_dir: Path,
@@ -768,11 +1229,15 @@ class TaskExecution:
         output: dict[str, Any],
         *,
         publish: bool,
+        candidate_bytes: bytes,
     ) -> None:
         source = self._safe_run_path(attempt_dir, output["attempt_path"])
         if _is_link_or_reparse(source) or not source.is_file():
             raise ArtifactDrift("validated Task Attempt output is absent or linked")
-        if sha256_file(source) != output["sha256"]:
+        if (
+            hashlib.sha256(candidate_bytes).hexdigest() != output["sha256"]
+            or source.read_bytes() != candidate_bytes
+        ):
             raise ArtifactDrift("validated Task Attempt output fingerprint drifted")
         canonical = self._safe_run_path(
             run_dir, output["canonical_path"], prefix="workflow"
@@ -798,7 +1263,7 @@ class TaskExecution:
         elif prior_sha is not None:
             raise ArtifactDrift("canonical prior Artifact Generation disappeared")
         if publish:
-            _write_bytes_atomic(canonical, source.read_bytes())
+            _write_bytes_atomic(canonical, candidate_bytes)
             if sha256_file(canonical) != output["sha256"]:
                 raise ArtifactDrift("promoted canonical output failed fingerprint verification")
 
@@ -815,14 +1280,34 @@ class TaskExecution:
             raise ContractError(f"unknown Task promotion fault point: {fault_point}")
         run_dir = run_dir.resolve()
         store = self.kernel._preflight_control_store()
+        caller_record, run_path, caller_run_sha = self._run_record(run_dir)
+        binding = store.binding_for_run(caller_record["run_id"])
+        if (
+            binding is None
+            or Path(binding["output_path"]).resolve() != run_dir
+            or store.current_run_record_sha(caller_record["run_id"]) != caller_run_sha
+        ):
+            raise KernelConflict("Task promotion caller Run authority is invalid")
         existing = store.task_promotion_for_attempt(task_id, attempt_id)
         if existing is not None:
+            if existing["run_id"] != caller_record["run_id"]:
+                raise KernelConflict(
+                    "Task promotion replay authority differs from caller Run"
+                )
             if int(existing["claim_generation"]) != claim_generation:
                 raise KernelConflict("Task promotion fencing token is stale")
             if existing["state"] != "COMMITTED":
                 self.reconcile_promotion(run_dir, existing)
                 existing = store.task_promotion_by_id(existing["intent_id"])
             if existing is not None and existing["state"] == "COMMITTED":
+                outputs = json.loads(str(existing["outputs_json"]))
+                self._authenticate_promotion_evidence(
+                    run_dir,
+                    existing,
+                    outputs,
+                    verify_run_boundary=False,
+                )
+                self.verify_committed_task_state(run_dir)
                 return TaskPromotionResult(
                     run_id=str(existing["run_id"]), run_dir=run_dir,
                     task_id=task_id, attempt_id=attempt_id,
@@ -833,7 +1318,6 @@ class TaskExecution:
             task_id=task_id,
             attempt_id=attempt_id,
             claim_generation=claim_generation,
-            completion_allowed=True,
         )
         completion_path = attempt_dir / "completion.json"
         if not completion_path.is_file() or read_json(completion_path) != completion:
@@ -841,21 +1325,30 @@ class TaskExecution:
         claim = store.task_claim_for_attempt(task_id, attempt_id)
         if claim is None or claim["attempt_state"] != "VALIDATED_WAITING_FOR_PROMOTION":
             raise KernelConflict("Task Attempt is not waiting for promotion")
-        run_path = run_dir / "workflow/run.json"
         old_run_sha = sha256_file(run_path)
         output_sha = completion["outputs"][0]["sha256"]
-        intent_id = self._intent_id(
-            run_id=record["run_id"], task_id=task_id, attempt_id=attempt_id,
-            claim_generation=claim_generation,
-            expected_revision=record["coordination_revision"],
-            old_run_sha=old_run_sha, output_sha=output_sha,
-        )
-        replacement = self._replacement_run_record(
-            record, envelope, attempt_id=attempt_id,
-            intent_id=intent_id, output_sha=output_sha,
-        )
         outputs = self._promotion_outputs(
             envelope, completion, claim_generation=claim_generation
+        )
+        outputs_json = canonical_json_bytes(outputs).decode("utf-8")
+        intent_id = store.derive_task_promotion_intent_id(
+            run_id=record["run_id"],
+            task_id=task_id,
+            attempt_id=attempt_id,
+            claim_generation=claim_generation,
+            expected_run_revision=record["coordination_revision"],
+            old_run_record_sha256=old_run_sha,
+            envelope_sha256=str(claim["envelope_sha256"]),
+            completion_sha256=str(claim["completion_sha256"]),
+            outputs_json=outputs_json,
+        )
+        replacement = self._replacement_run_record(
+            record,
+            envelope,
+            attempt_id=attempt_id,
+            intent_id=intent_id,
+            output_sha=output_sha,
+            committed_at=_utc_now(),
         )
         intent = store.prepare_task_promotion(
             run_id=record["run_id"], task_id=task_id, attempt_id=attempt_id,
@@ -865,6 +1358,26 @@ class TaskExecution:
             replacement_run_record=replacement, outputs=outputs,
         )
         _inject(fault_point, "after_promotion_intent_prepared")
+        try:
+            _, post_record, post_completion, _, _ = self._completion_gate(
+                run_dir,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                claim_generation=claim_generation,
+            )
+            if post_record != record or post_completion != completion:
+                raise ArtifactDrift(
+                    "post-slot Completion Gate authority differs from pre-slot validation"
+                )
+            _, _, attempt_dir, candidates = self._authenticate_promotion_evidence(
+                run_dir,
+                intent,
+                outputs,
+                verify_run_boundary=True,
+            )
+        except (ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict):
+            store.abort_task_promotion(intent_id)
+            raise
         journal = self._journal(intent, outputs)
         journal_path = attempt_dir / "p.json"
         journal_sha = write_json_atomic(journal_path, journal)
@@ -873,12 +1386,20 @@ class TaskExecution:
         _inject(fault_point, "after_promotion_journal_bound")
         for output in outputs:
             self._preserve_and_publish_output(
-                run_dir, attempt_dir, output, publish=False
+                run_dir,
+                attempt_dir,
+                output,
+                publish=False,
+                candidate_bytes=candidates[output["logical_id"]],
             )
         _inject(fault_point, "after_prior_outputs_preserved")
         for output in outputs:
             self._preserve_and_publish_output(
-                run_dir, attempt_dir, output, publish=True
+                run_dir,
+                attempt_dir,
+                output,
+                publish=True,
+                candidate_bytes=candidates[output["logical_id"]],
             )
             _inject(fault_point, "after_output_published")
         store.transition_task_promotion(
@@ -911,6 +1432,8 @@ class TaskExecution:
         intent = intent or store.active_task_promotion(run_id)
         if intent is None:
             return False
+        if intent["run_id"] != run_id:
+            raise KernelConflict("Task promotion intent differs from caller Run authority")
         replacement_json = str(intent["replacement_run_record_json"])
         try:
             replacement = json.loads(replacement_json)
@@ -925,12 +1448,50 @@ class TaskExecution:
             or replacement.get("run_id") != run_id
         ):
             raise ControlStoreUnavailable("Task promotion replacement authority is invalid")
+        state = str(intent["state"])
+        try:
+            old_sha = str(intent["old_run_record_sha256"])
+            replacement_sha = str(intent["replacement_run_record_sha256"])
+            if state == "PREPARED" and actual_run_sha != old_sha:
+                raise ControlStoreUnavailable(
+                    "PREPARED promotion has a changed coordination marker"
+                )
+            if state == "FILES_PUBLISHED" and actual_run_sha not in {
+                old_sha,
+                replacement_sha,
+            }:
+                raise ControlStoreUnavailable(
+                    "FILES_PUBLISHED promotion has a contradictory coordination marker"
+                )
+            if state == "RECORD_COMMITTED" and actual_run_sha != replacement_sha:
+                raise ControlStoreUnavailable(
+                    "RECORD_COMMITTED promotion lost its replacement marker"
+                )
+            self.kernel._verify_current_source(
+                run_dir,
+                expected_run_record_sha256=actual_run_sha,
+            )
+            _, _, attempt_dir, candidates = self._authenticate_promotion_evidence(
+                run_dir,
+                intent,
+                outputs,
+                verify_run_boundary=True,
+                allow_published_outputs=True,
+                allow_replacement_run_record=actual_run_sha == replacement_sha,
+            )
+        except (ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict):
+            if state == "PREPARED":
+                published = False
+                for output in outputs:
+                    canonical = self._safe_run_path(
+                        run_dir, output["canonical_path"], prefix="workflow"
+                    )
+                    if canonical.is_file() and sha256_file(canonical) == output["sha256"]:
+                        published = True
+                if not published:
+                    store.abort_task_promotion(intent["intent_id"])
+            raise
         journal = self._journal(intent, outputs)
-        attempt_dir = self._safe_run_path(
-            run_dir,
-            f"workflow/tasks/{intent['task_id']}/attempts/{intent['attempt_id']}",
-            prefix="workflow",
-        )
         journal_path = attempt_dir / "p.json"
         if journal_path.exists():
             if _is_link_or_reparse(journal_path) or read_json(journal_path) != journal:
@@ -941,13 +1502,14 @@ class TaskExecution:
                 raise ControlStoreUnavailable("Task promotion journal is missing after publication")
             journal_sha = write_json_atomic(journal_path, journal)
         store.bind_task_promotion_journal(intent["intent_id"], journal_sha)
-        state = str(intent["state"])
         if state == "PREPARED":
-            if actual_run_sha != intent["old_run_record_sha256"]:
-                raise ControlStoreUnavailable("PREPARED promotion has a changed coordination marker")
             for output in outputs:
                 self._preserve_and_publish_output(
-                    run_dir, attempt_dir, output, publish=True
+                    run_dir,
+                    attempt_dir,
+                    output,
+                    publish=True,
+                    candidate_bytes=candidates[output["logical_id"]],
                 )
             store.transition_task_promotion(
                 intent["intent_id"], expected_state="PREPARED", new_state="FILES_PUBLISHED"

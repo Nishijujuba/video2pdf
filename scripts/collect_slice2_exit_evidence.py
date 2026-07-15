@@ -70,6 +70,13 @@ COMMANDS = (
         ],
     ),
     (
+        "slice2-review-repairs",
+        [
+            sys.executable, "-X", "utf8", "-B", "-m", "unittest",
+            "tests.video_workflow.test_issue5_review_repairs",
+        ],
+    ),
+    (
         "slice1-exit-evidence",
         [
             sys.executable, "-X", "utf8", "-B",
@@ -254,13 +261,19 @@ def main() -> int:
                 "absolute_backslash_device_reparse_and_trailing_paths_fail_closed",
                 "unknown_authority_kind_identifier_and_contract_versions_fail_closed",
                 "prompt_envelope_completion_journal_and_canonical_tamper_fail_closed",
+                "promotion_intent_coordinated_tamper_and_identity_downgrade_fail_closed",
+                "run_wide_files_directories_and_unknown_task_roots_fail_closed",
+                "every_nonterminal_recovery_revalidates_source_freshness",
             ],
             "recovery": [
                 "claim_boundaries_resume_idempotently",
                 "completion_boundaries_resume_idempotently",
                 "promotion_boundaries_converge_to_one_committed_generation",
                 "committed_mutation_hash_chain_covers_task_and_source_drift",
-                "control_store_v1_through_v3_migrate_atomically_to_v4",
+                "control_store_v1_through_v4_migrate_atomically_to_v5",
+                "legacy_v4_committed_promotion_is_verified_and_backfilled",
+                "legacy_v4_nonterminal_and_partial_v5_migrations_fail_closed",
+                "completion_retry_preserves_first_trusted_event_time",
             ],
         },
         "artifact_fingerprints": implementation_artifacts(

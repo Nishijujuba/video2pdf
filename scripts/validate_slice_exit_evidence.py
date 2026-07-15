@@ -30,6 +30,17 @@ SLICE_CONFIGS = {
         "base_commit": "96089b99c9ae63fff61107e1920fc3481ffc0802",
         "evidence_prefix": "evidence/slice-01/",
         "checkpoints": [{"name": "source_ready", "status": "current"}],
+        "command_ids": [
+            "slice0-regression",
+            "slice1-contracts",
+            "slice1-public-deep-tests",
+            "slice1-review-hardening-tests",
+            "slice1-gate4-saga-containment-tests",
+            "slice1-gate7-review-repair-tests",
+            "slice0-exit-evidence",
+            "slice1-syntax",
+            "slice1-diff-check",
+        ],
     },
     2: {
         "base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
@@ -37,6 +48,17 @@ SLICE_CONFIGS = {
         "checkpoints": [
             {"name": "source_ready", "status": "current"},
             {"name": "source_acquisition_decision_ready", "status": "current"},
+        ],
+        "command_ids": [
+            "slice0-regression",
+            "slice2-contracts",
+            "slice1-regression",
+            "slice2-task-promotion",
+            "slice2-task-promotion-hardening",
+            "slice2-review-repairs",
+            "slice1-exit-evidence",
+            "slice2-syntax",
+            "slice2-diff-check",
         ],
     },
 }
@@ -162,6 +184,11 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):
         raise EvidenceError("command test_id values must be unique")
+    expected_command_ids = slice_config(manifest)["command_ids"]
+    if identities != expected_command_ids:
+        raise EvidenceError(
+            "Slice Exit Evidence commands differ from the registered closed test set"
+        )
     for command in commands:
         derived = command["actual_exit_code"] == command["expected_exit_code"]
         if command["conforms"] != derived:

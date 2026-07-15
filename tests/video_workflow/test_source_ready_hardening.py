@@ -343,6 +343,7 @@ class PersistenceHardeningTests(unittest.TestCase):
             "source_manifest_sha256",
         }
         with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA foreign_keys=OFF")
             columns = {
                 row[1]
                 for row in connection.execute(
@@ -354,10 +355,16 @@ class PersistenceHardeningTests(unittest.TestCase):
                     connection.execute(
                         f"ALTER TABLE initialization_intents DROP COLUMN {column}"
                     )
+                connection.execute("DROP TABLE task_promotion_identity_versions")
+                connection.execute("DROP TABLE task_completion_authorities")
+                connection.execute("DROP TABLE task_promotion_intents")
+                connection.execute("DROP TABLE task_attempts")
+                connection.execute("DROP TABLE task_claims")
+                connection.execute("DROP TABLE run_state_mutation_intents")
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 4)
+        self.assertEqual(migrated.control_store.check().schema_version, 5)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -374,7 +381,13 @@ class PersistenceHardeningTests(unittest.TestCase):
         self.assertTrue(expected_columns.issubset(columns))
         self.assertEqual(
             task_tables,
-            {"task_claims", "task_attempts", "task_promotion_intents"},
+            {
+                "task_claims",
+                "task_attempts",
+                "task_promotion_intents",
+                "task_completion_authorities",
+                "task_promotion_identity_versions",
+            },
         )
 
     def test_intent_transition_uses_expected_state_compare_and_swap(self) -> None:
@@ -524,7 +537,6 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "control-store-identity",
                 "fixture-package",
                 "run-record",
-                "run-record-task-capable",
                 "scaffold-contract",
                 "scaffold-ledger",
                 "source-acquisition-judgment-patch",
@@ -535,6 +547,10 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "task-promotion-journal",
                 "workflow-result",
             },
+        )
+        self.assertIn(
+            "run-record@2.0.0",
+            envelope["data"]["registered_contract_versions"],
         )
 
     def test_control_store_anchor_and_marker_share_a_registered_schema(self) -> None:

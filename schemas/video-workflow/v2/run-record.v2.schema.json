@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://video2pdf.local/schemas/video-workflow/v1/run-record-task-capable.v2.schema.json",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/run-record.v2.schema.json",
   "type": "object", "additionalProperties": false,
   "required": ["schema_name", "schema_version", "kernel_version", "scaffold_version", "run_id", "request_id", "platform_adapter", "canonical_platform", "canonical_item_id", "source_identity", "original_title", "normalized_title", "task_start", "output_path", "deliverable_version", "version_basis", "source_acquisition_mode", "phase", "initialization_intent_id", "coordination_revision", "last_mutation_intent_id", "artifact_plan", "artifact_generations", "checkpoint_dependencies", "checkpoints"],
   "properties": {

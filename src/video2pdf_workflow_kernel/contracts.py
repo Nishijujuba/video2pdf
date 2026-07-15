@@ -56,7 +56,7 @@ KNOWN_INVARIANTS = frozenset(
         "control-store-identity-path-v1",
         "fixture-package-paths-v1",
         "run-record-freshness-v1",
-        "run-record-task-capable-freshness-v2",
+        "run-record-freshness-v2",
         "scaffold-contract-directories-v1",
         "source-manifest-paths-and-fingerprints-v1",
         "task-attempt-path-v1",
@@ -215,6 +215,14 @@ def _validate_task_envelope(instance: dict[str, Any]) -> None:
         raise ContractError("Generated Task Prompt path does not bind its task identity")
     for value in instance["allowed_read_paths"]:
         _validate_project_relative_path(value, prefix="source")
+    snapshot_paths: set[str] = set()
+    for item in instance["protected_run_snapshot"]:
+        _validate_project_relative_path(item["path"])
+        if item["path"] in snapshot_paths:
+            raise ContractError("Task Envelope protected Run snapshot repeats a path")
+        if item["path"].startswith(f"{expected_root}/"):
+            raise ContractError("Task Envelope snapshots its dynamic Task boundary")
+        snapshot_paths.add(item["path"])
     for value in instance["write_set"]:
         _validate_project_relative_path(value, prefix="workflow")
     for output in instance["required_outputs"]:
@@ -285,7 +293,7 @@ INVARIANT_VALIDATORS = {
     ),
     "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,
-    "run-record-task-capable-freshness-v2": _validate_task_capable_run_record,
+    "run-record-freshness-v2": _validate_task_capable_run_record,
     "scaffold-contract-directories-v1": _validate_scaffold_contract,
     "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
     "task-attempt-path-v1": _validate_task_attempt,
@@ -320,7 +328,7 @@ class ContractRegistry:
                 "alternate registry authority metadata differs from the canonical registry"
             )
         self.entries = self._load_entries()
-        self.schemas: dict[str, dict[str, Any]] = {}
+        self.schemas: dict[tuple[str, str], dict[str, Any]] = {}
         self._registry: Registry | None = None
 
     def _load_entries(self) -> tuple[ContractEntry, ...]:
@@ -334,27 +342,31 @@ class ContractRegistry:
         if not isinstance(contracts, list) or not contracts:
             raise ContractError("Kernel Schema Registry contracts must be a non-empty array")
         canonical_entries = {
-            item["schema_name"]: item for item in self._canonical["contracts"]
+            (item["schema_name"], item["schema_version"]): item
+            for item in self._canonical["contracts"]
         }
-        known_versions = {
-            name: item["schema_version"] for name, item in canonical_entries.items()
-        }
+        if len(canonical_entries) != len(self._canonical["contracts"]):
+            raise ContractError("canonical registry repeats a contract name/version")
+        known_versions = set(canonical_entries)
         entries: list[ContractEntry] = []
-        seen_names: set[str] = set()
+        seen_versions: set[tuple[str, str]] = set()
         seen_ids: set[str] = set()
         for raw in contracts:
             if not isinstance(raw, dict):
                 raise ContractError("registry contract entry must be an object")
             name = raw.get("schema_name")
             version = raw.get("schema_version")
-            if name not in known_versions or version != known_versions[name]:
+            identity = (name, version)
+            if identity not in known_versions:
                 raise UnknownContractVersion(
                     f"unknown registered contract version: {name!r} {version!r}"
                 )
             schema_id = raw.get("schema_id")
-            if name in seen_names or schema_id in seen_ids:
-                raise ContractError("registry schema names and identities must be unique")
-            seen_names.add(name)
+            if identity in seen_versions or schema_id in seen_ids:
+                raise ContractError(
+                    "registry contract name/version and schema identities must be unique"
+                )
+            seen_versions.add(identity)
             seen_ids.add(schema_id)
             raw_path = Path(str(raw.get("schema_path", "")))
             schema_path = raw_path if raw_path.is_absolute() else self.project_root / raw_path
@@ -362,7 +374,7 @@ class ContractRegistry:
             negative = raw.get("negative_example")
             invariants = raw.get("invariants", [])
             canonical_instance = raw.get("canonical_instance")
-            expected_canonical_instance = canonical_entries[name].get(
+            expected_canonical_instance = canonical_entries[identity].get(
                 "canonical_instance"
             )
             if canonical_instance != expected_canonical_instance:
@@ -397,12 +409,11 @@ class ContractRegistry:
                     ),
                 )
             )
-        required_names = set(known_versions)
-        if seen_names != required_names:
+        if seen_versions != known_versions:
             raise ContractError(
-                "registry must contain the exact canonical contract name/version set: "
-                f"missing={sorted(required_names - seen_names)}, "
-                f"extra={sorted(seen_names - required_names)}"
+                "registry must contain the exact canonical contract version set: "
+                f"missing={sorted(known_versions - seen_versions)}, "
+                f"extra={sorted(seen_versions - known_versions)}"
             )
         return tuple(entries)
 
@@ -436,7 +447,12 @@ class ContractRegistry:
             "negative_examples_rejected": negative_count,
             "registry_path": str(self.registry_path),
             "registry_complete": True,
-            "registered_schema_names": sorted(entry.schema_name for entry in self.entries),
+            "registered_schema_names": sorted(
+                {entry.schema_name for entry in self.entries}
+            ),
+            "registered_contract_versions": sorted(
+                f"{entry.schema_name}@{entry.schema_version}" for entry in self.entries
+            ),
             "runtime_lock": runtime,
         }
 
@@ -499,17 +515,31 @@ class ContractRegistry:
     def validate(self, schema_name: str, instance: Any) -> None:
         if self._registry is None:
             self._prepare_registry()
-        entry = next((item for item in self.entries if item.schema_name == schema_name), None)
+        if not isinstance(instance, dict):
+            raise ContractError(f"{schema_name} contract root must be an object")
+        actual_version = instance.get("schema_version")
+        entry = next(
+            (
+                item
+                for item in self.entries
+                if item.schema_name == schema_name
+                and item.schema_version == actual_version
+            ),
+            None,
+        )
         if entry is None:
-            raise UnknownContractVersion(f"unregistered contract: {schema_name}")
-        if isinstance(instance, dict):
-            actual_version = instance.get("schema_version")
-            if actual_version != entry.schema_version:
-                raise UnknownContractVersion(
-                    f"unknown {schema_name} schema_version: {actual_version!r}"
-                )
+            versions = {
+                item.schema_version
+                for item in self.entries
+                if item.schema_name == schema_name
+            }
+            if not versions:
+                raise UnknownContractVersion(f"unregistered contract: {schema_name}")
+            raise UnknownContractVersion(
+                f"unknown {schema_name} schema_version: {actual_version!r}"
+            )
         validator = Draft202012Validator(
-            self.schemas[schema_name],
+            self.schemas[(schema_name, entry.schema_version)],
             registry=self._registry,
             format_checker=FormatChecker(),
         )
@@ -518,35 +548,36 @@ class ContractRegistry:
         except ValidationError as exc:
             path = "/".join(str(part) for part in exc.absolute_path) or "$"
             raise ContractError(f"{schema_name} instance invalid at {path}: {exc.message}") from exc
-        if isinstance(instance, dict):
-            for invariant in entry.invariants:
-                INVARIANT_VALIDATORS[invariant](instance)
-                if invariant == "scaffold-contract-directories-v1":
-                    if entry.canonical_instance is None:
-                        raise ContractError(
-                            "scaffold contract lacks its registered canonical instance"
-                        )
-                    canonical = read_json(entry.canonical_instance)
-                    if instance != canonical:
-                        raise ContractError(
-                            "scaffold contract differs from its registered canonical instance"
-                        )
+        for invariant in entry.invariants:
+            INVARIANT_VALIDATORS[invariant](instance)
+            if invariant == "scaffold-contract-directories-v1":
+                if entry.canonical_instance is None:
+                    raise ContractError(
+                        "scaffold contract lacks its registered canonical instance"
+                    )
+                canonical = read_json(entry.canonical_instance)
+                if instance != canonical:
+                    raise ContractError(
+                        "scaffold contract differs from its registered canonical instance"
+                    )
 
     def validate_run_record(self, instance: Any) -> None:
         """Validate either registered Run Record generation without guessing fields."""
         if not isinstance(instance, dict):
             raise ContractError("Run Record root must be an object")
-        version = instance.get("schema_version")
-        if version == "1.0.0":
-            self.validate("run-record", instance)
-            return
-        if version == "2.0.0":
-            self.validate("run-record-task-capable", instance)
-            return
-        raise UnknownContractVersion(f"unknown run-record schema_version: {version!r}")
+        self.validate("run-record", instance)
 
-    def canonical_instance(self, schema_name: str) -> Any:
-        entry = next((item for item in self.entries if item.schema_name == schema_name), None)
+    def canonical_instance(
+        self, schema_name: str, schema_version: str | None = None
+    ) -> Any:
+        candidates = [
+            item
+            for item in self.entries
+            if item.schema_name == schema_name
+            and (schema_version is None or item.schema_version == schema_version)
+            and item.canonical_instance is not None
+        ]
+        entry = candidates[0] if len(candidates) == 1 else None
         if entry is None or entry.canonical_instance is None:
             raise ContractError(f"contract has no canonical instance: {schema_name}")
         value = read_json(entry.canonical_instance)
@@ -583,14 +614,14 @@ class ContractRegistry:
                     raise UnresolvedSchemaReference(
                         f"unregistered schema reference {reference!r} in {entry.schema_id}"
                     )
-            self.schemas[entry.schema_name] = schema
+            self.schemas[(entry.schema_name, entry.schema_version)] = schema
             resources.append((entry.schema_id, Resource.from_contents(schema)))
         self._registry = Registry().with_resources(resources)
         registered_paths = {entry.schema_path for entry in self.entries}
         disk_paths = {
             path.resolve()
-            for path in (self.project_root / "schemas/video-workflow/v1").glob(
-                "*.schema.json"
+            for path in (self.project_root / "schemas/video-workflow").glob(
+                "v*/*.schema.json"
             )
         }
         if registered_paths != disk_paths:

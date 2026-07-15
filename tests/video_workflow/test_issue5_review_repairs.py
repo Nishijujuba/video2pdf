@@ -1,0 +1,910 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import sys
+import unittest
+import uuid
+from unittest import mock
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from video2pdf_workflow_kernel.contracts import ContractRegistry  # noqa: E402
+from video2pdf_workflow_kernel.errors import (  # noqa: E402
+    ArtifactDrift,
+    ContractError,
+    ControlStoreUnavailable,
+    KernelConflict,
+    TaskFault,
+    UnknownContractVersion,
+)
+from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
+from video2pdf_workflow_kernel.task_execution import TaskExecution  # noqa: E402
+from video2pdf_workflow_kernel.utils import (  # noqa: E402
+    canonical_json_bytes,
+    read_json,
+    sha256_file,
+    write_json_atomic,
+)
+
+
+FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
+TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
+TASK_START = "2026-07-15T01:02:03+08:00"
+PATCH_CANONICAL = "workflow/source-acquisition-judgment-patch.json"
+
+
+class Issue5RepairHarness:
+    def initialize(self, label: str) -> None:
+        identity = uuid.uuid4().hex[:8]
+        root = TEST_RUNS / f"r5-{identity}"
+        self.workspace = root / "workspace"
+        self.workspace.mkdir(parents=True, exist_ok=False)
+        self.kernel = VideoWorkflowKernel(self.workspace)
+        self.run_dir = self.kernel.trace_source_ready(
+            fixture=FIXTURE,
+            task_start=TASK_START,
+            request_id=f"r5-{label}-{identity}",
+        ).run_dir
+
+    def prepare(self, key: str = "source-acquisition-decision"):
+        return self.kernel.prepare_source_acquisition_task(
+            self.run_dir,
+            logical_task_key=key,
+            prepared_at=TASK_START,
+        )
+
+    def claim(self, prepared):
+        return self.kernel.claim_task(
+            self.run_dir,
+            prepared.task_id,
+            coordinator_session_id="repair-coordinator",
+            worker_id="repair-worker",
+        )
+
+    def write_patch(self, prepared, claimed) -> Path:
+        envelope = read_json(prepared.envelope_path)
+        path = claimed.attempt_dir / "o/p.json"
+        path.parent.mkdir(parents=False, exist_ok=False)
+        write_json_atomic(
+            path,
+            {
+                "schema_name": "source-acquisition-judgment-patch",
+                "schema_version": "1.0.0",
+                "kernel_version": "2.0.0",
+                "task_id": prepared.task_id,
+                "attempt_id": claimed.attempt_id,
+                "task_envelope_sha256": sha256_file(prepared.envelope_path),
+                "source_manifest_sha256": envelope["input_artifacts"][0]["sha256"],
+                "judgment": {
+                    "selected_subtitle_track": "subtitle_en",
+                    "whisper_fallback": {
+                        "choice": "not_required",
+                        "rationale": "The immutable English subtitle fixture is usable.",
+                    },
+                    "known_gaps": [],
+                },
+            },
+        )
+        return path
+
+    def complete(self, prepared, claimed):
+        return self.kernel.complete_task(
+            self.run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claimed.attempt_id,
+            claim_generation=claimed.claim_generation,
+        )
+
+    def promote(self, prepared, claimed, **kwargs):
+        return self.kernel.promote_task(
+            self.run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claimed.attempt_id,
+            claim_generation=claimed.claim_generation,
+            **kwargs,
+        )
+
+    def ready(self, label: str):
+        self.initialize(label)
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        self.complete(prepared, claimed)
+        return prepared, claimed
+
+    def prepare_source_mutation(self):
+        record_path = self.run_dir / "workflow/run.json"
+        record = read_json(record_path)
+        replacement = copy.deepcopy(record)
+        replacement["coordination_revision"] += 1
+        for checkpoint in replacement["checkpoints"].values():
+            checkpoint["status"] = "stale"
+        return self.kernel.control_store.prepare_run_state_mutation(
+            run_id=record["run_id"],
+            expected_run_revision=record["coordination_revision"],
+            old_run_record_sha256=sha256_file(record_path),
+            replacement_run_record=replacement,
+        )
+
+    def downgrade_promotion_to_real_legacy_v4(
+        self, prepared, claimed
+    ) -> str:
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.row_factory = sqlite3.Row
+            intent = connection.execute(
+                "SELECT * FROM task_promotion_intents "
+                "WHERE task_id=? AND attempt_id=?",
+                (prepared.task_id, claimed.attempt_id),
+            ).fetchone()
+        outputs = json.loads(intent["outputs_json"])
+        legacy_id = hashlib.sha256(
+            "\0".join(
+                (
+                    "task_artifact_promotion",
+                    intent["run_id"],
+                    intent["task_id"],
+                    intent["attempt_id"],
+                    str(intent["claim_generation"]),
+                    str(intent["expected_run_revision"]),
+                    intent["old_run_record_sha256"],
+                    outputs[0]["sha256"],
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+        replacement = json.loads(intent["replacement_run_record_json"])
+        replacement["last_mutation_intent_id"] = legacy_id
+        replacement_json = canonical_json_bytes(replacement).decode("utf-8")
+        replacement_sha = hashlib.sha256(
+            replacement_json.encode("utf-8")
+        ).hexdigest()
+        legacy_identity = hashlib.sha256(
+            "\0".join(
+                (
+                    "task_artifact_promotion",
+                    intent["run_id"],
+                    intent["task_id"],
+                    intent["attempt_id"],
+                    str(intent["claim_generation"]),
+                    str(intent["expected_run_revision"]),
+                    intent["old_run_record_sha256"],
+                    replacement_sha,
+                    hashlib.sha256(
+                        intent["outputs_json"].encode("utf-8")
+                    ).hexdigest(),
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+        journal_path = claimed.attempt_dir / "p.json"
+        journal_sha = intent["journal_sha256"]
+        if journal_path.is_file():
+            journal = read_json(journal_path)
+            journal["intent_id"] = legacy_id
+            journal["replacement_run_record_sha256"] = replacement_sha
+            journal_sha = write_json_atomic(journal_path, journal)
+        run_path = self.run_dir / "workflow/run.json"
+        if sha256_file(run_path) == intent["replacement_run_record_sha256"]:
+            self.assertEqual(write_json_atomic(run_path, replacement), replacement_sha)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_promotion_identity_versions")
+            connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute(
+                "UPDATE task_promotion_intents SET intent_id=?, "
+                "replacement_run_record_sha256=?, replacement_run_record_json=?, "
+                "journal_sha256=?, intent_identity=? WHERE intent_id=?",
+                (
+                    legacy_id,
+                    replacement_sha,
+                    replacement_json,
+                    journal_sha,
+                    legacy_identity,
+                    intent["intent_id"],
+                ),
+            )
+            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+        return legacy_id
+
+
+class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
+    def test_recovery_reauthenticates_intent_envelope_completion_and_staging(self) -> None:
+        for tamper in (
+            "intent_outputs",
+            "intent_outputs_and_identity",
+            "envelope",
+            "completion",
+            "staging",
+        ):
+            with self.subTest(tamper=tamper):
+                prepared, claimed = self.ready(f"auth-{tamper}")
+                with self.assertRaises(TaskFault):
+                    self.promote(
+                        prepared,
+                        claimed,
+                        fault_point="after_promotion_intent_prepared",
+                    )
+                plan = self.run_dir / "workflow/artifact-plan.json"
+                plan_before = plan.read_bytes()
+                if tamper in {"intent_outputs", "intent_outputs_and_identity"}:
+                    intent = self.kernel.control_store.task_promotion_for_attempt(
+                        prepared.task_id, claimed.attempt_id
+                    )
+                    outputs = read_json_string(intent["outputs_json"])
+                    outputs[0]["canonical_path"] = "workflow/artifact-plan.json"
+                    outputs[0]["prior_sha256"] = sha256_file(plan)
+                    outputs_json = canonical_json_bytes(outputs).decode("utf-8")
+                    replacement_identity = intent["intent_identity"]
+                    if tamper == "intent_outputs_and_identity":
+                        claim = self.kernel.control_store.task_claim_for_attempt(
+                            prepared.task_id, claimed.attempt_id
+                        )
+                        derived_id = self.kernel.control_store.derive_task_promotion_intent_id(
+                            run_id=intent["run_id"],
+                            task_id=intent["task_id"],
+                            attempt_id=intent["attempt_id"],
+                            claim_generation=int(intent["claim_generation"]),
+                            expected_run_revision=int(intent["expected_run_revision"]),
+                            old_run_record_sha256=intent["old_run_record_sha256"],
+                            envelope_sha256=claim["envelope_sha256"],
+                            completion_sha256=claim["completion_sha256"],
+                            outputs_json=outputs_json,
+                        )
+                        replacement_identity = hashlib.sha256(
+                            "\0".join(
+                                (
+                                    "task_promotion_intent_row_v2",
+                                    derived_id,
+                                    intent["replacement_run_record_sha256"],
+                                    hashlib.sha256(outputs_json.encode("utf-8")).hexdigest(),
+                                    claim["envelope_sha256"],
+                                    claim["completion_sha256"],
+                                )
+                            ).encode("utf-8")
+                        ).hexdigest()
+                    with sqlite3.connect(self.kernel.control_store.path) as connection:
+                        connection.execute(
+                            "UPDATE task_promotion_intents SET outputs_json=?, "
+                            "intent_identity=? WHERE intent_id=?",
+                            (
+                                outputs_json,
+                                replacement_identity,
+                                intent["intent_id"],
+                            ),
+                        )
+                elif tamper == "envelope":
+                    envelope = read_json(prepared.envelope_path)
+                    envelope["allowed_read_paths"].append("source/metadata/platform.json")
+                    write_json_atomic(prepared.envelope_path, envelope)
+                elif tamper == "completion":
+                    completion = read_json(claimed.attempt_dir / "completion.json")
+                    completion["validated_at"] = "2026-07-15T02:02:03+08:00"
+                    write_json_atomic(claimed.attempt_dir / "completion.json", completion)
+                else:
+                    patch = read_json(claimed.attempt_dir / "o/p.json")
+                    patch["judgment"]["known_gaps"] = ["tampered after validation"]
+                    write_json_atomic(claimed.attempt_dir / "o/p.json", patch)
+
+                run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+                with self.assertRaises(
+                    (ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict)
+                ):
+                    self.kernel.reconcile_authority("kernel_run", run_id)
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    state = connection.execute(
+                        "SELECT state FROM task_promotion_intents "
+                        "WHERE task_id=? AND attempt_id=?",
+                        (prepared.task_id, claimed.attempt_id),
+                    ).fetchone()[0]
+                self.assertNotEqual(state, "COMMITTED")
+                self.assertEqual(plan.read_bytes(), plan_before)
+                self.assertFalse((self.run_dir / PATCH_CANONICAL).exists())
+
+    def test_run_promotion_slot_is_symmetric_for_both_prepare_orderings(self) -> None:
+        prepared, claimed = self.ready("task-first")
+        with self.assertRaises(TaskFault):
+            self.promote(
+                prepared,
+                claimed,
+                fault_point="after_promotion_intent_prepared",
+            )
+        self.downgrade_promotion_to_real_legacy_v4(prepared, claimed)
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                4,
+            )
+        with self.assertRaises(KernelConflict):
+            self.prepare_source_mutation()
+
+        prepared, claimed = self.ready("source-first")
+        self.prepare_source_mutation()
+        with self.assertRaises(KernelConflict):
+            self.promote(prepared, claimed)
+
+    def test_post_slot_completion_gate_closes_source_drift_toctou(self) -> None:
+        prepared, claimed = self.ready("toctou")
+        run_path = self.run_dir / "workflow/run.json"
+        run_before = run_path.read_bytes()
+        original = self.kernel.control_store.prepare_task_promotion
+
+        def prepare_then_drift(**kwargs):
+            intent = original(**kwargs)
+            source = self.run_dir / "source/media/video.fixture"
+            source.write_bytes(source.read_bytes() + b"post-slot-drift")
+            return intent
+
+        with mock.patch.object(
+            self.kernel.control_store,
+            "prepare_task_promotion",
+            side_effect=prepare_then_drift,
+        ):
+            with self.assertRaises(ArtifactDrift):
+                self.promote(prepared, claimed)
+
+        intent = self.kernel.control_store.task_promotion_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        self.assertEqual(intent["state"], "ABORTED")
+        self.assertEqual(run_path.read_bytes(), run_before)
+        self.assertFalse((self.run_dir / PATCH_CANONICAL).exists())
+        self.assertEqual(
+            read_json(run_path)["checkpoints"]["source_ready"]["status"],
+            "current",
+        )
+
+    def test_committed_replay_validates_run_path_authority(self) -> None:
+        prepared, claimed = self.ready("replay-a")
+        self.promote(prepared, claimed)
+        run_a = self.run_dir
+        run_b = self.kernel.trace_source_ready(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:04+08:00",
+            request_id=f"r5-replay-b-{uuid.uuid4().hex[:8]}",
+        ).run_dir
+        with self.assertRaises((ArtifactDrift, KernelConflict)):
+            self.kernel.promote_task(
+                run_b,
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+            )
+        self.assertTrue((run_a / PATCH_CANONICAL).is_file())
+        self.assertFalse((run_b / PATCH_CANONICAL).exists())
+
+    def test_every_nonterminal_recovery_revalidates_source_freshness(self) -> None:
+        cases = {
+            "after_outputs_state_commit": "FILES_PUBLISHED",
+            "after_run_record_commit_marker": "FILES_PUBLISHED",
+            "after_record_state_commit": "RECORD_COMMITTED",
+        }
+        for fault_point, expected_state in cases.items():
+            with self.subTest(fault_point=fault_point):
+                prepared, claimed = self.ready(f"recovery-source-{fault_point}")
+                with self.assertRaises(TaskFault):
+                    self.promote(prepared, claimed, fault_point=fault_point)
+                source = self.run_dir / "source/media/video.fixture"
+                source.write_bytes(source.read_bytes() + b"recovery-source-drift")
+                run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+                with self.assertRaises(ArtifactDrift):
+                    self.kernel.reconcile_authority("kernel_run", run_id)
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    state = connection.execute(
+                        "SELECT state FROM task_promotion_intents "
+                        "WHERE task_id=? AND attempt_id=?",
+                        (prepared.task_id, claimed.attempt_id),
+                    ).fetchone()[0]
+                self.assertEqual(state, expected_state)
+                self.assertNotEqual(state, "COMMITTED")
+
+    def test_files_published_recovery_accepts_old_or_replacement_marker(self) -> None:
+        for fault_point in (
+            "after_outputs_state_commit",
+            "after_run_record_commit_marker",
+        ):
+            with self.subTest(fault_point=fault_point):
+                prepared, claimed = self.ready(f"marker-matrix-{fault_point}")
+                with self.assertRaises(TaskFault):
+                    self.promote(prepared, claimed, fault_point=fault_point)
+                run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+                self.kernel.reconcile_authority("kernel_run", run_id)
+                intent = self.kernel.control_store.task_promotion_for_attempt(
+                    prepared.task_id, claimed.attempt_id
+                )
+                self.assertEqual(intent["state"], "COMMITTED")
+
+
+class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
+    def test_completion_rejects_run_wide_undeclared_worker_file(self) -> None:
+        self.initialize("outside-write")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        (self.run_dir / "review/undeclared-worker-output.txt").write_text(
+            "undeclared", encoding="utf-8"
+        )
+        with self.assertRaises(ContractError):
+            self.complete(prepared, claimed)
+
+    def test_claimed_worker_cannot_prewrite_completion_record(self) -> None:
+        self.initialize("prewritten-completion")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        patch_path = self.write_patch(prepared, claimed)
+        envelope = read_json(prepared.envelope_path)
+        run = read_json(self.run_dir / "workflow/run.json")
+        source = run["artifact_generations"]["source_manifest"]
+        write_json_atomic(
+            claimed.attempt_dir / "completion.json",
+            {
+                "schema_name": "task-completion-record",
+                "schema_version": "1.0.0",
+                "kernel_version": "2.0.0",
+                "task_id": prepared.task_id,
+                "attempt_id": claimed.attempt_id,
+                "claim_generation": claimed.claim_generation,
+                "task_envelope_sha256": sha256_file(prepared.envelope_path),
+                "validated_authority_revision": run["coordination_revision"],
+                "validated_run_record_sha256": sha256_file(
+                    self.run_dir / "workflow/run.json"
+                ),
+                "validated_inputs": [
+                    {
+                        "logical_id": "source_manifest",
+                        "generation": source["generation"],
+                        "sha256": source["sha256"],
+                    }
+                ],
+                "outputs": [
+                    {
+                        "logical_id": "source_acquisition_decision",
+                        "attempt_path": "o/p.json",
+                        "canonical_path": PATCH_CANONICAL,
+                        "sha256": sha256_file(patch_path),
+                    }
+                ],
+                "gate_status": "pass",
+                "validated_at": envelope["prepared_at"],
+            },
+        )
+        with self.assertRaises((ArtifactDrift, ContractError)):
+            self.complete(prepared, claimed)
+
+    def test_validation_and_commit_timestamps_are_runtime_events(self) -> None:
+        prepared, claimed = self.ready("event-times")
+        completion = read_json(claimed.attempt_dir / "completion.json")
+        self.assertNotEqual(completion["validated_at"], TASK_START)
+        self.promote(prepared, claimed)
+        run = read_json(self.run_dir / "workflow/run.json")
+        self.assertNotEqual(
+            run["artifact_generations"]["source_acquisition_decision"]["committed_at"],
+            TASK_START,
+        )
+
+    def test_completion_retry_preserves_first_event_and_promotion_uses_later_event(self) -> None:
+        self.initialize("trusted-event-order")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        first = "2026-07-15T03:00:00+00:00"
+        retry = "2026-07-15T03:01:00+00:00"
+        promoted = "2026-07-15T03:02:00+00:00"
+        with mock.patch(
+            "video2pdf_workflow_kernel.task_execution._utc_now",
+            side_effect=[first, retry, promoted],
+        ):
+            with self.assertRaises(TaskFault):
+                self.kernel.complete_task(
+                    self.run_dir,
+                    task_id=prepared.task_id,
+                    attempt_id=claimed.attempt_id,
+                    claim_generation=claimed.claim_generation,
+                    fault_point="after_completion_prepared",
+                )
+            self.complete(prepared, claimed)
+            self.promote(prepared, claimed)
+        completion = read_json(claimed.attempt_dir / "completion.json")
+        run = read_json(self.run_dir / "workflow/run.json")
+        self.assertEqual(completion["validated_at"], first)
+        self.assertEqual(
+            run["artifact_generations"]["source_acquisition_decision"]["committed_at"],
+            promoted,
+        )
+
+    def test_shared_empty_directories_and_task_namespace_forgery_fail_closed(self) -> None:
+        mutations = (
+            "shared-empty",
+            "task-root-file",
+            "fake-attempt",
+            "fake-task-root",
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.initialize(mutation)
+                prepared = self.prepare()
+                claimed = self.claim(prepared)
+                self.write_patch(prepared, claimed)
+                if mutation == "shared-empty":
+                    (self.run_dir / "review/worker-empty-dir").mkdir()
+                elif mutation == "task-root-file":
+                    (prepared.task_dir / "evil.txt").write_text(
+                        "undeclared", encoding="utf-8"
+                    )
+                elif mutation == "fake-attempt":
+                    (prepared.task_dir / "attempts/fake-attempt").mkdir()
+                else:
+                    fake = self.run_dir / f"workflow/tasks/{'f' * 32}"
+                    fake.mkdir()
+                    (fake / "evil.txt").write_text("undeclared", encoding="utf-8")
+                with self.assertRaises(ContractError):
+                    self.complete(prepared, claimed)
+
+    def test_shared_empty_directory_removal_fails_closed(self) -> None:
+        self.initialize("shared-empty-removal")
+        baseline = self.run_dir / "review/baseline-empty-dir"
+        baseline.mkdir()
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        archive = self.run_dir / "待删除/removed-baseline-empty-dir"
+        baseline.replace(archive)
+        with self.assertRaises(ContractError):
+            self.complete(prepared, claimed)
+
+    def test_other_durable_task_root_and_attempt_do_not_break_completion(self) -> None:
+        self.initialize("disjoint-task-namespace")
+        prepared = self.prepare("first-task")
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        other = self.prepare("second-task")
+        envelope = read_json(other.envelope_path)
+        run = read_json(self.run_dir / "workflow/run.json")
+        other_attempt_id = hashlib.sha256(
+            f"task-attempt\0{other.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        claim = self.kernel.control_store.claim_task(
+            authority_id=run["run_id"],
+            task_id=other.task_id,
+            envelope_sha256=sha256_file(other.envelope_path),
+            write_set=("workflow/disjoint-output.json",),
+            attempt_path=(
+                f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
+            ),
+            coordinator_session_id="disjoint-coordinator",
+            worker_id="disjoint-worker",
+            claimed_at="2026-07-15T04:00:00+00:00",
+        )
+        TaskExecution(self.kernel)._create_attempt_record(
+            self.run_dir,
+            envelope,
+            claim,
+            fault_point=None,
+            after_write_fault_point="unused",
+        )
+        self.complete(prepared, claimed)
+
+
+class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
+    def test_v5_health_rejects_weakened_index_and_table_sql(self) -> None:
+        damages = {
+            "nonunique-index": (
+                "DROP INDEX one_nonterminal_task_promotion_per_run",
+                "CREATE INDEX one_nonterminal_task_promotion_per_run "
+                "ON task_promotion_intents(run_id) "
+                "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+            ),
+            "weakened-predicate": (
+                "DROP INDEX one_nonterminal_task_promotion_per_run",
+                "CREATE UNIQUE INDEX one_nonterminal_task_promotion_per_run "
+                "ON task_promotion_intents(run_id) WHERE state='PREPARED'",
+            ),
+        }
+        for label, statements in damages.items():
+            with self.subTest(label=label):
+                self.initialize(label)
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    for statement in statements:
+                        connection.execute(statement)
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.check()
+
+        self.initialize("weak-table")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_promotion_intents")
+            connection.execute(
+                "CREATE TABLE task_promotion_intents ("
+                "intent_id TEXT, run_id TEXT, task_id TEXT, attempt_id TEXT, "
+                "claim_generation INTEGER, expected_run_revision INTEGER, "
+                "old_run_record_sha256 TEXT, replacement_run_record_sha256 TEXT, "
+                "replacement_run_record_json TEXT, outputs_json TEXT, "
+                "journal_sha256 TEXT, state TEXT, intent_identity TEXT)"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX one_nonterminal_task_promotion_per_run "
+                "ON task_promotion_intents(run_id) "
+                "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+
+    def test_partial_v5_migration_fails_closed(self) -> None:
+        self.initialize("partial-v5")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+
+    def test_real_v3_and_v4_stores_migrate_atomically_to_v5(self) -> None:
+        self.initialize("v3-upgrade")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE task_promotion_identity_versions")
+            connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DROP TABLE task_promotion_intents")
+            connection.execute("DROP TABLE task_attempts")
+            connection.execute("DROP TABLE task_claims")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (4, 5)"
+            )
+        migrated_v3 = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated_v3.control_store.check().schema_version, 5)
+        with sqlite3.connect(migrated_v3.control_store.path) as connection:
+            versions = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                )
+            ]
+        self.assertEqual(versions, [1, 2, 3, 4, 5])
+
+        prepared, claimed = self.ready("v4-committed-upgrade")
+        self.promote(prepared, claimed)
+        legacy_id = self.downgrade_promotion_to_real_legacy_v4(
+            prepared, claimed
+        )
+        migrated_v4 = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated_v4.control_store.check().schema_version, 5)
+        with mock.patch(
+            "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
+            return_value=(b"future prompt version\n", {}),
+        ):
+            migrated_v4.promote_task(
+                self.run_dir,
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+            )
+        TaskExecution(migrated_v4).verify_committed_task_state(self.run_dir)
+        with sqlite3.connect(migrated_v4.control_store.path) as connection:
+            version = connection.execute(
+                "SELECT identity_version FROM task_promotion_identity_versions "
+                "WHERE intent_id=?",
+                (legacy_id,),
+            ).fetchone()[0]
+        self.assertEqual(version, "legacy-v1")
+
+    def test_v4_completion_backfill_tamper_rolls_back(self) -> None:
+        prepared, claimed = self.ready("v4-backfill-tamper")
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_promotion_identity_versions")
+            connection.execute("DROP TABLE task_completion_authorities")
+            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+        completion = read_json(claimed.attempt_dir / "completion.json")
+        completion["validated_at"] = "2026-07-15T09:00:00+00:00"
+        write_json_atomic(claimed.attempt_dir / "completion.json", completion)
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='task_completion_authorities'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                4,
+            )
+
+    def test_legacy_v4_nonterminal_promotion_is_blocked(self) -> None:
+        prepared, claimed = self.ready("legacy-v4-prepared")
+        with self.assertRaises(TaskFault):
+            self.promote(
+                prepared,
+                claimed,
+                fault_point="after_promotion_intent_prepared",
+            )
+
+    def test_legacy_v4_outputs_identity_tamper_rolls_back(self) -> None:
+        prepared, claimed = self.ready("legacy-v4-output-tamper")
+        self.promote(prepared, claimed)
+        legacy_id = self.downgrade_promotion_to_real_legacy_v4(
+            prepared, claimed
+        )
+        alias = self.run_dir / "workflow/migration-alias.json"
+        alias.write_bytes((self.run_dir / PATCH_CANONICAL).read_bytes())
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.row_factory = sqlite3.Row
+            intent = connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE intent_id=?",
+                (legacy_id,),
+            ).fetchone()
+            outputs = json.loads(intent["outputs_json"])
+            outputs[0]["canonical_path"] = "workflow/migration-alias.json"
+            outputs_json = canonical_json_bytes(outputs).decode("utf-8")
+            identity = hashlib.sha256(
+                "\0".join(
+                    (
+                        "task_artifact_promotion",
+                        intent["run_id"],
+                        intent["task_id"],
+                        intent["attempt_id"],
+                        str(intent["claim_generation"]),
+                        str(intent["expected_run_revision"]),
+                        intent["old_run_record_sha256"],
+                        intent["replacement_run_record_sha256"],
+                        hashlib.sha256(outputs_json.encode("utf-8")).hexdigest(),
+                    )
+                ).encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "UPDATE task_promotion_intents SET outputs_json=?, "
+                "intent_identity=? WHERE intent_id=?",
+                (outputs_json, identity, legacy_id),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE "
+                    "name='task_completion_authorities'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                4,
+            )
+    def test_evidence_v2_identity_marker_cannot_be_downgraded(self) -> None:
+        prepared, claimed = self.ready("identity-marker-downgrade")
+        with self.assertRaises(TaskFault):
+            self.promote(
+                prepared,
+                claimed,
+                fault_point="after_promotion_intent_prepared",
+            )
+        intent = self.kernel.control_store.task_promotion_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "UPDATE task_promotion_identity_versions "
+                "SET identity_version='legacy-v1' WHERE intent_id=?",
+                (intent["intent_id"],),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.task_promotion_for_attempt(
+                prepared.task_id, claimed.attempt_id
+            )
+
+    def test_reclaim_faults_resume_same_replacement_and_conflicts_reject(self) -> None:
+        for fault_point in (
+            "after_reclaim_committed",
+            "after_reclaim_attempt_record_written",
+        ):
+            with self.subTest(fault_point=fault_point):
+                self.initialize(fault_point)
+                prepared = self.prepare()
+                first = self.claim(prepared)
+                arguments = {
+                    "task_id": prepared.task_id,
+                    "expected_attempt_id": first.attempt_id,
+                    "expected_claim_generation": first.claim_generation,
+                    "coordinator_session_id": "replacement-coordinator",
+                    "worker_id": "replacement-worker",
+                    "reason": "deterministic worker replacement",
+                }
+                with self.assertRaises(TaskFault):
+                    self.kernel.reclaim_task(
+                        self.run_dir,
+                        **arguments,
+                        fault_point=fault_point,
+                    )
+                resumed = self.kernel.reclaim_task(self.run_dir, **arguments)
+                self.assertEqual(resumed.claim_generation, 2)
+                self.assertTrue((resumed.attempt_dir / "attempt.json").is_file())
+                with self.assertRaises(KernelConflict):
+                    self.kernel.reclaim_task(
+                        self.run_dir,
+                        **{**arguments, "worker_id": "conflicting-worker"},
+                    )
+
+
+class ContractAndPromptRepairTests(unittest.TestCase):
+    def test_run_record_versions_share_true_identity_and_major_paths(self) -> None:
+        manifest = read_json(PROJECT_ROOT / "schemas/video-workflow/registry.v1.json")
+        run_entries = [
+            entry for entry in manifest["contracts"] if entry["schema_name"] == "run-record"
+        ]
+        self.assertEqual(
+            {(entry["schema_name"], entry["schema_version"]) for entry in run_entries},
+            {("run-record", "1.0.0"), ("run-record", "2.0.0")},
+        )
+        v2 = next(entry for entry in run_entries if entry["schema_version"] == "2.0.0")
+        self.assertEqual(
+            v2["schema_path"], "schemas/video-workflow/v2/run-record.v2.schema.json"
+        )
+        self.assertEqual(
+            v2["schema_id"],
+            "https://video2pdf.local/schemas/video-workflow/v2/run-record.v2.schema.json",
+        )
+        schema = read_json(PROJECT_ROOT / v2["schema_path"])
+        self.assertEqual(schema["$id"], v2["schema_id"])
+        contracts = ContractRegistry(PROJECT_ROOT)
+        contracts.validate(
+            "run-record",
+            read_json(
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/contracts/run-record.v2.valid.json"
+            ),
+        )
+        with self.assertRaises(UnknownContractVersion):
+            contracts.validate_run_record(
+                {"schema_name": "run-record", "schema_version": "3.0.0"}
+            )
+
+    def test_duplicate_run_record_version_is_rejected(self) -> None:
+        contracts = ContractRegistry(PROJECT_ROOT)
+        duplicate = copy.deepcopy(contracts._canonical["contracts"][-1])
+        contracts._manifest = copy.deepcopy(contracts._canonical)
+        contracts._manifest["contracts"].append(duplicate)
+        contracts._canonical = copy.deepcopy(contracts._manifest)
+        with self.assertRaises(ContractError):
+            contracts._load_entries()
+
+    def test_generated_prompt_contains_semantics_and_boundaries_only(self) -> None:
+        prompt = (
+            PROJECT_ROOT / "prompts/video-workflow/roles/source-acquisition.v1.md"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("Completion Gate", prompt)
+        self.assertNotIn("promotion", prompt.casefold())
+        self.assertIn("bounded Source Acquisition Judgment Patch", prompt)
+
+    def test_slice2_evidence_closes_the_review_repair_command_set(self) -> None:
+        collector = (
+            PROJECT_ROOT / "scripts/collect_slice2_exit_evidence.py"
+        ).read_text(encoding="utf-8")
+        validator = (
+            PROJECT_ROOT / "scripts/validate_slice_exit_evidence.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"slice2-review-repairs"', collector)
+        self.assertIn(
+            '"tests.video_workflow.test_issue5_review_repairs"', collector
+        )
+        self.assertIn(
+            "control_store_v1_through_v4_migrate_atomically_to_v5", collector
+        )
+        self.assertIn('"slice2-review-repairs"', validator)
+
+
+def read_json_string(value: str) -> object:
+    import json
+
+    return json.loads(value)
+
+
+if __name__ == "__main__":
+    unittest.main()

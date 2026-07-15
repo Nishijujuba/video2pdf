@@ -149,14 +149,14 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/task-promotion-journal.invalid.json"
     },
     {
-      "schema_name": "run-record-task-capable",
+      "schema_name": "run-record",
       "schema_version": "2.0.0",
-      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/run-record-task-capable.v2.schema.json",
-      "schema_path": "schemas/video-workflow/v1/run-record-task-capable.v2.schema.json",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v2/run-record.v2.schema.json",
+      "schema_path": "schemas/video-workflow/v2/run-record.v2.schema.json",
       "kind": "contract",
-      "invariants": ["run-record-task-capable-freshness-v2"],
-      "positive_example": "tests/video_workflow/fixtures/contracts/run-record-task-capable.valid.json",
-      "negative_example": "tests/video_workflow/fixtures/contracts/run-record-task-capable.invalid.json"
+      "invariants": ["run-record-freshness-v2"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/run-record.v2.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/run-record.v2.invalid.json"
     }
   ]
 }

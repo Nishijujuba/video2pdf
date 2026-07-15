@@ -16,6 +16,7 @@ from .task_execution import (
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
     PROMOTION_FAULT_POINTS,
+    RECLAIM_FAULT_POINTS,
 )
 from .utils import read_json
 
@@ -84,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
     task_reclaim.add_argument("--coordinator-session-id", required=True)
     task_reclaim.add_argument("--worker-id", required=True)
     task_reclaim.add_argument("--reason", required=True)
-    task_reclaim.add_argument("--fault-point", choices=sorted(CLAIM_FAULT_POINTS))
+    task_reclaim.add_argument("--fault-point", choices=sorted(RECLAIM_FAULT_POINTS))
 
     task_complete = commands.add_parser("task-complete")
     task_complete.add_argument("--run-dir", required=True, type=Path)

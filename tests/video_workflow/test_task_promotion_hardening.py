@@ -242,7 +242,10 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
         with self.assertRaises(ArtifactDrift):
             self.complete(prepared, claimed)
 
-        canonical.replace(self.run_dir / "待删除/direct-canonical-write.json")
+        self.initialize("changed-after-validation")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        patch_path = self.patch(prepared, claimed)
         self.complete(prepared, claimed)
         patch = read_json(patch_path)
         patch["judgment"]["known_gaps"] = ["changed after validation"]

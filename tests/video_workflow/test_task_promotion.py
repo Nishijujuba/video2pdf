@@ -276,9 +276,10 @@ class TaskPromotionTestCase(unittest.TestCase):
                 "task-completion-record",
                 "source-acquisition-judgment-patch",
                 "task-promotion-journal",
-                "run-record-task-capable",
+                "run-record",
             }.issubset(names)
         )
+        self.assertIn("run-record@2.0.0", checked["registered_contract_versions"])
 
 
 if __name__ == "__main__":

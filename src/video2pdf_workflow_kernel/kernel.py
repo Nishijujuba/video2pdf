@@ -757,7 +757,12 @@ class VideoWorkflowKernel:
             },
         }
 
-    def _verify_current_source(self, run_dir: Path) -> None:
+    def _verify_current_source(
+        self,
+        run_dir: Path,
+        *,
+        expected_run_record_sha256: str | None = None,
+    ) -> None:
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
         self.contracts.validate_run_record(record)
@@ -777,7 +782,11 @@ class VideoWorkflowKernel:
             intent,
             record,
             run_record_sha,
-            expected_current_sha=store.current_run_record_sha(record["run_id"]),
+            expected_current_sha=(
+                expected_run_record_sha256
+                if expected_run_record_sha256 is not None
+                else store.current_run_record_sha(record["run_id"])
+            ),
         )
         manifest_path = run_dir / "source/manifest.json"
         expected_manifest_sha = record["artifact_generations"]["source_manifest"]["sha256"]

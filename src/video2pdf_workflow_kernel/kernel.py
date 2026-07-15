@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import FixturePlatformAdapter
+from .artifact_plan import ARTIFACT_PLAN_BINDINGS
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .errors import (
@@ -76,6 +77,8 @@ class VideoWorkflowKernel:
             self.control_store = ControlStore.initialize(
                 self.workspace_root, self.contracts
             )
+            self.control_store.check()
+        else:
             self.control_store.check()
         adapter = FixturePlatformAdapter(fixture, self.contracts)
         record = self._derive_bootstrap_record(
@@ -161,6 +164,8 @@ class VideoWorkflowKernel:
         title_override: str | None = None,
         fault_point: str | None = None,
     ) -> TraceResult:
+        if self.control_store is not None:
+            self.control_store.check()
         probe = self.bootstrap_probe(
             fixture=fixture,
             task_start=task_start,
@@ -178,6 +183,7 @@ class VideoWorkflowKernel:
         fixture: Path,
         fault_point: str | None = None,
     ) -> TraceResult:
+        store = self._preflight_control_store()
         if fault_point is not None and fault_point not in FAULT_POINTS:
             raise ContractError(f"unknown initialization fault point: {fault_point}")
         adapter = FixturePlatformAdapter(fixture, self.contracts)
@@ -203,8 +209,6 @@ class VideoWorkflowKernel:
         evidence_binding = {name: loaded_probe[name] for name in caller_binding}
         if caller_binding != evidence_binding:
             raise KernelConflict("caller Bootstrap identity disagrees with validated evidence")
-        store = self._require_control_store()
-
         existing = store.binding_for_run(probe.run_id)
         if existing:
             intent = store.intent_for_run(probe.run_id)
@@ -311,8 +315,16 @@ class VideoWorkflowKernel:
             source_manifest_sha=source_manifest_sha,
         )
         self.contracts.validate("run-record", run_record)
-        write_json_atomic(
+        expected_run_record_sha = write_json_atomic(
             staging_path / "待删除/bootstrap/prepared-run.json", run_record
+        )
+        store.bind_publication_expectations(
+            intent_id,
+            expected_run_record_sha256=expected_run_record_sha,
+            canonical_platform="fixture",
+            canonical_item_id=probe.canonical_item_id,
+            source_identity=probe.fixture_manifest_sha256,
+            source_manifest_sha256=source_manifest_sha,
         )
         self._inject(fault_point, "after_contracts_written")
 
@@ -351,7 +363,7 @@ class VideoWorkflowKernel:
         )
 
     def reconcile_initialization(self, run_id: str) -> ReconcileResult:
-        store = self._require_control_store()
+        store = self._preflight_control_store()
         intent = store.intent_for_run(run_id)
         if intent is None:
             raise KernelConflict(f"initialization intent does not exist for run {run_id}")
@@ -377,11 +389,6 @@ class VideoWorkflowKernel:
 
         prepared_path = output_path / "待删除/bootstrap/prepared-run.json"
         run_path = output_path / "workflow/run.json"
-        if state == "PREPARED":
-            store.transition_intent(
-                intent["intent_id"], expected_state="PREPARED", new_state="PUBLISHED"
-            )
-            state = "PUBLISHED"
         if not run_path.is_file():
             if state in {"RECORD_COMMITTED", "COMMITTED"}:
                 raise KernelConflict(
@@ -391,7 +398,29 @@ class VideoWorkflowKernel:
                 raise KernelConflict("published output lacks its prepared Run Record")
             run_record = read_json(prepared_path)
             self.contracts.validate("run-record", run_record)
-            run_record_sha = write_json_atomic(run_path, run_record)
+            run_record_sha = sha256_file(prepared_path)
+        else:
+            run_record = read_json(run_path)
+            self.contracts.validate("run-record", run_record)
+            run_record_sha = sha256_file(run_path)
+        recovery_drift = self._identity_binding_drift(
+            output_path, intent, run_record, run_record_sha
+        )
+        if recovery_drift:
+            raise KernelConflict(
+                "initialization recovery evidence disagrees with immutable intent",
+                data={"drifted_bindings": recovery_drift},
+            )
+        if state == "PREPARED":
+            store.transition_intent(
+                intent["intent_id"], expected_state="PREPARED", new_state="PUBLISHED"
+            )
+            state = "PUBLISHED"
+        if not run_path.is_file():
+            canonical_sha = write_json_atomic(run_path, run_record)
+            if canonical_sha != run_record_sha:
+                raise KernelConflict("canonical Run Record differs from prepared evidence")
+        if state == "PUBLISHED":
             store.transition_intent(
                 intent["intent_id"],
                 expected_state="PUBLISHED",
@@ -399,29 +428,11 @@ class VideoWorkflowKernel:
                 run_record_sha256=run_record_sha,
             )
             state = "RECORD_COMMITTED"
-        else:
-            run_record = read_json(run_path)
-            self.contracts.validate("run-record", run_record)
-            run_record_sha = sha256_file(run_path)
-            if state == "PUBLISHED":
-                store.transition_intent(
-                    intent["intent_id"],
-                    expected_state="PUBLISHED",
-                    new_state="RECORD_COMMITTED",
-                    run_record_sha256=run_record_sha,
+        elif state in {"RECORD_COMMITTED", "COMMITTED"}:
+            if intent["run_record_sha256"] != run_record_sha:
+                raise KernelConflict(
+                    "initialization intent Run Record fingerprint disagrees"
                 )
-                state = "RECORD_COMMITTED"
-            elif state in {"RECORD_COMMITTED", "COMMITTED"}:
-                if intent["run_record_sha256"] != run_record_sha:
-                    raise KernelConflict(
-                        "initialization intent Run Record fingerprint disagrees"
-                    )
-        if (
-            run_record["run_id"] != run_id
-            or run_record["initialization_intent_id"] != intent["intent_id"]
-            or Path(run_record["output_path"]).resolve() != output_path.resolve()
-        ):
-            raise KernelConflict("Run Record does not bind to initialization intent")
         self._verify_current_source(output_path)
         if state == "RECORD_COMMITTED":
             store.transition_intent(
@@ -433,11 +444,12 @@ class VideoWorkflowKernel:
         return ReconcileResult(run_id, output_path, "new_state_complete")
 
     def reconcile_run(self, run_dir: Path) -> ReconcileResult:
+        store = self._preflight_control_store()
         run_dir = run_dir.resolve()
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
         self.contracts.validate("run-record", record)
-        binding = self._require_control_store().binding_for_run(record["run_id"])
+        binding = store.binding_for_run(record["run_id"])
         if binding is None or Path(binding["output_path"]).resolve() != run_dir:
             raise KernelConflict("Run Record and Control Store binding disagree")
         try:
@@ -492,52 +504,13 @@ class VideoWorkflowKernel:
             )
         return self.control_store
 
+    def _preflight_control_store(self) -> ControlStore:
+        store = self._require_control_store()
+        store.check()
+        return store
+
     @staticmethod
     def _artifact_plan(run_id: str) -> dict[str, Any]:
-        artifacts = [
-            (
-                "run_record",
-                "workflow/run.json",
-                "run-record",
-                "kernel:init-run",
-                "run_initialized",
-            ),
-            (
-                "artifact_plan",
-                "workflow/artifact-plan.json",
-                "artifact-plan",
-                "kernel:init-run",
-                "run_initialized",
-            ),
-            (
-                "bootstrap_record",
-                "待删除/bootstrap/probe.json",
-                "bootstrap-record",
-                "kernel:bootstrap",
-                "run_initialized",
-            ),
-            (
-                "scaffold_contract",
-                "workflow/scaffold-contract.json",
-                "scaffold-contract",
-                "kernel:init-run",
-                "run_initialized",
-            ),
-            (
-                "scaffold_ledger",
-                "workflow/scaffold-ledger.json",
-                "scaffold-ledger",
-                "kernel:init-run",
-                "run_initialized",
-            ),
-            (
-                "source_manifest",
-                "source/manifest.json",
-                "source-manifest",
-                "kernel:verified-import",
-                "source_ready",
-            ),
-        ]
         return {
             "schema_name": "artifact-plan",
             "schema_version": "1.0.0",
@@ -545,13 +518,13 @@ class VideoWorkflowKernel:
             "run_id": run_id,
             "artifacts": [
                 {
-                    "logical_id": logical_id,
-                    "path": path,
-                    "schema_name": schema_name,
-                    "generator": generator,
-                    "earliest_checkpoint": checkpoint,
+                    "logical_id": binding.logical_id,
+                    "path": binding.path,
+                    "schema_name": binding.schema_name,
+                    "generator": binding.generator,
+                    "earliest_checkpoint": binding.earliest_checkpoint,
                 }
-                for logical_id, path, schema_name, generator, checkpoint in artifacts
+                for binding in ARTIFACT_PLAN_BINDINGS
             ],
         }
 
@@ -573,7 +546,9 @@ class VideoWorkflowKernel:
             "run_id": probe.run_id,
             "request_id": probe.request_id,
             "platform_adapter": "fixture",
+            "canonical_platform": "fixture",
             "canonical_item_id": probe.canonical_item_id,
+            "source_identity": probe.fixture_manifest_sha256,
             "original_title": probe.original_title,
             "normalized_title": normalize_title(probe.original_title),
             "task_start": probe.task_start,
@@ -606,9 +581,21 @@ class VideoWorkflowKernel:
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
         self.contracts.validate("run-record", record)
+        run_record_sha = sha256_file(record_path)
+        intent = self._require_control_store().intent_for_run(record["run_id"])
+        if intent is None:
+            raise ArtifactDrift(
+                "Run Record has no immutable initialization intent",
+                data={
+                    "run_dir": str(run_dir),
+                    "drifted_paths": ["workflow/run.json"],
+                },
+            )
+        drift = self._identity_binding_drift(
+            run_dir, intent, record, run_record_sha
+        )
         manifest_path = run_dir / "source/manifest.json"
         expected_manifest_sha = record["artifact_generations"]["source_manifest"]["sha256"]
-        drift: list[str] = []
         if not manifest_path.is_file():
             drift.append("source/manifest.json")
             manifest = None
@@ -637,6 +624,77 @@ class VideoWorkflowKernel:
                 "source_ready checkpoint is stale",
                 data={"run_dir": str(run_dir), "drifted_paths": []},
             )
+
+    def _identity_binding_drift(
+        self,
+        run_dir: Path,
+        intent: Any,
+        record: dict[str, Any],
+        run_record_sha: str,
+    ) -> list[str]:
+        drift: list[str] = []
+        expected_fields = (
+            "expected_run_record_sha256",
+            "canonical_platform",
+            "canonical_item_id",
+            "source_identity",
+            "source_manifest_sha256",
+        )
+        if any(intent[field] is None for field in expected_fields):
+            drift.append("control-store/initialization-intent")
+            return drift
+        if intent["expected_run_record_sha256"] != run_record_sha:
+            drift.append("workflow/run.json")
+        if intent["run_record_sha256"] is not None and intent["run_record_sha256"] != run_record_sha:
+            drift.append("workflow/run.json")
+        if (
+            record["run_id"] != intent["run_id"]
+            or record["initialization_intent_id"] != intent["intent_id"]
+            or Path(record["output_path"]).resolve() != Path(intent["output_path"]).resolve()
+            or record["canonical_platform"] != intent["canonical_platform"]
+            or record["canonical_item_id"] != intent["canonical_item_id"]
+            or record["source_identity"] != intent["source_identity"]
+        ):
+            drift.append("workflow/run.json")
+
+        manifest_path = run_dir / "source/manifest.json"
+        try:
+            manifest = read_json(manifest_path)
+            self.contracts.validate("source-manifest", manifest)
+            manifest_sha = sha256_file(manifest_path)
+        except (ContractError, OSError, ValueError):
+            manifest = None
+            manifest_sha = None
+            drift.append("source/manifest.json")
+        if manifest is not None and (
+            manifest_sha != intent["source_manifest_sha256"]
+            or record["artifact_generations"]["source_manifest"]["sha256"]
+            != manifest_sha
+            or manifest["run_id"] != intent["run_id"]
+            or manifest["adapter_id"] != intent["canonical_platform"]
+            or manifest["canonical_item_id"] != intent["canonical_item_id"]
+            or manifest["fixture_manifest_sha256"] != intent["source_identity"]
+        ):
+            drift.append("source/manifest.json")
+
+        bootstrap_path = run_dir / "待删除/bootstrap/probe.json"
+        try:
+            bootstrap = read_json(bootstrap_path)
+            self.contracts.validate("bootstrap-record", bootstrap)
+        except (ContractError, OSError, ValueError):
+            bootstrap = None
+            drift.append("待删除/bootstrap/probe.json")
+        if bootstrap is not None and (
+            bootstrap["run_id"] != intent["run_id"]
+            or bootstrap["adapter_id"] != intent["canonical_platform"]
+            or bootstrap["canonical_item_id"] != intent["canonical_item_id"]
+            or bootstrap["fixture_manifest_sha256"] != intent["source_identity"]
+            or bootstrap["request_id"] != record["request_id"]
+            or bootstrap["original_title"] != record["original_title"]
+            or bootstrap["task_start"] != record["task_start"]
+        ):
+            drift.append("待删除/bootstrap/probe.json")
+        return sorted(set(drift))
 
     @staticmethod
     def _inject(selected: str | None, current: str) -> None:

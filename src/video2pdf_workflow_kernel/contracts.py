@@ -8,6 +8,8 @@ import re
 import tomllib
 from typing import Any, Iterator
 
+from .artifact_plan import ARTIFACT_PLAN_BINDINGS
+
 try:
     from jsonschema import Draft202012Validator, FormatChecker
     from jsonschema.exceptions import SchemaError, ValidationError
@@ -94,24 +96,13 @@ def _validate_canonical_absolute_path(value: str) -> None:
 
 def _validate_artifact_plan(instance: dict[str, Any]) -> None:
     expected = {
-        "run_record": (
-            "workflow/run.json", "run-record", "kernel:init-run", "run_initialized"
-        ),
-        "artifact_plan": (
-            "workflow/artifact-plan.json", "artifact-plan", "kernel:init-run", "run_initialized"
-        ),
-        "bootstrap_record": (
-            "待删除/bootstrap/probe.json", "bootstrap-record", "kernel:bootstrap", "run_initialized"
-        ),
-        "scaffold_contract": (
-            "workflow/scaffold-contract.json", "scaffold-contract", "kernel:init-run", "run_initialized"
-        ),
-        "scaffold_ledger": (
-            "workflow/scaffold-ledger.json", "scaffold-ledger", "kernel:init-run", "run_initialized"
-        ),
-        "source_manifest": (
-            "source/manifest.json", "source-manifest", "kernel:verified-import", "source_ready"
-        ),
+        binding.logical_id: (
+            binding.path,
+            binding.schema_name,
+            binding.generator,
+            binding.earliest_checkpoint,
+        )
+        for binding in ARTIFACT_PLAN_BINDINGS
     }
     logical_ids: set[str] = set()
     paths: set[str] = set()

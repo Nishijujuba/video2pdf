@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import hashlib
 from pathlib import Path
 import shutil
 import sqlite3
@@ -189,6 +190,177 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
 
 
 class PersistenceHardeningTests(unittest.TestCase):
+    def test_publication_expectations_are_bound_before_output_publish(self) -> None:
+        from video2pdf_workflow_kernel import InitializationFault, VideoWorkflowKernel
+
+        root = new_test_root("ipb")
+        kernel = VideoWorkflowKernel(root / "workspace")
+        probe = kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="intent-publication-bindings",
+        )
+        with self.assertRaises(InitializationFault):
+            kernel.initialize_verified_import(
+                probe=probe,
+                fixture=FIXTURE,
+                fault_point="after_contracts_written",
+            )
+        intent = kernel.control_store.intent_for_run(probe.run_id)
+        self.assertEqual(intent["state"], "PREPARED")
+        self.assertRegex(intent["expected_run_record_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(intent["source_manifest_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(intent["canonical_platform"], "fixture")
+        self.assertEqual(intent["canonical_item_id"], probe.canonical_item_id)
+        self.assertEqual(intent["source_identity"], probe.fixture_manifest_sha256)
+
+    def test_published_prepared_run_identity_tamper_blocks_recovery(self) -> None:
+        from video2pdf_workflow_kernel import (
+            InitializationFault,
+            KernelConflict,
+            VideoWorkflowKernel,
+        )
+        from video2pdf_workflow_kernel.utils import write_json_atomic
+
+        root = new_test_root("prepared-run-tamper")
+        kernel = VideoWorkflowKernel(root / "workspace")
+        probe = kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="prepared-run-tamper",
+        )
+        with self.assertRaises(InitializationFault):
+            kernel.initialize_verified_import(
+                probe=probe,
+                fixture=FIXTURE,
+                fault_point="after_output_dir_publish",
+            )
+        intent = kernel.control_store.intent_for_run(probe.run_id)
+        prepared_path = Path(intent["output_path"]) / "待删除/bootstrap/prepared-run.json"
+        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+        prepared["original_title"] = "Schema-valid forged title"
+        prepared["normalized_title"] = "Schema_valid forged title"
+        write_json_atomic(prepared_path, prepared)
+
+        with self.assertRaises(KernelConflict):
+            kernel.reconcile_initialization(probe.run_id)
+        self.assertNotEqual(
+            kernel.control_store.intent_for_run(probe.run_id)["state"], "COMMITTED"
+        )
+
+    def test_committed_self_consistent_rewrite_is_artifact_drift_and_stale(self) -> None:
+        from video2pdf_workflow_kernel import ArtifactDrift, VideoWorkflowKernel
+        from video2pdf_workflow_kernel.utils import write_json_atomic
+
+        root = new_test_root("ccd")
+        kernel = VideoWorkflowKernel(root / "workspace")
+        result = kernel.trace_source_ready(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="committed-coordinated-drift",
+        )
+        subtitle = result.run_dir / "source/subtitles/subtitle.en.srt"
+        subtitle.write_bytes(subtitle.read_bytes() + b"\ncoordinated drift\n")
+        manifest_path = result.run_dir / "source/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        artifact = next(
+            item for item in manifest["artifacts"] if item["logical_id"] == "subtitle_en"
+        )
+        artifact["sha256"] = hashlib.sha256(subtitle.read_bytes()).hexdigest()
+        artifact["size_bytes"] = subtitle.stat().st_size
+        manifest_sha = write_json_atomic(manifest_path, manifest)
+        run_path = result.run_dir / "workflow/run.json"
+        run_record = json.loads(run_path.read_text(encoding="utf-8"))
+        run_record["artifact_generations"]["source_manifest"]["sha256"] = manifest_sha
+        run_record["checkpoints"]["source_ready"]["evidence_sha256"] = manifest_sha
+        write_json_atomic(run_path, run_record)
+
+        with self.assertRaises(ArtifactDrift):
+            kernel.reconcile_run(result.run_dir)
+        stale = json.loads(run_path.read_text(encoding="utf-8"))
+        self.assertEqual(stale["checkpoints"]["source_ready"]["status"], "stale")
+
+    def test_live_kernel_preflight_detects_anchor_and_store_displacement(self) -> None:
+        from video2pdf_workflow_kernel import VideoWorkflowKernel
+        from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
+
+        for displaced_kind in ("anchor", "store"):
+            with self.subTest(displaced_kind=displaced_kind):
+                root = new_test_root(f"lp-{displaced_kind[0]}")
+                workspace = root / "workspace"
+                kernel = VideoWorkflowKernel(workspace)
+                probe = kernel.bootstrap_probe(
+                    fixture=FIXTURE,
+                    task_start="2026-07-15T01:02:03+08:00",
+                    request_id=f"live-preflight-{displaced_kind}",
+                )
+                destination = root / "待删除" / displaced_kind
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if displaced_kind == "anchor":
+                    kernel.control_store.anchor_path.replace(destination)
+                else:
+                    kernel.control_store.control_dir.replace(destination)
+
+                with self.assertRaises(ControlStoreUnavailable):
+                    kernel.initialize_verified_import(probe=probe, fixture=FIXTURE)
+                completed, envelope = run_cli(
+                    "source-import",
+                    "--workspace-root",
+                    str(workspace),
+                    "--probe",
+                    str(probe.record_path),
+                    "--fixture",
+                    str(FIXTURE),
+                )
+                self.assertEqual(completed.returncode, 50)
+                self.assertEqual(
+                    envelope["classification"], "control_store_unavailable"
+                )
+
+    def test_slice1_v1_control_store_migrates_forward_to_intent_identity_columns(self) -> None:
+        from video2pdf_workflow_kernel import VideoWorkflowKernel
+
+        root = new_test_root("store-v1-migration")
+        workspace = root / "workspace"
+        kernel = VideoWorkflowKernel(workspace)
+        kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="store-v1-migration",
+        )
+        database = kernel.control_store.path
+        expected_columns = {
+            "expected_run_record_sha256",
+            "canonical_platform",
+            "canonical_item_id",
+            "source_identity",
+            "source_manifest_sha256",
+        }
+        with sqlite3.connect(database) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(initialization_intents)"
+                ).fetchall()
+            }
+            if expected_columns.issubset(columns):
+                for column in expected_columns:
+                    connection.execute(
+                        f"ALTER TABLE initialization_intents DROP COLUMN {column}"
+                    )
+                connection.execute("DELETE FROM schema_migrations WHERE version=2")
+
+        migrated = VideoWorkflowKernel(workspace)
+        self.assertEqual(migrated.control_store.check().schema_version, 2)
+        with sqlite3.connect(database) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(initialization_intents)"
+                ).fetchall()
+            }
+        self.assertTrue(expected_columns.issubset(columns))
+
     def test_intent_transition_uses_expected_state_compare_and_swap(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
 
@@ -207,6 +379,14 @@ class PersistenceHardeningTests(unittest.TestCase):
             )
         intent = kernel.control_store.intent_for_run(probe.run_id)
         self.assertEqual(intent["state"], "PREPARED")
+        kernel.control_store.bind_publication_expectations(
+            intent["intent_id"],
+            expected_run_record_sha256="0" * 64,
+            canonical_platform="fixture",
+            canonical_item_id=probe.canonical_item_id,
+            source_identity=probe.fixture_manifest_sha256,
+            source_manifest_sha256="1" * 64,
+        )
         kernel.control_store.transition_intent(
             intent["intent_id"], expected_state="PREPARED", new_state="PUBLISHED"
         )
@@ -275,6 +455,17 @@ class PersistenceHardeningTests(unittest.TestCase):
 
 
 class ContractAndPathHardeningTests(unittest.TestCase):
+    def test_artifact_plan_bindings_are_one_shared_immutable_six_item_source(self) -> None:
+        from video2pdf_workflow_kernel.artifact_plan import ARTIFACT_PLAN_BINDINGS
+        from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+
+        self.assertIsInstance(ARTIFACT_PLAN_BINDINGS, tuple)
+        self.assertEqual(len(ARTIFACT_PLAN_BINDINGS), 6)
+        plan = VideoWorkflowKernel._artifact_plan("0" * 32)
+        self.assertEqual(
+            [item["logical_id"] for item in plan["artifacts"]],
+            [binding.logical_id for binding in ARTIFACT_PLAN_BINDINGS],
+        )
     def test_registry_requires_exact_canonical_contract_name_version_set(self) -> None:
         canonical = json.loads(
             (PROJECT_ROOT / "schemas/video-workflow/registry.v1.json").read_text(

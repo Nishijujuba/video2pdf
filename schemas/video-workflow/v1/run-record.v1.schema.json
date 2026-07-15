@@ -3,7 +3,7 @@
   "$id": "https://video2pdf.local/schemas/video-workflow/v1/run-record.v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_name", "schema_version", "kernel_version", "scaffold_version", "run_id", "request_id", "platform_adapter", "canonical_item_id", "original_title", "normalized_title", "task_start", "output_path", "deliverable_version", "version_basis", "source_acquisition_mode", "phase", "initialization_intent_id", "coordination_revision", "artifact_plan", "artifact_generations", "checkpoints"],
+  "required": ["schema_name", "schema_version", "kernel_version", "scaffold_version", "run_id", "request_id", "platform_adapter", "canonical_platform", "canonical_item_id", "source_identity", "original_title", "normalized_title", "task_start", "output_path", "deliverable_version", "version_basis", "source_acquisition_mode", "phase", "initialization_intent_id", "coordination_revision", "artifact_plan", "artifact_generations", "checkpoints"],
   "properties": {
     "schema_name": {"const": "run-record"},
     "schema_version": {"const": "1.0.0"},
@@ -12,7 +12,9 @@
     "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
     "request_id": {"type": "string", "minLength": 1},
     "platform_adapter": {"const": "fixture"},
+    "canonical_platform": {"const": "fixture"},
     "canonical_item_id": {"type": "string", "minLength": 1},
+    "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
     "original_title": {"type": "string", "minLength": 1},
     "normalized_title": {"type": "string", "minLength": 1},
     "task_start": {"type": "string", "format": "date-time"},

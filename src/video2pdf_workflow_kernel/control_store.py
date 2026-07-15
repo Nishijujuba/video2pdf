@@ -16,7 +16,7 @@ from .models import ControlStoreHealth
 from .utils import normalized_physical_path, read_json, write_json_atomic
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
 LOCK_PROBE_TIMEOUT_MS = 100
 MARKER_NAME = "control-store.json"
@@ -118,12 +118,17 @@ class ControlStore:
         else:
             target = f"file:{self.path.as_posix()}?mode=rw"
             uri = True
-        connection = sqlite3.connect(
-            target,
-            uri=uri,
-            timeout=BUSY_TIMEOUT_MS / 1000,
-            isolation_level=None,
-        )
+        try:
+            connection = sqlite3.connect(
+                target,
+                uri=uri,
+                timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None,
+            )
+        except (sqlite3.Error, OSError) as exc:
+            raise ControlStoreUnavailable(
+                f"Control Store database connection failed: {exc}"
+            ) from exc
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -180,13 +185,17 @@ class ControlStore:
                 "output_path TEXT NOT NULL, staging_path TEXT NOT NULL, "
                 "state TEXT NOT NULL CHECK(state IN "
                 "('PREPARED','PUBLISHED','RECORD_COMMITTED','COMMITTED','ABORTED')), "
-                "run_record_sha256 TEXT)"
+                "run_record_sha256 TEXT, "
+                "expected_run_record_sha256 TEXT, "
+                "canonical_platform TEXT, canonical_item_id TEXT, "
+                "source_identity TEXT, source_manifest_sha256 TEXT)"
             )
             connection.execute(
                 "INSERT INTO control_store_metadata(key, value) VALUES ('store_id', ?)",
                 (self.store_id,),
             )
             connection.execute("INSERT INTO schema_migrations(version) VALUES (1)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -222,6 +231,7 @@ class ControlStore:
             raise ControlStoreUnavailable("Control Store anchor identity is invalid")
         if marker != self._identity_record("marker"):
             raise ControlStoreUnavailable("Control Store marker identity is invalid")
+        self._migrate_existing()
         try:
             connection = self._connect_raw()
             try:
@@ -242,7 +252,58 @@ class ControlStore:
                 f"unknown Control Store schema version: {version}"
             )
 
+    def _migrate_existing(self) -> None:
+        expected_columns = {
+            "expected_run_record_sha256",
+            "canonical_platform",
+            "canonical_item_id",
+            "source_identity",
+            "source_manifest_sha256",
+        }
+        try:
+            with self._immediate() as connection:
+                version = int(
+                    connection.execute(
+                        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                    ).fetchone()[0]
+                )
+                columns = {
+                    str(row[1])
+                    for row in connection.execute(
+                        "PRAGMA table_info(initialization_intents)"
+                    ).fetchall()
+                }
+                present = expected_columns & columns
+                if version == 1:
+                    if present:
+                        raise ControlStoreUnavailable(
+                            "Slice 1 v1 Control Store has a partial v2 intent migration"
+                        )
+                    for column in sorted(expected_columns):
+                        connection.execute(
+                            f"ALTER TABLE initialization_intents ADD COLUMN {column} TEXT"
+                        )
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (2)"
+                    )
+                elif version == 2:
+                    if present != expected_columns:
+                        raise ControlStoreUnavailable(
+                            "Control Store v2 intent identity columns are incomplete"
+                        )
+                else:
+                    raise ControlStoreUnavailable(
+                        f"unknown Control Store schema version: {version}"
+                    )
+        except ControlStoreUnavailable:
+            raise
+        except (sqlite3.Error, OSError) as exc:
+            raise ControlStoreUnavailable(
+                f"Control Store migration failed: {exc}"
+            ) from exc
+
     def check(self) -> ControlStoreHealth:
+        self._validate_existing()
         try:
             connection = self._connect()
             try:
@@ -476,6 +537,49 @@ class ControlStore:
         finally:
             connection.close()
 
+    def bind_publication_expectations(
+        self,
+        intent_id: str,
+        *,
+        expected_run_record_sha256: str,
+        canonical_platform: str,
+        canonical_item_id: str,
+        source_identity: str,
+        source_manifest_sha256: str,
+    ) -> None:
+        values = (
+            expected_run_record_sha256,
+            canonical_platform,
+            canonical_item_id,
+            source_identity,
+            source_manifest_sha256,
+        )
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE initialization_intents SET "
+                "expected_run_record_sha256=?, canonical_platform=?, "
+                "canonical_item_id=?, source_identity=?, source_manifest_sha256=? "
+                "WHERE intent_id=? AND state='PREPARED' "
+                "AND expected_run_record_sha256 IS NULL "
+                "AND canonical_platform IS NULL AND canonical_item_id IS NULL "
+                "AND source_identity IS NULL AND source_manifest_sha256 IS NULL",
+                (*values, intent_id),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = connection.execute(
+                "SELECT state, expected_run_record_sha256, canonical_platform, "
+                "canonical_item_id, source_identity, source_manifest_sha256 "
+                "FROM initialization_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is not None and row["state"] == "PREPARED" and tuple(row)[1:] == values:
+                return
+            raise KernelConflict(
+                "initialization publication expectations changed or were bound late",
+                data={"intent_id": intent_id},
+            )
+
     def transition_intent(
         self,
         intent_id: str,
@@ -498,12 +602,25 @@ class ControlStore:
                 },
             )
         with self._immediate() as connection:
-            cursor = connection.execute(
-                "UPDATE initialization_intents SET state=?, "
-                "run_record_sha256=COALESCE(?, run_record_sha256) "
-                "WHERE intent_id=? AND state=?",
-                (new_state, run_record_sha256, intent_id, expected_state),
-            )
+            if (expected_state, new_state) == ("PREPARED", "PUBLISHED"):
+                cursor = connection.execute(
+                    "UPDATE initialization_intents SET state=?, "
+                    "run_record_sha256=COALESCE(?, run_record_sha256) "
+                    "WHERE intent_id=? AND state=? "
+                    "AND expected_run_record_sha256 IS NOT NULL "
+                    "AND canonical_platform IS NOT NULL "
+                    "AND canonical_item_id IS NOT NULL "
+                    "AND source_identity IS NOT NULL "
+                    "AND source_manifest_sha256 IS NOT NULL",
+                    (new_state, run_record_sha256, intent_id, expected_state),
+                )
+            else:
+                cursor = connection.execute(
+                    "UPDATE initialization_intents SET state=?, "
+                    "run_record_sha256=COALESCE(?, run_record_sha256) "
+                    "WHERE intent_id=? AND state=?",
+                    (new_state, run_record_sha256, intent_id, expected_state),
+                )
             if cursor.rowcount != 1:
                 row = connection.execute(
                     "SELECT state FROM initialization_intents WHERE intent_id=?",

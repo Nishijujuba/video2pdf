@@ -4,7 +4,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .adapters import FixturePlatformAdapter
@@ -681,7 +681,7 @@ class VideoWorkflowKernel:
         )
         manifest_path = run_dir / "source/manifest.json"
         expected_manifest_sha = record["artifact_generations"]["source_manifest"]["sha256"]
-        if not manifest_path.is_file():
+        if manifest_path.is_symlink() or not manifest_path.is_file():
             drift.append("source/manifest.json")
             manifest = None
         else:
@@ -695,9 +695,14 @@ class VideoWorkflowKernel:
                 manifest = None
                 drift.append("source/manifest.json")
         if manifest is not None:
+            drift.extend(self._source_inventory_drift(run_dir, manifest))
             for artifact in manifest["artifacts"]:
                 path = run_dir.joinpath(*artifact["path"].split("/"))
-                if not path.is_file() or sha256_file(path) != artifact["sha256"]:
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or sha256_file(path) != artifact["sha256"]
+                ):
                     drift.append(artifact["path"])
         if drift:
             raise ArtifactDrift(
@@ -709,6 +714,74 @@ class VideoWorkflowKernel:
                 "source_ready checkpoint is stale",
                 data={"run_dir": str(run_dir), "drifted_paths": []},
             )
+
+    def _source_inventory_drift(
+        self, run_dir: Path, manifest: dict[str, Any]
+    ) -> list[str]:
+        source_root = run_dir / "source"
+        expected_directories = {
+            value
+            for value in self.scaffold["managed_directories"]
+            if value == "source" or value.startswith("source/")
+        }
+        expected_files = {
+            "source/manifest.json",
+            *(artifact["path"] for artifact in manifest["artifacts"]),
+        }
+        drift: set[str] = set()
+        if self._is_symlink_or_reparse_point(source_root) or not source_root.is_dir():
+            return ["source"]
+
+        actual_directories = {"source"}
+        actual_files: set[str] = set()
+        pending = [(source_root, "source")]
+        while pending:
+            directory, relative_directory = pending.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError:
+                drift.add(relative_directory)
+                continue
+            for entry in entries:
+                relative = f"{relative_directory}/{entry.name}"
+                try:
+                    stat_result = entry.stat(follow_symlinks=False)
+                except OSError:
+                    drift.add(relative)
+                    continue
+                if entry.is_symlink() or (
+                    getattr(stat_result, "st_file_attributes", 0) & 0x400
+                ):
+                    drift.add(relative)
+                elif entry.is_dir(follow_symlinks=False):
+                    actual_directories.add(relative)
+                    pending.append((Path(entry.path), relative))
+                elif entry.is_file(follow_symlinks=False):
+                    actual_files.add(relative)
+                else:
+                    drift.add(relative)
+
+        drift.update(actual_directories ^ expected_directories)
+        drift.update(actual_files ^ expected_files)
+        resolved_source_root = source_root.resolve()
+        for value in expected_files:
+            relative = PurePosixPath(value)
+            candidate = run_dir.joinpath(*relative.parts)
+            try:
+                candidate.resolve(strict=False).relative_to(resolved_source_root)
+            except ValueError:
+                drift.add(value)
+        return sorted(drift)
+
+    @staticmethod
+    def _is_symlink_or_reparse_point(path: Path) -> bool:
+        try:
+            stat_result = path.lstat()
+        except OSError:
+            return False
+        return path.is_symlink() or bool(
+            getattr(stat_result, "st_file_attributes", 0) & 0x400
+        )
 
     def _identity_binding_drift(
         self,

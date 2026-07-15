@@ -10,6 +10,7 @@
     "kind",
     "fingerprint_algorithm",
     "slice",
+    "slice_base_commit",
     "implementation_commit",
     "evidence_paths",
     "generated_at",
@@ -36,6 +37,7 @@
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
+    "slice_base_commit": {"const": "96089b99c9ae63fff61107e1920fc3481ffc0802"},
     "implementation_commit": {"$ref": "#/$defs/gitCommit"},
     "evidence_paths": {
       "type": "array",

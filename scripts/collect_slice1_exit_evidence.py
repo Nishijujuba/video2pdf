@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,10 +10,24 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC = PROJECT_ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from video2pdf_workflow_kernel.evidence import (
+    EvidenceSupportError,
+    fingerprint_implementation_changes,
+    git_output,
+    sha256_file,
+)
+
+
 EVIDENCE_DIR = PROJECT_ROOT / "evidence/slice-01"
 LOG_DIR = EVIDENCE_DIR / "logs"
 MANIFEST_PATH = EVIDENCE_DIR / "exit-evidence-manifest.json"
 FIXTURE_ROOT = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
+SLICE_BASE_COMMIT = "96089b99c9ae63fff61107e1920fc3481ffc0802"
+EVIDENCE_PREFIX = "evidence/slice-01/"
 
 
 COMMANDS = (
@@ -37,6 +50,10 @@ COMMANDS = (
     (
         "slice1-gate4-saga-containment-tests",
         [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_issue4_gate4"],
+    ),
+    (
+        "slice1-gate7-review-repair-tests",
+        [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "tests.video_workflow.test_issue4_gate7"],
     ),
     (
         "slice0-exit-evidence",
@@ -63,31 +80,16 @@ COMMANDS = (
     ),
     (
         "slice1-diff-check",
-        ["git", "diff", "--check", "HEAD^", "HEAD"],
+        ["git", "diff", "--check", f"{SLICE_BASE_COMMIT}...HEAD"],
     ),
 )
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def git(*arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", *arguments],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip() or "git command failed")
-    return completed.stdout.strip()
+    try:
+        return git_output(PROJECT_ROOT, *arguments)
+    except EvidenceSupportError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def project_relative(path: Path) -> str:
@@ -134,29 +136,18 @@ def run_commands(implementation_commit: str) -> list[dict[str, Any]]:
     return captured
 
 
-def implementation_artifacts(implementation_commit: str) -> list[dict[str, str]]:
-    paths = [
-        line
-        for line in git(
-            "diff-tree", "--no-commit-id", "--name-only", "-r", implementation_commit
-        ).splitlines()
-        if line
-    ]
-    fixture_prefix = "tests/video_workflow/fixtures/source-ready-tracer/"
-    result: list[dict[str, str]] = []
-    for path_value in sorted(paths):
-        if path_value.startswith("evidence/") or path_value.startswith(fixture_prefix):
-            continue
-        path = PROJECT_ROOT / path_value
-        if path.is_file():
-            result.append(
-                {
-                    "role": "implementation_artifact",
-                    "path": path_value,
-                    "sha256": sha256(path),
-                }
-            )
-    return result
+def implementation_artifacts(
+    slice_base_commit: str, implementation_commit: str
+) -> list[dict[str, str]]:
+    try:
+        return fingerprint_implementation_changes(
+            PROJECT_ROOT,
+            slice_base_commit,
+            implementation_commit,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
+    except EvidenceSupportError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def main() -> int:
@@ -181,7 +172,7 @@ def main() -> int:
                 "log": {
                     "role": "command_log",
                     "path": project_relative(log_path),
-                    "sha256": sha256(log_path),
+                    "sha256": sha256_file(log_path),
                 },
                 "conforms": item["actual_exit_code"] == item["expected_exit_code"],
             }
@@ -197,7 +188,7 @@ def main() -> int:
         {
             "role": "immutable_offline_fixture",
             "path": project_relative(path),
-            "sha256": sha256(path),
+            "sha256": sha256_file(path),
         }
         for path in fixture_paths
     ]
@@ -208,6 +199,7 @@ def main() -> int:
         "kind": "video-workflow-exit-evidence",
         "fingerprint_algorithm": "sha256-raw-v1",
         "slice": {"number": 1, "name": "offline-source-ready-tracer"},
+        "slice_base_commit": SLICE_BASE_COMMIT,
         "implementation_commit": implementation_commit,
         "evidence_paths": [
             project_relative(MANIFEST_PATH),
@@ -280,7 +272,9 @@ def main() -> int:
                 "prepared_drift_resume_revalidates_predecessor_revision_and_identity",
             ],
         },
-        "artifact_fingerprints": implementation_artifacts(implementation_commit),
+        "artifact_fingerprints": implementation_artifacts(
+            SLICE_BASE_COMMIT, implementation_commit
+        ),
         "unresolved_exceptions": [],
         "overall_decision": decision,
     }

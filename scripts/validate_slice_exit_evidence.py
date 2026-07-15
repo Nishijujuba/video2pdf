@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
-import subprocess
 import sys
 from typing import Any
 
@@ -18,37 +16,28 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
+from video2pdf_workflow_kernel.evidence import (
+    EvidenceSupportError,
+    fingerprint_implementation_changes,
+    git_output,
+    sha256_file,
+)
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
+SLICE_BASE_COMMIT = "96089b99c9ae63fff61107e1920fc3481ffc0802"
+EVIDENCE_PREFIX = "evidence/slice-01/"
 
 
 class EvidenceError(ValueError):
     pass
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def git(*arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", *arguments],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise EvidenceError(
-            f"git {' '.join(arguments)} failed: {completed.stderr.strip()}"
-        )
-    return completed.stdout.strip()
+    try:
+        return git_output(PROJECT_ROOT, *arguments)
+    except EvidenceSupportError as exc:
+        raise EvidenceError(str(exc)) from exc
 
 
 def resolve_project_path(value: str) -> Path:
@@ -165,6 +154,43 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError("passing evidence cannot contain unresolved exceptions")
 
 
+def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
+    slice_base_commit = manifest["slice_base_commit"]
+    implementation_commit = manifest["implementation_commit"]
+    if slice_base_commit != SLICE_BASE_COMMIT:
+        raise EvidenceError("Slice 1 base commit differs from its fixed authority")
+    git("merge-base", "--is-ancestor", slice_base_commit, implementation_commit)
+    try:
+        expected = fingerprint_implementation_changes(
+            PROJECT_ROOT,
+            slice_base_commit,
+            implementation_commit,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
+    except EvidenceSupportError as exc:
+        raise EvidenceError(str(exc)) from exc
+    provided = manifest["artifact_fingerprints"]
+    provided_paths = [item["path"] for item in provided]
+    if len(provided_paths) != len(set(provided_paths)):
+        raise EvidenceError("complete implementation change set has duplicate paths")
+    expected_by_path = {item["path"]: item for item in expected}
+    provided_by_path = {item["path"]: item for item in provided}
+    if set(provided_by_path) != set(expected_by_path):
+        missing = sorted(set(expected_by_path) - set(provided_by_path))
+        extra = sorted(set(provided_by_path) - set(expected_by_path))
+        raise EvidenceError(
+            "artifact_fingerprints must equal the complete implementation change set: "
+            f"missing={missing}, extra={extra}"
+        )
+    for path, expected_item in expected_by_path.items():
+        provided_item = provided_by_path[path]
+        if provided_item != expected_item:
+            raise EvidenceError(
+                "complete implementation change set fingerprint differs for "
+                f"{path}: expected {expected_item}, got {provided_item}"
+            )
+
+
 def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_paths = {command["log"]["path"] for command in manifest["commands"]}
@@ -174,7 +200,6 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     seen: set[str] = set()
     bound = [command["log"] for command in manifest["commands"]]
     bound.extend(manifest["fixtures"])
-    bound.extend(manifest["artifact_fingerprints"])
     for item in bound:
         path = resolve_project_path(item["path"])
         identity = str(path).casefold()
@@ -183,7 +208,7 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
         seen.add(identity)
         if not path.is_file():
             raise EvidenceError(f"fingerprinted path does not exist: {item['path']}")
-        actual = sha256(path)
+        actual = sha256_file(path)
         if actual != item["sha256"]:
             raise EvidenceError(
                 f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"
@@ -209,6 +234,7 @@ def validate_manifest(
         return
     validate_semantics(value)
     validate_bindings(value, manifest_path)
+    validate_implementation_artifacts(value)
     validate_lineage(value, manifest_path, pre_publication=pre_publication)
 
 

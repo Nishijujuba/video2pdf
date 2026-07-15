@@ -4,6 +4,7 @@
   "kind": "video-workflow-exit-evidence",
   "fingerprint_algorithm": "sha256-raw-v1",
   "slice": {"number": 1, "name": "offline-source-ready-tracer"},
+  "slice_base_commit": "96089b99c9ae63fff61107e1920fc3481ffc0802",
   "implementation_commit": "0000000000000000000000000000000000000000",
   "evidence_paths": ["evidence/slice-01/exit-evidence-manifest.json", "evidence/slice-01/logs/test.log", "evidence/slice-01/logs/test2.log", "evidence/slice-01/logs/test3.log"],
   "generated_at": "2026-07-15T00:00:00Z",

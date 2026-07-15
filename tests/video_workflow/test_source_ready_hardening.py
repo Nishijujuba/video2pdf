@@ -357,6 +357,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                     )
                 connection.execute("DROP TABLE task_promotion_identity_versions")
                 connection.execute("DROP TABLE task_completion_authorities")
+                connection.execute("DROP TABLE task_attempt_authorities")
                 connection.execute("DROP TABLE task_promotion_intents")
                 connection.execute("DROP TABLE task_attempts")
                 connection.execute("DROP TABLE task_claims")
@@ -385,6 +386,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 "task_claims",
                 "task_attempts",
                 "task_promotion_intents",
+                "task_attempt_authorities",
                 "task_completion_authorities",
                 "task_promotion_identity_versions",
             },

@@ -55,6 +55,7 @@ KNOWN_INVARIANTS = frozenset(
         "control-store-identity-path-v1",
         "fixture-package-paths-v1",
         "run-record-freshness-v1",
+        "scaffold-contract-directories-v1",
         "source-manifest-paths-and-fingerprints-v1",
     }
 )
@@ -65,7 +66,12 @@ def _validate_project_relative_path(value: str, *, prefix: str | None = None) ->
         raise ContractError(f"path is not a canonical project-relative path: {value!r}")
     pure = PurePosixPath(value)
     parts = pure.parts
-    if pure.is_absolute() or pure.as_posix() != value or any(part in {".", ".."} for part in parts):
+    if (
+        pure.is_absolute()
+        or not parts
+        or pure.as_posix() != value
+        or any(part in {".", ".."} for part in parts)
+    ):
         raise ContractError(f"path is not a canonical project-relative path: {value!r}")
     for part in parts:
         if part.endswith((" ", ".")) or ":" in part:
@@ -167,6 +173,13 @@ def _validate_run_record(instance: dict[str, Any]) -> None:
         raise ContractError("source_ready evidence fingerprint does not bind to Source Manifest")
 
 
+def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
+    for value in instance["managed_directories"]:
+        _validate_project_relative_path(value)
+    for value in instance["reserved_descendant_paths"]:
+        _validate_project_relative_path(value)
+
+
 INVARIANT_VALIDATORS = {
     "artifact-plan-paths-v1": _validate_artifact_plan,
     "control-store-identity-path-v1": lambda value: _validate_canonical_absolute_path(
@@ -174,6 +187,7 @@ INVARIANT_VALIDATORS = {
     ),
     "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,
+    "scaffold-contract-directories-v1": _validate_scaffold_contract,
     "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
 }
 
@@ -271,45 +285,8 @@ class ContractRegistry:
         return tuple(entries)
 
     def check(self) -> dict[str, Any]:
-        runtime = self._check_locked_runtime()
+        runtime = self._prepare_registry()
         installed = runtime["jsonschema_version"]
-        registered_ids = {entry.schema_id for entry in self.entries}
-        resources: list[tuple[str, Resource]] = []
-        for entry in self.entries:
-            try:
-                schema = read_json(entry.schema_path)
-            except (FileNotFoundError, json.JSONDecodeError) as exc:
-                raise ContractError(f"cannot load schema: {entry.schema_path}: {exc}") from exc
-            if not isinstance(schema, dict):
-                raise ContractError(f"schema root must be an object: {entry.schema_path}")
-            if schema.get("$schema") != DRAFT:
-                raise ContractError(f"schema draft mismatch: {entry.schema_path}")
-            if schema.get("$id") != entry.schema_id:
-                raise ContractError(f"schema identity mismatch: {entry.schema_path}")
-            try:
-                Draft202012Validator.check_schema(schema)
-            except SchemaError as exc:
-                raise ContractError(f"invalid Draft 2020-12 schema {entry.schema_id}: {exc.message}") from exc
-            for reference in _walk_refs(schema):
-                target = reference.split("#", 1)[0]
-                if target and target not in registered_ids:
-                    raise UnresolvedSchemaReference(
-                        f"unregistered schema reference {reference!r} in {entry.schema_id}"
-                    )
-            self.schemas[entry.schema_name] = schema
-            resources.append((entry.schema_id, Resource.from_contents(schema)))
-
-        self._registry = Registry().with_resources(resources)
-        if self.registry_path == (self.project_root / REGISTRY_RELATIVE_PATH).resolve():
-            registered_paths = {entry.schema_path for entry in self.entries}
-            disk_paths = {
-                path.resolve()
-                for path in (self.project_root / "schemas/video-workflow/v1").glob("*.schema.json")
-            }
-            if registered_paths != disk_paths:
-                missing = sorted(str(path) for path in disk_paths - registered_paths)
-                extra = sorted(str(path) for path in registered_paths - disk_paths)
-                raise ContractError(f"registry completeness mismatch: missing={missing}, extra={extra}")
 
         positive_count = 0
         negative_count = 0
@@ -399,7 +376,7 @@ class ContractRegistry:
 
     def validate(self, schema_name: str, instance: Any) -> None:
         if self._registry is None:
-            self._prepare_without_examples()
+            self._prepare_registry()
         entry = next((item for item in self.entries if item.schema_name == schema_name), None)
         if entry is None:
             raise UnknownContractVersion(f"unregistered contract: {schema_name}")
@@ -423,14 +400,30 @@ class ContractRegistry:
             for invariant in entry.invariants:
                 INVARIANT_VALIDATORS[invariant](instance)
 
-    def _prepare_without_examples(self) -> None:
+    def _prepare_registry(self) -> dict[str, Any]:
+        """Prepare every registry entry through the same closed, locked path."""
+        if self._registry is not None:
+            return self._check_locked_runtime()
+        runtime = self._check_locked_runtime()
         registered_ids = {entry.schema_id for entry in self.entries}
         resources: list[tuple[str, Resource]] = []
         for entry in self.entries:
-            schema = read_json(entry.schema_path)
+            try:
+                schema = read_json(entry.schema_path)
+            except (FileNotFoundError, json.JSONDecodeError) as exc:
+                raise ContractError(f"cannot load schema: {entry.schema_path}: {exc}") from exc
+            if not isinstance(schema, dict):
+                raise ContractError(f"schema root must be an object: {entry.schema_path}")
+            if schema.get("$schema") != DRAFT:
+                raise ContractError(f"schema draft mismatch: {entry.schema_path}")
             if schema.get("$id") != entry.schema_id:
                 raise ContractError(f"schema identity mismatch: {entry.schema_path}")
-            Draft202012Validator.check_schema(schema)
+            try:
+                Draft202012Validator.check_schema(schema)
+            except SchemaError as exc:
+                raise ContractError(
+                    f"invalid Draft 2020-12 schema {entry.schema_id}: {exc.message}"
+                ) from exc
             for reference in _walk_refs(schema):
                 target = reference.split("#", 1)[0]
                 if target and target not in registered_ids:
@@ -440,3 +433,18 @@ class ContractRegistry:
             self.schemas[entry.schema_name] = schema
             resources.append((entry.schema_id, Resource.from_contents(schema)))
         self._registry = Registry().with_resources(resources)
+        if self.registry_path == (self.project_root / REGISTRY_RELATIVE_PATH).resolve():
+            registered_paths = {entry.schema_path for entry in self.entries}
+            disk_paths = {
+                path.resolve()
+                for path in (self.project_root / "schemas/video-workflow/v1").glob(
+                    "*.schema.json"
+                )
+            }
+            if registered_paths != disk_paths:
+                missing = sorted(str(path) for path in disk_paths - registered_paths)
+                extra = sorted(str(path) for path in registered_paths - disk_paths)
+                raise ContractError(
+                    f"registry completeness mismatch: missing={missing}, extra={extra}"
+                )
+        return runtime

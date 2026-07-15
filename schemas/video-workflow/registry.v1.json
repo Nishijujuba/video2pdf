@@ -85,6 +85,7 @@
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
       "schema_path": "schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
       "kind": "contract",
+      "invariants": ["scaffold-contract-directories-v1"],
       "positive_example": "schemas/video-workflow/v1/scaffold.v1.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-contract.invalid.json"
     },

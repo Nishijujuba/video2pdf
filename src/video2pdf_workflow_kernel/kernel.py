@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,13 @@ FAULT_POINTS = frozenset(
         "after_run_record_commit_marker",
         "before_intent_commit",
         "after_intent_commit",
+    }
+)
+RUN_STATE_MUTATION_FAULT_POINTS = frozenset(
+    {
+        "after_run_state_mutation_prepared",
+        "after_stale_run_record_write",
+        "after_run_state_mutation_commit",
     }
 )
 
@@ -443,7 +451,14 @@ class VideoWorkflowKernel:
             )
         return ReconcileResult(run_id, output_path, "new_state_complete")
 
-    def reconcile_run(self, run_dir: Path) -> ReconcileResult:
+    def reconcile_run(
+        self, run_dir: Path, *, fault_point: str | None = None
+    ) -> ReconcileResult:
+        if (
+            fault_point is not None
+            and fault_point not in RUN_STATE_MUTATION_FAULT_POINTS
+        ):
+            raise ContractError(f"unknown run-state mutation fault point: {fault_point}")
         store = self._preflight_control_store()
         run_dir = run_dir.resolve()
         record_path = run_dir / "workflow/run.json"
@@ -452,13 +467,68 @@ class VideoWorkflowKernel:
         binding = store.binding_for_run(record["run_id"])
         if binding is None or Path(binding["output_path"]).resolve() != run_dir:
             raise KernelConflict("Run Record and Control Store binding disagree")
+        self._resume_prepared_run_state_mutation(store, record["run_id"], record_path)
+        record = read_json(record_path)
+        self.contracts.validate("run-record", record)
+        if record["run_id"] != binding["run_id"]:
+            raise KernelConflict("Run Record and Control Store binding disagree")
         try:
             self._verify_current_source(run_dir)
         except ArtifactDrift:
-            record["checkpoints"]["source_ready"]["status"] = "stale"
-            write_json_atomic(record_path, record)
+            if record["checkpoints"]["source_ready"]["status"] == "stale":
+                raise
+            old_sha = sha256_file(record_path)
+            replacement = json.loads(json.dumps(record))
+            replacement["coordination_revision"] = record["coordination_revision"] + 1
+            replacement["checkpoints"]["source_ready"]["status"] = "stale"
+            mutation = store.prepare_run_state_mutation(
+                run_id=record["run_id"],
+                expected_run_revision=record["coordination_revision"],
+                old_run_record_sha256=old_sha,
+                replacement_run_record=replacement,
+            )
+            self._inject(fault_point, "after_run_state_mutation_prepared")
+            if sha256_file(record_path) != mutation["old_run_record_sha256"]:
+                raise KernelConflict(
+                    "Run Record changed after source-drift mutation preparation"
+                )
+            replacement_sha = write_json_atomic(record_path, replacement)
+            if replacement_sha != mutation["replacement_run_record_sha256"]:
+                raise KernelConflict("source-drift replacement fingerprint changed")
+            self._inject(fault_point, "after_stale_run_record_write")
+            store.commit_run_state_mutation(mutation["mutation_id"])
+            self._inject(fault_point, "after_run_state_mutation_commit")
             raise
         return ReconcileResult(record["run_id"], run_dir, "new_state_complete")
+
+    def _resume_prepared_run_state_mutation(
+        self, store: ControlStore, run_id: str, record_path: Path
+    ) -> None:
+        mutation = store.prepared_run_state_mutation(run_id)
+        if mutation is None:
+            return
+        replacement = json.loads(mutation["replacement_run_record_json"])
+        self.contracts.validate("run-record", replacement)
+        replacement_sha = hashlib.sha256(
+            (mutation["replacement_run_record_json"]).encode("utf-8")
+        ).hexdigest()
+        if (
+            replacement_sha != mutation["replacement_run_record_sha256"]
+            or replacement["run_id"] != run_id
+            or replacement["coordination_revision"]
+            != mutation["expected_run_revision"] + 1
+        ):
+            raise ControlStoreUnavailable(
+                "prepared run-state mutation replacement evidence is invalid"
+            )
+        actual_sha = sha256_file(record_path)
+        if actual_sha == mutation["old_run_record_sha256"]:
+            actual_sha = write_json_atomic(record_path, replacement)
+        if actual_sha != mutation["replacement_run_record_sha256"]:
+            raise KernelConflict(
+                "prepared run-state mutation cannot reconcile an unknown Run Record"
+            )
+        store.commit_run_state_mutation(mutation["mutation_id"])
 
     def _resolve_output_path(self, probe: BootstrapProbeResult) -> Path:
         parsed = datetime.fromisoformat(probe.task_start)
@@ -582,7 +652,8 @@ class VideoWorkflowKernel:
         record = read_json(record_path)
         self.contracts.validate("run-record", record)
         run_record_sha = sha256_file(record_path)
-        intent = self._require_control_store().intent_for_run(record["run_id"])
+        store = self._require_control_store()
+        intent = store.intent_for_run(record["run_id"])
         if intent is None:
             raise ArtifactDrift(
                 "Run Record has no immutable initialization intent",
@@ -592,7 +663,11 @@ class VideoWorkflowKernel:
                 },
             )
         drift = self._identity_binding_drift(
-            run_dir, intent, record, run_record_sha
+            run_dir,
+            intent,
+            record,
+            run_record_sha,
+            expected_current_sha=store.current_run_record_sha(record["run_id"]),
         )
         manifest_path = run_dir / "source/manifest.json"
         expected_manifest_sha = record["artifact_generations"]["source_manifest"]["sha256"]
@@ -631,6 +706,7 @@ class VideoWorkflowKernel:
         intent: Any,
         record: dict[str, Any],
         run_record_sha: str,
+        expected_current_sha: str | None = None,
     ) -> list[str]:
         drift: list[str] = []
         expected_fields = (
@@ -643,9 +719,14 @@ class VideoWorkflowKernel:
         if any(intent[field] is None for field in expected_fields):
             drift.append("control-store/initialization-intent")
             return drift
-        if intent["expected_run_record_sha256"] != run_record_sha:
+        expected_sha = expected_current_sha or intent["expected_run_record_sha256"]
+        if expected_sha != run_record_sha:
             drift.append("workflow/run.json")
-        if intent["run_record_sha256"] is not None and intent["run_record_sha256"] != run_record_sha:
+        if (
+            expected_current_sha is None
+            and intent["run_record_sha256"] is not None
+            and intent["run_record_sha256"] != run_record_sha
+        ):
             drift.append("workflow/run.json")
         if (
             record["run_id"] != intent["run_id"]

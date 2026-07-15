@@ -13,10 +13,10 @@ import uuid
 from .contracts import ContractRegistry
 from .errors import ContractError, ControlStoreUnavailable, KernelConflict
 from .models import ControlStoreHealth
-from .utils import normalized_physical_path, read_json, write_json_atomic
+from .utils import canonical_json_bytes, normalized_physical_path, read_json, write_json_atomic
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BUSY_TIMEOUT_MS = 5000
 LOCK_PROBE_TIMEOUT_MS = 100
 MARKER_NAME = "control-store.json"
@@ -190,12 +190,14 @@ class ControlStore:
                 "canonical_platform TEXT, canonical_item_id TEXT, "
                 "source_identity TEXT, source_manifest_sha256 TEXT)"
             )
+            self._create_run_state_mutation_table(connection)
             connection.execute(
                 "INSERT INTO control_store_metadata(key, value) VALUES ('store_id', ?)",
                 (self.store_id,),
             )
             connection.execute("INSERT INTO schema_migrations(version) VALUES (1)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -252,6 +254,62 @@ class ControlStore:
                 f"unknown Control Store schema version: {version}"
             )
 
+    @staticmethod
+    def _create_run_state_mutation_table(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS run_state_mutation_intents ("
+            "mutation_id TEXT PRIMARY KEY, "
+            "operation TEXT NOT NULL CHECK(operation='source_drift_invalidation'), "
+            "run_id TEXT NOT NULL, expected_run_revision INTEGER NOT NULL, "
+            "old_run_record_sha256 TEXT NOT NULL, "
+            "predecessor_committed_sha256 TEXT NOT NULL, "
+            "replacement_run_record_sha256 TEXT NOT NULL, "
+            "replacement_run_record_json TEXT NOT NULL, "
+            "state TEXT NOT NULL CHECK(state IN ('PREPARED','COMMITTED','ABORTED')), "
+            "mutation_identity TEXT NOT NULL UNIQUE, "
+            "UNIQUE(run_id, operation, expected_run_revision))"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS one_prepared_source_drift_mutation_per_run "
+            "ON run_state_mutation_intents(run_id, operation) WHERE state='PREPARED'"
+        )
+        ControlStore._validate_run_state_mutation_table(connection)
+
+    @staticmethod
+    def _validate_run_state_mutation_table(connection: sqlite3.Connection) -> None:
+        expected_columns = {
+            "mutation_id",
+            "operation",
+            "run_id",
+            "expected_run_revision",
+            "old_run_record_sha256",
+            "predecessor_committed_sha256",
+            "replacement_run_record_sha256",
+            "replacement_run_record_json",
+            "state",
+            "mutation_identity",
+        }
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(run_state_mutation_intents)"
+            ).fetchall()
+        }
+        if columns != expected_columns:
+            raise ControlStoreUnavailable(
+                "Control Store run-state mutation table is incomplete"
+            )
+        indexes = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA index_list(run_state_mutation_intents)"
+            ).fetchall()
+        }
+        if "one_prepared_source_drift_mutation_per_run" not in indexes:
+            raise ControlStoreUnavailable(
+                "Control Store run-state mutation active-intent index is missing"
+            )
+
     def _migrate_existing(self) -> None:
         expected_columns = {
             "expected_run_record_sha256",
@@ -286,11 +344,33 @@ class ControlStore:
                     connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (2)"
                     )
-                elif version == 2:
+                    version = 2
+                    present = set(expected_columns)
+                if version == 2:
                     if present != expected_columns:
                         raise ControlStoreUnavailable(
                             "Control Store v2 intent identity columns are incomplete"
                         )
+                    self._create_run_state_mutation_table(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (3)"
+                    )
+                elif version == 3:
+                    if present != expected_columns:
+                        raise ControlStoreUnavailable(
+                            "Control Store v3 intent identity columns are incomplete"
+                        )
+                    tables = {
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        ).fetchall()
+                    }
+                    if "run_state_mutation_intents" not in tables:
+                        raise ControlStoreUnavailable(
+                            "Control Store v3 mutation intent table is missing"
+                        )
+                    self._validate_run_state_mutation_table(connection)
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -343,6 +423,7 @@ class ControlStore:
                     "control_store_metadata",
                     "run_bindings",
                     "initialization_intents",
+                    "run_state_mutation_intents",
                 }
                 if not required_tables.issubset(tables):
                     raise ControlStoreUnavailable(
@@ -654,3 +735,160 @@ class ControlStore:
                     data={"run_id": run_id, "actual_state": actual},
                 )
             connection.execute("DELETE FROM run_bindings WHERE run_id=?", (run_id,))
+
+    @staticmethod
+    def _current_run_record_sha(
+        connection: sqlite3.Connection, run_id: str
+    ) -> str | None:
+        initialization = connection.execute(
+            "SELECT run_record_sha256, expected_run_record_sha256 "
+            "FROM initialization_intents WHERE run_id=? AND state='COMMITTED'",
+            (run_id,),
+        ).fetchone()
+        if initialization is None:
+            return None
+        current = str(
+            initialization["run_record_sha256"]
+            or initialization["expected_run_record_sha256"]
+        )
+        expected_revision = 1
+        mutations = connection.execute(
+            "SELECT expected_run_revision, predecessor_committed_sha256, "
+            "replacement_run_record_sha256 FROM run_state_mutation_intents "
+            "WHERE run_id=? AND state='COMMITTED' "
+            "ORDER BY expected_run_revision",
+            (run_id,),
+        ).fetchall()
+        for mutation in mutations:
+            if (
+                int(mutation["expected_run_revision"]) != expected_revision
+                or mutation["predecessor_committed_sha256"] != current
+            ):
+                raise ControlStoreUnavailable(
+                    "committed run-state mutation hash chain is invalid"
+                )
+            current = str(mutation["replacement_run_record_sha256"])
+            expected_revision += 1
+        return current
+
+    def current_run_record_sha(self, run_id: str) -> str | None:
+        connection = self._connect()
+        try:
+            return self._current_run_record_sha(connection, run_id)
+        finally:
+            connection.close()
+
+    def prepare_run_state_mutation(
+        self,
+        *,
+        run_id: str,
+        expected_run_revision: int,
+        old_run_record_sha256: str,
+        replacement_run_record: dict,
+    ) -> sqlite3.Row:
+        """Durably prepare the Slice 1 source-drift invalidation Saga."""
+        operation = "source_drift_invalidation"
+        self.contracts.validate("run-record", replacement_run_record)
+        if (
+            replacement_run_record.get("run_id") != run_id
+            or replacement_run_record.get("coordination_revision")
+            != expected_run_revision + 1
+        ):
+            raise KernelConflict("run-state mutation replacement identity is invalid")
+        replacement_json = canonical_json_bytes(replacement_run_record).decode("utf-8")
+        replacement_sha = hashlib.sha256(replacement_json.encode("utf-8")).hexdigest()
+        with self._immediate() as connection:
+            predecessor = self._current_run_record_sha(connection, run_id)
+            if predecessor is None:
+                raise KernelConflict("run-state mutation has no committed predecessor")
+            previous = connection.execute(
+                "SELECT expected_run_revision FROM run_state_mutation_intents "
+                "WHERE run_id=? AND state='COMMITTED' "
+                "ORDER BY expected_run_revision DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            chain_revision = 1 if previous is None else int(previous[0]) + 1
+            if expected_run_revision != chain_revision:
+                raise KernelConflict(
+                    "run-state mutation expected revision is outside the committed chain"
+                )
+            identity_payload = "\0".join(
+                (
+                    operation,
+                    run_id,
+                    str(expected_run_revision),
+                    old_run_record_sha256,
+                    predecessor,
+                    replacement_sha,
+                )
+            )
+            mutation_identity = hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+            mutation_id = mutation_identity
+            existing = connection.execute(
+                "SELECT * FROM run_state_mutation_intents WHERE mutation_identity=?",
+                (mutation_identity,),
+            ).fetchone()
+            if existing is not None:
+                return existing
+            active = connection.execute(
+                "SELECT * FROM run_state_mutation_intents "
+                "WHERE run_id=? AND operation=? AND state='PREPARED'",
+                (run_id, operation),
+            ).fetchone()
+            if active is not None:
+                raise KernelConflict("a different run-state mutation is already PREPARED")
+            try:
+                connection.execute(
+                    "INSERT INTO run_state_mutation_intents("
+                    "mutation_id, operation, run_id, expected_run_revision, "
+                    "old_run_record_sha256, predecessor_committed_sha256, "
+                    "replacement_run_record_sha256, replacement_run_record_json, "
+                    "state, mutation_identity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED', ?)",
+                    (
+                        mutation_id,
+                        operation,
+                        run_id,
+                        expected_run_revision,
+                        old_run_record_sha256,
+                        predecessor,
+                        replacement_sha,
+                        replacement_json,
+                        mutation_identity,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise KernelConflict(
+                    "run-state mutation compare-and-swap identity conflicts"
+                ) from exc
+            return connection.execute(
+                "SELECT * FROM run_state_mutation_intents WHERE mutation_id=?",
+                (mutation_id,),
+            ).fetchone()
+
+    def prepared_run_state_mutation(self, run_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            return connection.execute(
+                "SELECT * FROM run_state_mutation_intents "
+                "WHERE run_id=? AND state='PREPARED'",
+                (run_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def commit_run_state_mutation(self, mutation_id: str) -> None:
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE run_state_mutation_intents SET state='COMMITTED' "
+                "WHERE mutation_id=? AND state='PREPARED'",
+                (mutation_id,),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = connection.execute(
+                "SELECT state FROM run_state_mutation_intents WHERE mutation_id=?",
+                (mutation_id,),
+            ).fetchone()
+            if row is not None and row["state"] == "COMMITTED":
+                return
+            raise KernelConflict("run-state mutation commit compare-and-swap failed")

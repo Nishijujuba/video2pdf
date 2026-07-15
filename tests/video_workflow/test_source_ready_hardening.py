@@ -348,10 +348,10 @@ class PersistenceHardeningTests(unittest.TestCase):
                     connection.execute(
                         f"ALTER TABLE initialization_intents DROP COLUMN {column}"
                     )
-                connection.execute("DELETE FROM schema_migrations WHERE version=2")
+                connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 2)
+        self.assertEqual(migrated.control_store.check().schema_version, 3)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]

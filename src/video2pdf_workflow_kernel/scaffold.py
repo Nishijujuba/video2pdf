@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path, PurePosixPath
 
-from .contracts import ContractRegistry
+from .contracts import ContractRegistry, _validate_project_relative_path
 from .errors import ContractError, PathBudgetError
 from .utils import normalize_title, read_json, truncate_utf16, utf16_units
 
@@ -69,11 +69,21 @@ def validate_path_budget(output_path: Path, scaffold: dict) -> int:
 def create_scaffold(root: Path, scaffold: dict, run_id: str) -> dict:
     if root.exists():
         raise ContractError(f"staged run directory already exists: {root}")
+    resolved_root = root.resolve()
+    planned: list[tuple[str, Path]] = []
+    for relative in scaffold["managed_directories"]:
+        _validate_project_relative_path(relative)
+        path = root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            path.resolve().relative_to(resolved_root)
+        except ValueError as exc:
+            raise ContractError(
+                f"managed scaffold directory escapes its root: {relative!r}"
+            ) from exc
+        planned.append((relative, path))
     root.mkdir(parents=False, exist_ok=False)
     directories: list[dict[str, str]] = []
-    for relative in scaffold["managed_directories"]:
-        parts = PurePosixPath(relative).parts
-        path = root.joinpath(*parts)
+    for relative, path in planned:
         path.mkdir(parents=False, exist_ok=False)
         directories.append({"path": relative, "created_by": "kernel:init-run"})
     return {

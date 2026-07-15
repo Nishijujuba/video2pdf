@@ -586,6 +586,14 @@ class VideoWorkflowKernel:
             replacement["coordination_revision"] = record["coordination_revision"] + 1
             for checkpoint in replacement["checkpoints"].values():
                 checkpoint["status"] = "stale"
+            if replacement.get("schema_version") == "2.0.0":
+                replacement["last_mutation_intent_id"] = (
+                    store.derive_run_state_mutation_id(
+                        run_id=record["run_id"],
+                        expected_run_revision=record["coordination_revision"],
+                        old_run_record_sha256=old_sha,
+                    )
+                )
             mutation = store.prepare_run_state_mutation(
                 run_id=record["run_id"],
                 expected_run_revision=record["coordination_revision"],

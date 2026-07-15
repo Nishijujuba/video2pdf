@@ -1441,6 +1441,23 @@ class ControlStore:
         finally:
             connection.close()
 
+    @staticmethod
+    def derive_run_state_mutation_id(
+        *,
+        run_id: str,
+        expected_run_revision: int,
+        old_run_record_sha256: str,
+    ) -> str:
+        identity_payload = "\0".join(
+            (
+                "source_drift_invalidation",
+                run_id,
+                str(expected_run_revision),
+                old_run_record_sha256,
+            )
+        )
+        return hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+
     def prepare_run_state_mutation(
         self,
         *,
@@ -1474,23 +1491,41 @@ class ControlStore:
                 raise KernelConflict(
                     "run-state mutation expected revision is outside the committed chain"
                 )
-            identity_payload = "\0".join(
-                (
-                    operation,
-                    run_id,
-                    str(expected_run_revision),
-                    old_run_record_sha256,
-                    predecessor,
-                    replacement_sha,
-                )
+            mutation_id = self.derive_run_state_mutation_id(
+                run_id=run_id,
+                expected_run_revision=expected_run_revision,
+                old_run_record_sha256=old_run_record_sha256,
             )
-            mutation_identity = hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
-            mutation_id = mutation_identity
+            mutation_identity = mutation_id
+            if (
+                replacement_run_record.get("schema_version") == "2.0.0"
+                and replacement_run_record.get("last_mutation_intent_id")
+                != mutation_id
+            ):
+                raise KernelConflict(
+                    "v2 run-state mutation replacement lacks its intent identity"
+                )
             existing = connection.execute(
                 "SELECT * FROM run_state_mutation_intents WHERE mutation_identity=?",
                 (mutation_identity,),
             ).fetchone()
             if existing is not None:
+                if (
+                    existing["operation"] != operation
+                    or existing["run_id"] != run_id
+                    or int(existing["expected_run_revision"])
+                    != expected_run_revision
+                    or existing["old_run_record_sha256"]
+                    != old_run_record_sha256
+                    or existing["predecessor_committed_sha256"] != predecessor
+                    or existing["replacement_run_record_sha256"]
+                    != replacement_sha
+                    or existing["replacement_run_record_json"]
+                    != replacement_json
+                ):
+                    raise KernelConflict(
+                        "conflicting run-state mutation replay changed its replacement"
+                    )
                 self._assert_run_promotion_slot(
                     connection,
                     run_id,
@@ -1548,17 +1583,17 @@ class ControlStore:
         expected_revision = self._next_run_revision(connection, mutation["run_id"])
         replacement_json = str(mutation["replacement_run_record_json"])
         replacement_sha = hashlib.sha256(replacement_json.encode("utf-8")).hexdigest()
-        identity_payload = "\0".join(
-            (
-                str(mutation["operation"]),
-                str(mutation["run_id"]),
-                str(mutation["expected_run_revision"]),
-                str(mutation["old_run_record_sha256"]),
-                str(mutation["predecessor_committed_sha256"]),
-                str(mutation["replacement_run_record_sha256"]),
-            )
+        identity = self.derive_run_state_mutation_id(
+            run_id=str(mutation["run_id"]),
+            expected_run_revision=int(mutation["expected_run_revision"]),
+            old_run_record_sha256=str(mutation["old_run_record_sha256"]),
         )
-        identity = hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+        try:
+            replacement = json.loads(replacement_json)
+        except json.JSONDecodeError as exc:
+            raise ControlStoreUnavailable(
+                "prepared run-state mutation replacement JSON is invalid"
+            ) from exc
         if (
             mutation["operation"] != "source_drift_invalidation"
             or mutation["expected_run_revision"] != expected_revision
@@ -1567,6 +1602,10 @@ class ControlStore:
             or replacement_sha != mutation["replacement_run_record_sha256"]
             or identity != mutation["mutation_identity"]
             or mutation["mutation_id"] != identity
+            or (
+                replacement.get("schema_version") == "2.0.0"
+                and replacement.get("last_mutation_intent_id") != identity
+            )
         ):
             raise ControlStoreUnavailable(
                 "prepared run-state mutation authority evidence is invalid"
@@ -1816,8 +1855,14 @@ class ControlStore:
         connection = self._connect()
         try:
             return connection.execute(
-                "SELECT attempt_id, state FROM task_attempts WHERE task_id=? "
-                "ORDER BY claim_generation",
+                "SELECT a.*, ca.completion_record_json, "
+                "tp.journal_sha256 AS promotion_journal_sha256, "
+                "tp.state AS promotion_state FROM task_attempts a "
+                "LEFT JOIN task_completion_authorities ca "
+                "ON ca.attempt_id=a.attempt_id "
+                "LEFT JOIN task_promotion_intents tp "
+                "ON tp.attempt_id=a.attempt_id WHERE a.task_id=? "
+                "ORDER BY a.claim_generation",
                 (task_id,),
             ).fetchall()
         finally:

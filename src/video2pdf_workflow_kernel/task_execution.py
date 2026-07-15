@@ -305,7 +305,8 @@ class TaskExecution:
         envelope = read_json(envelope_path)
         self.contracts.validate("subagent-task-envelope", envelope)
         prompt, provenance = generate_source_acquisition_prompt(self.project_root)
-        claim = self.kernel._preflight_control_store().task_claim_for_task(task_id)
+        store = self.kernel._preflight_control_store()
+        claim = store.task_claim_for_task(task_id)
         if (
             claim is None
             or claim["authority_id"] != run_id
@@ -321,12 +322,8 @@ class TaskExecution:
                 "Task namespace Envelope or Generated Prompt authority drifted"
             )
         attempts_root = task_dir / "attempts"
-        known_attempts = {
-            str(row["attempt_id"])
-            for row in self.kernel._preflight_control_store().task_attempts_for_task(
-                task_id
-            )
-        }
+        durable_attempts = store.task_attempts_for_task(task_id)
+        known_attempts = {str(row["attempt_id"]) for row in durable_attempts}
         if current_attempt_id is not None and current_attempt_id not in known_attempts:
             raise ControlStoreUnavailable("current Task Attempt lacks durable authority")
         observed_attempts: set[str] = set()
@@ -346,6 +343,165 @@ class TaskExecution:
             raise ContractError(
                 "Task attempts namespace differs from durable Attempt authority"
             )
+        for attempt in durable_attempts:
+            attempt_id = str(attempt["attempt_id"])
+            if attempt_id == current_attempt_id:
+                continue
+            self._verify_durable_attempt_boundary(
+                attempts_root / attempt_id,
+                envelope=envelope,
+                attempt=attempt,
+                current_claim=claim,
+            )
+
+    def _verify_attempt_record(
+        self,
+        attempt_dir: Path,
+        *,
+        envelope: dict[str, Any],
+        attempt: Any,
+        current_claim: Any,
+    ) -> dict[str, Any]:
+        path = attempt_dir / "attempt.json"
+        if _is_link_or_reparse(path) or not path.is_file():
+            raise ArtifactDrift("Task Attempt record is absent or linked")
+        record = read_json(path)
+        self.contracts.validate("task-attempt", record)
+        expected = {
+            "task_id": envelope["task_id"],
+            "attempt_id": str(attempt["attempt_id"]),
+            "claim_generation": int(attempt["claim_generation"]),
+            "task_envelope_sha256": str(current_claim["envelope_sha256"]),
+            "attempt_path": str(attempt["attempt_path"]),
+            "state": "claimed",
+        }
+        if str(current_claim["attempt_id"]) == str(attempt["attempt_id"]):
+            expected.update(
+                {
+                    "coordinator_session_id": str(
+                        current_claim["coordinator_session_id"]
+                    ),
+                    "worker_id": str(current_claim["worker_id"]),
+                    "claimed_at": str(current_claim["updated_at"]),
+                }
+            )
+        if any(record.get(key) != value for key, value in expected.items()):
+            raise ArtifactDrift("Task Attempt record disagrees with durable authority")
+        return record
+
+    @staticmethod
+    def _attempt_entries(attempt_dir: Path) -> tuple[set[str], set[str]]:
+        if _is_link_or_reparse(attempt_dir) or not attempt_dir.is_dir():
+            raise ContractError("Task Attempt boundary is absent or linked")
+        actual_dirs: set[str] = set()
+        actual_files: set[str] = set()
+        pending = [(attempt_dir, "")]
+        while pending:
+            directory, prefix = pending.pop()
+            for entry in os.scandir(directory):
+                relative = f"{prefix}/{entry.name}".lstrip("/")
+                info = entry.stat(follow_symlinks=False)
+                if entry.is_symlink() or (
+                    getattr(info, "st_file_attributes", 0)
+                    & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    raise ContractError(
+                        f"Task Attempt contains a link or reparse point: {relative}"
+                    )
+                if entry.is_dir(follow_symlinks=False):
+                    actual_dirs.add(relative)
+                    pending.append((Path(entry.path), relative))
+                elif entry.is_file(follow_symlinks=False):
+                    actual_files.add(relative)
+                else:
+                    raise ContractError(
+                        f"Task Attempt contains an unsupported entry: {relative}"
+                    )
+        return actual_dirs, actual_files
+
+    def _verify_durable_attempt_boundary(
+        self,
+        attempt_dir: Path,
+        *,
+        envelope: dict[str, Any],
+        attempt: Any,
+        current_claim: Any,
+    ) -> None:
+        actual_dirs, actual_files = self._attempt_entries(attempt_dir)
+        allowed_dirs = {"o"}
+        allowed_files = {"attempt.json", "o/p.json"}
+        completion_json = attempt["completion_record_json"]
+        promotion_journal_sha = attempt["promotion_journal_sha256"]
+        if completion_json is not None:
+            allowed_files.add("completion.json")
+        if promotion_journal_sha is not None:
+            allowed_files.add("p.json")
+        if (
+            "attempt.json" not in actual_files
+            or not actual_dirs.issubset(allowed_dirs)
+            or not actual_files.issubset(allowed_files)
+            or ("o/p.json" in actual_files and "o" not in actual_dirs)
+        ):
+            raise ContractError(
+                "durable Task Attempt contains content outside its closed staging boundary"
+            )
+        self._verify_attempt_record(
+            attempt_dir,
+            envelope=envelope,
+            attempt=attempt,
+            current_claim=current_claim,
+        )
+        state = str(attempt["state"])
+        if state in {"VALIDATED_WAITING_FOR_PROMOTION", "COMMITTED_COMPLETE"}:
+            expected_files = {
+                "attempt.json",
+                "o/p.json",
+                "completion.json",
+            }
+            if state == "COMMITTED_COMPLETE":
+                expected_files.add("p.json")
+            if actual_dirs != {"o"} or actual_files != expected_files:
+                raise ContractError(
+                    "validated Task Attempt lacks its exact durable evidence inventory"
+                )
+        elif state not in {"CLAIMED", "ABANDONED", "STALE", "FAILED"}:
+            raise ControlStoreUnavailable("durable Task Attempt state is unsupported")
+        if "o/p.json" in actual_files:
+            output = read_json(attempt_dir / "o/p.json")
+            output_spec = envelope["required_outputs"][0]
+            self.contracts.validate(output_spec["schema_name"], output)
+            if (
+                output["task_id"] != envelope["task_id"]
+                or output["attempt_id"] != attempt["attempt_id"]
+                or output["task_envelope_sha256"]
+                != current_claim["envelope_sha256"]
+            ):
+                raise ArtifactDrift("staged Task Attempt output authority drifted")
+        if completion_json is None:
+            if "completion.json" in actual_files:
+                raise ArtifactDrift("Task Completion evidence lacks durable authority")
+            return
+        completion = json.loads(str(completion_json))
+        self.contracts.validate("task-completion-record", completion)
+        completion_path = attempt_dir / "completion.json"
+        if completion_path.is_file():
+            if (
+                read_json(completion_path) != completion
+                or sha256_file(completion_path) != attempt["completion_sha256"]
+            ):
+                raise ArtifactDrift("durable Task Completion evidence drifted")
+        elif state in {"VALIDATED_WAITING_FOR_PROMOTION", "COMMITTED_COMPLETE"}:
+            raise ArtifactDrift("durable Task Completion evidence is absent")
+        journal_path = attempt_dir / "p.json"
+        if promotion_journal_sha is None:
+            if journal_path.exists():
+                raise ArtifactDrift("Task promotion journal lacks durable authority")
+        elif (
+            _is_link_or_reparse(journal_path)
+            or not journal_path.is_file()
+            or sha256_file(journal_path) != promotion_journal_sha
+        ):
+            raise ArtifactDrift("durable Task promotion journal drifted")
 
     def _build_envelope(
         self,
@@ -690,33 +846,19 @@ class TaskExecution:
         )
 
     def _attempt_inventory(
-        self, attempt_dir: Path, *, completion_allowed: bool
+        self,
+        attempt_dir: Path,
+        *,
+        completion_allowed: bool,
+        promotion_journal_expected: bool = False,
     ) -> None:
-        if _is_link_or_reparse(attempt_dir) or not attempt_dir.is_dir():
-            raise ContractError("Task Attempt boundary is absent or linked")
         expected_dirs = {"o"}
         expected_files = {"attempt.json", "o/p.json"}
         if completion_allowed and (attempt_dir / "completion.json").exists():
             expected_files.add("completion.json")
-        actual_dirs: set[str] = set()
-        actual_files: set[str] = set()
-        pending = [(attempt_dir, "")]
-        while pending:
-            directory, prefix = pending.pop()
-            for entry in os.scandir(directory):
-                relative = f"{prefix}/{entry.name}".lstrip("/")
-                info = entry.stat(follow_symlinks=False)
-                if entry.is_symlink() or (
-                    getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-                ):
-                    raise ContractError(f"Task Attempt contains a link or reparse point: {relative}")
-                if entry.is_dir(follow_symlinks=False):
-                    actual_dirs.add(relative)
-                    pending.append((Path(entry.path), relative))
-                elif entry.is_file(follow_symlinks=False):
-                    actual_files.add(relative)
-                else:
-                    raise ContractError(f"Task Attempt contains an unsupported entry: {relative}")
+        if promotion_journal_expected:
+            expected_files.add("p.json")
+        actual_dirs, actual_files = self._attempt_entries(attempt_dir)
         if actual_dirs != expected_dirs or actual_files != expected_files:
             raise ContractError(
                 "Task Attempt inventory differs from the exact declared outputs",
@@ -1071,6 +1213,7 @@ class TaskExecution:
         verify_run_boundary: bool,
         allow_published_outputs: bool = False,
         allow_replacement_run_record: bool = False,
+        allow_unbound_journal: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], Path, dict[str, bytes]]:
         store = self.kernel._preflight_control_store()
         claim = store.task_claim_for_attempt(
@@ -1145,6 +1288,24 @@ class TaskExecution:
             run_dir,
             f"{task_root}/attempts/{intent['attempt_id']}",
             prefix="workflow",
+        )
+        self._attempt_inventory(
+            attempt_dir,
+            completion_allowed=True,
+            promotion_journal_expected=(
+                intent["journal_sha256"] is not None
+                or (
+                    allow_unbound_journal
+                    and intent["state"] == "PREPARED"
+                    and (attempt_dir / "p.json").exists()
+                )
+            ),
+        )
+        self._verify_attempt_record(
+            attempt_dir,
+            envelope=envelope,
+            attempt=claim,
+            current_claim=claim,
         )
         completion_path = attempt_dir / "completion.json"
         if _is_link_or_reparse(completion_path) or not completion_path.is_file():
@@ -1478,6 +1639,7 @@ class TaskExecution:
                 verify_run_boundary=True,
                 allow_published_outputs=True,
                 allow_replacement_run_record=actual_run_sha == replacement_sha,
+                allow_unbound_journal=True,
             )
         except (ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict):
             if state == "PREPARED":

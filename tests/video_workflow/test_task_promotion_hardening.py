@@ -311,6 +311,14 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
             {checkpoint["status"] for checkpoint in record["checkpoints"].values()},
             {"stale"},
         )
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            mutation_id, state = connection.execute(
+                "SELECT mutation_id, state FROM run_state_mutation_intents "
+                "WHERE run_id=? ORDER BY rowid DESC LIMIT 1",
+                (record["run_id"],),
+            ).fetchone()
+        self.assertEqual(state, "COMMITTED")
+        self.assertEqual(record["last_mutation_intent_id"], mutation_id)
 
     def test_journal_tamper_and_intent_marker_contradiction_block_recovery(self) -> None:
         prepared = self.prepare()

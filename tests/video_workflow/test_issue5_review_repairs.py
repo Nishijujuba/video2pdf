@@ -213,12 +213,47 @@ class Issue5RepairHarness:
 
 
 class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
+    def test_source_drift_intent_replay_rejects_changed_replacement(self) -> None:
+        prepared, claimed = self.ready("source-drift-replay")
+        self.promote(prepared, claimed)
+        record_path = self.run_dir / "workflow/run.json"
+        record = read_json(record_path)
+        old_sha = sha256_file(record_path)
+        replacement = copy.deepcopy(record)
+        replacement["coordination_revision"] += 1
+        for checkpoint in replacement["checkpoints"].values():
+            checkpoint["status"] = "stale"
+        replacement["last_mutation_intent_id"] = (
+            self.kernel.control_store.derive_run_state_mutation_id(
+                run_id=record["run_id"],
+                expected_run_revision=record["coordination_revision"],
+                old_run_record_sha256=old_sha,
+            )
+        )
+        self.kernel.control_store.prepare_run_state_mutation(
+            run_id=record["run_id"],
+            expected_run_revision=record["coordination_revision"],
+            old_run_record_sha256=old_sha,
+            replacement_run_record=replacement,
+        )
+        conflicting = copy.deepcopy(replacement)
+        first_checkpoint = next(iter(conflicting["checkpoints"].values()))
+        first_checkpoint["status"] = "current"
+        with self.assertRaises(KernelConflict):
+            self.kernel.control_store.prepare_run_state_mutation(
+                run_id=record["run_id"],
+                expected_run_revision=record["coordination_revision"],
+                old_run_record_sha256=old_sha,
+                replacement_run_record=conflicting,
+            )
+
     def test_recovery_reauthenticates_intent_envelope_completion_and_staging(self) -> None:
         for tamper in (
             "intent_outputs",
             "intent_outputs_and_identity",
             "envelope",
             "completion",
+            "attempt",
             "staging",
         ):
             with self.subTest(tamper=tamper):
@@ -285,6 +320,10 @@ class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
                     completion = read_json(claimed.attempt_dir / "completion.json")
                     completion["validated_at"] = "2026-07-15T02:02:03+08:00"
                     write_json_atomic(claimed.attempt_dir / "completion.json", completion)
+                elif tamper == "attempt":
+                    attempt = read_json(claimed.attempt_dir / "attempt.json")
+                    attempt["worker_id"] = "tampered-recovery-worker"
+                    write_json_atomic(claimed.attempt_dir / "attempt.json", attempt)
                 else:
                     patch = read_json(claimed.attempt_dir / "o/p.json")
                     patch["judgment"]["known_gaps"] = ["tampered after validation"]
@@ -591,6 +630,58 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
             after_write_fault_point="unused",
         )
         self.complete(prepared, claimed)
+
+    def test_other_durable_task_attempt_rejects_undeclared_content(self) -> None:
+        self.initialize("cross-task-attempt-corruption")
+        prepared = self.prepare("first-task")
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        other = self.prepare("second-task")
+        envelope = read_json(other.envelope_path)
+        run = read_json(self.run_dir / "workflow/run.json")
+        other_attempt_id = hashlib.sha256(
+            f"task-attempt\0{other.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        claim = self.kernel.control_store.claim_task(
+            authority_id=run["run_id"],
+            task_id=other.task_id,
+            envelope_sha256=sha256_file(other.envelope_path),
+            write_set=("workflow/disjoint-output.json",),
+            attempt_path=(
+                f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
+            ),
+            coordinator_session_id="disjoint-coordinator",
+            worker_id="disjoint-worker",
+            claimed_at="2026-07-15T04:00:00+00:00",
+        )
+        TaskExecution(self.kernel)._create_attempt_record(
+            self.run_dir,
+            envelope,
+            claim,
+            fault_point=None,
+            after_write_fault_point="unused",
+        )
+        other_attempt = (
+            self.run_dir
+            / f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
+        )
+        (other_attempt / "worker-corruption.txt").write_text(
+            "undeclared cross-task write", encoding="utf-8"
+        )
+        with self.assertRaises(ContractError):
+            self.complete(prepared, claimed)
+
+    def test_prior_committed_attempt_rejects_late_tampering(self) -> None:
+        first, first_claim = self.ready("prior-attempt-corruption")
+        self.promote(first, first_claim)
+        second = self.prepare("second-generation-task")
+        second_claim = self.claim(second)
+        self.write_patch(second, second_claim)
+        (first_claim.attempt_dir / "late-worker-corruption.txt").write_text(
+            "late undeclared write", encoding="utf-8"
+        )
+        with self.assertRaises(ContractError):
+            self.complete(second, second_claim)
 
 
 class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):

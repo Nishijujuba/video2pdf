@@ -1109,7 +1109,14 @@ class TaskExecution:
         if prepared_completion_json is not None and prepared_completion != completion:
             raise ArtifactDrift("prepared Task Completion bindings drifted")
         if completion_path.exists():
-            if _is_link_or_reparse(completion_path) or read_json(completion_path) != completion:
+            if (
+                _is_link_or_reparse(completion_path)
+                or not completion_path.is_file()
+                or completion_path.read_bytes() != canonical_json_bytes(completion)
+                or prepared_completion_json is None
+                or claim["completion_sha256"] is None
+                or sha256_file(completion_path) != claim["completion_sha256"]
+            ):
                 raise ArtifactDrift("Task Completion evidence drifted")
         return envelope, record, completion, attempt_dir, patch
 
@@ -1133,21 +1140,32 @@ class TaskExecution:
             validation_time=_utc_now(),
         )
         completion_path = attempt_dir / "completion.json"
-        self.kernel._preflight_control_store().prepare_task_completion(
+        store = self.kernel._preflight_control_store()
+        prepared = store.prepare_task_completion(
             task_id=task_id,
             attempt_id=attempt_id,
             claim_generation=claim_generation,
             completion_record=completion,
         )
+        durable_completion_sha = str(prepared["completion_sha256"])
         _inject(fault_point, "after_completion_prepared")
         if completion_path.exists():
-            if _is_link_or_reparse(completion_path) or read_json(completion_path) != completion:
+            if (
+                _is_link_or_reparse(completion_path)
+                or not completion_path.is_file()
+                or completion_path.read_bytes() != canonical_json_bytes(completion)
+                or sha256_file(completion_path) != durable_completion_sha
+            ):
                 raise ArtifactDrift("Task Completion evidence drifted")
             completion_sha = sha256_file(completion_path)
         else:
             completion_sha = write_json_atomic(completion_path, completion)
+            if completion_sha != durable_completion_sha:
+                raise KernelConflict(
+                    "written Task Completion evidence differs from durable authority"
+                )
         _inject(fault_point, "after_completion_record_written")
-        self.kernel._preflight_control_store().mark_task_validated(
+        store.mark_task_validated(
             task_id=task_id,
             attempt_id=attempt_id,
             claim_generation=claim_generation,

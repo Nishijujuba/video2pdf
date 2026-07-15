@@ -2518,11 +2518,32 @@ class ControlStore:
                 raise ControlStoreUnavailable(
                     "Task Completion evidence lacks a durable preparation"
                 )
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE task_attempts SET state='VALIDATED_WAITING_FOR_PROMOTION' "
                 "WHERE attempt_id=? AND state='CLAIMED' AND completion_sha256=?",
                 (attempt_id, completion_sha256),
             )
+            if cursor.rowcount == 1:
+                return
+            current = connection.execute(
+                "SELECT state, completion_sha256 FROM task_attempts "
+                "WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                current is not None
+                and current["state"] == "VALIDATED_WAITING_FOR_PROMOTION"
+                and current["completion_sha256"] == completion_sha256
+            ):
+                return
+            if (
+                current is not None
+                and current["completion_sha256"] != completion_sha256
+            ):
+                raise KernelConflict(
+                    "Task Completion evidence differs from durable authority"
+                )
+            raise KernelConflict("Task Completion validation compare-and-set failed")
 
     @staticmethod
     def derive_task_promotion_intent_id(

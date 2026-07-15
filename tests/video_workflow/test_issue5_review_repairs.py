@@ -770,6 +770,59 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
             promoted,
         )
 
+    def test_completion_retry_rejects_noncanonical_completion_bytes(self) -> None:
+        self.initialize("completion-retry-noncanonical-bytes")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        with self.assertRaises(TaskFault):
+            self.kernel.complete_task(
+                self.run_dir,
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+                fault_point="after_completion_record_written",
+            )
+        completion_path = claimed.attempt_dir / "completion.json"
+        completion_path.write_bytes(completion_path.read_bytes() + b" ")
+
+        with self.assertRaises((ArtifactDrift, KernelConflict)):
+            self.complete(prepared, claimed)
+
+        durable = self.kernel.control_store.task_claim_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        self.assertEqual(durable["attempt_state"], "CLAIMED")
+
+    def test_completion_retry_accepts_unchanged_canonical_completion_bytes(self) -> None:
+        self.initialize("completion-retry-canonical-bytes")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        with self.assertRaises(TaskFault):
+            self.kernel.complete_task(
+                self.run_dir,
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+                fault_point="after_completion_record_written",
+            )
+        original_bytes = (claimed.attempt_dir / "completion.json").read_bytes()
+
+        resumed = self.complete(prepared, claimed)
+        replayed = self.complete(prepared, claimed)
+
+        self.assertEqual(resumed, replayed)
+        self.assertEqual(
+            (claimed.attempt_dir / "completion.json").read_bytes(), original_bytes
+        )
+        durable = self.kernel.control_store.task_claim_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        self.assertEqual(
+            durable["attempt_state"], "VALIDATED_WAITING_FOR_PROMOTION"
+        )
+
     def test_shared_empty_directories_and_task_namespace_forgery_fail_closed(self) -> None:
         mutations = (
             "shared-empty",
@@ -896,6 +949,33 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
 
 
 class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
+    def test_mark_task_validated_rejects_compare_and_set_sha_mismatch(self) -> None:
+        self.initialize("completion-validation-cas")
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.write_patch(prepared, claimed)
+        with self.assertRaises(TaskFault):
+            self.kernel.complete_task(
+                self.run_dir,
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+                fault_point="after_completion_prepared",
+            )
+
+        with self.assertRaises(KernelConflict):
+            self.kernel.control_store.mark_task_validated(
+                task_id=prepared.task_id,
+                attempt_id=claimed.attempt_id,
+                claim_generation=claimed.claim_generation,
+                completion_sha256="0" * 64,
+            )
+
+        durable = self.kernel.control_store.task_claim_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        self.assertEqual(durable["attempt_state"], "CLAIMED")
+
     def test_v5_health_rejects_weakened_index_and_table_sql(self) -> None:
         damages = {
             "nonunique-index": (

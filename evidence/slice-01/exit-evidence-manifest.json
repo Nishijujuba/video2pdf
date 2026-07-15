@@ -7,7 +7,7 @@
     "number": 1,
     "name": "offline-source-ready-tracer"
   },
-  "implementation_commit": "3121e27a8cb6e2882e9fb431989f73c1945b8405",
+  "implementation_commit": "792bec96818fadfa5bb37f55f06413fe1cfba224",
   "evidence_paths": [
     "evidence/slice-01/exit-evidence-manifest.json",
     "evidence/slice-01/logs/slice0-regression.log",
@@ -18,7 +18,7 @@
     "evidence/slice-01/logs/slice1-syntax.log",
     "evidence/slice-01/logs/slice1-diff-check.log"
   ],
-  "generated_at": "2026-07-15T01:41:41Z",
+  "generated_at": "2026-07-15T02:23:58Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -42,7 +42,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-regression.log",
-        "sha256": "8cebe13a72918243868268f413a8ae854c1567c4ca1640e34cd59bff0a615bfd"
+        "sha256": "fe451205308fcd396cbbad238e07c4a12558a991798369c071fe9d1d60056caf"
       },
       "conforms": true
     },
@@ -61,7 +61,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-contracts.log",
-        "sha256": "7b20d85e0636017e5dae6aeb1cdfc2b298e0b75f2e03da0dfae27411e42a1d1a"
+        "sha256": "a98524782f65dc7bade7ed3acdba8f3bac071ba7913126cebc9331e544719883"
       },
       "conforms": true
     },
@@ -81,7 +81,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-public-deep-tests.log",
-        "sha256": "9ca3b64cb5b62d6b766591b7c70331c22339b622735912cad171830e4da94c32"
+        "sha256": "2da3ea29cc970130c55df23f9eb3cf22692fde64b03e0276fdcf9a775d3afd4c"
       },
       "conforms": true
     },
@@ -101,7 +101,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-review-hardening-tests.log",
-        "sha256": "bbd5c1919adf89362c3739f95fd687a510dfcb4bf2efa6bae989ac7b974a8de1"
+        "sha256": "6e5d09511384370ed759714579bae4136cfe30d27814910d41e2d4dd22413aee"
       },
       "conforms": true
     },
@@ -120,7 +120,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice0-exit-evidence.log",
-        "sha256": "d254c6372a62badf6210acd7da501ec8b0963e8bb9c01a5e78cf454e03ea36cc"
+        "sha256": "074bcbeb1db9fc7132c9e5189be298f9c7054922316d916624b717ae3d7cf2d7"
       },
       "conforms": true
     },
@@ -139,7 +139,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-syntax.log",
-        "sha256": "fd03f4cc2478920cf6002da713956b631a89378159a227b9110eb8c51563cf7b"
+        "sha256": "f2369a8d2fd5de22ba25e10e415ab37714095d46f407557f476fa940273dfc78"
       },
       "conforms": true
     },
@@ -157,7 +157,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-01/logs/slice1-diff-check.log",
-        "sha256": "f38b9ed81c848ae30abc642d7680519ca1286de85ee2cc237a45deae57765094"
+        "sha256": "cfe57a1826b1ef3a17769883ecd7de5dbba6e5e0a79974587b293bde769fca74"
       },
       "conforms": true
     }
@@ -197,25 +197,33 @@
   ],
   "results": {
     "positive": [
-      "contracts_check_closed_registry_and_locked_runtime",
+      "registry_exact_canonical_set_and_locked_runtime_validated",
       "bootstrap_initialization_verified_import_source_ready",
-      "deterministic_run_path_record_plan_and_generation",
+      "artifact_plan_exact_six_bindings_generated",
+      "fixture_schema_invariant_and_runtime_containment_validated",
+      "run_record_canonical_absolute_output_path_validated",
       "utf16_239_and_240_pass",
       "idempotent_rerun_and_collision_safe_same_second_run",
       "fixture_adapter_deprived_of_production_capabilities",
       "bootstrap_probe_schema_and_canonical_identity_exact_binding",
-      "control_store_marker_database_identity_and_health_probes",
+      "control_store_external_anchor_marker_database_identity_validated",
+      "control_store_lock_and_same_volume_atomic_replace_probes_pass",
       "registered_path_fingerprint_and_freshness_invariants",
       "locked_runtime_import_failure_returns_machine_envelope"
     ],
     "negative": [
       "unknown_contract_and_run_versions_rejected",
       "unknown_or_remote_schema_reference_rejected",
+      "partial_duplicate_or_extra_registry_rejected",
+      "artifact_plan_missing_or_extra_binding_rejected",
+      "fixture_backslash_traversal_device_and_trailing_paths_rejected",
+      "relative_or_noncanonical_run_output_path_rejected",
       "utf16_241_fails_before_binding_intent_or_run",
       "run_identity_path_and_true_same_second_collision_fail_closed",
       "imported_source_drift_invalidates_source_ready",
       "unknown_control_store_migration_blocks_startup",
-      "missing_or_incomplete_control_store_never_auto_recreated",
+      "full_or_partial_control_store_loss_never_auto_recreated",
+      "control_store_external_anchor_tamper_blocks_startup",
       "published_or_committed_canonical_state_loss_blocks_retry"
     ],
     "recovery": [
@@ -228,58 +236,13 @@
   "artifact_fingerprints": [
     {
       "role": "implementation_artifact",
-      "path": "schemas/video-workflow/registry.v1.json",
-      "sha256": "a790710f3a5f58e47e6530c3a9e7edd02d023eba75d1c13282259a9d0897055b"
-    },
-    {
-      "role": "implementation_artifact",
       "path": "scripts/collect_slice1_exit_evidence.py",
-      "sha256": "a4f0e1db38afec297c48704e543f19ef1b6a09a2b9ba1985b79e090809d70c39"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "scripts/video_workflow.py",
-      "sha256": "1393c329cbe7b407236f5f2b8b72b6ee6ff458ade506eeb80c835891eb23bcb6"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/cli.py",
-      "sha256": "8bcc9999c2ef16777795c1b9e722b8476b3367dee8d138b6944bfa55fdc6c8d1"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/contracts.py",
-      "sha256": "aab35c81ca75693c5300f193767763b2e9d484e27ce616d5d7d406caf3317eb1"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/control_store.py",
-      "sha256": "792acdfbd77ac126b834c37cceac355697a767f0c3483ed397fb7802aee35ca6"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/kernel.py",
-      "sha256": "ca9cf517975247857e160849183206c1d3f3234573ac98c852682023b64e06af"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/models.py",
-      "sha256": "9f41abc5a0fab22829841323735c504dcb6d9f494e2b4328e35b436527d5231b"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "src/video2pdf_workflow_kernel/scaffold.py",
-      "sha256": "08cdbf2f348524f698e434800bd112155c3f588fb1d04938b52da53b2eeb2004"
+      "sha256": "97a37c7d3d7d7a56c190547d1a00ce6c8ae5f9039d950c9eabb997abcfb04a43"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_source_ready_hardening.py",
-      "sha256": "4aa9907b6d07f22c224d26d146c185bf4c477f7fac4864156958105db8eeb4c4"
-    },
-    {
-      "role": "implementation_artifact",
-      "path": "tests/video_workflow/test_source_ready_tracer.py",
-      "sha256": "5a6be58b4e75719e2985be1731f0ed68ba1d0c0e3c5454d036ce71e3634a1972"
+      "sha256": "355c65ad0f0b11320eb77319cec2eb974a8a8322578b326f519a62725e179c3a"
     }
   ],
   "unresolved_exceptions": [],

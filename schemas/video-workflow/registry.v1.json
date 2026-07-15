@@ -98,6 +98,65 @@
       "kind": "contract",
       "positive_example": "tests/video_workflow/fixtures/contracts/scaffold-ledger.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-ledger.invalid.json"
+    },
+    {
+      "schema_name": "subagent-task-envelope",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/subagent-task-envelope.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/subagent-task-envelope.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["task-envelope-bindings-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.invalid.json"
+    },
+    {
+      "schema_name": "task-attempt",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/task-attempt.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/task-attempt.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["task-attempt-path-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/task-attempt.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/task-attempt.invalid.json"
+    },
+    {
+      "schema_name": "task-completion-record",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/task-completion-record.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/task-completion-record.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["task-completion-bindings-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/task-completion-record.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/task-completion-record.invalid.json"
+    },
+    {
+      "schema_name": "source-acquisition-judgment-patch",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/source-acquisition-judgment-patch.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/source-acquisition-judgment-patch.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/source-acquisition-judgment-patch.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/source-acquisition-judgment-patch.invalid.json"
+    },
+    {
+      "schema_name": "task-promotion-journal",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/task-promotion-journal.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/task-promotion-journal.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["task-promotion-journal-paths-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/task-promotion-journal.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/task-promotion-journal.invalid.json"
+    },
+    {
+      "schema_name": "run-record-task-capable",
+      "schema_version": "2.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/run-record-task-capable.v2.schema.json",
+      "schema_path": "schemas/video-workflow/v1/run-record-task-capable.v2.schema.json",
+      "kind": "contract",
+      "invariants": ["run-record-task-capable-freshness-v2"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/run-record-task-capable.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/run-record-task-capable.invalid.json"
     }
   ]
 }

@@ -166,8 +166,19 @@ class SharedExitEvidenceTests(unittest.TestCase):
         )
 
         self.assertIn("slice_base_commit", schema["required"])
+        fixed_authorities = {
+            (
+                branch["properties"]["slice"]["properties"]["number"]["const"],
+                branch["properties"]["slice_base_commit"]["const"],
+            )
+            for branch in schema["oneOf"]
+        }
         self.assertEqual(
-            schema["properties"]["slice_base_commit"]["const"], SLICE_BASE_COMMIT
+            fixed_authorities,
+            {
+                (1, SLICE_BASE_COMMIT),
+                (2, "904f46409b87aca96aeecf5cb0be4855c2cfdafa"),
+            },
         )
 
     def test_collector_and_validator_map_shared_git_failures(self) -> None:

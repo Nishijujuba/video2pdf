@@ -51,7 +51,7 @@ RUN_STATE_MUTATION_FAULT_POINTS = frozenset(
 
 
 class VideoWorkflowKernel:
-    """Deep Slice 1 interface; CLI and future adapters delegate here."""
+    """Deep Kernel interface; CLI and workflow adapters delegate here."""
 
     def __init__(self, workspace_root: Path) -> None:
         self.project_root = Path(__file__).resolve().parents[2]
@@ -322,7 +322,7 @@ class VideoWorkflowKernel:
             intent_id=intent_id,
             source_manifest_sha=source_manifest_sha,
         )
-        self.contracts.validate("run-record", run_record)
+        self.contracts.validate_run_record(run_record)
         expected_run_record_sha = write_json_atomic(
             staging_path / "待删除/bootstrap/prepared-run.json", run_record
         )
@@ -405,11 +405,11 @@ class VideoWorkflowKernel:
             if not prepared_path.is_file():
                 raise KernelConflict("published output lacks its prepared Run Record")
             run_record = read_json(prepared_path)
-            self.contracts.validate("run-record", run_record)
+            self.contracts.validate_run_record(run_record)
             run_record_sha = sha256_file(prepared_path)
         else:
             run_record = read_json(run_path)
-            self.contracts.validate("run-record", run_record)
+            self.contracts.validate_run_record(run_record)
             run_record_sha = sha256_file(run_path)
         recovery_drift = self._identity_binding_drift(
             output_path, intent, run_record, run_record_sha
@@ -451,7 +451,90 @@ class VideoWorkflowKernel:
             )
         return ReconcileResult(run_id, output_path, "new_state_complete")
 
+    def prepare_source_acquisition_task(
+        self,
+        run_dir: Path,
+        *,
+        logical_task_key: str,
+        prepared_at: str,
+    ) -> Any:
+        from .task_execution import TaskExecution
+
+        return TaskExecution(self).prepare_source_acquisition_task(
+            run_dir,
+            logical_task_key=logical_task_key,
+            prepared_at=prepared_at,
+        )
+
+    def claim_task(
+        self,
+        run_dir: Path,
+        task_id: str,
+        *,
+        coordinator_session_id: str,
+        worker_id: str,
+        fault_point: str | None = None,
+    ) -> Any:
+        from .task_execution import TaskExecution
+
+        return TaskExecution(self).claim_task(
+            run_dir,
+            task_id,
+            coordinator_session_id=coordinator_session_id,
+            worker_id=worker_id,
+            fault_point=fault_point,
+        )
+
+    def reclaim_task(self, run_dir: Path, **kwargs: Any) -> Any:
+        from .task_execution import TaskExecution
+
+        return TaskExecution(self).reclaim_task(run_dir, **kwargs)
+
+    def complete_task(self, run_dir: Path, **kwargs: Any) -> Any:
+        from .task_execution import TaskExecution
+
+        return TaskExecution(self).complete_task(run_dir, **kwargs)
+
+    def promote_task(self, run_dir: Path, **kwargs: Any) -> Any:
+        from .task_execution import TaskExecution
+
+        return TaskExecution(self).promote_task(run_dir, **kwargs)
+
     def reconcile_run(
+        self, run_dir: Path, *, fault_point: str | None = None
+    ) -> ReconcileResult:
+        run_dir = run_dir.resolve()
+        record_path = run_dir / "workflow/run.json"
+        record = read_json(record_path)
+        self.contracts.validate_run_record(record)
+        return self.reconcile_authority(
+            "kernel_run",
+            record["run_id"],
+            expected_run_dir=run_dir,
+            fault_point=fault_point,
+        )
+
+    def reconcile_authority(
+        self,
+        kind: str,
+        authority_id: str,
+        *,
+        expected_run_dir: Path | None = None,
+        fault_point: str | None = None,
+    ) -> ReconcileResult:
+        """Public closed authority dispatcher; Slice 2 registers kernel_run only."""
+        if kind != "kernel_run":
+            raise ContractError(f"unknown reconciliation authority kind: {kind!r}")
+        store = self._preflight_control_store()
+        binding = store.binding_for_run(authority_id)
+        if binding is None:
+            raise KernelConflict(f"kernel_run authority does not exist: {authority_id}")
+        run_dir = Path(binding["output_path"]).resolve()
+        if expected_run_dir is not None and expected_run_dir.resolve() != run_dir:
+            raise KernelConflict("Run wrapper path disagrees with authority dispatcher")
+        return self._reconcile_kernel_run(run_dir, fault_point=fault_point)
+
+    def _reconcile_kernel_run(
         self, run_dir: Path, *, fault_point: str | None = None
     ) -> ReconcileResult:
         if (
@@ -463,13 +546,24 @@ class VideoWorkflowKernel:
         run_dir = run_dir.resolve()
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
-        self.contracts.validate("run-record", record)
+        self.contracts.validate_run_record(record)
         binding = store.binding_for_run(record["run_id"])
         if binding is None or Path(binding["output_path"]).resolve() != run_dir:
             raise KernelConflict("Run Record and Control Store binding disagree")
+        if (
+            store.prepared_run_state_mutation(record["run_id"]) is not None
+            and store.active_task_promotion(record["run_id"]) is not None
+        ):
+            raise ControlStoreUnavailable(
+                "Run has two non-terminal coordination-record mutation authorities"
+            )
         self._resume_prepared_run_state_mutation(store, record["run_id"], record_path)
+        from .task_execution import TaskExecution
+
+        task_execution = TaskExecution(self)
+        promotion_recovered = task_execution.reconcile_promotion(run_dir)
         record = read_json(record_path)
-        self.contracts.validate("run-record", record)
+        self.contracts.validate_run_record(record)
         if record["run_id"] != binding["run_id"]:
             raise KernelConflict("Run Record and Control Store binding disagree")
         authority_sha = store.current_run_record_sha(record["run_id"])
@@ -490,7 +584,8 @@ class VideoWorkflowKernel:
             old_sha = sha256_file(record_path)
             replacement = json.loads(json.dumps(record))
             replacement["coordination_revision"] = record["coordination_revision"] + 1
-            replacement["checkpoints"]["source_ready"]["status"] = "stale"
+            for checkpoint in replacement["checkpoints"].values():
+                checkpoint["status"] = "stale"
             mutation = store.prepare_run_state_mutation(
                 run_id=record["run_id"],
                 expected_run_revision=record["coordination_revision"],
@@ -509,7 +604,12 @@ class VideoWorkflowKernel:
             store.commit_run_state_mutation(mutation["mutation_id"])
             self._inject(fault_point, "after_run_state_mutation_commit")
             raise
-        return ReconcileResult(record["run_id"], run_dir, "new_state_complete")
+        task_execution.verify_committed_task_state(run_dir)
+        return ReconcileResult(
+            record["run_id"],
+            run_dir,
+            "new_state_complete" if promotion_recovered else "current_state_verified",
+        )
 
     def _resume_prepared_run_state_mutation(
         self, store: ControlStore, run_id: str, record_path: Path
@@ -518,7 +618,7 @@ class VideoWorkflowKernel:
         if mutation is None:
             return
         replacement = json.loads(mutation["replacement_run_record_json"])
-        self.contracts.validate("run-record", replacement)
+        self.contracts.validate_run_record(replacement)
         replacement_sha = hashlib.sha256(
             (mutation["replacement_run_record_json"]).encode("utf-8")
         ).hexdigest()
@@ -660,7 +760,7 @@ class VideoWorkflowKernel:
     def _verify_current_source(self, run_dir: Path) -> None:
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
-        self.contracts.validate("run-record", record)
+        self.contracts.validate_run_record(record)
         run_record_sha = sha256_file(record_path)
         store = self._require_control_store()
         intent = store.intent_for_run(record["run_id"])

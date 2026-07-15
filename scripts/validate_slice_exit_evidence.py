@@ -25,8 +25,21 @@ from video2pdf_workflow_kernel.evidence import (
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
-SLICE_BASE_COMMIT = "96089b99c9ae63fff61107e1920fc3481ffc0802"
-EVIDENCE_PREFIX = "evidence/slice-01/"
+SLICE_CONFIGS = {
+    1: {
+        "base_commit": "96089b99c9ae63fff61107e1920fc3481ffc0802",
+        "evidence_prefix": "evidence/slice-01/",
+        "checkpoints": [{"name": "source_ready", "status": "current"}],
+    },
+    2: {
+        "base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
+        "evidence_prefix": "evidence/slice-02/",
+        "checkpoints": [
+            {"name": "source_ready", "status": "current"},
+            {"name": "source_acquisition_decision_ready", "status": "current"},
+        ],
+    },
+}
 
 
 class EvidenceError(ValueError):
@@ -126,6 +139,24 @@ def validate_lineage(
         raise EvidenceError("implementation_commit cannot be evidence-only")
 
 
+def slice_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    if "slice" not in manifest:
+        base = manifest.get("slice_base_commit")
+        matches = [
+            config
+            for config in SLICE_CONFIGS.values()
+            if config["base_commit"] == base
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        raise EvidenceError("Slice Exit Evidence authority cannot be inferred")
+    number = manifest["slice"]["number"]
+    try:
+        return SLICE_CONFIGS[number]
+    except KeyError as exc:
+        raise EvidenceError(f"unsupported Slice Exit Evidence number: {number}") from exc
+
+
 def validate_semantics(manifest: dict[str, Any]) -> None:
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
@@ -137,11 +168,10 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
             raise EvidenceError(
                 f"command conforms is stale: {command['test_id']}"
             )
-    if manifest["expected_checkpoints"] != [
-        {"name": "source_ready", "status": "current"}
-    ]:
+    expected_checkpoints = slice_config(manifest)["checkpoints"]
+    if manifest["expected_checkpoints"] != expected_checkpoints:
         raise EvidenceError(
-            "Slice 1 Exit Evidence must declare only current source_ready"
+            "Slice Exit Evidence checkpoints differ from the registered Slice authority"
         )
     derived_pass = (
         all(command["conforms"] for command in commands)
@@ -157,15 +187,16 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
 def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
     slice_base_commit = manifest["slice_base_commit"]
     implementation_commit = manifest["implementation_commit"]
-    if slice_base_commit != SLICE_BASE_COMMIT:
-        raise EvidenceError("Slice 1 base commit differs from its fixed authority")
+    config = slice_config(manifest)
+    if slice_base_commit != config["base_commit"]:
+        raise EvidenceError("Slice base commit differs from its fixed authority")
     git("merge-base", "--is-ancestor", slice_base_commit, implementation_commit)
     try:
         expected = fingerprint_implementation_changes(
             PROJECT_ROOT,
             slice_base_commit,
             implementation_commit,
-            excluded_prefixes=(EVIDENCE_PREFIX,),
+            excluded_prefixes=(config["evidence_prefix"],),
         )
     except EvidenceSupportError as exc:
         raise EvidenceError(str(exc)) from exc

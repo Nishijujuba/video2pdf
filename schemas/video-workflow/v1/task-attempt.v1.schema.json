@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/task-attempt.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "task_id", "attempt_id", "claim_generation", "task_envelope_sha256", "attempt_path", "coordinator_session_id", "worker_id", "claimed_at", "state"],
+  "properties": {
+    "schema_name": {"const": "task-attempt"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+    "claim_generation": {"type": "integer", "minimum": 1},
+    "task_envelope_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "attempt_path": {"type": "string", "minLength": 1},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "worker_id": {"type": "string", "minLength": 1},
+    "claimed_at": {"type": "string", "format": "date-time"},
+    "state": {"const": "claimed"}
+  }
+}

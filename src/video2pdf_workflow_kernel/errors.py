@@ -62,6 +62,18 @@ class InitializationFault(KernelError):
         self.fault_point = fault_point
 
 
+class TaskFault(KernelError):
+    classification = "injected_task_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Task lifecycle fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
 class CliUsageError(KernelError):
     classification = "usage_error"
     exit_code = 2

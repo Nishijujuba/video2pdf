@@ -56,8 +56,13 @@ KNOWN_INVARIANTS = frozenset(
         "control-store-identity-path-v1",
         "fixture-package-paths-v1",
         "run-record-freshness-v1",
+        "run-record-task-capable-freshness-v2",
         "scaffold-contract-directories-v1",
         "source-manifest-paths-and-fingerprints-v1",
+        "task-attempt-path-v1",
+        "task-completion-bindings-v1",
+        "task-envelope-bindings-v1",
+        "task-promotion-journal-paths-v1",
     }
 )
 
@@ -174,6 +179,98 @@ def _validate_run_record(instance: dict[str, Any]) -> None:
         raise ContractError("source_ready evidence fingerprint does not bind to Source Manifest")
 
 
+def _validate_task_capable_run_record(instance: dict[str, Any]) -> None:
+    source = instance["artifact_generations"]["source_manifest"]
+    decision = instance["artifact_generations"]["source_acquisition_decision"]
+    source_checkpoint = instance["checkpoints"]["source_ready"]
+    decision_checkpoint = instance["checkpoints"]["source_acquisition_decision_ready"]
+    _validate_project_relative_path(source["path"], prefix="source")
+    _validate_project_relative_path(decision["path"], prefix="workflow")
+    _validate_project_relative_path(instance["artifact_plan"])
+    _validate_canonical_absolute_path(instance["output_path"])
+    if source_checkpoint["artifact_generations"]["source_manifest"] != source["generation"]:
+        raise ContractError("source_ready generation does not bind to Source Manifest generation")
+    if source_checkpoint["evidence_sha256"] != source["sha256"]:
+        raise ContractError("source_ready evidence fingerprint does not bind to Source Manifest")
+    bound = decision_checkpoint["artifact_generations"]
+    if (
+        bound["source_manifest"] != source["generation"]
+        or bound["source_acquisition_decision"] != decision["generation"]
+    ):
+        raise ContractError("task checkpoint does not bind current Artifact Generations")
+    if decision_checkpoint["evidence_sha256"] != decision["sha256"]:
+        raise ContractError("task checkpoint evidence does not bind promoted decision")
+    if instance["checkpoint_dependencies"] != {
+        "source_acquisition_decision_ready": ["source_ready"]
+    }:
+        raise ContractError("task checkpoint dependency graph is not canonical")
+
+
+def _validate_task_envelope(instance: dict[str, Any]) -> None:
+    task_id = instance["task_id"]
+    expected_root = f"workflow/tasks/{task_id}"
+    if instance["task_root_path"] != expected_root:
+        raise ContractError("Task Envelope root does not bind its task identity")
+    if instance["generated_prompt"]["path"] != f"{expected_root}/prompt.md":
+        raise ContractError("Generated Task Prompt path does not bind its task identity")
+    for value in instance["allowed_read_paths"]:
+        _validate_project_relative_path(value, prefix="source")
+    for value in instance["write_set"]:
+        _validate_project_relative_path(value, prefix="workflow")
+    for output in instance["required_outputs"]:
+        _validate_project_relative_path(output["attempt_relative_path"])
+        _validate_project_relative_path(output["canonical_path"], prefix="workflow")
+        if output["canonical_path"] not in instance["write_set"]:
+            raise ContractError("required output is outside the declared write set")
+        prior_generation = output["expected_prior_generation"]
+        prior_sha = output["expected_prior_sha256"]
+        if (prior_generation is None) != (prior_sha is None):
+            raise ContractError("prior Artifact Generation identity is incomplete")
+    for source in (
+        instance["generated_prompt"]["role_template"],
+        instance["generated_prompt"]["platform_overlay"],
+    ):
+        _validate_project_relative_path(source["path"], prefix="prompts")
+
+
+def _validate_task_attempt(instance: dict[str, Any]) -> None:
+    expected = (
+        f"workflow/tasks/{instance['task_id']}/attempts/{instance['attempt_id']}"
+    )
+    _validate_project_relative_path(instance["attempt_path"], prefix="workflow")
+    if instance["attempt_path"] != expected:
+        raise ContractError("Task Attempt path does not bind task and attempt identities")
+
+
+def _validate_task_completion(instance: dict[str, Any]) -> None:
+    logical_ids: set[str] = set()
+    canonical_paths: set[str] = set()
+    for output in instance["outputs"]:
+        _validate_project_relative_path(output["attempt_path"])
+        _validate_project_relative_path(output["canonical_path"], prefix="workflow")
+        if output["logical_id"] in logical_ids or output["canonical_path"] in canonical_paths:
+            raise ContractError("Task Completion outputs are not unique")
+        logical_ids.add(output["logical_id"])
+        canonical_paths.add(output["canonical_path"])
+
+
+def _validate_task_promotion_journal(instance: dict[str, Any]) -> None:
+    prefix = (
+        f"待删除/task-promotions/{instance['task_id']}/"
+        f"g{instance['claim_generation']:08d}"
+    )
+    canonical_paths: set[str] = set()
+    for output in instance["outputs"]:
+        _validate_project_relative_path(output["attempt_path"])
+        _validate_project_relative_path(output["canonical_path"], prefix="workflow")
+        _validate_project_relative_path(output["preservation_path"], prefix="待删除")
+        if not output["preservation_path"].startswith(f"{prefix}/previous/"):
+            raise ContractError("promotion preservation path is outside its intent boundary")
+        if output["canonical_path"] in canonical_paths:
+            raise ContractError("promotion journal repeats a canonical output path")
+        canonical_paths.add(output["canonical_path"])
+
+
 def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
     for value in instance["managed_directories"]:
         _validate_project_relative_path(value)
@@ -188,8 +285,13 @@ INVARIANT_VALIDATORS = {
     ),
     "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,
+    "run-record-task-capable-freshness-v2": _validate_task_capable_run_record,
     "scaffold-contract-directories-v1": _validate_scaffold_contract,
     "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
+    "task-attempt-path-v1": _validate_task_attempt,
+    "task-completion-bindings-v1": _validate_task_completion,
+    "task-envelope-bindings-v1": _validate_task_envelope,
+    "task-promotion-journal-paths-v1": _validate_task_promotion_journal,
 }
 
 
@@ -429,6 +531,19 @@ class ContractRegistry:
                         raise ContractError(
                             "scaffold contract differs from its registered canonical instance"
                         )
+
+    def validate_run_record(self, instance: Any) -> None:
+        """Validate either registered Run Record generation without guessing fields."""
+        if not isinstance(instance, dict):
+            raise ContractError("Run Record root must be an object")
+        version = instance.get("schema_version")
+        if version == "1.0.0":
+            self.validate("run-record", instance)
+            return
+        if version == "2.0.0":
+            self.validate("run-record-task-capable", instance)
+            return
+        raise UnknownContractVersion(f"unknown run-record schema_version: {version!r}")
 
     def canonical_instance(self, schema_name: str) -> Any:
         entry = next((item for item in self.entries if item.schema_name == schema_name), None)

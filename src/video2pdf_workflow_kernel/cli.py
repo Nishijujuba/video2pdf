@@ -12,6 +12,11 @@ from .control_store import ControlStore
 from .errors import CliUsageError, KernelError
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult
+from .task_execution import (
+    CLAIM_FAULT_POINTS,
+    COMPLETION_FAULT_POINTS,
+    PROMOTION_FAULT_POINTS,
+)
 from .utils import read_json
 
 
@@ -53,6 +58,47 @@ def _parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--run-dir", type=Path)
     reconcile.add_argument("--workspace-root", type=Path)
     reconcile.add_argument("--run-id")
+
+    authority = commands.add_parser("reconcile-authority")
+    authority.add_argument("--workspace-root", required=True, type=Path)
+    authority.add_argument("--kind", required=True)
+    authority.add_argument("--id", required=True)
+
+    task_prepare = commands.add_parser("task-prepare")
+    task_prepare.add_argument("--run-dir", required=True, type=Path)
+    task_prepare.add_argument("--logical-task-key", required=True)
+    task_prepare.add_argument("--prepared-at")
+
+    task_claim = commands.add_parser("task-claim")
+    task_claim.add_argument("--run-dir", required=True, type=Path)
+    task_claim.add_argument("--task-id", required=True)
+    task_claim.add_argument("--coordinator-session-id", required=True)
+    task_claim.add_argument("--worker-id", required=True)
+    task_claim.add_argument("--fault-point", choices=sorted(CLAIM_FAULT_POINTS))
+
+    task_reclaim = commands.add_parser("task-reclaim")
+    task_reclaim.add_argument("--run-dir", required=True, type=Path)
+    task_reclaim.add_argument("--task-id", required=True)
+    task_reclaim.add_argument("--expected-attempt-id", required=True)
+    task_reclaim.add_argument("--expected-claim-generation", required=True, type=int)
+    task_reclaim.add_argument("--coordinator-session-id", required=True)
+    task_reclaim.add_argument("--worker-id", required=True)
+    task_reclaim.add_argument("--reason", required=True)
+    task_reclaim.add_argument("--fault-point", choices=sorted(CLAIM_FAULT_POINTS))
+
+    task_complete = commands.add_parser("task-complete")
+    task_complete.add_argument("--run-dir", required=True, type=Path)
+    task_complete.add_argument("--task-id", required=True)
+    task_complete.add_argument("--attempt-id", required=True)
+    task_complete.add_argument("--claim-generation", required=True, type=int)
+    task_complete.add_argument("--fault-point", choices=sorted(COMPLETION_FAULT_POINTS))
+
+    task_promote = commands.add_parser("task-promote")
+    task_promote.add_argument("--run-dir", required=True, type=Path)
+    task_promote.add_argument("--task-id", required=True)
+    task_promote.add_argument("--attempt-id", required=True)
+    task_promote.add_argument("--claim-generation", required=True, type=int)
+    task_promote.add_argument("--fault-point", choices=sorted(PROMOTION_FAULT_POINTS))
 
     capability = commands.add_parser("adapter-capability-check")
     capability.add_argument("--fixture", required=True, type=Path)
@@ -200,6 +246,118 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "outcome": result.outcome,
             },
             str(result.run_dir / "workflow/run.json"),
+        )
+    if command == "reconcile-authority":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        result = kernel.reconcile_authority(args.kind, args.id)
+        return _ok(
+            command,
+            "authority_reconciled",
+            {
+                "kind": args.kind,
+                "authority_id": result.run_id,
+                "run_dir": str(result.run_dir),
+                "outcome": result.outcome,
+            },
+            str(result.run_dir / "workflow/run.json"),
+        )
+    if command == "task-prepare":
+        run_dir = args.run_dir.resolve()
+        kernel = VideoWorkflowKernel(run_dir.parent)
+        record = read_json(run_dir / "workflow/run.json")
+        kernel.contracts.validate_run_record(record)
+        result = kernel.prepare_source_acquisition_task(
+            run_dir,
+            logical_task_key=args.logical_task_key,
+            prepared_at=args.prepared_at or record["task_start"],
+        )
+        return _ok(
+            command,
+            result.classification,
+            {
+                "run_id": result.run_id,
+                "task_id": result.task_id,
+                "task_dir": str(result.task_dir),
+                "prompt_path": str(result.prompt_path),
+            },
+            str(result.envelope_path),
+        )
+    if command in {"task-claim", "task-reclaim"}:
+        run_dir = args.run_dir.resolve()
+        kernel = VideoWorkflowKernel(run_dir.parent)
+        if command == "task-claim":
+            result = kernel.claim_task(
+                run_dir,
+                args.task_id,
+                coordinator_session_id=args.coordinator_session_id,
+                worker_id=args.worker_id,
+                fault_point=args.fault_point,
+            )
+        else:
+            result = kernel.reclaim_task(
+                run_dir,
+                task_id=args.task_id,
+                expected_attempt_id=args.expected_attempt_id,
+                expected_claim_generation=args.expected_claim_generation,
+                coordinator_session_id=args.coordinator_session_id,
+                worker_id=args.worker_id,
+                reason=args.reason,
+                fault_point=args.fault_point,
+            )
+        return _ok(
+            command,
+            result.classification,
+            {
+                "run_id": result.run_id,
+                "task_id": result.task_id,
+                "attempt_id": result.attempt_id,
+                "claim_generation": result.claim_generation,
+                "attempt_dir": str(result.attempt_dir),
+            },
+            str(result.attempt_dir / "attempt.json"),
+        )
+    if command == "task-complete":
+        run_dir = args.run_dir.resolve()
+        kernel = VideoWorkflowKernel(run_dir.parent)
+        result = kernel.complete_task(
+            run_dir,
+            task_id=args.task_id,
+            attempt_id=args.attempt_id,
+            claim_generation=args.claim_generation,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            result.classification,
+            {
+                "run_id": result.run_id,
+                "task_id": result.task_id,
+                "attempt_id": result.attempt_id,
+                "claim_generation": result.claim_generation,
+            },
+            str(result.completion_path),
+        )
+    if command == "task-promote":
+        run_dir = args.run_dir.resolve()
+        kernel = VideoWorkflowKernel(run_dir.parent)
+        result = kernel.promote_task(
+            run_dir,
+            task_id=args.task_id,
+            attempt_id=args.attempt_id,
+            claim_generation=args.claim_generation,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            result.classification,
+            {
+                "run_id": result.run_id,
+                "task_id": result.task_id,
+                "attempt_id": result.attempt_id,
+                "claim_generation": result.claim_generation,
+                "intent_id": result.intent_id,
+            },
+            str(run_dir / "workflow/run.json"),
         )
     if command == "adapter-capability-check":
         contracts = ContractRegistry(project_root)

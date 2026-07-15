@@ -357,7 +357,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 3)
+        self.assertEqual(migrated.control_store.check().schema_version, 4)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -365,7 +365,17 @@ class PersistenceHardeningTests(unittest.TestCase):
                     "PRAGMA table_info(initialization_intents)"
                 ).fetchall()
             }
+            task_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'task_%'"
+                ).fetchall()
+            }
         self.assertTrue(expected_columns.issubset(columns))
+        self.assertEqual(
+            task_tables,
+            {"task_claims", "task_attempts", "task_promotion_intents"},
+        )
 
     def test_intent_transition_uses_expected_state_compare_and_swap(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
@@ -514,9 +524,15 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "control-store-identity",
                 "fixture-package",
                 "run-record",
+                "run-record-task-capable",
                 "scaffold-contract",
                 "scaffold-ledger",
+                "source-acquisition-judgment-patch",
                 "source-manifest",
+                "subagent-task-envelope",
+                "task-attempt",
+                "task-completion-record",
+                "task-promotion-journal",
                 "workflow-result",
             },
         )

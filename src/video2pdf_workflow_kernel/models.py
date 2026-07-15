@@ -40,3 +40,47 @@ class ControlStoreHealth:
     path: Path
     lock_contention_checked: bool
     atomic_replace_checked: bool
+
+
+@dataclass(frozen=True)
+class TaskPreparationResult:
+    run_id: str
+    run_dir: Path
+    task_id: str
+    task_dir: Path
+    envelope_path: Path
+    prompt_path: Path
+    classification: str = "task_prepared"
+
+
+@dataclass(frozen=True)
+class TaskClaimResult:
+    run_id: str
+    run_dir: Path
+    task_id: str
+    attempt_id: str
+    claim_generation: int
+    attempt_dir: Path
+    classification: str = "task_claimed"
+
+
+@dataclass(frozen=True)
+class TaskCompletionResult:
+    run_id: str
+    run_dir: Path
+    task_id: str
+    attempt_id: str
+    claim_generation: int
+    completion_path: Path
+    classification: str = "validated_waiting_for_promotion"
+
+
+@dataclass(frozen=True)
+class TaskPromotionResult:
+    run_id: str
+    run_dir: Path
+    task_id: str
+    attempt_id: str
+    claim_generation: int
+    intent_id: str
+    classification: str = "committed_complete"

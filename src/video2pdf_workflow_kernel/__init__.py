@@ -7,6 +7,7 @@ from .errors import (
     KernelConflict,
     KernelError,
     PathBudgetError,
+    TaskFault,
 )
 from .kernel import VideoWorkflowKernel
 
@@ -19,5 +20,6 @@ __all__ = [
     "KernelConflict",
     "KernelError",
     "PathBudgetError",
+    "TaskFault",
     "VideoWorkflowKernel",
 ]

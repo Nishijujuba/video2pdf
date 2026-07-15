@@ -16,7 +16,7 @@ from .models import ControlStoreHealth
 from .utils import canonical_json_bytes, normalized_physical_path, read_json, write_json_atomic
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BUSY_TIMEOUT_MS = 5000
 LOCK_PROBE_TIMEOUT_MS = 100
 MARKER_NAME = "control-store.json"
@@ -24,7 +24,7 @@ DATABASE_RELPATH = ".workflow-control/control.sqlite3"
 
 
 class ControlStore:
-    """Cross-run transaction authority for Slice 1 bindings and init intents."""
+    """Cross-run transaction authority for Kernel bindings and mutation intents."""
 
     def __init__(self, workspace_root: Path, contracts: ContractRegistry) -> None:
         self._configure(workspace_root, contracts)
@@ -191,6 +191,7 @@ class ControlStore:
                 "source_identity TEXT, source_manifest_sha256 TEXT)"
             )
             self._create_run_state_mutation_table(connection)
+            self._create_task_tables(connection)
             connection.execute(
                 "INSERT INTO control_store_metadata(key, value) VALUES ('store_id', ?)",
                 (self.store_id,),
@@ -198,6 +199,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (1)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -310,6 +312,91 @@ class ControlStore:
                 "Control Store run-state mutation active-intent index is missing"
             )
 
+    @staticmethod
+    def _create_task_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS task_claims ("
+            "task_id TEXT PRIMARY KEY, "
+            "authority_kind TEXT NOT NULL CHECK(authority_kind='kernel_run'), "
+            "authority_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+            "envelope_sha256 TEXT NOT NULL, write_set_json TEXT NOT NULL, "
+            "state TEXT NOT NULL CHECK(state IN ('ACTIVE','TERMINAL')), "
+            "claim_generation INTEGER NOT NULL CHECK(claim_generation >= 1), "
+            "attempt_id TEXT NOT NULL UNIQUE, "
+            "coordinator_session_id TEXT NOT NULL, worker_id TEXT NOT NULL, "
+            "reclaim_reason TEXT, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS task_attempts ("
+            "attempt_id TEXT PRIMARY KEY, "
+            "task_id TEXT NOT NULL REFERENCES task_claims(task_id), "
+            "claim_generation INTEGER NOT NULL CHECK(claim_generation >= 1), "
+            "attempt_path TEXT NOT NULL UNIQUE, "
+            "state TEXT NOT NULL CHECK(state IN "
+            "('CLAIMED','VALIDATED_WAITING_FOR_PROMOTION','STALE','COMMITTED_COMPLETE','ABANDONED','FAILED')), "
+            "completion_sha256 TEXT, "
+            "UNIQUE(task_id, claim_generation))"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS task_promotion_intents ("
+            "intent_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+            "task_id TEXT NOT NULL REFERENCES task_claims(task_id), "
+            "attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id), "
+            "claim_generation INTEGER NOT NULL CHECK(claim_generation >= 1), "
+            "expected_run_revision INTEGER NOT NULL CHECK(expected_run_revision >= 1), "
+            "old_run_record_sha256 TEXT NOT NULL, replacement_run_record_sha256 TEXT NOT NULL, "
+            "replacement_run_record_json TEXT NOT NULL, outputs_json TEXT NOT NULL, "
+            "journal_sha256 TEXT, "
+            "state TEXT NOT NULL CHECK(state IN "
+            "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED','COMMITTED','ABORTED')), "
+            "intent_identity TEXT NOT NULL UNIQUE)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_task_promotion_per_run "
+            "ON task_promotion_intents(run_id) "
+            "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+        )
+        ControlStore._validate_task_tables(connection)
+
+    @staticmethod
+    def _validate_task_tables(connection: sqlite3.Connection) -> None:
+        expected = {
+            "task_claims": {
+                "task_id", "authority_kind", "authority_id", "envelope_sha256",
+                "write_set_json", "state", "claim_generation", "attempt_id",
+                "coordinator_session_id", "worker_id", "reclaim_reason", "updated_at",
+            },
+            "task_attempts": {
+                "attempt_id", "task_id", "claim_generation", "attempt_path",
+                "state", "completion_sha256",
+            },
+            "task_promotion_intents": {
+                "intent_id", "run_id", "task_id", "attempt_id", "claim_generation",
+                "expected_run_revision", "old_run_record_sha256",
+                "replacement_run_record_sha256", "replacement_run_record_json",
+                "outputs_json", "journal_sha256", "state", "intent_identity",
+            },
+        }
+        for table, expected_columns in expected.items():
+            actual = {
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if actual != expected_columns:
+                raise ControlStoreUnavailable(
+                    f"Control Store {table} table is incomplete"
+                )
+        indexes = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA index_list(task_promotion_intents)"
+            ).fetchall()
+        }
+        if "one_nonterminal_task_promotion_per_run" not in indexes:
+            raise ControlStoreUnavailable(
+                "Control Store Run Promotion Slot index is missing"
+            )
+
     def _migrate_existing(self) -> None:
         expected_columns = {
             "expected_run_record_sha256",
@@ -355,7 +442,8 @@ class ControlStore:
                     connection.execute(
                         "INSERT INTO schema_migrations(version) VALUES (3)"
                     )
-                elif version == 3:
+                    version = 3
+                if version == 3:
                     if present != expected_columns:
                         raise ControlStoreUnavailable(
                             "Control Store v3 intent identity columns are incomplete"
@@ -371,6 +459,18 @@ class ControlStore:
                             "Control Store v3 mutation intent table is missing"
                         )
                     self._validate_run_state_mutation_table(connection)
+                    self._create_task_tables(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (4)"
+                    )
+                    version = 4
+                if version == 4:
+                    if present != expected_columns:
+                        raise ControlStoreUnavailable(
+                            "Control Store v4 intent identity columns are incomplete"
+                        )
+                    self._validate_run_state_mutation_table(connection)
+                    self._validate_task_tables(connection)
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -424,6 +524,9 @@ class ControlStore:
                     "run_bindings",
                     "initialization_intents",
                     "run_state_mutation_intents",
+                    "task_claims",
+                    "task_attempts",
+                    "task_promotion_intents",
                 }
                 if not required_tables.issubset(tables):
                     raise ControlStoreUnavailable(
@@ -438,6 +541,8 @@ class ControlStore:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
                     )
+                self._validate_run_state_mutation_table(connection)
+                self._validate_task_tables(connection)
                 self._probe_lock_contention(connection)
             finally:
                 connection.close()
@@ -752,13 +857,23 @@ class ControlStore:
             or initialization["expected_run_record_sha256"]
         )
         expected_revision = 1
-        mutations = connection.execute(
+        run_state_mutations = connection.execute(
             "SELECT expected_run_revision, predecessor_committed_sha256, "
             "replacement_run_record_sha256 FROM run_state_mutation_intents "
             "WHERE run_id=? AND state='COMMITTED' "
             "ORDER BY expected_run_revision",
             (run_id,),
         ).fetchall()
+        task_mutations = connection.execute(
+            "SELECT expected_run_revision, old_run_record_sha256 AS predecessor_committed_sha256, "
+            "replacement_run_record_sha256 FROM task_promotion_intents "
+            "WHERE run_id=? AND state='COMMITTED' ORDER BY expected_run_revision",
+            (run_id,),
+        ).fetchall()
+        mutations = sorted(
+            [*run_state_mutations, *task_mutations],
+            key=lambda row: int(row["expected_run_revision"]),
+        )
         for mutation in mutations:
             if (
                 int(mutation["expected_run_revision"]) != expected_revision
@@ -770,6 +885,23 @@ class ControlStore:
             current = str(mutation["replacement_run_record_sha256"])
             expected_revision += 1
         return current
+
+    @staticmethod
+    def _next_run_revision(connection: sqlite3.Connection, run_id: str) -> int:
+        revisions = [
+            int(row[0])
+            for table in ("run_state_mutation_intents", "task_promotion_intents")
+            for row in connection.execute(
+                f"SELECT expected_run_revision FROM {table} "
+                "WHERE run_id=? AND state='COMMITTED'",
+                (run_id,),
+            ).fetchall()
+        ]
+        if len(revisions) != len(set(revisions)):
+            raise ControlStoreUnavailable(
+                "committed Run mutation revisions are ambiguous"
+            )
+        return 1 if not revisions else max(revisions) + 1
 
     def current_run_record_sha(self, run_id: str) -> str | None:
         connection = self._connect()
@@ -788,7 +920,7 @@ class ControlStore:
     ) -> sqlite3.Row:
         """Durably prepare the Slice 1 source-drift invalidation Saga."""
         operation = "source_drift_invalidation"
-        self.contracts.validate("run-record", replacement_run_record)
+        self.contracts.validate_run_record(replacement_run_record)
         if (
             replacement_run_record.get("run_id") != run_id
             or replacement_run_record.get("coordination_revision")
@@ -806,13 +938,7 @@ class ControlStore:
                     "Run Record differs from its committed authority predecessor",
                     data={"drifted_paths": ["workflow/run.json"]},
                 )
-            previous = connection.execute(
-                "SELECT expected_run_revision FROM run_state_mutation_intents "
-                "WHERE run_id=? AND state='COMMITTED' "
-                "ORDER BY expected_run_revision DESC LIMIT 1",
-                (run_id,),
-            ).fetchone()
-            chain_revision = 1 if previous is None else int(previous[0]) + 1
+            chain_revision = self._next_run_revision(connection, run_id)
             if expected_run_revision != chain_revision:
                 raise KernelConflict(
                     "run-state mutation expected revision is outside the committed chain"
@@ -888,13 +1014,7 @@ class ControlStore:
         self, connection: sqlite3.Connection, mutation: sqlite3.Row
     ) -> None:
         predecessor = self._current_run_record_sha(connection, mutation["run_id"])
-        previous = connection.execute(
-            "SELECT expected_run_revision FROM run_state_mutation_intents "
-            "WHERE run_id=? AND state='COMMITTED' "
-            "ORDER BY expected_run_revision DESC LIMIT 1",
-            (mutation["run_id"],),
-        ).fetchone()
-        expected_revision = 1 if previous is None else int(previous[0]) + 1
+        expected_revision = self._next_run_revision(connection, mutation["run_id"])
         replacement_json = str(mutation["replacement_run_record_json"])
         replacement_sha = hashlib.sha256(replacement_json.encode("utf-8")).hexdigest()
         identity_payload = "\0".join(
@@ -937,3 +1057,430 @@ class ControlStore:
             if row is not None and row["state"] == "COMMITTED":
                 return
             raise KernelConflict("run-state mutation commit compare-and-swap failed")
+
+    @staticmethod
+    def _write_sets_overlap(left_json: str, right: tuple[str, ...]) -> bool:
+        try:
+            left = tuple(json.loads(left_json))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ControlStoreUnavailable("stored Task Claim write set is invalid") from exc
+        for first in left:
+            if not isinstance(first, str):
+                raise ControlStoreUnavailable("stored Task Claim write set is invalid")
+            for second in right:
+                if (
+                    first == second
+                    or first.startswith(f"{second}/")
+                    or second.startswith(f"{first}/")
+                ):
+                    return True
+        return False
+
+    def claim_task(
+        self,
+        *,
+        authority_id: str,
+        task_id: str,
+        envelope_sha256: str,
+        write_set: tuple[str, ...],
+        attempt_path: str,
+        coordinator_session_id: str,
+        worker_id: str,
+        claimed_at: str,
+    ) -> sqlite3.Row:
+        write_set_json = canonical_json_bytes(list(write_set)).decode("utf-8").strip()
+        with self._immediate() as connection:
+            if self._current_run_record_sha(connection, authority_id) is None:
+                raise KernelConflict("Task Claim authority has no committed Run Record")
+            existing = connection.execute(
+                "SELECT * FROM task_claims WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["state"] == "ACTIVE"
+                    and existing["authority_id"] == authority_id
+                    and existing["envelope_sha256"] == envelope_sha256
+                    and existing["write_set_json"] == write_set_json
+                    and existing["coordinator_session_id"] == coordinator_session_id
+                    and existing["worker_id"] == worker_id
+                ):
+                    return connection.execute(
+                        "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
+                        "a.completion_sha256 FROM task_claims c JOIN task_attempts a "
+                        "ON a.attempt_id=c.attempt_id WHERE c.task_id=?",
+                        (task_id,),
+                    ).fetchone()
+                raise KernelConflict("logical task already has a current or terminal Claim")
+            active = connection.execute(
+                "SELECT task_id, write_set_json FROM task_claims "
+                "WHERE authority_kind='kernel_run' AND authority_id=? AND state='ACTIVE'",
+                (authority_id,),
+            ).fetchall()
+            for row in active:
+                if self._write_sets_overlap(str(row["write_set_json"]), write_set):
+                    raise KernelConflict(
+                        "Task Claim write set overlaps an active Claim",
+                        data={"conflicting_task_id": str(row["task_id"])},
+                    )
+            generation = 1
+            attempt_id = hashlib.sha256(
+                f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
+            ).hexdigest()[:24]
+            try:
+                connection.execute(
+                    "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
+                    "envelope_sha256, write_set_json, state, claim_generation, attempt_id, "
+                    "coordinator_session_id, worker_id, reclaim_reason, updated_at) "
+                    "VALUES (?, 'kernel_run', ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, NULL, ?)",
+                    (
+                        task_id, authority_id, envelope_sha256, write_set_json,
+                        generation, attempt_id, coordinator_session_id, worker_id, claimed_at,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO task_attempts(attempt_id, task_id, claim_generation, "
+                    "attempt_path, state, completion_sha256) "
+                    "VALUES (?, ?, ?, ?, 'CLAIMED', NULL)",
+                    (attempt_id, task_id, generation, attempt_path),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise KernelConflict("Task Claim compare-and-set failed") from exc
+            return connection.execute(
+                "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
+                "a.completion_sha256 FROM task_claims c JOIN task_attempts a "
+                "ON a.attempt_id=c.attempt_id WHERE c.task_id=?",
+                (task_id,),
+            ).fetchone()
+
+    def reclaim_task(
+        self,
+        *,
+        authority_id: str,
+        task_id: str,
+        expected_attempt_id: str,
+        expected_claim_generation: int,
+        attempt_path: str,
+        coordinator_session_id: str,
+        worker_id: str,
+        reason: str,
+        reclaimed_at: str,
+    ) -> sqlite3.Row:
+        if not reason.strip():
+            raise ContractError("Task reclaim requires a recovery reason")
+        with self._immediate() as connection:
+            claim = connection.execute(
+                "SELECT * FROM task_claims WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if (
+                claim is None
+                or claim["state"] != "ACTIVE"
+                or claim["authority_id"] != authority_id
+                or claim["attempt_id"] != expected_attempt_id
+                or int(claim["claim_generation"]) != expected_claim_generation
+            ):
+                raise KernelConflict("Task reclaim fencing compare-and-set failed")
+            active_intent = connection.execute(
+                "SELECT intent_id FROM task_promotion_intents "
+                "WHERE task_id=? AND state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+                (task_id,),
+            ).fetchone()
+            if active_intent is not None:
+                raise KernelConflict("Task reclaim is blocked by a non-terminal promotion")
+            generation = expected_claim_generation + 1
+            attempt_id = hashlib.sha256(
+                f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
+            ).hexdigest()[:24]
+            connection.execute(
+                "UPDATE task_attempts SET state='ABANDONED' "
+                "WHERE attempt_id=? AND state IN ('CLAIMED','VALIDATED_WAITING_FOR_PROMOTION')",
+                (expected_attempt_id,),
+            )
+            cursor = connection.execute(
+                "UPDATE task_claims SET claim_generation=?, attempt_id=?, "
+                "coordinator_session_id=?, worker_id=?, reclaim_reason=?, updated_at=? "
+                "WHERE task_id=? AND state='ACTIVE' AND claim_generation=? AND attempt_id=?",
+                (
+                    generation, attempt_id, coordinator_session_id, worker_id, reason,
+                    reclaimed_at, task_id, expected_claim_generation, expected_attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict("Task reclaim fencing compare-and-set failed")
+            connection.execute(
+                "INSERT INTO task_attempts(attempt_id, task_id, claim_generation, "
+                "attempt_path, state, completion_sha256) "
+                "VALUES (?, ?, ?, ?, 'CLAIMED', NULL)",
+                (attempt_id, task_id, generation, attempt_path),
+            )
+            return connection.execute(
+                "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
+                "a.completion_sha256 FROM task_claims c JOIN task_attempts a "
+                "ON a.attempt_id=c.attempt_id WHERE c.task_id=?",
+                (task_id,),
+            ).fetchone()
+
+    def task_claim_for_attempt(
+        self, task_id: str, attempt_id: str
+    ) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            return connection.execute(
+                "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
+                "a.completion_sha256 FROM task_claims c JOIN task_attempts a "
+                "ON a.task_id=c.task_id WHERE c.task_id=? AND a.attempt_id=?",
+                (task_id, attempt_id),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def mark_task_validated(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        claim_generation: int,
+        completion_sha256: str,
+    ) -> None:
+        with self._immediate() as connection:
+            claim = connection.execute(
+                "SELECT state, attempt_id, claim_generation FROM task_claims WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if (
+                claim is None
+                or claim["state"] != "ACTIVE"
+                or claim["attempt_id"] != attempt_id
+                or int(claim["claim_generation"]) != claim_generation
+            ):
+                raise KernelConflict("Task Completion Gate fencing token is stale")
+            attempt = connection.execute(
+                "SELECT state, completion_sha256 FROM task_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if attempt is None:
+                raise KernelConflict("Task Attempt is absent from the Control Store")
+            if attempt["state"] == "VALIDATED_WAITING_FOR_PROMOTION":
+                if attempt["completion_sha256"] != completion_sha256:
+                    raise KernelConflict("Task Completion evidence changed after validation")
+                return
+            if attempt["state"] != "CLAIMED":
+                raise KernelConflict("Task Attempt cannot enter the Completion Gate")
+            connection.execute(
+                "UPDATE task_attempts SET state='VALIDATED_WAITING_FOR_PROMOTION', "
+                "completion_sha256=? WHERE attempt_id=? AND state='CLAIMED'",
+                (completion_sha256, attempt_id),
+            )
+
+    def prepare_task_promotion(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        attempt_id: str,
+        claim_generation: int,
+        expected_run_revision: int,
+        old_run_record_sha256: str,
+        intent_id: str,
+        replacement_run_record: dict,
+        outputs: list[dict],
+    ) -> sqlite3.Row:
+        self.contracts.validate_run_record(replacement_run_record)
+        replacement_json = canonical_json_bytes(replacement_run_record).decode("utf-8")
+        replacement_sha = hashlib.sha256(replacement_json.encode("utf-8")).hexdigest()
+        outputs_json = canonical_json_bytes(outputs).decode("utf-8")
+        identity_payload = "\0".join(
+            (
+                "task_artifact_promotion", run_id, task_id, attempt_id,
+                str(claim_generation), str(expected_run_revision),
+                old_run_record_sha256, replacement_sha,
+                hashlib.sha256(outputs_json.encode("utf-8")).hexdigest(),
+            )
+        )
+        identity = hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+        if (
+            len(intent_id) != 64
+            or replacement_run_record.get("last_mutation_intent_id") != intent_id
+        ):
+            raise KernelConflict("Task promotion intent identity is not bound to Run Record")
+        with self._immediate() as connection:
+            existing = connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["intent_identity"] != identity:
+                    raise KernelConflict("Task promotion intent identity was reused")
+                return existing
+            claim = connection.execute(
+                "SELECT * FROM task_claims WHERE task_id=?", (task_id,)
+            ).fetchone()
+            attempt = connection.execute(
+                "SELECT * FROM task_attempts WHERE attempt_id=?", (attempt_id,)
+            ).fetchone()
+            if (
+                claim is None
+                or attempt is None
+                or claim["state"] != "ACTIVE"
+                or claim["authority_id"] != run_id
+                or claim["attempt_id"] != attempt_id
+                or int(claim["claim_generation"]) != claim_generation
+                or attempt["state"] != "VALIDATED_WAITING_FOR_PROMOTION"
+            ):
+                raise KernelConflict("Task promotion fencing or Completion state is stale")
+            predecessor = self._current_run_record_sha(connection, run_id)
+            if predecessor != old_run_record_sha256:
+                raise ArtifactDrift(
+                    "Task promotion Run Record predecessor is stale",
+                    data={"drifted_paths": ["workflow/run.json"]},
+                )
+            if self._next_run_revision(connection, run_id) != expected_run_revision:
+                raise KernelConflict("Task promotion expected Run revision is stale")
+            run_state_intent = connection.execute(
+                "SELECT mutation_id FROM run_state_mutation_intents "
+                "WHERE run_id=? AND state='PREPARED'",
+                (run_id,),
+            ).fetchone()
+            if run_state_intent is not None:
+                raise KernelConflict("Run Promotion Slot is occupied by another mutation")
+            try:
+                connection.execute(
+                    "INSERT INTO task_promotion_intents(intent_id, run_id, task_id, "
+                    "attempt_id, claim_generation, expected_run_revision, "
+                    "old_run_record_sha256, replacement_run_record_sha256, "
+                    "replacement_run_record_json, outputs_json, journal_sha256, state, "
+                    "intent_identity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, "
+                    "'PREPARED', ?)",
+                    (
+                        intent_id, run_id, task_id, attempt_id, claim_generation,
+                        expected_run_revision, old_run_record_sha256, replacement_sha,
+                        replacement_json, outputs_json, identity,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise KernelConflict("Run Promotion Slot compare-and-set failed") from exc
+            return connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+
+    def bind_task_promotion_journal(self, intent_id: str, journal_sha256: str) -> None:
+        with self._immediate() as connection:
+            row = connection.execute(
+                "SELECT state, journal_sha256 FROM task_promotion_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("promotion journal binding requires a known intent")
+            if row["journal_sha256"] is not None:
+                if row["journal_sha256"] != journal_sha256:
+                    raise ArtifactDrift("promotion journal fingerprint changed")
+                return
+            if row["state"] != "PREPARED":
+                raise KernelConflict("promotion journal binding requires PREPARED intent")
+            connection.execute(
+                "UPDATE task_promotion_intents SET journal_sha256=? "
+                "WHERE intent_id=? AND state='PREPARED' AND journal_sha256 IS NULL",
+                (journal_sha256, intent_id),
+            )
+
+    def transition_task_promotion(
+        self, intent_id: str, *, expected_state: str, new_state: str
+    ) -> None:
+        allowed = {
+            ("PREPARED", "FILES_PUBLISHED"),
+            ("FILES_PUBLISHED", "RECORD_COMMITTED"),
+        }
+        if (expected_state, new_state) not in allowed:
+            raise ContractError("invalid Task promotion intent transition")
+        with self._immediate() as connection:
+            cursor = connection.execute(
+                "UPDATE task_promotion_intents SET state=? "
+                "WHERE intent_id=? AND state=? AND journal_sha256 IS NOT NULL",
+                (new_state, intent_id, expected_state),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = connection.execute(
+                "SELECT state FROM task_promotion_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is not None and row["state"] == new_state:
+                return
+            raise KernelConflict("Task promotion intent transition compare-and-set failed")
+
+    def commit_task_promotion(self, intent_id: str) -> None:
+        with self._immediate() as connection:
+            intent = connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if intent is None:
+                raise KernelConflict("Task promotion intent is absent")
+            if intent["state"] == "COMMITTED":
+                return
+            if intent["state"] != "RECORD_COMMITTED":
+                raise KernelConflict("Task promotion cannot commit before coordination marker")
+            predecessor = self._current_run_record_sha(connection, intent["run_id"])
+            if predecessor != intent["old_run_record_sha256"]:
+                raise ControlStoreUnavailable(
+                    "Task promotion predecessor changed before final commit"
+                )
+            claim = connection.execute(
+                "SELECT * FROM task_claims WHERE task_id=?", (intent["task_id"],)
+            ).fetchone()
+            if (
+                claim is None
+                or claim["state"] != "ACTIVE"
+                or claim["attempt_id"] != intent["attempt_id"]
+                or int(claim["claim_generation"]) != int(intent["claim_generation"])
+            ):
+                raise KernelConflict("Task promotion final fencing compare-and-set failed")
+            connection.execute(
+                "UPDATE task_promotion_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND state='RECORD_COMMITTED'",
+                (intent_id,),
+            )
+            connection.execute(
+                "UPDATE task_attempts SET state='COMMITTED_COMPLETE' "
+                "WHERE attempt_id=? AND state='VALIDATED_WAITING_FOR_PROMOTION'",
+                (intent["attempt_id"],),
+            )
+            connection.execute(
+                "UPDATE task_claims SET state='TERMINAL' "
+                "WHERE task_id=? AND state='ACTIVE' AND attempt_id=? AND claim_generation=?",
+                (intent["task_id"], intent["attempt_id"], intent["claim_generation"]),
+            )
+
+    def active_task_promotion(self, run_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE run_id=? AND "
+                "state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+                (run_id,),
+            ).fetchall()
+            if len(rows) > 1:
+                raise ControlStoreUnavailable("Run has multiple non-terminal promotions")
+            return None if not rows else rows[0]
+        finally:
+            connection.close()
+
+    def task_promotion_for_attempt(
+        self, task_id: str, attempt_id: str
+    ) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            return connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE task_id=? AND attempt_id=? "
+                "ORDER BY expected_run_revision DESC LIMIT 1",
+                (task_id, attempt_id),
+            ).fetchone()
+        finally:
+            connection.close()
+
+    def task_promotion_by_id(self, intent_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            return connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+        finally:
+            connection.close()

@@ -1,0 +1,10 @@
+{
+  "schema_name": "video-workflow-prompt-registry",
+  "schema_version": "1.0.0",
+  "roles": [
+    {"identity": "source-acquisition", "version": "1.0.0", "path": "prompts/video-workflow/roles/source-acquisition.v1.md"}
+  ],
+  "platforms": [
+    {"identity": "fixture", "version": "1.0.0", "path": "prompts/video-workflow/platforms/fixture.v1.md"}
+  ]
+}

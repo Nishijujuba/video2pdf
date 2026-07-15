@@ -4,9 +4,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 import uuid
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +112,20 @@ class SharedExitEvidenceTests(unittest.TestCase):
             sha256_file(path),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         )
+
+    def test_collector_canonicalizes_command_logs_before_fingerprinting(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["command"],
+            returncode=0,
+            stdout=b"stdout\r\n",
+            stderr=b"stderr\r\n",
+        )
+        with mock.patch.object(self.collector.subprocess, "run", return_value=completed):
+            captured = self.collector.run_commands("a" * 40)
+
+        for item in captured:
+            self.assertNotIn(b"\r", item["raw"])
+            self.assertIn(b"stdout\nstderr\n", item["raw"])
 
     def test_collector_fingerprints_complete_slice_diff_from_fixed_base(self) -> None:
         implementation_commit = self.collector.git("rev-parse", "HEAD")

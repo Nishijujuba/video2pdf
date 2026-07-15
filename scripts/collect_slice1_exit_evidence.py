@@ -117,12 +117,12 @@ def run_commands(implementation_commit: str) -> list[dict[str, Any]]:
             capture_output=True,
             check=False,
         )
+        command_output = (completed.stdout + completed.stderr).replace(
+            b"\r\n", b"\n"
+        ).replace(b"\r", b"\n")
         raw = (
-            completed.stdout
-            + completed.stderr
-            + f"\nEVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n".encode(
-                "utf-8"
-            )
+            command_output
+            + f"\nEVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n".encode("utf-8")
         )
         captured.append(
             {

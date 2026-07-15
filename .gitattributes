@@ -1,0 +1,14 @@
+.gitattributes text eol=lf
+requirements/video-workflow-runtime.in text eol=lf
+requirements/pylock.video-workflow-runtime.toml text eol=lf
+schemas/exit-evidence-manifest.v2.schema.json text eol=lf
+schemas/video-workflow/** text eol=lf
+scripts/collect_slice1_exit_evidence.py text eol=lf
+scripts/validate_slice_exit_evidence.py text eol=lf
+scripts/video_workflow.py text eol=lf
+src/video2pdf_workflow_kernel/** text eol=lf
+tests/video_workflow/test_source_ready_tracer.py text eol=lf
+tests/video_workflow/fixtures/contracts/** text eol=lf
+tests/video_workflow/fixtures/exit_evidence_manifest.v2.*.json text eol=lf
+tests/video_workflow/fixtures/source-ready-tracer/** -text
+evidence/slice-01/** text eol=lf

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {"number": 1, "name": "offline-source-ready-tracer"},
+  "implementation_commit": "0000000000000000000000000000000000000000",
+  "evidence_paths": ["evidence/slice-01/exit-evidence-manifest.json", "evidence/slice-01/logs/test.log", "evidence/slice-01/logs/test2.log", "evidence/slice-01/logs/test3.log"],
+  "generated_at": "2026-07-15T00:00:00Z",
+  "activation_scope": {"kind": "none", "runtime_authority_change": false, "components_activated": [], "legacy_track_authority": "preserved"},
+  "commands": [
+    {"test_id": "contracts", "command": ["python", "scripts/video_workflow.py", "contracts-check"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-01/logs/test.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true},
+    {"test_id": "slice-tests", "command": ["python", "-m", "unittest"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-01/logs/test2.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true},
+    {"test_id": "legacy-tests", "command": ["python", "-m", "unittest"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-01/logs/test3.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true}
+  ],
+  "expected_checkpoints": [{"name": "source_ready", "status": "current"}],
+  "fixtures": [{"role": "offline_fixture", "path": "tests/video_workflow/fixtures/source-ready-tracer/fixture.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}],
+  "results": {"positive": ["offline_source_ready"], "negative": ["path_241_fail_closed"], "recovery": ["initialization_fault_boundaries"]},
+  "artifact_fingerprints": [{"role": "runtime_lock", "path": "requirements/pylock.video-workflow-runtime.toml", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

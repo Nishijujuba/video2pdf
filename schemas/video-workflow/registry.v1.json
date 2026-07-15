@@ -1,0 +1,87 @@
+{
+  "schema_name": "kernel-schema-registry",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "json_schema_draft": "https://json-schema.org/draft/2020-12/schema",
+  "contracts": [
+    {
+      "schema_name": "common-definitions",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/common.v1.schema.json",
+      "kind": "supporting_schema"
+    },
+    {
+      "schema_name": "workflow-result",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/workflow-result.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/workflow-result.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/workflow-result.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/workflow-result.invalid.json"
+    },
+    {
+      "schema_name": "bootstrap-record",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/bootstrap-record.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/bootstrap-record.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/bootstrap-record.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/bootstrap-record.invalid.json"
+    },
+    {
+      "schema_name": "run-record",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/run-record.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/run-record.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/run-record.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/run-record.invalid.json"
+    },
+    {
+      "schema_name": "artifact-plan",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/artifact-plan.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/artifact-plan.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/artifact-plan.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/artifact-plan.invalid.json"
+    },
+    {
+      "schema_name": "source-manifest",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/source-manifest.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/source-manifest.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/source-manifest.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/source-manifest.invalid.json"
+    },
+    {
+      "schema_name": "fixture-package",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/fixture-package.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/fixture-package.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/fixture-package.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/fixture-package.invalid.json"
+    },
+    {
+      "schema_name": "scaffold-contract",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "schemas/video-workflow/v1/scaffold.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-contract.invalid.json"
+    },
+    {
+      "schema_name": "scaffold-ledger",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/scaffold-ledger.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/scaffold-ledger.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/scaffold-ledger.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-ledger.invalid.json"
+    }
+  ]
+}

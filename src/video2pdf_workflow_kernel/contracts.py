@@ -1,0 +1,279 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import importlib.metadata
+import json
+from pathlib import Path
+import tomllib
+from typing import Any, Iterator
+
+try:
+    from jsonschema import Draft202012Validator, FormatChecker
+    from jsonschema.exceptions import SchemaError, ValidationError
+    from referencing import Registry, Resource
+except ImportError as exc:  # pragma: no cover - exercised by startup environments
+    raise RuntimeError(
+        "Workflow Kernel requires the locked jsonschema runtime; install "
+        "requirements/pylock.video-workflow-runtime.toml"
+    ) from exc
+
+from .errors import ContractError, UnknownContractVersion, UnresolvedSchemaReference
+from .utils import read_json
+from .utils import sha256_file
+
+
+JSONSCHEMA_VERSION = "4.26.0"
+DRAFT = "https://json-schema.org/draft/2020-12/schema"
+REGISTRY_RELATIVE_PATH = Path("schemas/video-workflow/registry.v1.json")
+RUNTIME_INPUT = Path("requirements/video-workflow-runtime.in")
+RUNTIME_LOCK = Path("requirements/pylock.video-workflow-runtime.toml")
+
+
+@dataclass(frozen=True)
+class ContractEntry:
+    schema_name: str
+    schema_version: str
+    schema_id: str
+    schema_path: Path
+    kind: str
+    positive_example: Path | None
+    negative_example: Path | None
+
+
+def _walk_refs(value: Any) -> Iterator[str]:
+    if isinstance(value, dict):
+        reference = value.get("$ref")
+        if isinstance(reference, str):
+            yield reference
+        for child in value.values():
+            yield from _walk_refs(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_refs(child)
+
+
+class ContractRegistry:
+    """Closed JSON Schema registry; structural field authority stays in Schema."""
+
+    def __init__(self, project_root: Path, registry_path: Path | None = None) -> None:
+        self.project_root = project_root.resolve()
+        self.registry_path = (registry_path or self.project_root / REGISTRY_RELATIVE_PATH).resolve()
+        self._canonical = read_json(self.project_root / REGISTRY_RELATIVE_PATH)
+        self._manifest = read_json(self.registry_path)
+        self.entries = self._load_entries()
+        self.schemas: dict[str, dict[str, Any]] = {}
+        self._registry: Registry | None = None
+
+    def _load_entries(self) -> tuple[ContractEntry, ...]:
+        if not isinstance(self._manifest, dict):
+            raise ContractError("Kernel Schema Registry root must be an object")
+        if self._manifest.get("schema_name") != "kernel-schema-registry":
+            raise ContractError("Kernel Schema Registry identity is invalid")
+        if self._manifest.get("schema_version") != "1.0.0":
+            raise UnknownContractVersion("unknown Kernel Schema Registry version")
+        contracts = self._manifest.get("contracts")
+        if not isinstance(contracts, list) or not contracts:
+            raise ContractError("Kernel Schema Registry contracts must be a non-empty array")
+        known_versions = {
+            item["schema_name"]: item["schema_version"]
+            for item in self._canonical["contracts"]
+        }
+        entries: list[ContractEntry] = []
+        seen_names: set[str] = set()
+        seen_ids: set[str] = set()
+        for raw in contracts:
+            if not isinstance(raw, dict):
+                raise ContractError("registry contract entry must be an object")
+            name = raw.get("schema_name")
+            version = raw.get("schema_version")
+            if name not in known_versions or version != known_versions[name]:
+                raise UnknownContractVersion(
+                    f"unknown registered contract version: {name!r} {version!r}"
+                )
+            schema_id = raw.get("schema_id")
+            if name in seen_names or schema_id in seen_ids:
+                raise ContractError("registry schema names and identities must be unique")
+            seen_names.add(name)
+            seen_ids.add(schema_id)
+            raw_path = Path(str(raw.get("schema_path", "")))
+            schema_path = raw_path if raw_path.is_absolute() else self.project_root / raw_path
+            positive = raw.get("positive_example")
+            negative = raw.get("negative_example")
+            entries.append(
+                ContractEntry(
+                    schema_name=name,
+                    schema_version=version,
+                    schema_id=schema_id,
+                    schema_path=schema_path.resolve(),
+                    kind=str(raw.get("kind")),
+                    positive_example=(self.project_root / positive).resolve() if positive else None,
+                    negative_example=(self.project_root / negative).resolve() if negative else None,
+                )
+            )
+        return tuple(entries)
+
+    def check(self) -> dict[str, Any]:
+        runtime = self._check_locked_runtime()
+        installed = runtime["jsonschema_version"]
+        registered_ids = {entry.schema_id for entry in self.entries}
+        resources: list[tuple[str, Resource]] = []
+        for entry in self.entries:
+            try:
+                schema = read_json(entry.schema_path)
+            except (FileNotFoundError, json.JSONDecodeError) as exc:
+                raise ContractError(f"cannot load schema: {entry.schema_path}: {exc}") from exc
+            if not isinstance(schema, dict):
+                raise ContractError(f"schema root must be an object: {entry.schema_path}")
+            if schema.get("$schema") != DRAFT:
+                raise ContractError(f"schema draft mismatch: {entry.schema_path}")
+            if schema.get("$id") != entry.schema_id:
+                raise ContractError(f"schema identity mismatch: {entry.schema_path}")
+            try:
+                Draft202012Validator.check_schema(schema)
+            except SchemaError as exc:
+                raise ContractError(f"invalid Draft 2020-12 schema {entry.schema_id}: {exc.message}") from exc
+            for reference in _walk_refs(schema):
+                target = reference.split("#", 1)[0]
+                if target and target not in registered_ids:
+                    raise UnresolvedSchemaReference(
+                        f"unregistered schema reference {reference!r} in {entry.schema_id}"
+                    )
+            self.schemas[entry.schema_name] = schema
+            resources.append((entry.schema_id, Resource.from_contents(schema)))
+
+        self._registry = Registry().with_resources(resources)
+        if self.registry_path == (self.project_root / REGISTRY_RELATIVE_PATH).resolve():
+            registered_paths = {entry.schema_path for entry in self.entries}
+            disk_paths = {
+                path.resolve()
+                for path in (self.project_root / "schemas/video-workflow/v1").glob("*.schema.json")
+            }
+            if registered_paths != disk_paths:
+                missing = sorted(str(path) for path in disk_paths - registered_paths)
+                extra = sorted(str(path) for path in registered_paths - disk_paths)
+                raise ContractError(f"registry completeness mismatch: missing={missing}, extra={extra}")
+
+        positive_count = 0
+        negative_count = 0
+        for entry in self.entries:
+            if entry.kind != "contract":
+                continue
+            if entry.positive_example is None or entry.negative_example is None:
+                raise ContractError(f"contract examples missing for {entry.schema_name}")
+            self.validate(entry.schema_name, read_json(entry.positive_example))
+            positive_count += 1
+            try:
+                self.validate(entry.schema_name, read_json(entry.negative_example))
+            except ContractError:
+                negative_count += 1
+            else:
+                raise ContractError(
+                    f"negative contract example unexpectedly passed: {entry.negative_example}"
+                )
+        return {
+            "jsonschema_version": installed,
+            "json_schema_draft": DRAFT,
+            "contract_count": positive_count,
+            "supporting_schema_count": sum(e.kind == "supporting_schema" for e in self.entries),
+            "positive_examples_validated": positive_count,
+            "negative_examples_rejected": negative_count,
+            "registry_path": str(self.registry_path),
+            "runtime_lock": runtime,
+        }
+
+    def _check_locked_runtime(self) -> dict[str, Any]:
+        input_path = self.project_root / RUNTIME_INPUT
+        lock_path = self.project_root / RUNTIME_LOCK
+        direct_lines = {
+            line.strip()
+            for line in input_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        if direct_lines != {f"jsonschema=={JSONSCHEMA_VERSION}"}:
+            raise ContractError("runtime input must contain only the exact jsonschema pin")
+        with lock_path.open("rb") as handle:
+            lock = tomllib.load(handle)
+        if lock.get("lock-version") != "1.0" or lock.get("created-by") != "uv":
+            raise ContractError("runtime lock is not the expected uv PEP 751 lock")
+        packages = lock.get("packages")
+        if not isinstance(packages, list) or not packages:
+            raise ContractError("runtime lock contains no packages")
+        locked: dict[str, str] = {}
+        for package in packages:
+            name = package.get("name")
+            version = package.get("version")
+            if not isinstance(name, str) or not isinstance(version, str) or name in locked:
+                raise ContractError("runtime lock package identities must be unique strings")
+            artifacts = []
+            if isinstance(package.get("sdist"), dict):
+                artifacts.append(package["sdist"])
+            if isinstance(package.get("wheels"), list):
+                artifacts.extend(package["wheels"])
+            if not artifacts or any(
+                not isinstance(artifact.get("hashes"), dict)
+                or not isinstance(artifact["hashes"].get("sha256"), str)
+                or len(artifact["hashes"]["sha256"]) != 64
+                for artifact in artifacts
+            ):
+                raise ContractError(f"runtime lock package lacks full SHA-256 hashes: {name}")
+            locked[name] = version
+        if locked.get("jsonschema") != JSONSCHEMA_VERSION:
+            raise ContractError("runtime lock jsonschema version differs from the direct pin")
+        installed: dict[str, str] = {}
+        for name, expected in locked.items():
+            try:
+                actual = importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError as exc:
+                raise ContractError(f"locked runtime package is unavailable: {name}") from exc
+            if actual != expected:
+                raise ContractError(
+                    f"locked runtime package mismatch: {name}: expected {expected}, got {actual}"
+                )
+            installed[name] = actual
+        return {
+            "jsonschema_version": installed["jsonschema"],
+            "locked_packages": installed,
+            "lock_path": str(lock_path),
+            "lock_sha256": sha256_file(lock_path),
+        }
+
+    def validate(self, schema_name: str, instance: Any) -> None:
+        if self._registry is None:
+            self._prepare_without_examples()
+        entry = next((item for item in self.entries if item.schema_name == schema_name), None)
+        if entry is None:
+            raise UnknownContractVersion(f"unregistered contract: {schema_name}")
+        if isinstance(instance, dict):
+            actual_version = instance.get("schema_version")
+            if actual_version != entry.schema_version:
+                raise UnknownContractVersion(
+                    f"unknown {schema_name} schema_version: {actual_version!r}"
+                )
+        validator = Draft202012Validator(
+            self.schemas[schema_name],
+            registry=self._registry,
+            format_checker=FormatChecker(),
+        )
+        try:
+            validator.validate(instance)
+        except ValidationError as exc:
+            path = "/".join(str(part) for part in exc.absolute_path) or "$"
+            raise ContractError(f"{schema_name} instance invalid at {path}: {exc.message}") from exc
+
+    def _prepare_without_examples(self) -> None:
+        registered_ids = {entry.schema_id for entry in self.entries}
+        resources: list[tuple[str, Resource]] = []
+        for entry in self.entries:
+            schema = read_json(entry.schema_path)
+            if schema.get("$id") != entry.schema_id:
+                raise ContractError(f"schema identity mismatch: {entry.schema_path}")
+            Draft202012Validator.check_schema(schema)
+            for reference in _walk_refs(schema):
+                target = reference.split("#", 1)[0]
+                if target and target not in registered_ids:
+                    raise UnresolvedSchemaReference(
+                        f"unregistered schema reference {reference!r} in {entry.schema_id}"
+                    )
+            self.schemas[entry.schema_name] = schema
+            resources.append((entry.schema_id, Resource.from_contents(schema)))
+        self._registry = Registry().with_resources(resources)

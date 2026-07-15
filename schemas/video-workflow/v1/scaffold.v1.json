@@ -1,0 +1,42 @@
+{
+  "schema_name": "scaffold-contract",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "scaffold_version": "1.0.0",
+  "max_absolute_path_utf16_units": 240,
+  "max_output_component_utf16_units": 96,
+  "managed_directories": [
+    "workflow",
+    "workflow/tasks",
+    "source",
+    "source/metadata",
+    "source/subtitles",
+    "source/media",
+    "source/cover",
+    "figures",
+    "work",
+    "work/source-acquisition",
+    "work/outline",
+    "work/writers",
+    "work/figures",
+    "work/integration",
+    "work/repairs",
+    "review",
+    "review/pyramid",
+    "review/consistency",
+    "review/independent",
+    "review/latex",
+    "review/acceptance",
+    "review/acceptance/attempts",
+    "review/acceptance/executions",
+    "review/acceptance/rendered_pages",
+    "待删除",
+    "待删除/bootstrap"
+  ],
+  "reserved_descendant_paths": [
+    "review/acceptance/executions/00000000000000000000000000000000/acceptance_report.skeleton.json",
+    "review/acceptance/rendered_pages/page_000000.png",
+    "workflow/tasks/00000000000000000000000000000000/attempts/00000000/result-envelope.json",
+    "待删除/acceptance-rendered-pages/page_000000.png"
+  ]
+}

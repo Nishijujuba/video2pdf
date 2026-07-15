@@ -1,0 +1,40 @@
+{
+  "$schema": "https://video2pdf.local/schemas/video-workflow/v1/fixture-package.v1.schema.json",
+  "schema_name": "fixture-package",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "adapter_id": "fixture",
+  "canonical_item_id": "offline-source-ready-001",
+  "original_title": "A",
+  "duration_seconds": 2,
+  "capabilities": [
+    "offline_probe",
+    "verified_import"
+  ],
+  "artifacts": [
+    {
+      "logical_id": "platform_metadata",
+      "path": "metadata/platform.json",
+      "media_type": "application/json",
+      "sha256": "781453792ea3bbe5ffe175c8e10ae60727e4fd929792dbc43e469e640c2e4f2d"
+    },
+    {
+      "logical_id": "subtitle_en",
+      "path": "subtitles/subtitle.en.srt",
+      "media_type": "application/x-subrip",
+      "sha256": "f1d7129dcc4d529697e478f9bce2b5faf4c1a54d33c73356dfdeb08708e03a81"
+    },
+    {
+      "logical_id": "video",
+      "path": "media/video.fixture",
+      "media_type": "application/octet-stream",
+      "sha256": "915fabd6ff048fbaf8a874b98b62bd2daf99c5d2aca3a169d322c66551d4d503"
+    },
+    {
+      "logical_id": "cover",
+      "path": "cover/cover.fixture",
+      "media_type": "application/octet-stream",
+      "sha256": "c447f52ffa12c1a7673d412488db92f94a552532516b61eb6fa8de3f7fcd5d5f"
+    }
+  ]
+}

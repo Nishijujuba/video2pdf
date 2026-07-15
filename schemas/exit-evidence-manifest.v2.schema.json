@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "title": "Video Workflow Exit Evidence Manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "kind",
+    "fingerprint_algorithm",
+    "slice",
+    "implementation_commit",
+    "evidence_paths",
+    "generated_at",
+    "activation_scope",
+    "commands",
+    "expected_checkpoints",
+    "fixtures",
+    "results",
+    "artifact_fingerprints",
+    "unresolved_exceptions",
+    "overall_decision"
+  ],
+  "properties": {
+    "$schema": {"const": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json"},
+    "schema_version": {"const": 2},
+    "kind": {"const": "video-workflow-exit-evidence"},
+    "fingerprint_algorithm": {"const": "sha256-raw-v1"},
+    "slice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "name"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1, "maximum": 12},
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
+      }
+    },
+    "implementation_commit": {"$ref": "#/$defs/gitCommit"},
+    "evidence_paths": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/projectPath"}
+    },
+    "generated_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "activation_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority"],
+      "properties": {
+        "kind": {"const": "none"},
+        "runtime_authority_change": {"const": false},
+        "components_activated": {"type": "array", "maxItems": 0},
+        "legacy_track_authority": {"const": "preserved"}
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"$ref": "#/$defs/commandEvidence"}
+    },
+    "expected_checkpoints": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["current", "stale", "blocked"]}
+        }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["positive", "negative", "recovery"],
+      "properties": {
+        "positive": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "negative": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "recovery": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "artifact_fingerprints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+    },
+    "unresolved_exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["blocking", "code", "message"],
+        "properties": {
+          "blocking": {"type": "boolean"},
+          "code": {"type": "string", "minLength": 1},
+          "message": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "overall_decision": {"enum": ["pass", "fail"]}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "fingerprintedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/projectPath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "commandEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_id", "command", "expected_exit_code", "actual_exit_code", "log", "conforms"],
+      "properties": {
+        "test_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "expected_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+        "actual_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+        "log": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "conforms": {"type": "boolean"}
+      }
+    }
+  }
+}

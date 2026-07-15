@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/fixture-package.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_name", "schema_version", "kernel_version", "adapter_id", "canonical_item_id", "original_title", "duration_seconds", "capabilities", "artifacts"],
+  "properties": {
+    "$schema": {"const": "https://video2pdf.local/schemas/video-workflow/v1/fixture-package.v1.schema.json"},
+    "schema_name": {"const": "fixture-package"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "adapter_id": {"const": "fixture"},
+    "canonical_item_id": {"type": "string", "minLength": 1},
+    "original_title": {"type": "string", "minLength": 1},
+    "duration_seconds": {"type": "integer", "minimum": 1},
+    "capabilities": {"const": ["offline_probe", "verified_import"]},
+    "artifacts": {
+      "type": "array", "minItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["logical_id", "path", "media_type", "sha256"],
+        "properties": {
+          "logical_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "pattern": "^(metadata|subtitles|media|cover)/"},
+          "media_type": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+# Workflow Kernel 2.0 Slice 1 standards-based JSON Schema runtime.
+jsonschema==4.26.0

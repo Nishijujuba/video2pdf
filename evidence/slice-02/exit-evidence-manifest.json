@@ -8,7 +8,7 @@
     "name": "fenced-task-execution-and-promotion"
   },
   "slice_base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
-  "implementation_commit": "f321833d59a62f576ef088eb6a6bb1a6cd2d3d34",
+  "implementation_commit": "2e08fd278e859afcbb35a884ff845fc758571aff",
   "evidence_paths": [
     "evidence/slice-02/exit-evidence-manifest.json",
     "evidence/slice-02/logs/slice0-regression.log",
@@ -21,7 +21,7 @@
     "evidence/slice-02/logs/slice2-syntax.log",
     "evidence/slice-02/logs/slice2-diff-check.log"
   ],
-  "generated_at": "2026-07-15T16:46:34Z",
+  "generated_at": "2026-07-15T17:18:54Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -45,7 +45,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice0-regression.log",
-        "sha256": "387882324892920f2ef0e56cd5bb9aee5308610721a88356f85d51e446ddc4c8"
+        "sha256": "0dfcc37db03f87d59fe41fe87c6a29a84f72d8914c1663cbcc0a638e3f2e28aa"
       },
       "conforms": true
     },
@@ -64,7 +64,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-contracts.log",
-        "sha256": "c8a5f468456a06a64821f5e28af3d9642bb1492054e72782110705a4642b57f6"
+        "sha256": "7a668956a3213be02d36ef7c07ec013af34da099b3a3ddaa48f83e83d4992e9c"
       },
       "conforms": true
     },
@@ -87,7 +87,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-regression.log",
-        "sha256": "ef55e7f0b84a4920fd397cb7a5fb5907d25f5bddaeecf744803291f65e916ae5"
+        "sha256": "68d585c61508d0ea9353a724306d338df42525394aee6e7c13cc2d012f933615"
       },
       "conforms": true
     },
@@ -107,7 +107,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion.log",
-        "sha256": "7c9854cfcee6ab65bd6315a9df0df49a0c5dd12702bc7c6599763379f2af735a"
+        "sha256": "cd46e64737a516e20c74f0c7b993b933a22f5ed5a34c3bf66380d0a2726f5e21"
       },
       "conforms": true
     },
@@ -127,7 +127,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion-hardening.log",
-        "sha256": "b82e9c9965ac162aa75b3b94aa580549623f031daa21c2796febd068096723c9"
+        "sha256": "b215a83ec4e973e35400d4eda13f2192b9e98fe0b0557b9b4bada98d82b1b369"
       },
       "conforms": true
     },
@@ -147,7 +147,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-review-repairs.log",
-        "sha256": "4951805a8ffa92d3d36058d4df378b9401e5c2e4b380d6682d05638ee5f760b7"
+        "sha256": "d24e43d51bb8cad32d293034c999670ddad56fc8a77a3b3bd9ac3bc588c1b00b"
       },
       "conforms": true
     },
@@ -166,7 +166,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-exit-evidence.log",
-        "sha256": "0c9737874511b7f5b9c2636b5d1155e89e88b1545514dcd66347164b6b252da7"
+        "sha256": "387123972317b523be25caf032ed731b94845a1ddc645c6d032247eae2473b6c"
       },
       "conforms": true
     },
@@ -185,7 +185,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-syntax.log",
-        "sha256": "c7192fbeb2cd0db0551b68c3e5ad6760fdb54e2eba6e4550a65792660884d784"
+        "sha256": "3b5ca528841c58f1ffa75123a7deba58b599bb24ac69e198ee4a71d35715ce36"
       },
       "conforms": true
     },
@@ -202,7 +202,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-diff-check.log",
-        "sha256": "ac5b9560ec1a83726d4e139cdebe13eae5ecdf25c0efd2901a0f5a82ada923d9"
+        "sha256": "aa29bb4b47e9f5f04e7a78db4c980a72bd7ca130f3dec8c2fa4c756da677b00b"
       },
       "conforms": true
     }
@@ -366,7 +366,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/control_store.py",
-      "sha256": "a9484c49d2cf5bb854bd1d956e9dd4529f286da55e7b4cb503282da9bc664397"
+      "sha256": "e22faee86d034fe683ac5c1c2e8f55ded501288dbde33ac580965137fd2926fd"
     },
     {
       "role": "implementation_artifact",
@@ -391,7 +391,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/task_execution.py",
-      "sha256": "5ce23ecb217179222a2037aab0dd5f90b7b5f692dffb182e8df8039a519b711f"
+      "sha256": "ae16afea953282097f6bb0b7a106414a2d0dc1e9eefc178b37a0b0276ae5f4a8"
     },
     {
       "role": "implementation_artifact",
@@ -461,7 +461,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue5_review_repairs.py",
-      "sha256": "b2f1edcdab19570fc93a23de72a96a9a518b3c3944682ab262d6f44680b8b08c"
+      "sha256": "f5833898c2b19cd505ee592d140ec648f9966bdb896494138428fe6c83fe45f7"
     },
     {
       "role": "implementation_artifact",

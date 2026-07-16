@@ -639,9 +639,21 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
         prepared = self.prepare()
         claimed = self.claim(prepared)
         self.patch(prepared, claimed)
-        (claimed.attempt_dir / "extra").mkdir()
+        extra_directory = claimed.attempt_dir / "extra"
+        extra_directory.mkdir()
         with self.assertRaises(ContractError):
             self.complete(prepared, claimed)
+
+        quarantined_directory = (
+            TEST_RUNS
+            / "待删除"
+            / "isolated-test-scenarios"
+            / f"{uuid.uuid4().hex}-extra-directory"
+        )
+        quarantined_directory.parent.mkdir(parents=True, exist_ok=True)
+        extra_directory.replace(quarantined_directory)
+        self.assertFalse(extra_directory.exists())
+        self.assertTrue(quarantined_directory.is_dir())
 
         prepared2 = self.prepare("source-acquisition-decision-two")
         with self.assertRaises(KernelConflict):

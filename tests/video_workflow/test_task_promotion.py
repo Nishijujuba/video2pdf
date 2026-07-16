@@ -177,9 +177,21 @@ class TaskPromotionTestCase(unittest.TestCase):
     def test_completion_rejects_undeclared_outputs_and_direct_canonical_write(self) -> None:
         prepared, claimed = self.prepare_and_claim()
         self.write_patch(prepared, claimed)
-        (claimed.attempt_dir / "extra.txt").write_text("undeclared", encoding="utf-8")
+        undeclared_output = claimed.attempt_dir / "extra.txt"
+        undeclared_output.write_text("undeclared", encoding="utf-8")
         with self.assertRaises(ContractError):
             self.complete(prepared, claimed)
+
+        quarantined_output = (
+            TEST_RUNS
+            / "待删除"
+            / "isolated-test-scenarios"
+            / f"{uuid.uuid4().hex}-undeclared-output.txt"
+        )
+        quarantined_output.parent.mkdir(parents=True, exist_ok=True)
+        undeclared_output.replace(quarantined_output)
+        self.assertFalse(undeclared_output.exists())
+        self.assertTrue(quarantined_output.is_file())
 
         prepared2 = self.kernel.prepare_source_acquisition_task(
             self.run_dir,

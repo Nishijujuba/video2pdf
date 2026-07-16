@@ -8,7 +8,7 @@
     "name": "fenced-task-execution-and-promotion"
   },
   "slice_base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
-  "implementation_commit": "8050f0951f21baefc44572453857ecb3b6f1a88c",
+  "implementation_commit": "ea7c5d9b64ea6768238ae9a1596b4863d7686921",
   "evidence_paths": [
     "evidence/slice-02/exit-evidence-manifest.json",
     "evidence/slice-02/logs/slice0-regression.log",
@@ -17,11 +17,12 @@
     "evidence/slice-02/logs/slice2-task-promotion.log",
     "evidence/slice-02/logs/slice2-task-promotion-hardening.log",
     "evidence/slice-02/logs/slice2-review-repairs.log",
+    "evidence/slice-02/logs/slice2-control-store-transaction-scope.log",
     "evidence/slice-02/logs/slice1-exit-evidence.log",
     "evidence/slice-02/logs/slice2-syntax.log",
     "evidence/slice-02/logs/slice2-diff-check.log"
   ],
-  "generated_at": "2026-07-16T02:17:01Z",
+  "generated_at": "2026-07-16T10:26:30Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -45,7 +46,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice0-regression.log",
-        "sha256": "9cbd10c9a274fed878067962bb2a3d104027d189d894d0c589d1866a0b79d2aa"
+        "sha256": "33bcf8a27d7abb04adbeb3f3de68eff187897fe89634e1f457d524091277bb19"
       },
       "conforms": true
     },
@@ -64,7 +65,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-contracts.log",
-        "sha256": "6e437a4c0b0569f514652fb72d942afab0aff284e12a0dea71d5d6eecd2993fb"
+        "sha256": "25a1a5677840d273d425c223100fc82635f4974fbedd5e9ae1a042dd72763804"
       },
       "conforms": true
     },
@@ -87,7 +88,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-regression.log",
-        "sha256": "53612265e1f5dc6af9db4cd4858bc5fa62769c0c9012bd674560003fd91b3573"
+        "sha256": "819fd09cce7a3042285aea1ac21797a368eb24f0d5f30a67286e4694e217d097"
       },
       "conforms": true
     },
@@ -107,7 +108,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion.log",
-        "sha256": "8687e2903f304ad67bfe2233ff4affa24c3b35224bbc51efa5cfeb8f09168197"
+        "sha256": "cc894216cc7b71e23697bbf5051d6be6c23437953386de219e810a7eaa4d3ee4"
       },
       "conforms": true
     },
@@ -127,7 +128,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion-hardening.log",
-        "sha256": "3224a21d0e2b60eb778ebe2f7dd24947be1fbced0ff5b291eb9d1022645ea0b8"
+        "sha256": "f2c08813bcdbaf7504667a07795152280186f9edf73751cf1bf693e131d30ad8"
       },
       "conforms": true
     },
@@ -147,7 +148,27 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-review-repairs.log",
-        "sha256": "55f48903784d91e49035b64e728fce67d7605cd7b6296d3f89ab82082b6bf62a"
+        "sha256": "208533ed4c13cdca4968599724c3bed7f6e6e1cdec81e144c9fa75d555795f28"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice2-control-store-transaction-scope",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_control_store_transaction_scope"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-02/logs/slice2-control-store-transaction-scope.log",
+        "sha256": "2be3e536155e1644b79f2ec0afb3eda38976a731e0fca7945b6f3ac0f6eb2f62"
       },
       "conforms": true
     },
@@ -166,7 +187,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-exit-evidence.log",
-        "sha256": "e375ba5c38f7cff5532108a6d7e3937fedec5053097129a78ba3a16cf0315d52"
+        "sha256": "6ca161a2ff5466be37a6b33cdc99eef3b6eaf21ce9bd9224d10a6efa92de2f5d"
       },
       "conforms": true
     },
@@ -185,7 +206,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-syntax.log",
-        "sha256": "c5049529dcb1704e45adb4927f91ba9e1b1e2d3df1f2979f8cbc40a64fc55d9d"
+        "sha256": "ec8e82cf21eaeab2f45f9892eb2c445360765ea8a9bd9fde169eb607098d367f"
       },
       "conforms": true
     },
@@ -202,7 +223,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-diff-check.log",
-        "sha256": "6e2ff1158d341e5c3db9f781d0d517c9f7c21c1cc743855d5df718fabd295faf"
+        "sha256": "cca3f4f78204fa1807db1ad76ba9b93481ffac91d4a90fddf97d67d64af4f27f"
       },
       "conforms": true
     }
@@ -253,6 +274,9 @@
       "same_run_publication_is_serialized_with_cross_run_independence",
       "second_generation_preserves_prior_bytes",
       "multiple_reclaims_preserve_complete_ordered_audit_history",
+      "authenticated_claim_authority_preserves_valid_reclaim_promotion_and_terminal_overlap",
+      "control_store_authority_preflight_precedes_writer_lock",
+      "concurrent_valid_mutations_retry_without_lost_updates",
       "public_reconcile_authority_dispatches_kernel_run",
       "reconcile_run_wraps_the_same_authority_handler"
     ],
@@ -267,19 +291,25 @@
       "run_wide_files_directories_and_unknown_task_roots_fail_closed",
       "every_nonterminal_recovery_revalidates_source_freshness",
       "missing_or_drifted_prior_generation_preservation_fails_closed",
-      "reclaim_history_corruption_blocks_global_mutation"
+      "reclaim_history_corruption_blocks_global_mutation",
+      "claim_authority_projection_and_lifecycle_tamper_fail_closed",
+      "overlapping_active_claim_write_sets_fail_closed",
+      "missing_tampered_or_orphan_claim_authority_blocks_global_mutation",
+      "raw_writer_race_invalidates_stale_preflight"
     ],
     "recovery": [
       "claim_boundaries_resume_idempotently",
       "completion_boundaries_resume_idempotently",
       "promotion_boundaries_converge_to_one_committed_generation",
       "committed_mutation_hash_chain_covers_task_and_source_drift",
-      "control_store_v1_through_v5_migrate_atomically_to_v6",
+      "control_store_v1_through_v6_migrate_atomically_to_v7",
       "legacy_v4_committed_promotion_is_verified_and_backfilled",
-      "legacy_v4_nonterminal_and_partial_v5_v6_migrations_fail_closed",
+      "legacy_v4_nonterminal_and_partial_v5_v6_v7_migrations_fail_closed",
       "completion_retry_preserves_first_trusted_event_time",
       "prepared_prior_generation_preservation_rebuilds_before_publication",
-      "v5_reclaim_history_migration_is_lossless_or_fails_atomically"
+      "v5_reclaim_history_migration_is_lossless_or_fails_atomically",
+      "v6_claim_authority_migration_is_lossless_or_fails_atomically",
+      "legacy_migration_artifact_validation_precedes_writer_lock"
     ]
   },
   "artifact_fingerprints": [
@@ -346,12 +376,12 @@
     {
       "role": "implementation_artifact",
       "path": "scripts/collect_slice2_exit_evidence.py",
-      "sha256": "0bd905d1a2c18ebc7859d8d11cb19b35b6222537fce962c2fefe2cdf25a2c160"
+      "sha256": "cdb0b4250f84b7108b25d0ceb56cd3325bf008da3d910c8d699508235168af69"
     },
     {
       "role": "implementation_artifact",
       "path": "scripts/validate_slice_exit_evidence.py",
-      "sha256": "0c1e34f69dfc9a9c54feb03d3a8568d8e55b14aa538c77aafe4eb5fdbe4792c5"
+      "sha256": "4e2ceac6f878eeb9afc25b9676dd773bce4d8537c153c06edac1d4edfd85c3fe"
     },
     {
       "role": "implementation_artifact",
@@ -371,7 +401,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/control_store.py",
-      "sha256": "56a38f66c97f9087967aeabaeb7c5c6f7ecca19372e760b72c97a00b6568f743"
+      "sha256": "d9e180a29afb3475e2e05a0bedc1d9fa68e84594abfb1faddc74974179388eea"
     },
     {
       "role": "implementation_artifact",
@@ -396,7 +426,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/task_execution.py",
-      "sha256": "287d170d121a3a9bb450a4a9c1d32558e92ecb74667916aac77d4b01966a81ec"
+      "sha256": "33815bee10ee7a4ac8aa1244042fe79209a1f76b90fe0b1cb3e16a97e1feb4d7"
     },
     {
       "role": "implementation_artifact",
@@ -460,23 +490,28 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_control_store_transaction_scope.py",
+      "sha256": "e1c0c4c10c33a456e3938a8c16c77f26b33542415cb28498e84621fdc56498e9"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue4_gate7.py",
       "sha256": "c114f358c136cdb77701783256851b88125916a6c6271a5fd911eb58ad268c84"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue5_review_repairs.py",
-      "sha256": "813d9c213b75a2863897ed512e2e6c3049c5f3491494b5ffc39fcc8db5137f42"
+      "sha256": "cfec2e32015aef5576a8e8c879b2c04b9642cdf1cc2da3eeedb51ef302528f87"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_source_ready_hardening.py",
-      "sha256": "7240ee1d36e4a283edf79302da11c34d232951ae1ad7ffd3b56a2a6354f701e4"
+      "sha256": "773d3550571b467752eed4df1e5001ffd38a2fd6f6194329e9005885ded803bf"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_source_ready_tracer.py",
-      "sha256": "1b05eef3ad585e5265059c2b6130645fdd3c212d83921b31b71d678ae32bad62"
+      "sha256": "9aa39616830c7a148f8fd3865a326b8e2125de2a4a1aebb1a360f1327b4fe952"
     },
     {
       "role": "implementation_artifact",
@@ -486,7 +521,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_task_promotion_hardening.py",
-      "sha256": "6646ec08553effcb16418c6490713683fa4991029bbcd2101ceb45699ec2611e"
+      "sha256": "f4dc142ecf9922862d8e2e870a1a0d227ec13b75662abc487e9352b09d7d2ce8"
     }
   ],
   "unresolved_exceptions": [],

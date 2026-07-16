@@ -56,6 +56,7 @@ SLICE_CONFIGS = {
             "slice2-task-promotion",
             "slice2-task-promotion-hardening",
             "slice2-review-repairs",
+            "slice2-control-store-transaction-scope",
             "slice1-exit-evidence",
             "slice2-syntax",
             "slice2-diff-check",

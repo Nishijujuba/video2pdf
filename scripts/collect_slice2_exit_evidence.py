@@ -77,6 +77,13 @@ COMMANDS = (
         ],
     ),
     (
+        "slice2-control-store-transaction-scope",
+        [
+            sys.executable, "-X", "utf8", "-B", "-m", "unittest",
+            "tests.video_workflow.test_control_store_transaction_scope",
+        ],
+    ),
+    (
         "slice1-exit-evidence",
         [
             sys.executable, "-X", "utf8", "-B",
@@ -253,6 +260,8 @@ def main() -> int:
                 "second_generation_preserves_prior_bytes",
                 "multiple_reclaims_preserve_complete_ordered_audit_history",
                 "authenticated_claim_authority_preserves_valid_reclaim_promotion_and_terminal_overlap",
+                "control_store_authority_preflight_precedes_writer_lock",
+                "concurrent_valid_mutations_retry_without_lost_updates",
                 "public_reconcile_authority_dispatches_kernel_run",
                 "reconcile_run_wraps_the_same_authority_handler",
             ],
@@ -271,6 +280,7 @@ def main() -> int:
                 "claim_authority_projection_and_lifecycle_tamper_fail_closed",
                 "overlapping_active_claim_write_sets_fail_closed",
                 "missing_tampered_or_orphan_claim_authority_blocks_global_mutation",
+                "raw_writer_race_invalidates_stale_preflight",
             ],
             "recovery": [
                 "claim_boundaries_resume_idempotently",
@@ -284,6 +294,7 @@ def main() -> int:
                 "prepared_prior_generation_preservation_rebuilds_before_publication",
                 "v5_reclaim_history_migration_is_lossless_or_fails_atomically",
                 "v6_claim_authority_migration_is_lossless_or_fails_atomically",
+                "legacy_migration_artifact_validation_precedes_writer_lock",
             ],
         },
         "artifact_fingerprints": implementation_artifacts(

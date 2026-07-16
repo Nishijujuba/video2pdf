@@ -2478,6 +2478,11 @@ class ContractAndPromptRepairTests(unittest.TestCase):
         self.assertIn(
             '"tests.video_workflow.test_issue5_review_repairs"', collector
         )
+        self.assertIn('"slice2-control-store-transaction-scope"', collector)
+        self.assertIn(
+            '"tests.video_workflow.test_control_store_transaction_scope"',
+            collector,
+        )
         self.assertIn(
             "control_store_v1_through_v6_migrate_atomically_to_v7", collector
         )
@@ -2492,9 +2497,14 @@ class ContractAndPromptRepairTests(unittest.TestCase):
             "overlapping_active_claim_write_sets_fail_closed",
             "missing_tampered_or_orphan_claim_authority_blocks_global_mutation",
             "v6_claim_authority_migration_is_lossless_or_fails_atomically",
+            "control_store_authority_preflight_precedes_writer_lock",
+            "raw_writer_race_invalidates_stale_preflight",
+            "legacy_migration_artifact_validation_precedes_writer_lock",
+            "concurrent_valid_mutations_retry_without_lost_updates",
         ):
             self.assertIn(result_name, collector)
         self.assertIn('"slice2-review-repairs"', validator)
+        self.assertIn('"slice2-control-store-transaction-scope"', validator)
 
 
 def read_json_string(value: str) -> object:

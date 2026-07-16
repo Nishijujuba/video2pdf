@@ -29,6 +29,8 @@ from video2pdf_workflow_kernel.task_execution import (  # noqa: E402
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
     PROMOTION_FAULT_POINTS,
+    TaskExecution,
+    _is_link_or_reparse,
 )
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     read_json,
@@ -401,6 +403,212 @@ class TaskPriorGenerationPreservationTests(unittest.TestCase, Slice2Harness):
             self.kernel.reconcile_authority("kernel_run", run_id)
         self.assertFalse(second_preservation.exists())
         self.assertTrue(quarantine.is_file())
+
+
+class TaskNamespaceReconciliationTests(unittest.TestCase, Slice2Harness):
+    def _commit_task(self):
+        prepared = self.prepare("namespace-authority")
+        claimed = self.claim(prepared)
+        self.patch(prepared, claimed)
+        self.complete(prepared, claimed)
+        self.promote(prepared, claimed)
+        return prepared, claimed
+
+    def _quarantine(self, path: Path, label: str) -> Path:
+        destination = (
+            TEST_RUNS
+            / "待删除"
+            / "task-namespace-drift"
+            / f"{uuid.uuid4().hex}-{label}-{path.name}"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        path.replace(destination)
+        return destination
+
+    def _assert_every_resume_boundary_rejects_drift(self, label: str) -> None:
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+        task_roots_before = {
+            entry.name for entry in (self.run_dir / "workflow/tasks").iterdir()
+        }
+        operations = {
+            "reconcile-authority": lambda: self.kernel.reconcile_authority(
+                "kernel_run", run_id
+            ),
+            "reconcile-run": lambda: self.kernel.reconcile_run(self.run_dir),
+            "later-task-prepare": lambda: self.kernel.prepare_source_acquisition_task(
+                self.run_dir,
+                logical_task_key=f"after-{label}",
+                prepared_at=TASK_START,
+            ),
+        }
+        for operation_name, operation in operations.items():
+            with self.subTest(drift=label, operation=operation_name):
+                with self.assertRaises((ArtifactDrift, ContractError)):
+                    operation()
+        self.assertEqual(
+            {
+                entry.name
+                for entry in (self.run_dir / "workflow/tasks").iterdir()
+            },
+            task_roots_before,
+        )
+
+    def test_committed_task_evidence_drift_blocks_every_resume_boundary(self) -> None:
+        for label in (
+            "prompt",
+            "envelope",
+            "attempt-record",
+            "completion",
+            "promotion-journal",
+            "staged-patch",
+            "missing-prompt",
+            "missing-envelope",
+            "missing-attempt-record",
+            "missing-completion",
+            "missing-promotion-journal",
+            "missing-staged-patch",
+            "missing-task",
+            "extra-task",
+            "missing-attempt",
+            "extra-attempt",
+        ):
+            with self.subTest(drift=label):
+                self.initialize(f"namespace-{label}")
+                prepared, claimed = self._commit_task()
+                paths = {
+                    "prompt": prepared.prompt_path,
+                    "envelope": prepared.envelope_path,
+                    "attempt-record": claimed.attempt_dir / "attempt.json",
+                    "completion": claimed.attempt_dir / "completion.json",
+                    "promotion-journal": claimed.attempt_dir / "p.json",
+                    "staged-patch": claimed.attempt_dir / "o/p.json",
+                }
+                if label in paths:
+                    path = paths[label]
+                    path.write_bytes(path.read_bytes() + b"\nnamespace drift\n")
+                elif label.startswith("missing-") and label[8:] in paths:
+                    self._quarantine(paths[label[8:]], label)
+                elif label == "missing-task":
+                    self._quarantine(prepared.task_dir, label)
+                elif label == "extra-task":
+                    (self.run_dir / "workflow/tasks/undeclared-task-root").mkdir()
+                elif label == "missing-attempt":
+                    self._quarantine(claimed.attempt_dir, label)
+                else:
+                    (
+                        prepared.task_dir
+                        / "attempts/undeclared-attempt"
+                    ).mkdir()
+                self._assert_every_resume_boundary_rejects_drift(label)
+
+    def test_linked_durable_prompt_blocks_every_resume_boundary(self) -> None:
+        self.initialize("namespace-link")
+        prepared, _ = self._commit_task()
+        original = self._quarantine(prepared.prompt_path, "linked-prompt")
+        try:
+            prepared.prompt_path.symlink_to(original)
+        except OSError as exc:
+            original.replace(prepared.prompt_path)
+            self.skipTest(f"file symlinks are unavailable: {exc}")
+        self._assert_every_resume_boundary_rejects_drift("linked-prompt")
+
+    def test_link_detection_is_fail_closed_without_platform_symlink_support(self) -> None:
+        self.initialize("namespace-link-detection")
+        prepared, _ = self._commit_task()
+
+        def report_prompt_as_link(path: Path) -> bool:
+            return path == prepared.prompt_path or _is_link_or_reparse(path)
+
+        with patch(
+            "video2pdf_workflow_kernel.task_execution._is_link_or_reparse",
+            side_effect=report_prompt_as_link,
+        ):
+            self._assert_every_resume_boundary_rejects_drift("linked-prompt-detected")
+
+    def test_clean_reconciliation_and_unclaimed_preparation_remain_idempotent(self) -> None:
+        self.initialize("namespace-clean-idempotence")
+        self._commit_task()
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+
+        self.kernel.reconcile_authority("kernel_run", run_id)
+        self.kernel.reconcile_run(self.run_dir)
+        first = self.prepare("namespace-next-task")
+        replay = self.prepare("namespace-next-task")
+
+        self.assertEqual(replay.task_id, first.task_id)
+        self.assertEqual(replay.envelope_path, first.envelope_path)
+        self.assertEqual(replay.prompt_path, first.prompt_path)
+
+    def test_legacy_source_ready_reconciliation_does_not_require_task_namespace(self) -> None:
+        self.initialize("namespace-legacy-source-ready")
+        record = read_json(self.run_dir / "workflow/run.json")
+        self.assertEqual(record["schema_version"], "1.0.0")
+        tasks = self.run_dir / "workflow/tasks"
+        self._quarantine(tasks, "legacy-empty-task-namespace")
+
+        result = self.kernel.reconcile_run(self.run_dir)
+
+        self.assertEqual(result.outcome, "current_state_verified")
+
+    def test_schema1_claim_backed_drift_blocks_dispatcher_wrapper_and_prepare(self) -> None:
+        for label in ("prompt", "attempt-record", "staged-patch"):
+            with self.subTest(drift=label):
+                self.initialize(f"namespace-schema1-{label}")
+                prepared = self.prepare("schema1-claim-backed")
+                claimed = self.claim(prepared)
+                patch_path = self.patch(prepared, claimed)
+                record = read_json(self.run_dir / "workflow/run.json")
+                self.assertEqual(record["schema_version"], "1.0.0")
+                paths = {
+                    "prompt": prepared.prompt_path,
+                    "attempt-record": claimed.attempt_dir / "attempt.json",
+                    "staged-patch": patch_path,
+                }
+                path = paths[label]
+                path.write_bytes(path.read_bytes() + b"\nschema1 drift\n")
+
+                self._assert_every_resume_boundary_rejects_drift(
+                    f"schema1-{label}"
+                )
+
+    def test_reclaimed_attempt_staged_evidence_remains_in_resume_boundary(self) -> None:
+        self.initialize("namespace-reclaimed-attempt")
+        prepared = self.prepare("namespace-reclaimed-attempt")
+        first = self.claim(prepared)
+        first_patch = self.patch(prepared, first, rationale="Abandoned attempt.")
+        replacement = self.kernel.reclaim_task(
+            self.run_dir,
+            task_id=prepared.task_id,
+            expected_attempt_id=first.attempt_id,
+            expected_claim_generation=first.claim_generation,
+            coordinator_session_id="replacement-coordinator",
+            worker_id="replacement-worker",
+            reason="explicit test recovery",
+        )
+        self.patch(prepared, replacement, rationale="Replacement attempt.")
+        self.complete(prepared, replacement)
+        self.promote(prepared, replacement)
+        first_patch.write_bytes(first_patch.read_bytes() + b"\nhistorical drift\n")
+
+        self._assert_every_resume_boundary_rejects_drift("reclaimed-attempt")
+
+    def test_partial_current_attempt_skip_binding_is_rejected(self) -> None:
+        self.initialize("namespace-partial-skip")
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+        execution = TaskExecution(self.kernel)
+
+        with self.assertRaises(ContractError):
+            execution._verify_task_root_inventory(
+                self.run_dir,
+                run_id=run_id,
+                skip_task_id="partial-task",
+            )
+        with self.assertRaises(ContractError):
+            execution._verify_task_root_inventory(
+                self.run_dir,
+                run_id=run_id,
+                skip_attempt_id="partial-attempt",
+            )
 
 
 class TaskFailClosedTests(unittest.TestCase, Slice2Harness):

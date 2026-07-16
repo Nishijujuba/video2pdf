@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 import sqlite3
 import sys
@@ -17,7 +18,17 @@ if str(SRC_ROOT) not in sys.path:
 from video2pdf_workflow_kernel import control_store as control_store_module  # noqa: E402
 from video2pdf_workflow_kernel.control_store import ControlStore  # noqa: E402
 from video2pdf_workflow_kernel.contracts import ContractRegistry  # noqa: E402
+from video2pdf_workflow_kernel.errors import (  # noqa: E402
+    ControlStoreUnavailable,
+    KernelConflict,
+    TaskFault,
+)
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
+from video2pdf_workflow_kernel.utils import (  # noqa: E402
+    read_json,
+    sha256_file,
+    write_json_atomic,
+)
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
@@ -51,6 +62,55 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
             staging_path=store.workspace_root / "待删除" / f"staging-{label}",
         )
 
+    def prepare_completed_task(
+        self,
+        kernel: VideoWorkflowKernel,
+        run_dir: Path,
+        *,
+        logical_task_key: str,
+    ):
+        prepared = kernel.prepare_source_acquisition_task(
+            run_dir,
+            logical_task_key=logical_task_key,
+            prepared_at=TASK_START,
+        )
+        claimed = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="transaction-coordinator",
+            worker_id=f"worker-{logical_task_key}",
+        )
+        envelope = read_json(prepared.envelope_path)
+        output = claimed.attempt_dir / "o/p.json"
+        output.parent.mkdir(parents=False, exist_ok=False)
+        write_json_atomic(
+            output,
+            {
+                "schema_name": "source-acquisition-judgment-patch",
+                "schema_version": "1.0.0",
+                "kernel_version": "2.0.0",
+                "task_id": prepared.task_id,
+                "attempt_id": claimed.attempt_id,
+                "task_envelope_sha256": sha256_file(prepared.envelope_path),
+                "source_manifest_sha256": envelope["input_artifacts"][0]["sha256"],
+                "judgment": {
+                    "selected_subtitle_track": "subtitle_en",
+                    "whisper_fallback": {
+                        "choice": "not_required",
+                        "rationale": "The immutable English subtitle fixture is usable.",
+                    },
+                    "known_gaps": [],
+                },
+            },
+        )
+        kernel.complete_task(
+            run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claimed.attempt_id,
+            claim_generation=claimed.claim_generation,
+        )
+        return prepared, claimed
+
     def test_global_authority_preflight_runs_before_begin_immediate(self) -> None:
         store = self.new_store("preflight-before-lock")
         events: list[str] = []
@@ -83,6 +143,306 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
             if statement.strip().upper() == "BEGIN IMMEDIATE"
         )
         self.assertLess(preflight_index, writer_index)
+
+    def test_active_claim_lookup_uses_authority_state_index(self) -> None:
+        store = self.new_store("claim-query-plan")
+        with sqlite3.connect(store.path) as connection:
+            connection.executemany(
+                "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
+                "envelope_sha256, write_set_json, state, claim_generation, "
+                "attempt_id, coordinator_session_id, worker_id, reclaim_reason, "
+                "updated_at) VALUES (?, 'kernel_run', ?, ?, ?, 'TERMINAL', 1, "
+                "?, 'historical-coordinator', 'historical-worker', NULL, ?)",
+                (
+                    (
+                        f"historical-task-{index:05d}",
+                        f"historical-run-{index % 20:02d}",
+                        f"{index:064x}",
+                        f'["workflow/archive/{index:05d}.json"]',
+                        f"historical-attempt-{index:05d}",
+                        TASK_START,
+                    )
+                    for index in range(3_000)
+                ),
+            )
+            connection.execute("ANALYZE task_claims")
+            plan = connection.execute(
+                "EXPLAIN QUERY PLAN SELECT task_id, write_set_json "
+                "FROM task_claims WHERE authority_kind='kernel_run' "
+                "AND authority_id=? AND state='ACTIVE'",
+                ("run-query-plan",),
+            ).fetchall()
+            cardinality = int(
+                connection.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0]
+            )
+
+        detail = " ".join(str(row[3]).upper() for row in plan)
+        self.assertEqual(cardinality, 3_000)
+        self.assertIn("SEARCH TASK_CLAIMS USING INDEX", detail)
+        self.assertNotIn("SCAN TASK_CLAIMS", detail)
+
+    def test_claim_overlap_scan_runs_in_read_snapshot_before_writer_lock(self) -> None:
+        workspace = self.new_workspace("claim-overlap-phase")
+        kernel = VideoWorkflowKernel(workspace)
+        run_dir = kernel.trace_source_ready(
+            fixture=FIXTURE,
+            task_start=TASK_START,
+            request_id=f"transaction-claim-{uuid.uuid4().hex[:8]}",
+        ).run_dir
+        first = kernel.prepare_source_acquisition_task(
+            run_dir,
+            logical_task_key="transaction-claim-left",
+            prepared_at=TASK_START,
+        )
+        kernel.claim_task(
+            run_dir,
+            first.task_id,
+            coordinator_session_id="claim-coordinator-left",
+            worker_id="claim-worker-left",
+        )
+        second = kernel.prepare_source_acquisition_task(
+            run_dir,
+            logical_task_key="transaction-claim-right",
+            prepared_at=TASK_START,
+        )
+        original_overlap = kernel.control_store._write_sets_overlap
+        overlap_calls = 0
+        writer_phase_violations = 0
+
+        def observed_overlap(left_json: str, right: tuple[str, ...]) -> bool:
+            nonlocal overlap_calls, writer_phase_violations
+            overlap_calls += 1
+            probe = sqlite3.connect(
+                kernel.control_store.path,
+                isolation_level=None,
+                timeout=0.05,
+            )
+            try:
+                probe.execute("PRAGMA busy_timeout=50")
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    writer_phase_violations += 1
+                else:
+                    probe.execute("ROLLBACK")
+            finally:
+                if probe.in_transaction:
+                    probe.execute("ROLLBACK")
+                probe.close()
+            return original_overlap(left_json, right)
+
+        with mock.patch.object(
+            kernel.control_store,
+            "_write_sets_overlap",
+            side_effect=observed_overlap,
+        ):
+            with self.assertRaises(KernelConflict):
+                kernel.claim_task(
+                    run_dir,
+                    second.task_id,
+                    coordinator_session_id="claim-coordinator-right",
+                    worker_id="claim-worker-right",
+                )
+
+        self.assertGreaterEqual(overlap_calls, 1)
+        self.assertEqual(writer_phase_violations, 0)
+
+    def test_promotion_and_run_state_authority_work_precedes_writer_lock(self) -> None:
+        workspace = self.new_workspace("promotion-writer-phase")
+        kernel = VideoWorkflowKernel(workspace)
+        run_dir = kernel.trace_source_ready(
+            fixture=FIXTURE,
+            task_start=TASK_START,
+            request_id=f"transaction-promotion-{uuid.uuid4().hex[:8]}",
+        ).run_dir
+        first, first_claim = self.prepare_completed_task(
+            kernel,
+            run_dir,
+            logical_task_key="transaction-promotion-first",
+        )
+        observed_operations: list[str] = []
+        writer_phase_violations: list[str] = []
+
+        def observe(operation: str) -> None:
+            observed_operations.append(operation)
+            probe = sqlite3.connect(
+                kernel.control_store.path,
+                isolation_level=None,
+                timeout=0.05,
+            )
+            try:
+                probe.execute("PRAGMA busy_timeout=50")
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    writer_phase_violations.append(operation)
+                else:
+                    probe.execute("ROLLBACK")
+            finally:
+                if probe.in_transaction:
+                    probe.execute("ROLLBACK")
+                probe.close()
+
+        original_sha256 = control_store_module.hashlib.sha256
+        original_canonical = control_store_module.canonical_json_bytes
+        original_promotion_validate = (
+            kernel.control_store._validate_task_promotion_intent
+        )
+        original_run_sha = kernel.control_store._current_run_record_sha
+        original_next_revision = kernel.control_store._next_run_revision
+        original_run_validate = kernel.control_store._validate_run_state_mutation_row
+        original_prepared_validate = (
+            kernel.control_store._validate_prepared_run_state_mutation
+        )
+
+        def observed_sha256(*args, **kwargs):
+            observe("hashlib.sha256")
+            return original_sha256(*args, **kwargs)
+
+        def observed_canonical(*args, **kwargs):
+            observe("canonical_json_bytes")
+            return original_canonical(*args, **kwargs)
+
+        def observed_promotion_validate(*args, **kwargs):
+            observe("validate_task_promotion")
+            return original_promotion_validate(*args, **kwargs)
+
+        def observed_run_sha(*args, **kwargs):
+            observe("current_run_record_sha")
+            return original_run_sha(*args, **kwargs)
+
+        def observed_next_revision(*args, **kwargs):
+            observe("next_run_revision")
+            return original_next_revision(*args, **kwargs)
+
+        def observed_run_validate(*args, **kwargs):
+            observe("validate_run_state_mutation")
+            return original_run_validate(*args, **kwargs)
+
+        def observed_prepared_validate(*args, **kwargs):
+            observe("validate_prepared_run_state_mutation")
+            return original_prepared_validate(*args, **kwargs)
+
+        with mock.patch.object(
+            control_store_module.hashlib,
+            "sha256",
+            side_effect=observed_sha256,
+        ), mock.patch.object(
+            control_store_module,
+            "canonical_json_bytes",
+            side_effect=observed_canonical,
+        ), mock.patch.object(
+            kernel.control_store,
+            "_validate_task_promotion_intent",
+            side_effect=observed_promotion_validate,
+        ), mock.patch.object(
+            kernel.control_store,
+            "_current_run_record_sha",
+            side_effect=observed_run_sha,
+        ), mock.patch.object(
+            kernel.control_store,
+            "_next_run_revision",
+            side_effect=observed_next_revision,
+        ), mock.patch.object(
+            kernel.control_store,
+            "_validate_run_state_mutation_row",
+            side_effect=observed_run_validate,
+        ), mock.patch.object(
+            kernel.control_store,
+            "_validate_prepared_run_state_mutation",
+            side_effect=observed_prepared_validate,
+        ):
+            kernel.promote_task(
+                run_dir,
+                task_id=first.task_id,
+                attempt_id=first_claim.attempt_id,
+                claim_generation=first_claim.claim_generation,
+            )
+            first_intent = kernel.control_store.task_promotion_for_attempt(
+                first.task_id,
+                first_claim.attempt_id,
+            )
+            self.assertIsNotNone(first_intent)
+
+            second, second_claim = self.prepare_completed_task(
+                kernel,
+                run_dir,
+                logical_task_key="transaction-promotion-abort",
+            )
+            with self.assertRaises(TaskFault):
+                kernel.promote_task(
+                    run_dir,
+                    task_id=second.task_id,
+                    attempt_id=second_claim.attempt_id,
+                    claim_generation=second_claim.claim_generation,
+                    fault_point="after_promotion_intent_prepared",
+                )
+            abort_intent = kernel.control_store.task_promotion_for_attempt(
+                second.task_id,
+                second_claim.attempt_id,
+            )
+            self.assertIsNotNone(abort_intent)
+            kernel.control_store.abort_task_promotion(
+                str(abort_intent["intent_id"])
+            )
+
+            run_path = run_dir / "workflow/run.json"
+            run_record = read_json(run_path)
+            old_run_sha = sha256_file(run_path)
+            mutation_id = kernel.control_store.derive_run_state_mutation_id(
+                run_id=run_record["run_id"],
+                expected_run_revision=run_record["coordination_revision"],
+                old_run_record_sha256=old_run_sha,
+            )
+            replacement = copy.deepcopy(run_record)
+            replacement["coordination_revision"] += 1
+            replacement["last_mutation_intent_id"] = mutation_id
+            for checkpoint in replacement["checkpoints"].values():
+                checkpoint["status"] = "stale"
+            mutation = kernel.control_store.prepare_run_state_mutation(
+                run_id=run_record["run_id"],
+                expected_run_revision=run_record["coordination_revision"],
+                old_run_record_sha256=old_run_sha,
+                replacement_run_record=replacement,
+            )
+            kernel.control_store.commit_run_state_mutation(
+                str(mutation["mutation_id"])
+            )
+            # Both historical COMMITTED replay paths authenticate the complete
+            # current chain while allowing the later valid Run revision.
+            kernel.control_store.commit_task_promotion(
+                str(first_intent["intent_id"])
+            )
+            kernel.control_store.commit_run_state_mutation(
+                str(mutation["mutation_id"])
+            )
+
+        for operation in {
+            "hashlib.sha256",
+            "canonical_json_bytes",
+            "validate_task_promotion",
+            "current_run_record_sha",
+            "next_run_revision",
+            "validate_run_state_mutation",
+            "validate_prepared_run_state_mutation",
+        }:
+            self.assertIn(operation, observed_operations)
+        self.assertEqual(writer_phase_violations, [])
+
+        with sqlite3.connect(kernel.control_store.path) as connection:
+            connection.execute(
+                "UPDATE initialization_intents SET run_record_sha256=? "
+                "WHERE run_id=? AND state='COMMITTED'",
+                ("0" * 64, run_record["run_id"]),
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            kernel.control_store.commit_task_promotion(
+                str(first_intent["intent_id"])
+            )
+        with self.assertRaises(ControlStoreUnavailable):
+            kernel.control_store.commit_run_state_mutation(
+                str(mutation["mutation_id"])
+            )
 
     def test_commit_between_preflight_and_writer_lock_retries_fresh_snapshot(
         self,

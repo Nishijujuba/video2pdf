@@ -23,7 +23,7 @@ from .utils import (
 )
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BUSY_TIMEOUT_MS = 5000
 LOCK_PROBE_TIMEOUT_MS = 100
 MARKER_NAME = "control-store.json"
@@ -111,6 +111,25 @@ TASK_PROMOTION_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_task_promotion_per_run "
     "ON task_promotion_intents(run_id) "
     "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+)
+TASK_RECLAIM_TRANSITIONS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS task_reclaim_transitions ("
+    "transition_id TEXT PRIMARY KEY, "
+    "authority_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+    "task_id TEXT NOT NULL REFERENCES task_claims(task_id), "
+    "prior_attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id), "
+    "replacement_attempt_id TEXT NOT NULL UNIQUE "
+    "REFERENCES task_attempts(attempt_id), "
+    "prior_claim_generation INTEGER NOT NULL CHECK(prior_claim_generation >= 1), "
+    "replacement_claim_generation INTEGER NOT NULL "
+    "CHECK(replacement_claim_generation = prior_claim_generation + 1), "
+    "recovery_reason TEXT NOT NULL CHECK(length(trim(recovery_reason)) > 0), "
+    "prior_coordinator_session_id TEXT NOT NULL, prior_worker_id TEXT NOT NULL, "
+    "replacement_coordinator_session_id TEXT NOT NULL, "
+    "replacement_worker_id TEXT NOT NULL, reclaimed_at TEXT NOT NULL, "
+    "transition_record_json TEXT NOT NULL, "
+    "UNIQUE(task_id, prior_claim_generation), "
+    "UNIQUE(task_id, replacement_claim_generation))"
 )
 
 
@@ -243,6 +262,7 @@ class ControlStore:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
+            self._validate_reclaim_history_before_mutation(connection)
             yield connection
             connection.execute("COMMIT")
         except BaseException:
@@ -299,6 +319,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (5)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (6)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -465,7 +486,9 @@ class ControlStore:
         connection.execute(TASK_PROMOTION_TABLE_SQL)
         connection.execute(TASK_PROMOTION_INDEX_SQL)
         connection.execute(TASK_PROMOTION_IDENTITY_VERSIONS_TABLE_SQL)
+        connection.execute(TASK_RECLAIM_TRANSITIONS_TABLE_SQL)
         ControlStore._validate_task_tables(connection)
+        ControlStore._validate_task_reclaim_transition_table(connection)
 
     @staticmethod
     def _create_task_tables_v4(connection: sqlite3.Connection) -> None:
@@ -554,6 +577,375 @@ class ControlStore:
             if row is None or _normalized_sql(row[0]) != _normalized_sql(expected):
                 raise ControlStoreUnavailable(
                     f"Control Store SQL authority differs for {name}"
+                )
+
+    def _validate_reclaim_history_before_mutation(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        version = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+            ).fetchone()[0]
+        )
+        if version < 6:
+            return
+        self._validate_task_reclaim_transition_table(connection)
+        self._validate_task_attempt_authority_rows(connection)
+        self._validate_task_reclaim_transition_rows(connection)
+
+    @staticmethod
+    def _validate_task_reclaim_transition_table(
+        connection: sqlite3.Connection,
+    ) -> None:
+        expected_columns = {
+            "transition_id",
+            "authority_id",
+            "task_id",
+            "prior_attempt_id",
+            "replacement_attempt_id",
+            "prior_claim_generation",
+            "replacement_claim_generation",
+            "recovery_reason",
+            "prior_coordinator_session_id",
+            "prior_worker_id",
+            "replacement_coordinator_session_id",
+            "replacement_worker_id",
+            "reclaimed_at",
+            "transition_record_json",
+        }
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(task_reclaim_transitions)"
+            ).fetchall()
+        }
+        if columns != expected_columns:
+            raise ControlStoreUnavailable(
+                "Control Store Task reclaim transition table is incomplete"
+            )
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='task_reclaim_transitions'"
+        ).fetchone()
+        if row is None or _normalized_sql(row[0]) != _normalized_sql(
+            TASK_RECLAIM_TRANSITIONS_TABLE_SQL
+        ):
+            raise ControlStoreUnavailable(
+                "Control Store SQL authority differs for task_reclaim_transitions"
+            )
+
+    @staticmethod
+    def _task_reclaim_transition_record(
+        *,
+        authority_id: str,
+        task_id: str,
+        prior_attempt_id: str,
+        replacement_attempt_id: str,
+        prior_claim_generation: int,
+        replacement_claim_generation: int,
+        recovery_reason: str,
+        prior_coordinator_session_id: str,
+        prior_worker_id: str,
+        replacement_coordinator_session_id: str,
+        replacement_worker_id: str,
+        reclaimed_at: str,
+    ) -> dict:
+        return {
+            "identity_version": "evidence-v1",
+            "authority_id": authority_id,
+            "task_id": task_id,
+            "prior_attempt_id": prior_attempt_id,
+            "replacement_attempt_id": replacement_attempt_id,
+            "prior_claim_generation": prior_claim_generation,
+            "replacement_claim_generation": replacement_claim_generation,
+            "recovery_reason": recovery_reason,
+            "prior_coordinator_session_id": prior_coordinator_session_id,
+            "prior_worker_id": prior_worker_id,
+            "replacement_coordinator_session_id": (
+                replacement_coordinator_session_id
+            ),
+            "replacement_worker_id": replacement_worker_id,
+            "reclaimed_at": reclaimed_at,
+        }
+
+    @staticmethod
+    def _task_reclaim_transition_id(record: dict) -> str:
+        return hashlib.sha256(canonical_json_bytes(record)).hexdigest()
+
+    def _insert_task_reclaim_transition(
+        self,
+        connection: sqlite3.Connection,
+        record: dict,
+    ) -> None:
+        canonical = canonical_json_bytes(record).decode("utf-8")
+        transition_id = self._task_reclaim_transition_id(record)
+        connection.execute(
+            "INSERT INTO task_reclaim_transitions("
+            "transition_id, authority_id, task_id, prior_attempt_id, "
+            "replacement_attempt_id, prior_claim_generation, "
+            "replacement_claim_generation, recovery_reason, "
+            "prior_coordinator_session_id, prior_worker_id, "
+            "replacement_coordinator_session_id, replacement_worker_id, "
+            "reclaimed_at, transition_record_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                transition_id,
+                record["authority_id"],
+                record["task_id"],
+                record["prior_attempt_id"],
+                record["replacement_attempt_id"],
+                record["prior_claim_generation"],
+                record["replacement_claim_generation"],
+                record["recovery_reason"],
+                record["prior_coordinator_session_id"],
+                record["prior_worker_id"],
+                record["replacement_coordinator_session_id"],
+                record["replacement_worker_id"],
+                record["reclaimed_at"],
+                canonical,
+            ),
+        )
+
+    def _backfill_task_reclaim_transitions(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        claims = connection.execute(
+            "SELECT * FROM task_claims ORDER BY task_id"
+        ).fetchall()
+        for claim in claims:
+            generation = int(claim["claim_generation"])
+            if generation > 2:
+                raise ControlStoreUnavailable(
+                    "Control Store v5 multiple-reclaim history cannot be recovered"
+                )
+            if generation == 1:
+                continue
+            reason = claim["reclaim_reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                raise ControlStoreUnavailable(
+                    "Control Store v5 reclaim reason is unavailable"
+                )
+            attempts = connection.execute(
+                "SELECT a.*, aa.attempt_record_json FROM task_attempts a "
+                "JOIN task_attempt_authorities aa ON aa.attempt_id=a.attempt_id "
+                "WHERE a.task_id=? ORDER BY a.claim_generation",
+                (claim["task_id"],),
+            ).fetchall()
+            if (
+                len(attempts) != 2
+                or [int(row["claim_generation"]) for row in attempts] != [1, 2]
+                or attempts[1]["attempt_id"] != claim["attempt_id"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Control Store v5 single-reclaim Attempt chain is incomplete"
+                )
+            try:
+                prior_record = json.loads(str(attempts[0]["attempt_record_json"]))
+                replacement_record = json.loads(
+                    str(attempts[1]["attempt_record_json"])
+                )
+            except json.JSONDecodeError as exc:
+                raise ControlStoreUnavailable(
+                    "Control Store v5 reclaim Attempt authority is invalid"
+                ) from exc
+            record = self._task_reclaim_transition_record(
+                authority_id=str(claim["authority_id"]),
+                task_id=str(claim["task_id"]),
+                prior_attempt_id=str(attempts[0]["attempt_id"]),
+                replacement_attempt_id=str(attempts[1]["attempt_id"]),
+                prior_claim_generation=1,
+                replacement_claim_generation=2,
+                recovery_reason=reason,
+                prior_coordinator_session_id=str(
+                    prior_record.get("coordinator_session_id", "")
+                ),
+                prior_worker_id=str(prior_record.get("worker_id", "")),
+                replacement_coordinator_session_id=str(
+                    replacement_record.get("coordinator_session_id", "")
+                ),
+                replacement_worker_id=str(
+                    replacement_record.get("worker_id", "")
+                ),
+                reclaimed_at=str(replacement_record.get("claimed_at", "")),
+            )
+            self._insert_task_reclaim_transition(connection, record)
+
+    def _validate_task_reclaim_transition_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        orphan = connection.execute(
+            "SELECT t.transition_id FROM task_reclaim_transitions t "
+            "LEFT JOIN task_claims c ON c.task_id=t.task_id "
+            "LEFT JOIN run_bindings b ON b.run_id=t.authority_id "
+            "LEFT JOIN task_attempts p ON p.attempt_id=t.prior_attempt_id "
+            "AND p.task_id=t.task_id "
+            "LEFT JOIN task_attempts r ON r.attempt_id=t.replacement_attempt_id "
+            "AND r.task_id=t.task_id "
+            "WHERE c.task_id IS NULL OR b.run_id IS NULL "
+            "OR p.attempt_id IS NULL OR r.attempt_id IS NULL LIMIT 1"
+        ).fetchone()
+        if orphan is not None:
+            raise ControlStoreUnavailable(
+                "Task reclaim transition lacks its bound Run, Claim, or Attempt"
+            )
+        claims = connection.execute(
+            "SELECT * FROM task_claims ORDER BY task_id"
+        ).fetchall()
+        for claim in claims:
+            attempts = connection.execute(
+                "SELECT a.*, aa.attempt_record_json, aa.attempt_record_sha256 "
+                "FROM task_attempts a LEFT JOIN task_attempt_authorities aa "
+                "ON aa.attempt_id=a.attempt_id WHERE a.task_id=? "
+                "ORDER BY a.claim_generation",
+                (claim["task_id"],),
+            ).fetchall()
+            claim_generation = int(claim["claim_generation"])
+            expected_generations = list(range(1, claim_generation + 1))
+            if (
+                [int(row["claim_generation"]) for row in attempts]
+                != expected_generations
+                or not attempts
+                or attempts[-1]["attempt_id"] != claim["attempt_id"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Task reclaim Attempt generation chain is incomplete"
+                )
+            attempt_records: list[dict] = []
+            for attempt in attempts:
+                try:
+                    attempt_record = json.loads(
+                        str(attempt["attempt_record_json"])
+                    )
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise ControlStoreUnavailable(
+                        "Task reclaim Attempt authority is invalid"
+                    ) from exc
+                canonical_attempt = canonical_json_bytes(attempt_record)
+                if (
+                    canonical_attempt.decode("utf-8")
+                    != attempt["attempt_record_json"]
+                    or hashlib.sha256(canonical_attempt).hexdigest()
+                    != attempt["attempt_record_sha256"]
+                    or attempt_record.get("task_id") != claim["task_id"]
+                    or attempt_record.get("attempt_id") != attempt["attempt_id"]
+                    or int(attempt_record.get("claim_generation", 0))
+                    != int(attempt["claim_generation"])
+                ):
+                    raise ControlStoreUnavailable(
+                        "Task reclaim Attempt authority binding is invalid"
+                    )
+                attempt_records.append(attempt_record)
+            transitions = connection.execute(
+                "SELECT * FROM task_reclaim_transitions WHERE task_id=? "
+                "ORDER BY replacement_claim_generation",
+                (claim["task_id"],),
+            ).fetchall()
+            if len(transitions) != claim_generation - 1:
+                raise ControlStoreUnavailable(
+                    "Task reclaim transition history coverage is incomplete"
+                )
+            if claim_generation == 1:
+                if claim["reclaim_reason"] is not None:
+                    raise ControlStoreUnavailable(
+                        "initial Task Claim has an unexplained reclaim projection"
+                    )
+                current_record = attempt_records[0]
+                if (
+                    current_record.get("coordinator_session_id")
+                    != claim["coordinator_session_id"]
+                    or current_record.get("worker_id") != claim["worker_id"]
+                    or current_record.get("claimed_at") != claim["updated_at"]
+                ):
+                    raise ControlStoreUnavailable(
+                        "initial Task Claim projection identity drifted"
+                    )
+                continue
+            for index, transition in enumerate(transitions):
+                prior = attempts[index]
+                replacement = attempts[index + 1]
+                prior_record = attempt_records[index]
+                replacement_record = attempt_records[index + 1]
+                if prior["state"] != "ABANDONED":
+                    raise ControlStoreUnavailable(
+                        "Task reclaim prior Attempt is not abandoned"
+                    )
+                expected = self._task_reclaim_transition_record(
+                    authority_id=str(claim["authority_id"]),
+                    task_id=str(claim["task_id"]),
+                    prior_attempt_id=str(prior["attempt_id"]),
+                    replacement_attempt_id=str(replacement["attempt_id"]),
+                    prior_claim_generation=int(prior["claim_generation"]),
+                    replacement_claim_generation=int(
+                        replacement["claim_generation"]
+                    ),
+                    recovery_reason=str(transition["recovery_reason"]),
+                    prior_coordinator_session_id=str(
+                        prior_record.get("coordinator_session_id", "")
+                    ),
+                    prior_worker_id=str(prior_record.get("worker_id", "")),
+                    replacement_coordinator_session_id=str(
+                        replacement_record.get("coordinator_session_id", "")
+                    ),
+                    replacement_worker_id=str(
+                        replacement_record.get("worker_id", "")
+                    ),
+                    reclaimed_at=str(replacement_record.get("claimed_at", "")),
+                )
+                canonical = canonical_json_bytes(expected).decode("utf-8")
+                try:
+                    stored_record = json.loads(
+                        str(transition["transition_record_json"])
+                    )
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise ControlStoreUnavailable(
+                        "Task reclaim transition record is invalid"
+                    ) from exc
+                projected = {
+                    key: transition[key]
+                    for key in (
+                        "authority_id",
+                        "task_id",
+                        "prior_attempt_id",
+                        "replacement_attempt_id",
+                        "prior_claim_generation",
+                        "replacement_claim_generation",
+                        "recovery_reason",
+                        "prior_coordinator_session_id",
+                        "prior_worker_id",
+                        "replacement_coordinator_session_id",
+                        "replacement_worker_id",
+                        "reclaimed_at",
+                    )
+                }
+                expected_projection = {
+                    key: value
+                    for key, value in expected.items()
+                    if key != "identity_version"
+                }
+                if (
+                    projected != expected_projection
+                    or stored_record != expected
+                    or transition["transition_record_json"] != canonical
+                    or transition["transition_id"]
+                    != self._task_reclaim_transition_id(expected)
+                ):
+                    raise ControlStoreUnavailable(
+                        "Task reclaim transition identity or binding drifted"
+                    )
+            latest = transitions[-1]
+            latest_record = attempt_records[-1]
+            if (
+                claim["reclaim_reason"] != latest["recovery_reason"]
+                or claim["coordinator_session_id"]
+                != latest["replacement_coordinator_session_id"]
+                or claim["worker_id"] != latest["replacement_worker_id"]
+                or claim["updated_at"] != latest["reclaimed_at"]
+                or latest_record.get("coordinator_session_id")
+                != claim["coordinator_session_id"]
+                or latest_record.get("worker_id") != claim["worker_id"]
+                or latest_record.get("claimed_at") != claim["updated_at"]
+            ):
+                raise ControlStoreUnavailable(
+                    "current Task Claim projection disagrees with reclaim history"
                 )
 
     @staticmethod
@@ -1353,6 +1745,42 @@ class ControlStore:
                         raise ControlStoreUnavailable(
                             "Control Store v5 migration ledger is incomplete"
                         )
+                    tables = {
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        ).fetchall()
+                    }
+                    if "task_reclaim_transitions" in tables:
+                        raise ControlStoreUnavailable(
+                            "Control Store v5 has a partial v6 reclaim migration"
+                        )
+                    connection.execute(TASK_RECLAIM_TRANSITIONS_TABLE_SQL)
+                    self._backfill_task_reclaim_transitions(connection)
+                    self._validate_task_reclaim_transition_table(connection)
+                    self._validate_task_reclaim_transition_rows(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (6)"
+                    )
+                    version = 6
+                if version == 6:
+                    if present != expected_columns:
+                        raise ControlStoreUnavailable(
+                            "Control Store v6 intent identity columns are incomplete"
+                        )
+                    self._validate_run_state_mutation_table(connection)
+                    self._validate_run_state_mutation_identity_table(connection)
+                    self._validate_run_state_mutation_rows(connection)
+                    self._validate_task_tables(connection)
+                    self._validate_task_attempt_authority_rows(connection)
+                    self._validate_task_completion_authority_rows(connection)
+                    self._validate_task_promotion_identity_rows(connection)
+                    self._validate_task_reclaim_transition_table(connection)
+                    self._validate_task_reclaim_transition_rows(connection)
+                    if self._migration_versions(connection) != [1, 2, 3, 4, 5, 6]:
+                        raise ControlStoreUnavailable(
+                            "Control Store v6 migration ledger is incomplete"
+                        )
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -1413,6 +1841,7 @@ class ControlStore:
                     "task_completion_authorities",
                     "task_promotion_identity_versions",
                     "task_promotion_intents",
+                    "task_reclaim_transitions",
                 }
                 if not required_tables.issubset(tables):
                     raise ControlStoreUnavailable(
@@ -1446,6 +1875,8 @@ class ControlStore:
                 self._validate_task_attempt_authority_rows(connection)
                 self._validate_task_completion_authority_rows(connection)
                 self._validate_task_promotion_identity_rows(connection)
+                self._validate_task_reclaim_transition_table(connection)
+                self._validate_task_reclaim_transition_rows(connection)
                 self._probe_lock_contention(connection)
             finally:
                 connection.close()
@@ -2435,6 +2866,26 @@ class ControlStore:
                 "VALUES (?, ?, ?)",
                 (attempt_id, attempt_record_json, attempt_record_sha),
             )
+            transition_record = self._task_reclaim_transition_record(
+                authority_id=authority_id,
+                task_id=task_id,
+                prior_attempt_id=expected_attempt_id,
+                replacement_attempt_id=attempt_id,
+                prior_claim_generation=expected_claim_generation,
+                replacement_claim_generation=generation,
+                recovery_reason=reason,
+                prior_coordinator_session_id=str(
+                    claim["coordinator_session_id"]
+                ),
+                prior_worker_id=str(claim["worker_id"]),
+                replacement_coordinator_session_id=coordinator_session_id,
+                replacement_worker_id=worker_id,
+                reclaimed_at=reclaimed_at,
+            )
+            self._insert_task_reclaim_transition(
+                connection, transition_record
+            )
+            self._validate_task_reclaim_transition_rows(connection)
             return connection.execute(
                 "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
                 "a.completion_sha256, ca.completion_record_json "
@@ -2476,6 +2927,21 @@ class ControlStore:
                 "ORDER BY a.claim_generation",
                 (task_id,),
             ).fetchall()
+        finally:
+            connection.close()
+
+    def task_reclaim_history(self, task_id: str) -> list[dict]:
+        connection = self._connect()
+        try:
+            self._validate_task_reclaim_transition_table(connection)
+            self._validate_task_attempt_authority_rows(connection)
+            self._validate_task_reclaim_transition_rows(connection)
+            rows = connection.execute(
+                "SELECT transition_record_json FROM task_reclaim_transitions "
+                "WHERE task_id=? ORDER BY replacement_claim_generation",
+                (task_id,),
+            ).fetchall()
+            return [json.loads(str(row["transition_record_json"])) for row in rows]
         finally:
             connection.close()
 

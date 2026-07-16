@@ -225,6 +225,7 @@ class Issue5RepairHarness:
             connection.execute(
                 "DROP TABLE IF EXISTS run_state_mutation_identity_versions"
             )
+            connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
@@ -233,7 +234,9 @@ class Issue5RepairHarness:
                 "mutation_identity=? WHERE mutation_id=?",
                 (legacy_identity, legacy_identity, mutation["mutation_id"]),
             )
-            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+            )
         return legacy_identity
 
     def downgrade_promotion_to_real_legacy_v4(
@@ -295,6 +298,7 @@ class Issue5RepairHarness:
         if sha256_file(run_path) == intent["replacement_run_record_sha256"]:
             self.assertEqual(write_json_atomic(run_path, replacement), replacement_sha)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
             )
@@ -314,7 +318,9 @@ class Issue5RepairHarness:
                     intent["intent_id"],
                 ),
             )
-            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+            )
         return legacy_id
 
 
@@ -1176,7 +1182,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         mutation = self.commit_source_mutation()
         legacy_id = self.downgrade_source_mutation_to_real_legacy_v4(mutation)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 5)
+        self.assertEqual(migrated.control_store.check().schema_version, 6)
         with sqlite3.connect(migrated.control_store.path) as connection:
             version_row = connection.execute(
                 "SELECT identity_version, row_identity FROM "
@@ -1222,10 +1228,11 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 4,
             )
 
-    def test_real_v3_and_v4_stores_migrate_atomically_to_v5(self) -> None:
+    def test_real_v3_and_v4_stores_migrate_atomically_to_v6(self) -> None:
         self.initialize("v3-upgrade")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
             )
@@ -1236,10 +1243,10 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             connection.execute("DROP TABLE task_attempts")
             connection.execute("DROP TABLE task_claims")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (4, 5)"
+                "DELETE FROM schema_migrations WHERE version IN (4, 5, 6)"
             )
         migrated_v3 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v3.control_store.check().schema_version, 5)
+        self.assertEqual(migrated_v3.control_store.check().schema_version, 6)
         with sqlite3.connect(migrated_v3.control_store.path) as connection:
             versions = [
                 row[0]
@@ -1250,7 +1257,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             attempt_authority_count = connection.execute(
                 "SELECT COUNT(*) FROM task_attempt_authorities"
             ).fetchone()[0]
-        self.assertEqual(versions, [1, 2, 3, 4, 5])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6])
         self.assertEqual(attempt_authority_count, 0)
 
         prepared, claimed = self.ready("v4-committed-upgrade")
@@ -1259,7 +1266,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             prepared, claimed
         )
         migrated_v4 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v4.control_store.check().schema_version, 5)
+        self.assertEqual(migrated_v4.control_store.check().schema_version, 6)
         with mock.patch(
             "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
             return_value=(b"future prompt version\n", {}),
@@ -1294,13 +1301,16 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
     def test_v4_completion_backfill_tamper_rolls_back(self) -> None:
         prepared, claimed = self.ready("v4-backfill-tamper")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
             )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
-            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+            )
         completion = read_json(claimed.attempt_dir / "completion.json")
         completion["validated_at"] = "2026-07-15T09:00:00+00:00"
         write_json_atomic(claimed.attempt_dir / "completion.json", completion)
@@ -1325,13 +1335,16 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         prepared = self.prepare()
         claimed = self.claim(prepared)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
             )
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
-            connection.execute("DELETE FROM schema_migrations WHERE version=5")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+            )
         attempt = read_json(claimed.attempt_dir / "attempt.json")
         attempt["worker_id"] = "tampered-before-v5-backfill"
         write_json_atomic(claimed.attempt_dir / "attempt.json", attempt)
@@ -1376,6 +1389,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 with sqlite3.connect(
                     self.kernel.control_store.path
                 ) as connection:
+                    connection.execute("DROP TABLE task_reclaim_transitions")
                     connection.execute(
                         "DROP TABLE run_state_mutation_identity_versions"
                     )
@@ -1385,7 +1399,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                     connection.execute("DROP TABLE task_completion_authorities")
                     connection.execute("DROP TABLE task_attempt_authorities")
                     connection.execute(
-                        "DELETE FROM schema_migrations WHERE version=5"
+                        "DELETE FROM schema_migrations WHERE version IN (5, 6)"
                     )
                 record_path = first.attempt_dir / "attempt.json"
                 record = read_json(record_path)
@@ -1527,6 +1541,355 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                     )
 
 
+class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
+    def reclaim(self, prepared, prior, *, suffix: str, reason: str):
+        return self.kernel.reclaim_task(
+            self.run_dir,
+            task_id=prepared.task_id,
+            expected_attempt_id=prior.attempt_id,
+            expected_claim_generation=prior.claim_generation,
+            coordinator_session_id=f"replacement-coordinator-{suffix}",
+            worker_id=f"replacement-worker-{suffix}",
+            reason=reason,
+        )
+
+    def downgrade_reclaim_history_to_v5(self) -> None:
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE task_reclaim_transitions")
+            connection.execute("DELETE FROM schema_migrations WHERE version=6")
+
+    def test_multiple_reclaims_preserve_complete_ordered_audit_history(self) -> None:
+        self.initialize("reclaim-history-two-transitions")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        second = self.reclaim(
+            prepared,
+            first,
+            suffix="two",
+            reason="first coordinator disappeared",
+        )
+        third = self.reclaim(
+            prepared,
+            second,
+            suffix="three",
+            reason="second worker returned invalid evidence",
+        )
+
+        history = self.kernel.control_store.task_reclaim_history(prepared.task_id)
+        self.assertEqual(
+            [entry["recovery_reason"] for entry in history],
+            [
+                "first coordinator disappeared",
+                "second worker returned invalid evidence",
+            ],
+        )
+        self.assertEqual(
+            [
+                (
+                    entry["prior_attempt_id"],
+                    entry["replacement_attempt_id"],
+                    entry["prior_claim_generation"],
+                    entry["replacement_claim_generation"],
+                )
+                for entry in history
+            ],
+            [
+                (first.attempt_id, second.attempt_id, 1, 2),
+                (second.attempt_id, third.attempt_id, 2, 3),
+            ],
+        )
+        self.assertEqual(
+            [
+                (
+                    entry["prior_coordinator_session_id"],
+                    entry["prior_worker_id"],
+                    entry["replacement_coordinator_session_id"],
+                    entry["replacement_worker_id"],
+                )
+                for entry in history
+            ],
+            [
+                (
+                    "repair-coordinator",
+                    "repair-worker",
+                    "replacement-coordinator-two",
+                    "replacement-worker-two",
+                ),
+                (
+                    "replacement-coordinator-two",
+                    "replacement-worker-two",
+                    "replacement-coordinator-three",
+                    "replacement-worker-three",
+                ),
+            ],
+        )
+        projection = self.kernel.control_store.task_claim_for_task(prepared.task_id)
+        self.assertEqual(projection["attempt_id"], third.attempt_id)
+        self.assertEqual(projection["reclaim_reason"], history[-1]["recovery_reason"])
+        self.assertEqual(self.kernel.control_store.check().schema_version, 6)
+
+        reopened = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(
+            reopened.control_store.task_reclaim_history(prepared.task_id),
+            history,
+        )
+
+    def test_initial_claim_and_reclaim_retry_have_exact_history_coverage(self) -> None:
+        self.initialize("reclaim-history-retry")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        self.assertEqual(
+            self.kernel.control_store.task_reclaim_history(prepared.task_id), []
+        )
+        arguments = {
+            "task_id": prepared.task_id,
+            "expected_attempt_id": first.attempt_id,
+            "expected_claim_generation": first.claim_generation,
+            "coordinator_session_id": "retry-coordinator",
+            "worker_id": "retry-worker",
+            "reason": "retryable deterministic reclaim",
+        }
+        replacement = self.kernel.reclaim_task(self.run_dir, **arguments)
+        replay = self.kernel.reclaim_task(self.run_dir, **arguments)
+        self.assertEqual(replay.attempt_id, replacement.attempt_id)
+        history = self.kernel.control_store.task_reclaim_history(prepared.task_id)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["replacement_attempt_id"], replacement.attempt_id)
+        with self.assertRaises(KernelConflict):
+            self.kernel.reclaim_task(
+                self.run_dir,
+                **{**arguments, "reason": "conflicting replay reason"},
+            )
+        self.assertEqual(
+            self.kernel.control_store.task_reclaim_history(prepared.task_id),
+            history,
+        )
+
+    def test_reclaim_projection_and_history_append_share_one_transaction(self) -> None:
+        self.initialize("reclaim-history-atomic")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "CREATE TRIGGER fail_reclaim_history BEFORE INSERT ON "
+                "task_reclaim_transitions BEGIN SELECT RAISE(ABORT, "
+                "'injected reclaim history failure'); END"
+            )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.reclaim(
+                prepared,
+                first,
+                suffix="failed",
+                reason="must roll back projection too",
+            )
+        projection = self.kernel.control_store.task_claim_for_task(prepared.task_id)
+        attempts = self.kernel.control_store.task_attempts_for_task(prepared.task_id)
+        self.assertEqual(projection["attempt_id"], first.attempt_id)
+        self.assertEqual(projection["claim_generation"], 1)
+        self.assertIsNone(projection["reclaim_reason"])
+        self.assertEqual([row["attempt_id"] for row in attempts], [first.attempt_id])
+        self.assertEqual(
+            self.kernel.control_store.task_reclaim_history(prepared.task_id), []
+        )
+
+    def test_history_duplicate_missing_extra_tamper_reorder_and_binding_drift_fail_closed(
+        self,
+    ) -> None:
+        cases = ("missing", "extra", "tamper", "reorder", "binding")
+        for case in cases:
+            with self.subTest(case=case):
+                self.initialize(f"reclaim-history-{case}")
+                prepared = self.prepare()
+                first = self.claim(prepared)
+                second = self.reclaim(
+                    prepared,
+                    first,
+                    suffix="two",
+                    reason="first immutable reason",
+                )
+                third = self.reclaim(
+                    prepared,
+                    second,
+                    suffix="three",
+                    reason="second immutable reason",
+                )
+                other = (
+                    self.prepare("other-task-after-history-corruption")
+                    if case == "missing"
+                    else None
+                )
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    connection.row_factory = sqlite3.Row
+                    if case == "missing":
+                        connection.execute(
+                            "DELETE FROM task_reclaim_transitions "
+                            "WHERE task_id=? AND replacement_claim_generation=2",
+                            (prepared.task_id,),
+                        )
+                    elif case == "extra":
+                        connection.execute("PRAGMA foreign_keys=OFF")
+                        source = connection.execute(
+                            "SELECT * FROM task_reclaim_transitions "
+                            "WHERE task_id=? ORDER BY replacement_claim_generation LIMIT 1",
+                            (prepared.task_id,),
+                        ).fetchone()
+                        connection.execute(
+                            "INSERT INTO task_reclaim_transitions("
+                            "transition_id, authority_id, task_id, prior_attempt_id, "
+                            "replacement_attempt_id, prior_claim_generation, "
+                            "replacement_claim_generation, recovery_reason, "
+                            "prior_coordinator_session_id, prior_worker_id, "
+                            "replacement_coordinator_session_id, replacement_worker_id, "
+                            "reclaimed_at, transition_record_json) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                "f" * 64,
+                                source["authority_id"],
+                                "orphan-task",
+                                "e" * 24,
+                                "d" * 24,
+                                1,
+                                2,
+                                source["recovery_reason"],
+                                source["prior_coordinator_session_id"],
+                                source["prior_worker_id"],
+                                source["replacement_coordinator_session_id"],
+                                source["replacement_worker_id"],
+                                source["reclaimed_at"],
+                                source["transition_record_json"],
+                            ),
+                        )
+                    elif case == "tamper":
+                        connection.execute(
+                            "UPDATE task_reclaim_transitions SET recovery_reason=? "
+                            "WHERE task_id=? AND replacement_claim_generation=2",
+                            ("tampered reason", prepared.task_id),
+                        )
+                    elif case == "reorder":
+                        connection.execute(
+                            "UPDATE task_reclaim_transitions SET "
+                            "prior_claim_generation=3, replacement_claim_generation=4 "
+                            "WHERE task_id=? AND replacement_claim_generation=2",
+                            (prepared.task_id,),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE task_reclaim_transitions SET prior_attempt_id=? "
+                            "WHERE task_id=? AND replacement_claim_generation=2",
+                            (third.attempt_id, prepared.task_id),
+                        )
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.check()
+                if case == "missing":
+                    with self.assertRaises(ControlStoreUnavailable):
+                        self.claim_disjoint(other)
+
+        self.initialize("reclaim-history-duplicate")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        self.reclaim(
+            prepared,
+            first,
+            suffix="duplicate",
+            reason="one authoritative transition",
+        )
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM task_reclaim_transitions WHERE task_id=?",
+                (prepared.task_id,),
+            ).fetchone()
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO task_reclaim_transitions("
+                    "transition_id, authority_id, task_id, prior_attempt_id, "
+                    "replacement_attempt_id, prior_claim_generation, "
+                    "replacement_claim_generation, recovery_reason, "
+                    "prior_coordinator_session_id, prior_worker_id, "
+                    "replacement_coordinator_session_id, replacement_worker_id, "
+                    "reclaimed_at, transition_record_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "f" * 64,
+                        row["authority_id"],
+                        row["task_id"],
+                        row["prior_attempt_id"],
+                        row["replacement_attempt_id"],
+                        row["prior_claim_generation"],
+                        row["replacement_claim_generation"],
+                        row["recovery_reason"],
+                        row["prior_coordinator_session_id"],
+                        row["prior_worker_id"],
+                        row["replacement_coordinator_session_id"],
+                        row["replacement_worker_id"],
+                        row["reclaimed_at"],
+                        row["transition_record_json"],
+                    ),
+                )
+        self.assertEqual(len(self.kernel.control_store.task_reclaim_history(prepared.task_id)), 1)
+
+    def test_v5_fresh_and_single_reclaim_migrate_but_lost_multi_reclaim_fails_atomically(
+        self,
+    ) -> None:
+        self.initialize("reclaim-history-v5-fresh")
+        fresh = self.prepare()
+        self.claim(fresh)
+        self.downgrade_reclaim_history_to_v5()
+        migrated = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated.control_store.check().schema_version, 6)
+        self.assertEqual(migrated.control_store.task_reclaim_history(fresh.task_id), [])
+
+        self.initialize("reclaim-history-v5-single")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        replacement = self.reclaim(
+            prepared,
+            first,
+            suffix="single",
+            reason="recoverable current v5 reason",
+        )
+        self.downgrade_reclaim_history_to_v5()
+        migrated = VideoWorkflowKernel(self.workspace)
+        history = migrated.control_store.task_reclaim_history(prepared.task_id)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["prior_attempt_id"], first.attempt_id)
+        self.assertEqual(history[0]["replacement_attempt_id"], replacement.attempt_id)
+        self.assertEqual(history[0]["recovery_reason"], "recoverable current v5 reason")
+
+        self.initialize("reclaim-history-v5-multiple")
+        prepared = self.prepare()
+        first = self.claim(prepared)
+        second = self.reclaim(
+            prepared,
+            first,
+            suffix="two",
+            reason="lost v5 reason one",
+        )
+        self.reclaim(
+            prepared,
+            second,
+            suffix="three",
+            reason="retained v5 reason two",
+        )
+        self.downgrade_reclaim_history_to_v5()
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name='task_reclaim_transitions'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                5,
+            )
+
+
 class GlobalTaskAuthorityHealthTests(unittest.TestCase, Issue5RepairHarness):
     def test_completion_authority_content_drift_blocks_global_check_and_other_claim(
         self,
@@ -1665,13 +2028,13 @@ class GlobalTaskAuthorityHealthTests(unittest.TestCase, Issue5RepairHarness):
     ) -> None:
         prepared, claimed = self.ready("global-authority-fresh")
         self.promote(prepared, claimed)
-        self.assertEqual(self.kernel.control_store.check().schema_version, 5)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 6)
 
         prepared, claimed = self.ready("global-authority-v4")
         self.promote(prepared, claimed)
         self.downgrade_promotion_to_real_legacy_v4(prepared, claimed)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 5)
+        self.assertEqual(migrated.control_store.check().schema_version, 6)
 
 
 class ContractAndPromptRepairTests(unittest.TestCase):

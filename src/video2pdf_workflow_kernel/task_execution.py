@@ -1477,30 +1477,148 @@ class TaskExecution:
         canonical = self._safe_run_path(
             run_dir, output["canonical_path"], prefix="workflow"
         )
-        preservation = self._safe_run_path(
-            run_dir, output["preservation_path"], prefix="待删除"
-        )
         prior_sha = output["prior_sha256"]
         if canonical.exists():
             if _is_link_or_reparse(canonical) or not canonical.is_file():
                 raise ArtifactDrift("canonical promotion target is linked or not a file")
             actual = sha256_file(canonical)
             if actual == output["sha256"]:
+                self._verify_prior_generation_preservation(
+                    run_dir,
+                    output,
+                    recover_from_canonical=False,
+                )
                 return
             if prior_sha is None or actual != prior_sha:
                 raise ArtifactDrift("canonical promotion target differs from old and new generations")
-            preservation.parent.mkdir(parents=True, exist_ok=True)
-            if preservation.exists():
-                if _is_link_or_reparse(preservation) or sha256_file(preservation) != prior_sha:
-                    raise ArtifactDrift("preserved prior Artifact Generation drifted")
-            else:
-                _write_bytes_atomic(preservation, canonical.read_bytes())
+            self._verify_prior_generation_preservation(
+                run_dir,
+                output,
+                recover_from_canonical=True,
+            )
         elif prior_sha is not None:
             raise ArtifactDrift("canonical prior Artifact Generation disappeared")
         if publish:
             _write_bytes_atomic(canonical, candidate_bytes)
             if sha256_file(canonical) != output["sha256"]:
                 raise ArtifactDrift("promoted canonical output failed fingerprint verification")
+
+    def _verify_prior_generation_preservation(
+        self,
+        run_dir: Path,
+        output: dict[str, Any],
+        *,
+        recover_from_canonical: bool,
+    ) -> None:
+        """Verify one registered prior generation, with bounded PREPARED recovery."""
+        prior_sha = output["prior_sha256"]
+        if prior_sha is None:
+            return
+        preservation_relative = str(output["preservation_path"])
+        preservation = self._safe_run_path(
+            run_dir,
+            preservation_relative,
+            prefix="待删除",
+        )
+        drift = {
+            "drifted_paths": [preservation_relative],
+            "expected_sha256": str(prior_sha),
+        }
+        if _is_link_or_reparse(preservation):
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation is linked or reparse-backed",
+                data=drift,
+            )
+        if preservation.is_file():
+            if sha256_file(preservation) != prior_sha:
+                raise ArtifactDrift(
+                    "preserved prior Artifact Generation fingerprint drifted",
+                    data=drift,
+                )
+            return
+        if preservation.exists():
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation is not an ordinary file",
+                data=drift,
+            )
+        if not recover_from_canonical:
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation is missing",
+                data=drift,
+            )
+
+        canonical_relative = str(output["canonical_path"])
+        canonical = self._safe_run_path(
+            run_dir,
+            canonical_relative,
+            prefix="workflow",
+        )
+        if _is_link_or_reparse(canonical) or not canonical.is_file():
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation cannot be rebuilt from canonical authority",
+                data={**drift, "drifted_paths": [canonical_relative, preservation_relative]},
+            )
+        prior_bytes = canonical.read_bytes()
+        if hashlib.sha256(prior_bytes).hexdigest() != prior_sha:
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation cannot be rebuilt after publication",
+                data={**drift, "drifted_paths": [canonical_relative, preservation_relative]},
+            )
+        try:
+            preservation.parent.mkdir(parents=True, exist_ok=True)
+            preservation = self._safe_run_path(
+                run_dir,
+                preservation_relative,
+                prefix="待删除",
+            )
+            _write_bytes_atomic(preservation, prior_bytes)
+        except OSError as exc:
+            raise ArtifactDrift(
+                "preserved prior Artifact Generation recovery failed",
+                data=drift,
+            ) from exc
+        self._verify_prior_generation_preservation(
+            run_dir,
+            output,
+            recover_from_canonical=False,
+        )
+
+    def _verify_committed_prior_generations(self, run_dir: Path, run_id: str) -> None:
+        """Verify history without replaying obsolete protected Run snapshots."""
+        store = self.kernel._preflight_control_store()
+        verified_intents: set[str] = set()
+        for task_id in sorted(store.task_ids_for_authority(run_id)):
+            for attempt in store.task_attempts_for_task(task_id):
+                if attempt["promotion_state"] != "COMMITTED":
+                    continue
+                intent = store.task_promotion_for_attempt(
+                    task_id,
+                    str(attempt["attempt_id"]),
+                )
+                if (
+                    intent is None
+                    or intent["state"] != "COMMITTED"
+                    or intent["run_id"] != run_id
+                ):
+                    raise ControlStoreUnavailable(
+                        "committed Task promotion history is incomplete"
+                    )
+                intent_id = str(intent["intent_id"])
+                if intent_id in verified_intents:
+                    continue
+                verified_intents.add(intent_id)
+                try:
+                    outputs = json.loads(str(intent["outputs_json"]))
+                except json.JSONDecodeError as exc:
+                    raise ControlStoreUnavailable(
+                        "committed Task promotion output authority is invalid"
+                    ) from exc
+                for output in outputs:
+                    self._verify_prior_generation_preservation(
+                        run_dir,
+                        output,
+                        recover_from_canonical=False,
+                    )
 
     def promote_task(
         self,
@@ -1542,6 +1660,12 @@ class TaskExecution:
                     outputs,
                     verify_run_boundary=False,
                 )
+                for output in outputs:
+                    self._verify_prior_generation_preservation(
+                        run_dir,
+                        output,
+                        recover_from_canonical=False,
+                    )
                 self.verify_committed_task_state(run_dir)
                 return TaskPromotionResult(
                     run_id=str(existing["run_id"]), run_dir=run_dir,
@@ -1715,6 +1839,12 @@ class TaskExecution:
                 allow_replacement_run_record=actual_run_sha == replacement_sha,
                 allow_unbound_journal=True,
             )
+            for output in outputs:
+                self._verify_prior_generation_preservation(
+                    run_dir,
+                    output,
+                    recover_from_canonical=state == "PREPARED",
+                )
         except (ArtifactDrift, ContractError, ControlStoreUnavailable, KernelConflict):
             if state == "PREPARED":
                 published = False
@@ -1787,9 +1917,8 @@ class TaskExecution:
         record, run_path, run_sha = self._run_record(run_dir)
         if record["schema_version"] == "1.0.0":
             return
-        intent = self.kernel._preflight_control_store().task_promotion_by_id(
-            record["last_mutation_intent_id"]
-        )
+        store = self.kernel._preflight_control_store()
+        intent = store.task_promotion_by_id(record["last_mutation_intent_id"])
         if (
             intent is None
             or intent["state"] != "COMMITTED"
@@ -1811,3 +1940,7 @@ class TaskExecution:
                 "promoted task Artifact Generation drifted",
                 data={"drifted_paths": [decision["path"]]},
             )
+        self._verify_committed_prior_generations(
+            run_dir,
+            str(record["run_id"]),
+        )

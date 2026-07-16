@@ -229,6 +229,178 @@ class TaskPersistenceBoundaryTests(unittest.TestCase, Slice2Harness):
             )
 
 
+class TaskPriorGenerationPreservationTests(unittest.TestCase, Slice2Harness):
+    def _commit_generation(self, key: str, rationale: str, worker_id: str):
+        prepared = self.prepare(key)
+        claimed = self.claim(prepared, worker_id=worker_id)
+        self.patch(prepared, claimed, rationale=rationale)
+        self.complete(prepared, claimed)
+        self.promote(prepared, claimed)
+        return prepared, claimed
+
+    def _start_second_generation(self, fault_point: str):
+        self._commit_generation(
+            "source-acquisition-decision-1",
+            "First decision.",
+            "worker-1",
+        )
+        canonical = self.run_dir / "workflow/source-acquisition-judgment-patch.json"
+        first_bytes = canonical.read_bytes()
+        second = self.prepare("source-acquisition-decision-2")
+        second_claim = self.claim(second, worker_id="worker-2")
+        self.patch(second, second_claim, rationale="Second decision.")
+        self.complete(second, second_claim)
+        with self.assertRaises(TaskFault):
+            self.promote(second, second_claim, fault_point=fault_point)
+        intent = self.kernel.control_store.task_promotion_for_attempt(
+            second.task_id, second_claim.attempt_id
+        )
+        output = json.loads(intent["outputs_json"])[0]
+        preservation = self.run_dir.joinpath(
+            *Path(output["preservation_path"]).parts
+        )
+        return second, second_claim, intent, preservation, first_bytes
+
+    def _move_preservation_aside(self, preservation: Path, label: str) -> Path:
+        quarantine = (
+            PROJECT_ROOT
+            / "待删除/preservation-regression-tamper"
+            / f"{uuid.uuid4().hex}-{label}-{preservation.name}"
+        )
+        quarantine.parent.mkdir(parents=True, exist_ok=True)
+        preservation.replace(quarantine)
+        self.assertFalse(preservation.exists())
+        return quarantine
+
+    def test_missing_preservation_blocks_every_published_nonterminal_state(self) -> None:
+        cases = {
+            "PREPARED": "after_output_published",
+            "FILES_PUBLISHED": "after_outputs_state_commit",
+            "RECORD_COMMITTED": "after_record_state_commit",
+        }
+        for expected_state, fault_point in cases.items():
+            with self.subTest(state=expected_state):
+                self.initialize(f"missing-preservation-{expected_state.lower()}")
+                (
+                    second,
+                    second_claim,
+                    intent,
+                    preservation,
+                    _,
+                ) = self._start_second_generation(fault_point)
+                self.assertEqual(intent["state"], expected_state)
+                quarantine = self._move_preservation_aside(
+                    preservation, expected_state.lower()
+                )
+                run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+
+                with self.assertRaisesRegex(
+                    ArtifactDrift, "preserved prior Artifact Generation"
+                ):
+                    self.kernel.reconcile_authority("kernel_run", run_id)
+
+                current = self.kernel.control_store.task_promotion_for_attempt(
+                    second.task_id, second_claim.attempt_id
+                )
+                self.assertEqual(current["state"], expected_state)
+                self.assertFalse(preservation.exists())
+                self.assertTrue(quarantine.is_file())
+
+    def test_prepared_with_canonical_prior_rebuilds_missing_preservation(self) -> None:
+        self.initialize("recover-missing-preservation")
+        (
+            second,
+            second_claim,
+            intent,
+            preservation,
+            first_bytes,
+        ) = self._start_second_generation("after_promotion_journal_bound")
+        self.assertEqual(intent["state"], "PREPARED")
+        self.assertFalse(preservation.exists())
+
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+        reconciled = self.kernel.reconcile_authority("kernel_run", run_id)
+
+        self.assertEqual(reconciled.outcome, "new_state_complete")
+        self.assertEqual(preservation.read_bytes(), first_bytes)
+        current = self.kernel.control_store.task_promotion_for_attempt(
+            second.task_id, second_claim.attempt_id
+        )
+        self.assertEqual(current["state"], "COMMITTED")
+
+    def test_committed_preservation_drift_blocks_public_reconcile_and_replay(self) -> None:
+        self.initialize("committed-preservation-drift")
+        (
+            second,
+            second_claim,
+            _,
+            preservation,
+            _,
+        ) = self._start_second_generation("after_promotion_intent_commit")
+        original = self._move_preservation_aside(
+            preservation, "committed-original"
+        )
+        preservation.write_bytes(b"wrong prior generation\n")
+        drifted_sha = sha256_file(preservation)
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+
+        operations = {
+            "reconcile-authority": lambda: self.kernel.reconcile_authority(
+                "kernel_run", run_id
+            ),
+            "reconcile-run": lambda: self.kernel.reconcile_run(self.run_dir),
+            "committed-replay": lambda: self.promote(second, second_claim),
+        }
+        for name, operation in operations.items():
+            with self.subTest(operation=name):
+                with self.assertRaisesRegex(
+                    ArtifactDrift, "preserved prior Artifact Generation"
+                ):
+                    operation()
+                current = self.kernel.control_store.task_promotion_for_attempt(
+                    second.task_id, second_claim.attempt_id
+                )
+                self.assertEqual(current["state"], "COMMITTED")
+                self.assertEqual(sha256_file(preservation), drifted_sha)
+                self.assertTrue(original.is_file())
+
+    def test_third_generation_keeps_earlier_preservation_under_authority(self) -> None:
+        self.initialize("third-generation-preservation")
+        self._commit_generation(
+            "source-acquisition-decision-1",
+            "First decision.",
+            "worker-1",
+        )
+        second, second_claim = self._commit_generation(
+            "source-acquisition-decision-2",
+            "Second decision.",
+            "worker-2",
+        )
+        second_intent = self.kernel.control_store.task_promotion_for_attempt(
+            second.task_id, second_claim.attempt_id
+        )
+        second_output = json.loads(second_intent["outputs_json"])[0]
+        second_preservation = self.run_dir.joinpath(
+            *Path(second_output["preservation_path"]).parts
+        )
+        self._commit_generation(
+            "source-acquisition-decision-3",
+            "Third decision.",
+            "worker-3",
+        )
+        quarantine = self._move_preservation_aside(
+            second_preservation, "historical-second-intent"
+        )
+
+        run_id = read_json(self.run_dir / "workflow/run.json")["run_id"]
+        with self.assertRaisesRegex(
+            ArtifactDrift, "preserved prior Artifact Generation"
+        ):
+            self.kernel.reconcile_authority("kernel_run", run_id)
+        self.assertFalse(second_preservation.exists())
+        self.assertTrue(quarantine.is_file())
+
+
 class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
     def setUp(self) -> None:
         self.initialize("negative")

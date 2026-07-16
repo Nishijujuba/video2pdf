@@ -358,6 +358,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute(
                     "DROP TABLE run_state_mutation_identity_versions"
                 )
+                connection.execute("DROP TABLE task_reclaim_transitions")
                 connection.execute("DROP TABLE task_promotion_identity_versions")
                 connection.execute("DROP TABLE task_completion_authorities")
                 connection.execute("DROP TABLE task_attempt_authorities")
@@ -368,7 +369,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 5)
+        self.assertEqual(migrated.control_store.check().schema_version, 6)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -392,6 +393,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 "task_attempt_authorities",
                 "task_completion_authorities",
                 "task_promotion_identity_versions",
+                "task_reclaim_transitions",
             },
         )
 

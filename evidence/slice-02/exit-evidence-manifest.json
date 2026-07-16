@@ -8,7 +8,7 @@
     "name": "fenced-task-execution-and-promotion"
   },
   "slice_base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
-  "implementation_commit": "ea7c5d9b64ea6768238ae9a1596b4863d7686921",
+  "implementation_commit": "45e24aa8d4eb7d60ce1acd132424fb3d4bcd7366",
   "evidence_paths": [
     "evidence/slice-02/exit-evidence-manifest.json",
     "evidence/slice-02/logs/slice0-regression.log",
@@ -22,7 +22,7 @@
     "evidence/slice-02/logs/slice2-syntax.log",
     "evidence/slice-02/logs/slice2-diff-check.log"
   ],
-  "generated_at": "2026-07-16T10:26:30Z",
+  "generated_at": "2026-07-16T22:12:32Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -46,7 +46,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice0-regression.log",
-        "sha256": "33bcf8a27d7abb04adbeb3f3de68eff187897fe89634e1f457d524091277bb19"
+        "sha256": "edd0c567d7769e088e4ef0c5c97fea1b941dc9df384fed288b58364c6a1fccfe"
       },
       "conforms": true
     },
@@ -65,7 +65,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-contracts.log",
-        "sha256": "25a1a5677840d273d425c223100fc82635f4974fbedd5e9ae1a042dd72763804"
+        "sha256": "cd2775249ff4befe33500229c3f6d8724e70c3c9c6282d91c00f2e23347883b4"
       },
       "conforms": true
     },
@@ -88,7 +88,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-regression.log",
-        "sha256": "819fd09cce7a3042285aea1ac21797a368eb24f0d5f30a67286e4694e217d097"
+        "sha256": "ea0be9db41609cfc25658a943495ebe902defb1084ffe357a61126f23450688a"
       },
       "conforms": true
     },
@@ -108,7 +108,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion.log",
-        "sha256": "cc894216cc7b71e23697bbf5051d6be6c23437953386de219e810a7eaa4d3ee4"
+        "sha256": "05b004c246af5dc578f673140fe08a353672e9a5739ef0b36786fd2c810d4c0a"
       },
       "conforms": true
     },
@@ -128,7 +128,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion-hardening.log",
-        "sha256": "f2c08813bcdbaf7504667a07795152280186f9edf73751cf1bf693e131d30ad8"
+        "sha256": "8690b6fba743ccac154756e61d294986bdebac44559ce5f284e2bf784b5ec13e"
       },
       "conforms": true
     },
@@ -148,7 +148,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-review-repairs.log",
-        "sha256": "208533ed4c13cdca4968599724c3bed7f6e6e1cdec81e144c9fa75d555795f28"
+        "sha256": "1a89cc18f94cae7e323e9ea7b87ca20bc4c060babfe584ffae64f6798a885c5a"
       },
       "conforms": true
     },
@@ -168,7 +168,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-control-store-transaction-scope.log",
-        "sha256": "2be3e536155e1644b79f2ec0afb3eda38976a731e0fca7945b6f3ac0f6eb2f62"
+        "sha256": "c53707935aaefb78ab0e7fd3845d2ee77374fa1bbeba2a9f51a3662ad12e0c7c"
       },
       "conforms": true
     },
@@ -187,7 +187,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-exit-evidence.log",
-        "sha256": "6ca161a2ff5466be37a6b33cdc99eef3b6eaf21ce9bd9224d10a6efa92de2f5d"
+        "sha256": "5a9e28b9915b3d471386c8ec4e642e784384ad9d992dbd74e4d15f009a6b34a4"
       },
       "conforms": true
     },
@@ -206,7 +206,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-syntax.log",
-        "sha256": "ec8e82cf21eaeab2f45f9892eb2c445360765ea8a9bd9fde169eb607098d367f"
+        "sha256": "27026b8841ec6fac804c052a7aed586f536749d6eda54ecdc47b5c6cc662e025"
       },
       "conforms": true
     },
@@ -223,7 +223,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-diff-check.log",
-        "sha256": "cca3f4f78204fa1807db1ad76ba9b93481ffac91d4a90fddf97d67d64af4f27f"
+        "sha256": "848e4f2198ebbfbd4e8d69103109bb1ea529da8f0617ff50337b258d7a7708f7"
       },
       "conforms": true
     }
@@ -401,7 +401,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/control_store.py",
-      "sha256": "d9e180a29afb3475e2e05a0bedc1d9fa68e84594abfb1faddc74974179388eea"
+      "sha256": "f61f627c3e054d7bd272e3aac2b6c559f7f678179f912dd7ed3c1788bb55b671"
     },
     {
       "role": "implementation_artifact",
@@ -426,7 +426,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/task_execution.py",
-      "sha256": "33815bee10ee7a4ac8aa1244042fe79209a1f76b90fe0b1cb3e16a97e1feb4d7"
+      "sha256": "09eaa2f02d0746d5cfa2530ec66abffac5b3bb881a6cb0573bfbe5dc1d7e029b"
     },
     {
       "role": "implementation_artifact",
@@ -491,7 +491,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_control_store_transaction_scope.py",
-      "sha256": "e1c0c4c10c33a456e3938a8c16c77f26b33542415cb28498e84621fdc56498e9"
+      "sha256": "90296a74b2b2109dd9f0fe55600b6c66313ae8f39d93381dc43ae266e32141da"
     },
     {
       "role": "implementation_artifact",
@@ -516,12 +516,12 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_task_promotion.py",
-      "sha256": "b19d301956ba704fcbce47bfe4d73252c2d714adac64d788507398ce8e9709d7"
+      "sha256": "cd51b2b8f050d16ca700bbbef55df8bea142346220c53c29241b7303c55e44d7"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_task_promotion_hardening.py",
-      "sha256": "f4dc142ecf9922862d8e2e870a1a0d227ec13b75662abc487e9352b09d7d2ce8"
+      "sha256": "74b98b69b23517f892007194ddef6e012ba9276f4272888eb79a73f3c01b4c09"
     }
   ],
   "unresolved_exceptions": [],

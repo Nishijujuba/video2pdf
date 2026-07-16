@@ -266,6 +266,31 @@ class TaskExecution:
                 ),
             )
 
+    def _verify_envelope_recorded_prompt(
+        self,
+        task_dir: Path,
+        envelope: dict[str, Any],
+        *,
+        task_id: str,
+    ) -> None:
+        """Verify a durable Prompt from its immutable Task Envelope authority."""
+        expected_path = f"workflow/tasks/{task_id}/prompt.md"
+        prompt_path = task_dir / "prompt.md"
+        generated_prompt = envelope["generated_prompt"]
+        # Contract validation closes and versions both provenance records.  The
+        # durable Claim authenticates the full Envelope fingerprint, including
+        # those exact historical fields; replay must never reinterpret them
+        # through whichever Prompt generator happens to be installed now.
+        if (
+            generated_prompt["path"] != expected_path
+            or _is_link_or_reparse(prompt_path)
+            or not prompt_path.is_file()
+            or sha256_file(prompt_path) != generated_prompt["sha256"]
+        ):
+            raise ArtifactDrift(
+                "Task Envelope-recorded Generated Prompt authority drifted"
+            )
+
     def _verify_one_task_root(
         self,
         task_dir: Path,
@@ -301,10 +326,8 @@ class TaskExecution:
         ):
             raise ContractError("Task root inventory contains undeclared entries")
         envelope_path = task_dir / "task.json"
-        prompt_path = task_dir / "prompt.md"
         envelope = read_json(envelope_path)
         self.contracts.validate("subagent-task-envelope", envelope)
-        prompt, provenance = generate_source_acquisition_prompt(self.project_root)
         store = self.kernel._preflight_control_store()
         claim = store.task_claim_for_task(task_id)
         if (
@@ -314,21 +337,15 @@ class TaskExecution:
             or envelope["task_id"] != task_id
             or envelope["task_root_path"] != f"workflow/tasks/{task_id}"
             or envelope["authority_binding"]["run_id"] != run_id
-            or (
-                current_attempt_id is None
-                and (
-                    envelope["generated_prompt"]
-                    != {
-                        "path": f"workflow/tasks/{task_id}/prompt.md",
-                        **provenance,
-                    }
-                    or prompt_path.read_bytes() != prompt
-                )
-            )
         ):
             raise ArtifactDrift(
                 "Task namespace Envelope or Generated Prompt authority drifted"
             )
+        self._verify_envelope_recorded_prompt(
+            task_dir,
+            envelope,
+            task_id=task_id,
+        )
         attempts_root = task_dir / "attempts"
         durable_attempts = store.task_attempts_for_task(task_id)
         known_attempts = {str(row["attempt_id"]) for row in durable_attempts}
@@ -1312,12 +1329,9 @@ class TaskExecution:
         task_root = f"workflow/tasks/{intent['task_id']}"
         task_dir = self._safe_run_path(run_dir, task_root, prefix="workflow")
         envelope_path = task_dir / "task.json"
-        prompt_path = task_dir / "prompt.md"
         if (
             _is_link_or_reparse(envelope_path)
-            or _is_link_or_reparse(prompt_path)
             or not envelope_path.is_file()
-            or not prompt_path.is_file()
         ):
             raise ArtifactDrift("Task promotion Envelope or Prompt is absent or linked")
         envelope = read_json(envelope_path)
@@ -1333,31 +1347,15 @@ class TaskExecution:
             raise ArtifactDrift(
                 "Task promotion immutable Envelope or Generated Prompt drifted"
             )
-        if identity_version == "evidence-v2":
-            prompt_bytes, provenance = generate_source_acquisition_prompt(
-                self.project_root
-            )
-            expected_prompt = {"path": f"{task_root}/prompt.md", **provenance}
-            if (
-                envelope["generated_prompt"] != expected_prompt
-                or prompt_path.read_bytes() != prompt_bytes
-            ):
-                raise ArtifactDrift(
-                    "Task promotion current Prompt authority drifted"
-                )
-        elif identity_version == "legacy-v1":
-            if (
-                envelope["generated_prompt"]["path"] != f"{task_root}/prompt.md"
-                or sha256_file(prompt_path)
-                != envelope["generated_prompt"]["sha256"]
-            ):
-                raise ArtifactDrift(
-                    "legacy Task promotion historical Prompt authority drifted"
-                )
-        else:
+        if identity_version not in {"evidence-v2", "legacy-v1"}:
             raise ControlStoreUnavailable(
                 "Task promotion identity version is absent or unsupported"
             )
+        self._verify_envelope_recorded_prompt(
+            task_dir,
+            envelope,
+            task_id=str(intent["task_id"]),
+        )
         attempt_dir = self._safe_run_path(
             run_dir,
             f"{task_root}/attempts/{intent['attempt_id']}",
@@ -1653,6 +1651,11 @@ class TaskExecution:
                 self.reconcile_promotion(run_dir, existing)
                 existing = store.task_promotion_by_id(existing["intent_id"])
             if existing is not None and existing["state"] == "COMMITTED":
+                # A committed replay is a Run resume boundary.  Reconciliation
+                # authenticates the current Source and transactionally stales
+                # every dependent checkpoint before any idempotent success can
+                # be returned for drifted input.
+                self.kernel.reconcile_run(run_dir)
                 outputs = json.loads(str(existing["outputs_json"]))
                 self._authenticate_promotion_evidence(
                     run_dir,

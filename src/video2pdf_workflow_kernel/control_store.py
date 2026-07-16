@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import sqlite3
+import stat
 import time
 from typing import Iterator
 import uuid
@@ -23,9 +25,10 @@ from .utils import (
 )
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 BUSY_TIMEOUT_MS = 5000
 LOCK_PROBE_TIMEOUT_MS = 100
+SNAPSHOT_RETRY_LIMIT = 3
 MARKER_NAME = "control-store.json"
 DATABASE_RELPATH = ".workflow-control/control.sqlite3"
 
@@ -65,6 +68,12 @@ TASK_CLAIMS_TABLE_SQL = (
     "attempt_id TEXT NOT NULL UNIQUE, "
     "coordinator_session_id TEXT NOT NULL, worker_id TEXT NOT NULL, "
     "reclaim_reason TEXT, updated_at TEXT NOT NULL)"
+)
+TASK_CLAIM_AUTHORITIES_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS task_claim_authorities ("
+    "task_id TEXT PRIMARY KEY REFERENCES task_claims(task_id), "
+    "claim_record_json TEXT NOT NULL, "
+    "claim_record_sha256 TEXT NOT NULL UNIQUE)"
 )
 TASK_ATTEMPTS_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS task_attempts ("
@@ -131,6 +140,17 @@ TASK_RECLAIM_TRANSITIONS_TABLE_SQL = (
     "UNIQUE(task_id, prior_claim_generation), "
     "UNIQUE(task_id, replacement_claim_generation))"
 )
+
+
+@dataclass(frozen=True)
+class _MigrationPlan:
+    source_version: int
+    run_state_identity_rows: tuple[tuple[object, ...], ...]
+    task_attempt_authority_rows: tuple[tuple[object, ...], ...]
+    task_completion_authority_rows: tuple[tuple[object, ...], ...]
+    task_promotion_identity_rows: tuple[tuple[object, ...], ...]
+    task_reclaim_transition_rows: tuple[tuple[object, ...], ...]
+    task_claim_authority_rows: tuple[tuple[object, ...], ...]
 
 
 def _normalized_sql(value: str | None) -> str:
@@ -257,20 +277,52 @@ class ControlStore:
         connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         return connection
 
+    @staticmethod
+    def _data_version(connection: sqlite3.Connection) -> int:
+        return int(connection.execute("PRAGMA data_version").fetchone()[0])
+
+    def _begin_immediate_if_snapshot_unchanged(
+        self,
+        connection: sqlite3.Connection,
+        expected_data_version: int,
+    ) -> bool:
+        connection.execute("BEGIN IMMEDIATE")
+        if self._data_version(connection) == expected_data_version:
+            return True
+        connection.execute("ROLLBACK")
+        return False
+
     @contextmanager
     def _immediate(self) -> Iterator[sqlite3.Connection]:
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._validate_reclaim_history_before_mutation(connection)
-            yield connection
-            connection.execute("COMMIT")
-        except BaseException:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise
-        finally:
-            connection.close()
+        for _attempt in range(SNAPSHOT_RETRY_LIMIT):
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN")
+                snapshot_data_version = self._data_version(connection)
+                self._validate_reclaim_history_before_mutation(connection)
+                connection.execute("COMMIT")
+                if not self._begin_immediate_if_snapshot_unchanged(
+                    connection,
+                    snapshot_data_version,
+                ):
+                    continue
+                try:
+                    yield connection
+                    connection.execute("COMMIT")
+                except BaseException:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                    raise
+                return
+            except BaseException:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+            finally:
+                connection.close()
+        raise ControlStoreUnavailable(
+            "Control Store changed during mutation preflight; bounded retry exhausted"
+        )
 
     def _create_database(self) -> None:
         if self.path.exists():
@@ -320,6 +372,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (5)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (6)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (7)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -480,6 +533,7 @@ class ControlStore:
     @staticmethod
     def _create_task_tables(connection: sqlite3.Connection) -> None:
         connection.execute(TASK_CLAIMS_TABLE_SQL)
+        connection.execute(TASK_CLAIM_AUTHORITIES_TABLE_SQL)
         connection.execute(TASK_ATTEMPTS_TABLE_SQL)
         connection.execute(TASK_ATTEMPT_AUTHORITIES_TABLE_SQL)
         connection.execute(TASK_COMPLETION_AUTHORITIES_TABLE_SQL)
@@ -488,6 +542,7 @@ class ControlStore:
         connection.execute(TASK_PROMOTION_IDENTITY_VERSIONS_TABLE_SQL)
         connection.execute(TASK_RECLAIM_TRANSITIONS_TABLE_SQL)
         ControlStore._validate_task_tables(connection)
+        ControlStore._validate_task_claim_authority_table(connection)
         ControlStore._validate_task_reclaim_transition_table(connection)
 
     @staticmethod
@@ -579,6 +634,283 @@ class ControlStore:
                     f"Control Store SQL authority differs for {name}"
                 )
 
+    @staticmethod
+    def _validate_task_claim_authority_table(
+        connection: sqlite3.Connection,
+    ) -> None:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(task_claim_authorities)"
+            ).fetchall()
+        }
+        if columns != {
+            "task_id",
+            "claim_record_json",
+            "claim_record_sha256",
+        }:
+            raise ControlStoreUnavailable(
+                "Control Store Task Claim authority table is incomplete"
+            )
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='task_claim_authorities'"
+        ).fetchone()
+        if row is None or _normalized_sql(row[0]) != _normalized_sql(
+            TASK_CLAIM_AUTHORITIES_TABLE_SQL
+        ):
+            raise ControlStoreUnavailable(
+                "Control Store SQL authority differs for task_claim_authorities"
+            )
+
+    @staticmethod
+    def _task_claim_authority_record(
+        *,
+        task_id: str,
+        authority_kind: str,
+        authority_id: str,
+        envelope_sha256: str,
+        write_set: tuple[str, ...],
+    ) -> dict:
+        return {
+            "identity_version": "evidence-v1",
+            "task_id": task_id,
+            "authority_kind": authority_kind,
+            "authority_id": authority_id,
+            "task_root_path": f"workflow/tasks/{task_id}",
+            "task_envelope_sha256": envelope_sha256,
+            "write_set": list(write_set),
+        }
+
+    def _claim_authority_from_current_envelope(
+        self,
+        *,
+        authority_id: str,
+        task_id: str,
+        envelope_sha256: str,
+        write_set: tuple[str, ...],
+    ) -> dict:
+        connection = self._connect()
+        try:
+            binding = connection.execute(
+                "SELECT output_path FROM run_bindings WHERE run_id=?",
+                (authority_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if binding is None:
+            raise KernelConflict("Task Claim authority has no Run binding")
+        run_root = Path(str(binding["output_path"])).resolve()
+        task_root = run_root / "workflow" / "tasks" / task_id
+        envelope_path = task_root / "task.json"
+        try:
+            task_root_info = task_root.lstat()
+            envelope_info = envelope_path.lstat()
+        except OSError as exc:
+            raise KernelConflict("Task Claim Envelope is unavailable") from exc
+        if (
+            task_root.is_symlink()
+            or not stat.S_ISDIR(task_root_info.st_mode)
+            or getattr(task_root_info, "st_file_attributes", 0)
+            & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or envelope_path.is_symlink()
+            or not stat.S_ISREG(envelope_info.st_mode)
+            or getattr(envelope_info, "st_file_attributes", 0)
+            & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            raise KernelConflict("Task Claim Envelope boundary is absent or linked")
+        try:
+            envelope = read_json(envelope_path)
+            self.contracts.validate("subagent-task-envelope", envelope)
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            raise KernelConflict("Task Claim Envelope contract is invalid") from exc
+        authority_binding = envelope.get("authority_binding", {})
+        if (
+            envelope.get("task_id") != task_id
+            or envelope.get("task_root_path") != f"workflow/tasks/{task_id}"
+            or authority_binding.get("kind") != "kernel_run"
+            or authority_binding.get("run_id") != authority_id
+            or sha256_file(envelope_path) != envelope_sha256
+            or envelope.get("write_set") != list(write_set)
+        ):
+            raise KernelConflict(
+                "Task Claim static authority differs from its current Envelope"
+            )
+        return self._task_claim_authority_record(
+            task_id=task_id,
+            authority_kind="kernel_run",
+            authority_id=authority_id,
+            envelope_sha256=envelope_sha256,
+            write_set=write_set,
+        )
+
+    @staticmethod
+    def _insert_task_claim_authority(
+        connection: sqlite3.Connection,
+        record: dict,
+        *,
+        canonical: bytes | None = None,
+        record_sha256: str | None = None,
+    ) -> None:
+        if canonical is None:
+            canonical = canonical_json_bytes(record)
+        if record_sha256 is None:
+            record_sha256 = hashlib.sha256(canonical).hexdigest()
+        connection.execute(
+            "INSERT INTO task_claim_authorities("
+            "task_id, claim_record_json, claim_record_sha256) VALUES (?, ?, ?)",
+            (
+                record["task_id"],
+                canonical.decode("utf-8"),
+                record_sha256,
+            ),
+        )
+
+    def _validate_task_claim_authority_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        orphan = connection.execute(
+            "SELECT a.task_id FROM task_claim_authorities a "
+            "LEFT JOIN task_claims c ON c.task_id=a.task_id "
+            "WHERE c.task_id IS NULL LIMIT 1"
+        ).fetchone()
+        if orphan is not None:
+            raise ControlStoreUnavailable(
+                "Task Claim authority lacks a Claim projection"
+            )
+        rows = connection.execute(
+            "SELECT c.*, a.claim_record_json, a.claim_record_sha256 "
+            "FROM task_claims c LEFT JOIN task_claim_authorities a "
+            "ON a.task_id=c.task_id ORDER BY c.task_id"
+        ).fetchall()
+        for row in rows:
+            authority_json = row["claim_record_json"]
+            authority_sha = row["claim_record_sha256"]
+            if authority_json is None or authority_sha is None:
+                raise ControlStoreUnavailable(
+                    "Task Claim lacks immutable authority"
+                )
+            try:
+                write_set = json.loads(str(row["write_set_json"]))
+                record = json.loads(str(authority_json))
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ControlStoreUnavailable(
+                    "Task Claim projection or authority is invalid"
+                ) from exc
+            if (
+                not isinstance(write_set, list)
+                or not write_set
+                or any(not isinstance(path, str) or not path for path in write_set)
+                or canonical_json_bytes(write_set).decode("utf-8").strip()
+                != row["write_set_json"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Task Claim write set projection is invalid"
+                )
+            expected = self._task_claim_authority_record(
+                task_id=str(row["task_id"]),
+                authority_kind=str(row["authority_kind"]),
+                authority_id=str(row["authority_id"]),
+                envelope_sha256=str(row["envelope_sha256"]),
+                write_set=tuple(write_set),
+            )
+            canonical = canonical_json_bytes(record)
+            if (
+                record != expected
+                or canonical.decode("utf-8") != authority_json
+                or hashlib.sha256(canonical).hexdigest() != authority_sha
+            ):
+                raise ControlStoreUnavailable(
+                    "Task Claim immutable authority binding drifted"
+                )
+            current_attempt = connection.execute(
+                "SELECT state FROM task_attempts WHERE task_id=? AND attempt_id=? "
+                "AND claim_generation=?",
+                (
+                    row["task_id"],
+                    row["attempt_id"],
+                    row["claim_generation"],
+                ),
+            ).fetchone()
+            if current_attempt is None:
+                raise ControlStoreUnavailable(
+                    "Task Claim current Attempt projection is absent"
+                )
+            promotions = connection.execute(
+                "SELECT run_id, task_id, attempt_id, claim_generation, state "
+                "FROM task_promotion_intents WHERE task_id=? ORDER BY intent_id",
+                (row["task_id"],),
+            ).fetchall()
+            committed = [
+                intent for intent in promotions if intent["state"] == "COMMITTED"
+            ]
+            non_aborted = [
+                intent for intent in promotions if intent["state"] != "ABORTED"
+            ]
+            if any(
+                intent["run_id"] != row["authority_id"]
+                or intent["task_id"] != row["task_id"]
+                or intent["attempt_id"] != row["attempt_id"]
+                or int(intent["claim_generation"])
+                != int(row["claim_generation"])
+                for intent in promotions
+                if intent["state"] != "ABORTED"
+            ):
+                raise ControlStoreUnavailable(
+                    "Task Claim lifecycle disagrees with promotion authority"
+                )
+            if row["state"] == "ACTIVE":
+                if current_attempt["state"] not in {
+                    "CLAIMED",
+                    "VALIDATED_WAITING_FOR_PROMOTION",
+                } or committed:
+                    raise ControlStoreUnavailable(
+                        "active Task Claim lifecycle projection is invalid"
+                    )
+                if non_aborted and current_attempt["state"] != (
+                    "VALIDATED_WAITING_FOR_PROMOTION"
+                ):
+                    raise ControlStoreUnavailable(
+                        "Task Claim promotion lacks a validated current Attempt"
+                    )
+            elif (
+                current_attempt["state"] != "COMMITTED_COMPLETE"
+                or len(committed) != 1
+            ):
+                raise ControlStoreUnavailable(
+                    "terminal Task Claim lacks one committed promotion authority"
+                )
+        active = [row for row in rows if row["state"] == "ACTIVE"]
+        for index, left in enumerate(active):
+            try:
+                left_record = json.loads(str(left["claim_record_json"]))
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ControlStoreUnavailable(
+                    "active Task Claim authority is invalid"
+                ) from exc
+            for right in active[index + 1 :]:
+                if (
+                    left["authority_kind"] != right["authority_kind"]
+                    or left["authority_id"] != right["authority_id"]
+                ):
+                    continue
+                try:
+                    right_record = json.loads(str(right["claim_record_json"]))
+                    right_write_set = tuple(right_record["write_set"])
+                except (TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ControlStoreUnavailable(
+                        "active Task Claim authority is invalid"
+                    ) from exc
+                left_write_set_json = canonical_json_bytes(
+                    left_record["write_set"]
+                ).decode("utf-8").strip()
+                if self._write_sets_overlap(
+                    left_write_set_json,
+                    right_write_set,
+                ):
+                    raise ControlStoreUnavailable(
+                        "Control Store has overlapping active Task Claims"
+                    )
+
     def _validate_reclaim_history_before_mutation(
         self, connection: sqlite3.Connection
     ) -> None:
@@ -592,6 +924,9 @@ class ControlStore:
         self._validate_task_reclaim_transition_table(connection)
         self._validate_task_attempt_authority_rows(connection)
         self._validate_task_reclaim_transition_rows(connection)
+        if version >= 7:
+            self._validate_task_claim_authority_table(connection)
+            self._validate_task_claim_authority_rows(connection)
 
     @staticmethod
     def _validate_task_reclaim_transition_table(
@@ -675,9 +1010,14 @@ class ControlStore:
         self,
         connection: sqlite3.Connection,
         record: dict,
+        *,
+        canonical: str | None = None,
+        transition_id: str | None = None,
     ) -> None:
-        canonical = canonical_json_bytes(record).decode("utf-8")
-        transition_id = self._task_reclaim_transition_id(record)
+        if canonical is None:
+            canonical = canonical_json_bytes(record).decode("utf-8")
+        if transition_id is None:
+            transition_id = self._task_reclaim_transition_id(record)
         connection.execute(
             "INSERT INTO task_reclaim_transitions("
             "transition_id, authority_id, task_id, prior_attempt_id, "
@@ -768,6 +1108,77 @@ class ControlStore:
                 reclaimed_at=str(replacement_record.get("claimed_at", "")),
             )
             self._insert_task_reclaim_transition(connection, record)
+
+    def _backfill_task_claim_authorities(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        claims = connection.execute(
+            "SELECT c.*, b.output_path FROM task_claims c "
+            "JOIN run_bindings b ON b.run_id=c.authority_id ORDER BY c.task_id"
+        ).fetchall()
+        claim_count = int(
+            connection.execute("SELECT COUNT(*) FROM task_claims").fetchone()[0]
+        )
+        if len(claims) != claim_count:
+            raise ControlStoreUnavailable(
+                "Control Store v6 Claim lacks its Run binding"
+            )
+        for claim in claims:
+            task_id = str(claim["task_id"])
+            run_root = Path(str(claim["output_path"])).resolve()
+            envelope_path = run_root / "workflow" / "tasks" / task_id / "task.json"
+            try:
+                info = envelope_path.lstat()
+            except OSError as exc:
+                raise ControlStoreUnavailable(
+                    "Control Store v6 Claim Envelope is unavailable"
+                ) from exc
+            if (
+                envelope_path.is_symlink()
+                or not stat.S_ISREG(info.st_mode)
+                or getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise ControlStoreUnavailable(
+                    "Control Store v6 Claim Envelope is absent or linked"
+                )
+            try:
+                envelope = read_json(envelope_path)
+                self.contracts.validate("subagent-task-envelope", envelope)
+            except (OSError, json.JSONDecodeError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "Control Store v6 Claim Envelope contract is invalid"
+                ) from exc
+            try:
+                projected_write_set = json.loads(str(claim["write_set_json"]))
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ControlStoreUnavailable(
+                    "Control Store v6 Claim write set is invalid"
+                ) from exc
+            envelope_sha = sha256_file(envelope_path)
+            expected_root = f"workflow/tasks/{task_id}"
+            authority_binding = envelope.get("authority_binding", {})
+            if (
+                envelope.get("task_id") != task_id
+                or envelope.get("task_root_path") != expected_root
+                or authority_binding.get("kind") != claim["authority_kind"]
+                or authority_binding.get("run_id") != claim["authority_id"]
+                or envelope_sha != claim["envelope_sha256"]
+                or envelope.get("write_set") != projected_write_set
+                or canonical_json_bytes(projected_write_set).decode("utf-8").strip()
+                != claim["write_set_json"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Control Store v6 Claim cannot be losslessly bound to its Envelope"
+                )
+            record = self._task_claim_authority_record(
+                task_id=task_id,
+                authority_kind=str(claim["authority_kind"]),
+                authority_id=str(claim["authority_id"]),
+                envelope_sha256=envelope_sha,
+                write_set=tuple(projected_write_set),
+            )
+            self._insert_task_claim_authority(connection, record)
 
     def _validate_task_reclaim_transition_rows(
         self, connection: sqlite3.Connection
@@ -1616,7 +2027,10 @@ class ControlStore:
                 (legacy_identity, legacy_identity),
             )
 
-    def _migrate_existing(self) -> None:
+    def _upgrade_migration_snapshot(
+        self,
+        planning_connection: sqlite3.Connection,
+    ) -> None:
         expected_columns = {
             "expected_run_record_sha256",
             "canonical_platform",
@@ -1625,7 +2039,7 @@ class ControlStore:
             "source_manifest_sha256",
         }
         try:
-            with self._immediate() as connection:
+            with nullcontext(planning_connection) as connection:
                 versions = self._migration_versions(connection)
                 version = 0 if not versions else versions[-1]
                 columns = {
@@ -1781,6 +2195,46 @@ class ControlStore:
                         raise ControlStoreUnavailable(
                             "Control Store v6 migration ledger is incomplete"
                         )
+                    tables = {
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        ).fetchall()
+                    }
+                    if "task_claim_authorities" in tables:
+                        raise ControlStoreUnavailable(
+                            "Control Store v6 has a partial v7 Claim authority migration"
+                        )
+                    connection.execute(TASK_CLAIM_AUTHORITIES_TABLE_SQL)
+                    self._backfill_task_claim_authorities(connection)
+                    self._validate_task_claim_authority_table(connection)
+                    self._validate_task_claim_authority_rows(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (7)"
+                    )
+                    version = 7
+                if version == 7:
+                    if present != expected_columns:
+                        raise ControlStoreUnavailable(
+                            "Control Store v7 intent identity columns are incomplete"
+                        )
+                    self._validate_run_state_mutation_table(connection)
+                    self._validate_run_state_mutation_identity_table(connection)
+                    self._validate_run_state_mutation_rows(connection)
+                    self._validate_task_tables(connection)
+                    self._validate_task_attempt_authority_rows(connection)
+                    self._validate_task_completion_authority_rows(connection)
+                    self._validate_task_promotion_identity_rows(connection)
+                    self._validate_task_reclaim_transition_table(connection)
+                    self._validate_task_reclaim_transition_rows(connection)
+                    self._validate_task_claim_authority_table(connection)
+                    self._validate_task_claim_authority_rows(connection)
+                    if self._migration_versions(connection) != [
+                        1, 2, 3, 4, 5, 6, 7
+                    ]:
+                        raise ControlStoreUnavailable(
+                            "Control Store v7 migration ledger is incomplete"
+                        )
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -1791,6 +2245,292 @@ class ControlStore:
             raise ControlStoreUnavailable(
                 f"Control Store migration failed: {exc}"
             ) from exc
+
+    @staticmethod
+    def _migration_rows(
+        connection: sqlite3.Connection,
+        table: str,
+        columns: tuple[str, ...],
+        order_by: str,
+    ) -> tuple[tuple[object, ...], ...]:
+        selected = ", ".join(columns)
+        return tuple(
+            tuple(row)
+            for row in connection.execute(
+                f"SELECT {selected} FROM {table} ORDER BY {order_by}"
+            ).fetchall()
+        )
+
+    def _prepare_migration_plan(
+        self,
+        connection: sqlite3.Connection,
+    ) -> _MigrationPlan:
+        versions = self._migration_versions(connection)
+        source_version = 0 if not versions else versions[-1]
+        snapshot = sqlite3.connect(":memory:", isolation_level=None)
+        snapshot.row_factory = sqlite3.Row
+        try:
+            connection.backup(snapshot)
+            snapshot.execute("PRAGMA foreign_keys=ON")
+            snapshot.execute("PRAGMA trusted_schema=OFF")
+            self._upgrade_migration_snapshot(snapshot)
+            return _MigrationPlan(
+                source_version=source_version,
+                run_state_identity_rows=self._migration_rows(
+                    snapshot,
+                    "run_state_mutation_identity_versions",
+                    ("mutation_id", "identity_version", "row_identity"),
+                    "mutation_id",
+                ),
+                task_attempt_authority_rows=self._migration_rows(
+                    snapshot,
+                    "task_attempt_authorities",
+                    (
+                        "attempt_id",
+                        "attempt_record_json",
+                        "attempt_record_sha256",
+                    ),
+                    "attempt_id",
+                ),
+                task_completion_authority_rows=self._migration_rows(
+                    snapshot,
+                    "task_completion_authorities",
+                    ("attempt_id", "completion_record_json"),
+                    "attempt_id",
+                ),
+                task_promotion_identity_rows=self._migration_rows(
+                    snapshot,
+                    "task_promotion_identity_versions",
+                    ("intent_id", "identity_version"),
+                    "intent_id",
+                ),
+                task_reclaim_transition_rows=self._migration_rows(
+                    snapshot,
+                    "task_reclaim_transitions",
+                    (
+                        "transition_id",
+                        "authority_id",
+                        "task_id",
+                        "prior_attempt_id",
+                        "replacement_attempt_id",
+                        "prior_claim_generation",
+                        "replacement_claim_generation",
+                        "recovery_reason",
+                        "prior_coordinator_session_id",
+                        "prior_worker_id",
+                        "replacement_coordinator_session_id",
+                        "replacement_worker_id",
+                        "reclaimed_at",
+                        "transition_record_json",
+                    ),
+                    "task_id, replacement_claim_generation",
+                ),
+                task_claim_authority_rows=self._migration_rows(
+                    snapshot,
+                    "task_claim_authorities",
+                    ("task_id", "claim_record_json", "claim_record_sha256"),
+                    "task_id",
+                ),
+            )
+        finally:
+            snapshot.close()
+
+    @staticmethod
+    def _assert_precomputed_row_count(
+        connection: sqlite3.Connection,
+        table: str,
+        expected: int,
+    ) -> None:
+        actual = int(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        )
+        if actual != expected:
+            raise ControlStoreUnavailable(
+                f"Control Store migration row count differs for {table}"
+            )
+
+    def _apply_migration_plan(
+        self,
+        connection: sqlite3.Connection,
+        plan: _MigrationPlan,
+    ) -> None:
+        versions = self._migration_versions(connection)
+        version = 0 if not versions else versions[-1]
+        if version != plan.source_version:
+            raise ControlStoreUnavailable(
+                "Control Store migration source snapshot changed before apply"
+            )
+        expected_columns = {
+            "expected_run_record_sha256",
+            "canonical_platform",
+            "canonical_item_id",
+            "source_identity",
+            "source_manifest_sha256",
+        }
+        if version == 1:
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(initialization_intents)"
+                ).fetchall()
+            }
+            if expected_columns & columns:
+                raise ControlStoreUnavailable(
+                    "Slice 1 v1 Control Store has a partial v2 intent migration"
+                )
+            for column in sorted(expected_columns):
+                connection.execute(
+                    f"ALTER TABLE initialization_intents ADD COLUMN {column} TEXT"
+                )
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
+            version = 2
+        if version == 2:
+            connection.execute(RUN_STATE_MUTATION_TABLE_SQL)
+            connection.execute(RUN_STATE_MUTATION_INDEX_SQL)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
+            version = 3
+        if version == 3:
+            connection.execute(TASK_CLAIMS_TABLE_SQL)
+            connection.execute(TASK_ATTEMPTS_TABLE_SQL)
+            connection.execute(TASK_PROMOTION_TABLE_SQL)
+            connection.execute(TASK_PROMOTION_INDEX_SQL)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
+            version = 4
+        if version == 4:
+            connection.execute(RUN_STATE_MUTATION_IDENTITY_VERSIONS_TABLE_SQL)
+            connection.execute(TASK_ATTEMPT_AUTHORITIES_TABLE_SQL)
+            connection.execute(TASK_COMPLETION_AUTHORITIES_TABLE_SQL)
+            connection.execute(TASK_PROMOTION_IDENTITY_VERSIONS_TABLE_SQL)
+            connection.executemany(
+                "INSERT INTO run_state_mutation_identity_versions("
+                "mutation_id, identity_version, row_identity) VALUES (?, ?, ?)",
+                plan.run_state_identity_rows,
+            )
+            connection.executemany(
+                "INSERT INTO task_attempt_authorities("
+                "attempt_id, attempt_record_json, attempt_record_sha256) "
+                "VALUES (?, ?, ?)",
+                plan.task_attempt_authority_rows,
+            )
+            connection.executemany(
+                "INSERT INTO task_completion_authorities("
+                "attempt_id, completion_record_json) VALUES (?, ?)",
+                plan.task_completion_authority_rows,
+            )
+            connection.executemany(
+                "INSERT INTO task_promotion_identity_versions("
+                "intent_id, identity_version) VALUES (?, ?)",
+                plan.task_promotion_identity_rows,
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "run_state_mutation_identity_versions",
+                len(plan.run_state_identity_rows),
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "task_attempt_authorities",
+                len(plan.task_attempt_authority_rows),
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "task_completion_authorities",
+                len(plan.task_completion_authority_rows),
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "task_promotion_identity_versions",
+                len(plan.task_promotion_identity_rows),
+            )
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (5)")
+            version = 5
+        if version == 5:
+            connection.execute(TASK_RECLAIM_TRANSITIONS_TABLE_SQL)
+            connection.executemany(
+                "INSERT INTO task_reclaim_transitions("
+                "transition_id, authority_id, task_id, prior_attempt_id, "
+                "replacement_attempt_id, prior_claim_generation, "
+                "replacement_claim_generation, recovery_reason, "
+                "prior_coordinator_session_id, prior_worker_id, "
+                "replacement_coordinator_session_id, replacement_worker_id, "
+                "reclaimed_at, transition_record_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                plan.task_reclaim_transition_rows,
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "task_reclaim_transitions",
+                len(plan.task_reclaim_transition_rows),
+            )
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (6)")
+            version = 6
+        if version == 6:
+            connection.execute(TASK_CLAIM_AUTHORITIES_TABLE_SQL)
+            connection.executemany(
+                "INSERT INTO task_claim_authorities("
+                "task_id, claim_record_json, claim_record_sha256) "
+                "VALUES (?, ?, ?)",
+                plan.task_claim_authority_rows,
+            )
+            self._assert_precomputed_row_count(
+                connection,
+                "task_claim_authorities",
+                len(plan.task_claim_authority_rows),
+            )
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (7)")
+            version = 7
+        if version != SCHEMA_VERSION or self._migration_versions(connection) != list(
+            range(1, SCHEMA_VERSION + 1)
+        ):
+            raise ControlStoreUnavailable(
+                f"unknown Control Store schema version: {version}"
+            )
+
+    def _validate_migrated_snapshot(self) -> None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN")
+            plan = self._prepare_migration_plan(connection)
+            if plan.source_version != SCHEMA_VERSION:
+                raise ControlStoreUnavailable(
+                    "Control Store migration did not reach the current schema"
+                )
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+    def _migrate_existing(self) -> None:
+        for _attempt in range(SNAPSHOT_RETRY_LIMIT):
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN")
+                snapshot_data_version = self._data_version(connection)
+                plan = self._prepare_migration_plan(connection)
+                connection.execute("COMMIT")
+                if plan.source_version == SCHEMA_VERSION:
+                    return
+                if not self._begin_immediate_if_snapshot_unchanged(
+                    connection,
+                    snapshot_data_version,
+                ):
+                    continue
+                self._apply_migration_plan(connection, plan)
+                connection.execute("COMMIT")
+                self._validate_migrated_snapshot()
+                return
+            except BaseException:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+            finally:
+                connection.close()
+        raise ControlStoreUnavailable(
+            "Control Store changed during migration preflight; bounded retry exhausted"
+        )
 
     def check(self) -> ControlStoreHealth:
         self._validate_existing()
@@ -1836,6 +2576,7 @@ class ControlStore:
                     "run_state_mutation_intents",
                     "run_state_mutation_identity_versions",
                     "task_claims",
+                    "task_claim_authorities",
                     "task_attempts",
                     "task_attempt_authorities",
                     "task_completion_authorities",
@@ -1877,6 +2618,8 @@ class ControlStore:
                 self._validate_task_promotion_identity_rows(connection)
                 self._validate_task_reclaim_transition_table(connection)
                 self._validate_task_reclaim_transition_rows(connection)
+                self._validate_task_claim_authority_table(connection)
+                self._validate_task_claim_authority_rows(connection)
                 self._probe_lock_contention(connection)
             finally:
                 connection.close()
@@ -2659,6 +3402,35 @@ class ControlStore:
         claimed_at: str,
     ) -> sqlite3.Row:
         write_set_json = canonical_json_bytes(list(write_set)).decode("utf-8").strip()
+        claim_authority = self._claim_authority_from_current_envelope(
+            authority_id=authority_id,
+            task_id=task_id,
+            envelope_sha256=envelope_sha256,
+            write_set=write_set,
+        )
+        claim_authority_canonical = canonical_json_bytes(claim_authority)
+        claim_authority_sha256 = hashlib.sha256(
+            claim_authority_canonical
+        ).hexdigest()
+        generation = 1
+        attempt_id = hashlib.sha256(
+            f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
+        ).hexdigest()[:24]
+        attempt_record = self._task_attempt_record(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            claim_generation=generation,
+            envelope_sha256=envelope_sha256,
+            attempt_path=attempt_path,
+            coordinator_session_id=coordinator_session_id,
+            worker_id=worker_id,
+            claimed_at=claimed_at,
+        )
+        self.contracts.validate("task-attempt", attempt_record)
+        attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
+        attempt_record_sha = hashlib.sha256(
+            attempt_record_json.encode("utf-8")
+        ).hexdigest()
         with self._immediate() as connection:
             if self._current_run_record_sha(connection, authority_id) is None:
                 raise KernelConflict("Task Claim authority has no committed Run Record")
@@ -2695,25 +3467,6 @@ class ControlStore:
                         "Task Claim write set overlaps an active Claim",
                         data={"conflicting_task_id": str(row["task_id"])},
                     )
-            generation = 1
-            attempt_id = hashlib.sha256(
-                f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
-            ).hexdigest()[:24]
-            attempt_record = self._task_attempt_record(
-                task_id=task_id,
-                attempt_id=attempt_id,
-                claim_generation=generation,
-                envelope_sha256=envelope_sha256,
-                attempt_path=attempt_path,
-                coordinator_session_id=coordinator_session_id,
-                worker_id=worker_id,
-                claimed_at=claimed_at,
-            )
-            self.contracts.validate("task-attempt", attempt_record)
-            attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
-            attempt_record_sha = hashlib.sha256(
-                attempt_record_json.encode("utf-8")
-            ).hexdigest()
             try:
                 connection.execute(
                     "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
@@ -2724,6 +3477,12 @@ class ControlStore:
                         task_id, authority_id, envelope_sha256, write_set_json,
                         generation, attempt_id, coordinator_session_id, worker_id, claimed_at,
                     ),
+                )
+                self._insert_task_claim_authority(
+                    connection,
+                    claim_authority,
+                    canonical=claim_authority_canonical,
+                    record_sha256=claim_authority_sha256,
                 )
                 connection.execute(
                     "INSERT INTO task_attempts(attempt_id, task_id, claim_generation, "
@@ -2768,6 +3527,56 @@ class ControlStore:
         attempt_id = hashlib.sha256(
             f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
         ).hexdigest()[:24]
+        planned_claim = self.task_claim_for_task(task_id)
+        attempt_record_json: str | None = None
+        attempt_record_sha: str | None = None
+        transition_record: dict | None = None
+        transition_canonical: str | None = None
+        transition_id: str | None = None
+        if (
+            planned_claim is not None
+            and planned_claim["authority_id"] == authority_id
+            and planned_claim["attempt_id"] == expected_attempt_id
+            and int(planned_claim["claim_generation"])
+            == expected_claim_generation
+        ):
+            attempt_record = self._task_attempt_record(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                claim_generation=generation,
+                envelope_sha256=str(planned_claim["envelope_sha256"]),
+                attempt_path=attempt_path,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                claimed_at=reclaimed_at,
+            )
+            self.contracts.validate("task-attempt", attempt_record)
+            attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
+            attempt_record_sha = hashlib.sha256(
+                attempt_record_json.encode("utf-8")
+            ).hexdigest()
+            transition_record = self._task_reclaim_transition_record(
+                authority_id=authority_id,
+                task_id=task_id,
+                prior_attempt_id=expected_attempt_id,
+                replacement_attempt_id=attempt_id,
+                prior_claim_generation=expected_claim_generation,
+                replacement_claim_generation=generation,
+                recovery_reason=reason,
+                prior_coordinator_session_id=str(
+                    planned_claim["coordinator_session_id"]
+                ),
+                prior_worker_id=str(planned_claim["worker_id"]),
+                replacement_coordinator_session_id=coordinator_session_id,
+                replacement_worker_id=worker_id,
+                reclaimed_at=reclaimed_at,
+            )
+            transition_canonical = canonical_json_bytes(transition_record).decode(
+                "utf-8"
+            )
+            transition_id = hashlib.sha256(
+                transition_canonical.encode("utf-8")
+            ).hexdigest()
         with self._immediate() as connection:
             claim = connection.execute(
                 "SELECT * FROM task_claims WHERE task_id=?", (task_id,)
@@ -2821,6 +3630,16 @@ class ControlStore:
             ).fetchone()
             if active_intent is not None:
                 raise KernelConflict("Task reclaim is blocked by a non-terminal promotion")
+            if (
+                attempt_record_json is None
+                or attempt_record_sha is None
+                or transition_record is None
+                or transition_canonical is None
+                or transition_id is None
+            ):
+                raise KernelConflict(
+                    "Task reclaim changed while its authenticated rows were prepared"
+                )
             abandoned = connection.execute(
                 "UPDATE task_attempts SET state='ABANDONED' "
                 "WHERE attempt_id=? AND state IN ('CLAIMED','VALIDATED_WAITING_FOR_PROMOTION')",
@@ -2828,21 +3647,6 @@ class ControlStore:
             )
             if abandoned.rowcount != 1:
                 raise KernelConflict("Task reclaim prior Attempt is not replaceable")
-            attempt_record = self._task_attempt_record(
-                task_id=task_id,
-                attempt_id=attempt_id,
-                claim_generation=generation,
-                envelope_sha256=str(claim["envelope_sha256"]),
-                attempt_path=attempt_path,
-                coordinator_session_id=coordinator_session_id,
-                worker_id=worker_id,
-                claimed_at=reclaimed_at,
-            )
-            self.contracts.validate("task-attempt", attempt_record)
-            attempt_record_json = canonical_json_bytes(attempt_record).decode("utf-8")
-            attempt_record_sha = hashlib.sha256(
-                attempt_record_json.encode("utf-8")
-            ).hexdigest()
             cursor = connection.execute(
                 "UPDATE task_claims SET claim_generation=?, attempt_id=?, "
                 "coordinator_session_id=?, worker_id=?, reclaim_reason=?, updated_at=? "
@@ -2866,26 +3670,12 @@ class ControlStore:
                 "VALUES (?, ?, ?)",
                 (attempt_id, attempt_record_json, attempt_record_sha),
             )
-            transition_record = self._task_reclaim_transition_record(
-                authority_id=authority_id,
-                task_id=task_id,
-                prior_attempt_id=expected_attempt_id,
-                replacement_attempt_id=attempt_id,
-                prior_claim_generation=expected_claim_generation,
-                replacement_claim_generation=generation,
-                recovery_reason=reason,
-                prior_coordinator_session_id=str(
-                    claim["coordinator_session_id"]
-                ),
-                prior_worker_id=str(claim["worker_id"]),
-                replacement_coordinator_session_id=coordinator_session_id,
-                replacement_worker_id=worker_id,
-                reclaimed_at=reclaimed_at,
-            )
             self._insert_task_reclaim_transition(
-                connection, transition_record
+                connection,
+                transition_record,
+                canonical=transition_canonical,
+                transition_id=transition_id,
             )
-            self._validate_task_reclaim_transition_rows(connection)
             return connection.execute(
                 "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
                 "a.completion_sha256, ca.completion_record_json "

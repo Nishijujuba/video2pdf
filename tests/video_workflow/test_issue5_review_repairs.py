@@ -78,16 +78,86 @@ class Issue5RepairHarness:
         attempt_path = (
             f"workflow/tasks/{prepared.task_id}/attempts/{attempt_id}"
         )
-        claim = self.kernel.control_store.claim_task(
-            authority_id=run["run_id"],
-            task_id=prepared.task_id,
-            envelope_sha256=sha256_file(prepared.envelope_path),
-            write_set=(f"workflow/disjoint-{prepared.task_id}.json",),
-            attempt_path=attempt_path,
-            coordinator_session_id="disjoint-coordinator",
-            worker_id="disjoint-worker",
-            claimed_at="2026-07-15T04:00:00+00:00",
-        )
+        envelope_sha = sha256_file(prepared.envelope_path)
+        write_set = [f"workflow/disjoint-{prepared.task_id}.json"]
+        claimed_at = "2026-07-15T04:00:00+00:00"
+        claim_authority = {
+            "identity_version": "evidence-v1",
+            "task_id": prepared.task_id,
+            "authority_kind": "kernel_run",
+            "authority_id": run["run_id"],
+            "task_root_path": f"workflow/tasks/{prepared.task_id}",
+            "task_envelope_sha256": envelope_sha,
+            "write_set": write_set,
+        }
+        claim_authority_bytes = canonical_json_bytes(claim_authority)
+        attempt_record = {
+            "schema_name": "task-attempt",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "task_id": prepared.task_id,
+            "attempt_id": attempt_id,
+            "claim_generation": 1,
+            "task_envelope_sha256": envelope_sha,
+            "attempt_path": attempt_path,
+            "coordinator_session_id": "disjoint-coordinator",
+            "worker_id": "disjoint-worker",
+            "claimed_at": claimed_at,
+            "state": "claimed",
+        }
+        attempt_record_bytes = canonical_json_bytes(attempt_record)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
+                "envelope_sha256, write_set_json, state, claim_generation, attempt_id, "
+                "coordinator_session_id, worker_id, reclaim_reason, updated_at) "
+                "VALUES (?, 'kernel_run', ?, ?, ?, 'ACTIVE', 1, ?, ?, ?, NULL, ?)",
+                (
+                    prepared.task_id,
+                    run["run_id"],
+                    envelope_sha,
+                    canonical_json_bytes(write_set).decode("utf-8").strip(),
+                    attempt_id,
+                    "disjoint-coordinator",
+                    "disjoint-worker",
+                    claimed_at,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO task_claim_authorities("
+                "task_id, claim_record_json, claim_record_sha256) VALUES (?, ?, ?)",
+                (
+                    prepared.task_id,
+                    claim_authority_bytes.decode("utf-8"),
+                    hashlib.sha256(claim_authority_bytes).hexdigest(),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO task_attempts(attempt_id, task_id, claim_generation, "
+                "attempt_path, state, completion_sha256) "
+                "VALUES (?, ?, 1, ?, 'CLAIMED', NULL)",
+                (attempt_id, prepared.task_id, attempt_path),
+            )
+            connection.execute(
+                "INSERT INTO task_attempt_authorities("
+                "attempt_id, attempt_record_json, attempt_record_sha256) "
+                "VALUES (?, ?, ?)",
+                (
+                    attempt_id,
+                    attempt_record_bytes.decode("utf-8"),
+                    hashlib.sha256(attempt_record_bytes).hexdigest(),
+                ),
+            )
+            connection.row_factory = sqlite3.Row
+            claim = connection.execute(
+                "SELECT c.*, a.attempt_path, a.state AS attempt_state, "
+                "a.completion_sha256, ca.completion_record_json "
+                "FROM task_claims c JOIN task_attempts a "
+                "ON a.attempt_id=c.attempt_id "
+                "LEFT JOIN task_completion_authorities ca "
+                "ON ca.attempt_id=a.attempt_id WHERE c.task_id=?",
+                (prepared.task_id,),
+            ).fetchone()
         TaskExecution(self.kernel)._create_attempt_record(
             self.run_dir,
             envelope,
@@ -225,6 +295,7 @@ class Issue5RepairHarness:
             connection.execute(
                 "DROP TABLE IF EXISTS run_state_mutation_identity_versions"
             )
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute("DROP TABLE task_promotion_identity_versions")
             connection.execute("DROP TABLE task_completion_authorities")
@@ -235,7 +306,7 @@ class Issue5RepairHarness:
                 (legacy_identity, legacy_identity, mutation["mutation_id"]),
             )
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+                "DELETE FROM schema_migrations WHERE version IN (5, 6, 7)"
             )
         return legacy_identity
 
@@ -298,6 +369,7 @@ class Issue5RepairHarness:
         if sha256_file(run_path) == intent["replacement_run_record_sha256"]:
             self.assertEqual(write_json_atomic(run_path, replacement), replacement_sha)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
@@ -319,7 +391,7 @@ class Issue5RepairHarness:
                 ),
             )
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+                "DELETE FROM schema_migrations WHERE version IN (5, 6, 7)"
             )
         return legacy_id
 
@@ -604,7 +676,7 @@ class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
                 self.assertEqual(intent["state"], "COMMITTED")
 
     def test_disjoint_atomic_output_temp_does_not_block_promotion(self) -> None:
-        for state in ("CLAIMED", "ABANDONED", "FAILED"):
+        for state in ("CLAIMED", "ABANDONED"):
             with self.subTest(state=state):
                 prepared, claimed = self.ready(f"atomic-temp-{state.lower()}")
                 other = self.prepare(f"atomic-temp-other-{state.lower()}")
@@ -623,16 +695,6 @@ class PromotionAuthorityRepairTests(unittest.TestCase, Issue5RepairHarness):
                         worker_id="replacement-worker",
                         reason="recover crashed atomic output write",
                     )
-                elif state == "FAILED":
-                    with sqlite3.connect(
-                        self.kernel.control_store.path
-                    ) as connection:
-                        connection.execute(
-                            "UPDATE task_attempts SET state='FAILED' "
-                            "WHERE attempt_id=?",
-                            (other_claim["attempt_id"],),
-                        )
-
                 self.promote(prepared, claimed)
                 intent = self.kernel.control_store.task_promotion_for_attempt(
                     prepared.task_id, claimed.attempt_id
@@ -875,30 +937,7 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
         claimed = self.claim(prepared)
         self.write_patch(prepared, claimed)
         other = self.prepare("second-task")
-        envelope = read_json(other.envelope_path)
-        run = read_json(self.run_dir / "workflow/run.json")
-        other_attempt_id = hashlib.sha256(
-            f"task-attempt\0{other.task_id}\0{1}".encode("utf-8")
-        ).hexdigest()[:24]
-        claim = self.kernel.control_store.claim_task(
-            authority_id=run["run_id"],
-            task_id=other.task_id,
-            envelope_sha256=sha256_file(other.envelope_path),
-            write_set=("workflow/disjoint-output.json",),
-            attempt_path=(
-                f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
-            ),
-            coordinator_session_id="disjoint-coordinator",
-            worker_id="disjoint-worker",
-            claimed_at="2026-07-15T04:00:00+00:00",
-        )
-        TaskExecution(self.kernel)._create_attempt_record(
-            self.run_dir,
-            envelope,
-            claim,
-            fault_point=None,
-            after_write_fault_point="unused",
-        )
+        self.claim_disjoint(other)
         self.complete(prepared, claimed)
 
     def test_other_durable_task_attempt_rejects_undeclared_content(self) -> None:
@@ -907,34 +946,7 @@ class CompletionBoundaryRepairTests(unittest.TestCase, Issue5RepairHarness):
         claimed = self.claim(prepared)
         self.write_patch(prepared, claimed)
         other = self.prepare("second-task")
-        envelope = read_json(other.envelope_path)
-        run = read_json(self.run_dir / "workflow/run.json")
-        other_attempt_id = hashlib.sha256(
-            f"task-attempt\0{other.task_id}\0{1}".encode("utf-8")
-        ).hexdigest()[:24]
-        claim = self.kernel.control_store.claim_task(
-            authority_id=run["run_id"],
-            task_id=other.task_id,
-            envelope_sha256=sha256_file(other.envelope_path),
-            write_set=("workflow/disjoint-output.json",),
-            attempt_path=(
-                f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
-            ),
-            coordinator_session_id="disjoint-coordinator",
-            worker_id="disjoint-worker",
-            claimed_at="2026-07-15T04:00:00+00:00",
-        )
-        TaskExecution(self.kernel)._create_attempt_record(
-            self.run_dir,
-            envelope,
-            claim,
-            fault_point=None,
-            after_write_fault_point="unused",
-        )
-        other_attempt = (
-            self.run_dir
-            / f"workflow/tasks/{other.task_id}/attempts/{other_attempt_id}"
-        )
+        _, other_attempt = self.claim_disjoint(other)
         (other_attempt / "worker-corruption.txt").write_text(
             "undeclared cross-task write", encoding="utf-8"
         )
@@ -1182,7 +1194,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         mutation = self.commit_source_mutation()
         legacy_id = self.downgrade_source_mutation_to_real_legacy_v4(mutation)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 6)
+        self.assertEqual(migrated.control_store.check().schema_version, 7)
         with sqlite3.connect(migrated.control_store.path) as connection:
             version_row = connection.execute(
                 "SELECT identity_version, row_identity FROM "
@@ -1228,10 +1240,11 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 4,
             )
 
-    def test_real_v3_and_v4_stores_migrate_atomically_to_v6(self) -> None:
+    def test_real_v3_and_v4_stores_migrate_atomically_to_v7(self) -> None:
         self.initialize("v3-upgrade")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
@@ -1243,10 +1256,10 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             connection.execute("DROP TABLE task_attempts")
             connection.execute("DROP TABLE task_claims")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (4, 5, 6)"
+                "DELETE FROM schema_migrations WHERE version IN (4, 5, 6, 7)"
             )
         migrated_v3 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v3.control_store.check().schema_version, 6)
+        self.assertEqual(migrated_v3.control_store.check().schema_version, 7)
         with sqlite3.connect(migrated_v3.control_store.path) as connection:
             versions = [
                 row[0]
@@ -1257,7 +1270,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             attempt_authority_count = connection.execute(
                 "SELECT COUNT(*) FROM task_attempt_authorities"
             ).fetchone()[0]
-        self.assertEqual(versions, [1, 2, 3, 4, 5, 6])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(attempt_authority_count, 0)
 
         prepared, claimed = self.ready("v4-committed-upgrade")
@@ -1266,7 +1279,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             prepared, claimed
         )
         migrated_v4 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v4.control_store.check().schema_version, 6)
+        self.assertEqual(migrated_v4.control_store.check().schema_version, 7)
         with mock.patch(
             "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
             return_value=(b"future prompt version\n", {}),
@@ -1301,6 +1314,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
     def test_v4_completion_backfill_tamper_rolls_back(self) -> None:
         prepared, claimed = self.ready("v4-backfill-tamper")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
@@ -1309,7 +1323,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+                "DELETE FROM schema_migrations WHERE version IN (5, 6, 7)"
             )
         completion = read_json(claimed.attempt_dir / "completion.json")
         completion["validated_at"] = "2026-07-15T09:00:00+00:00"
@@ -1335,6 +1349,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         prepared = self.prepare()
         claimed = self.claim(prepared)
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
             connection.execute(
                 "DROP TABLE run_state_mutation_identity_versions"
@@ -1343,7 +1358,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             connection.execute("DROP TABLE task_completion_authorities")
             connection.execute("DROP TABLE task_attempt_authorities")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+                "DELETE FROM schema_migrations WHERE version IN (5, 6, 7)"
             )
         attempt = read_json(claimed.attempt_dir / "attempt.json")
         attempt["worker_id"] = "tampered-before-v5-backfill"
@@ -1389,6 +1404,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 with sqlite3.connect(
                     self.kernel.control_store.path
                 ) as connection:
+                    connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
                     connection.execute("DROP TABLE task_reclaim_transitions")
                     connection.execute(
                         "DROP TABLE run_state_mutation_identity_versions"
@@ -1399,7 +1415,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                     connection.execute("DROP TABLE task_completion_authorities")
                     connection.execute("DROP TABLE task_attempt_authorities")
                     connection.execute(
-                        "DELETE FROM schema_migrations WHERE version IN (5, 6)"
+                        "DELETE FROM schema_migrations WHERE version IN (5, 6, 7)"
                     )
                 record_path = first.attempt_dir / "attempt.json"
                 record = read_json(record_path)
@@ -1555,8 +1571,11 @@ class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
 
     def downgrade_reclaim_history_to_v5(self) -> None:
         with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("DROP TABLE IF EXISTS task_claim_authorities")
             connection.execute("DROP TABLE task_reclaim_transitions")
-            connection.execute("DELETE FROM schema_migrations WHERE version=6")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (6, 7)"
+            )
 
     def test_multiple_reclaims_preserve_complete_ordered_audit_history(self) -> None:
         self.initialize("reclaim-history-two-transitions")
@@ -1626,7 +1645,7 @@ class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         projection = self.kernel.control_store.task_claim_for_task(prepared.task_id)
         self.assertEqual(projection["attempt_id"], third.attempt_id)
         self.assertEqual(projection["reclaim_reason"], history[-1]["recovery_reason"])
-        self.assertEqual(self.kernel.control_store.check().schema_version, 6)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 7)
 
         reopened = VideoWorkflowKernel(self.workspace)
         self.assertEqual(
@@ -1837,7 +1856,7 @@ class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         self.claim(fresh)
         self.downgrade_reclaim_history_to_v5()
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 6)
+        self.assertEqual(migrated.control_store.check().schema_version, 7)
         self.assertEqual(migrated.control_store.task_reclaim_history(fresh.task_id), [])
 
         self.initialize("reclaim-history-v5-single")
@@ -2028,13 +2047,374 @@ class GlobalTaskAuthorityHealthTests(unittest.TestCase, Issue5RepairHarness):
     ) -> None:
         prepared, claimed = self.ready("global-authority-fresh")
         self.promote(prepared, claimed)
-        self.assertEqual(self.kernel.control_store.check().schema_version, 6)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 7)
 
         prepared, claimed = self.ready("global-authority-v4")
         self.promote(prepared, claimed)
         self.downgrade_promotion_to_real_legacy_v4(prepared, claimed)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 6)
+        self.assertEqual(migrated.control_store.check().schema_version, 7)
+
+
+class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
+    def downgrade_claim_authority_to_v6(self) -> None:
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE task_claim_authorities")
+            connection.execute("DELETE FROM schema_migrations WHERE version=7")
+
+    def test_write_set_tamper_blocks_second_claim_before_mutation(self) -> None:
+        self.initialize("claim-authority-write-set-tamper")
+        first_task = self.prepare("claim-authority-first")
+        self.claim(first_task)
+        second_task = self.prepare("claim-authority-second")
+        run = read_json(self.run_dir / "workflow/run.json")
+        second_attempt_id = hashlib.sha256(
+            f"task-attempt\0{second_task.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "UPDATE task_claims SET write_set_json=? WHERE task_id=?",
+                (
+                    canonical_json_bytes(
+                        ["workflow/tampered-non-overlapping-path.json"]
+                    ).decode("utf-8").strip(),
+                    first_task.task_id,
+                ),
+            )
+
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.claim_task(
+                authority_id=run["run_id"],
+                task_id=second_task.task_id,
+                envelope_sha256=sha256_file(second_task.envelope_path),
+                write_set=(PATCH_CANONICAL,),
+                attempt_path=(
+                    f"workflow/tasks/{second_task.task_id}/attempts/"
+                    f"{second_attempt_id}"
+                ),
+                coordinator_session_id="second-coordinator",
+                worker_id="second-worker",
+                claimed_at="2026-07-15T04:00:00+00:00",
+            )
+        self.assertIsNone(
+            self.kernel.control_store.task_claim_for_task(second_task.task_id)
+        )
+
+    def test_lifecycle_projection_tamper_blocks_check_and_new_claim(self) -> None:
+        self.initialize("claim-authority-lifecycle-tamper")
+        first_task = self.prepare("claim-lifecycle-first")
+        self.claim(first_task)
+        second_task = self.prepare("claim-lifecycle-second")
+        run = read_json(self.run_dir / "workflow/run.json")
+        second_attempt_id = hashlib.sha256(
+            f"task-attempt\0{second_task.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "UPDATE task_claims SET state='TERMINAL' WHERE task_id=?",
+                (first_task.task_id,),
+            )
+
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.check()
+        with self.assertRaises(ControlStoreUnavailable):
+            self.kernel.control_store.claim_task(
+                authority_id=run["run_id"],
+                task_id=second_task.task_id,
+                envelope_sha256=sha256_file(second_task.envelope_path),
+                write_set=(PATCH_CANONICAL,),
+                attempt_path=(
+                    f"workflow/tasks/{second_task.task_id}/attempts/"
+                    f"{second_attempt_id}"
+                ),
+                coordinator_session_id="second-coordinator",
+                worker_id="second-worker",
+                claimed_at="2026-07-15T04:00:00+00:00",
+            )
+        self.assertIsNone(
+            self.kernel.control_store.task_claim_for_task(second_task.task_id)
+        )
+
+    def test_active_claim_rejects_terminal_current_attempt_states(self) -> None:
+        for attempt_state in ("STALE", "FAILED", "ABANDONED"):
+            with self.subTest(attempt_state=attempt_state):
+                self.initialize(f"claim-lifecycle-{attempt_state.lower()}")
+                prepared = self.prepare(
+                    f"claim-lifecycle-{attempt_state.lower()}-task"
+                )
+                claimed = self.claim(prepared)
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    connection.execute(
+                        "UPDATE task_attempts SET state=? WHERE attempt_id=?",
+                        (attempt_state, claimed.attempt_id),
+                    )
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.check()
+
+    def test_global_check_rejects_two_internally_authenticated_overlapping_claims(
+        self,
+    ) -> None:
+        self.initialize("claim-authority-global-overlap")
+        first_task = self.prepare("claim-overlap-first")
+        self.claim(first_task)
+        second_task = self.prepare("claim-overlap-second")
+        run = read_json(self.run_dir / "workflow/run.json")
+        second_attempt_id = hashlib.sha256(
+            f"task-attempt\0{second_task.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        second_attempt_path = (
+            f"workflow/tasks/{second_task.task_id}/attempts/{second_attempt_id}"
+        )
+        overlapping_envelope_sha = sha256_file(second_task.envelope_path)
+        claim_record = {
+            "identity_version": "evidence-v1",
+            "task_id": second_task.task_id,
+            "authority_kind": "kernel_run",
+            "authority_id": run["run_id"],
+            "task_root_path": f"workflow/tasks/{second_task.task_id}",
+            "task_envelope_sha256": overlapping_envelope_sha,
+            "write_set": [PATCH_CANONICAL],
+        }
+        claim_record_bytes = canonical_json_bytes(claim_record)
+        attempt_record = {
+            "schema_name": "task-attempt",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "task_id": second_task.task_id,
+            "attempt_id": second_attempt_id,
+            "claim_generation": 1,
+            "task_envelope_sha256": overlapping_envelope_sha,
+            "attempt_path": second_attempt_path,
+            "coordinator_session_id": "second-coordinator",
+            "worker_id": "second-worker",
+            "claimed_at": "2026-07-15T04:00:00+00:00",
+            "state": "claimed",
+        }
+        attempt_record_bytes = canonical_json_bytes(attempt_record)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            connection.execute(
+                "INSERT INTO task_claims(task_id, authority_kind, authority_id, "
+                "envelope_sha256, write_set_json, state, claim_generation, "
+                "attempt_id, coordinator_session_id, worker_id, reclaim_reason, "
+                "updated_at) VALUES (?, 'kernel_run', ?, ?, ?, 'ACTIVE', 1, ?, "
+                "?, ?, NULL, ?)",
+                (
+                    second_task.task_id,
+                    run["run_id"],
+                    overlapping_envelope_sha,
+                    canonical_json_bytes([PATCH_CANONICAL])
+                    .decode("utf-8")
+                    .strip(),
+                    second_attempt_id,
+                    "second-coordinator",
+                    "second-worker",
+                    "2026-07-15T04:00:00+00:00",
+                ),
+            )
+            connection.execute(
+                "INSERT INTO task_claim_authorities("
+                "task_id, claim_record_json, claim_record_sha256) VALUES (?, ?, ?)",
+                (
+                    second_task.task_id,
+                    claim_record_bytes.decode("utf-8"),
+                    hashlib.sha256(claim_record_bytes).hexdigest(),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO task_attempts(attempt_id, task_id, claim_generation, "
+                "attempt_path, state, completion_sha256) "
+                "VALUES (?, ?, 1, ?, 'CLAIMED', NULL)",
+                (second_attempt_id, second_task.task_id, second_attempt_path),
+            )
+            connection.execute(
+                "INSERT INTO task_attempt_authorities("
+                "attempt_id, attempt_record_json, attempt_record_sha256) "
+                "VALUES (?, ?, ?)",
+                (
+                    second_attempt_id,
+                    attempt_record_bytes.decode("utf-8"),
+                    hashlib.sha256(attempt_record_bytes).hexdigest(),
+                ),
+            )
+
+        with self.assertRaisesRegex(
+            ControlStoreUnavailable,
+            "overlapping active Task Claims",
+        ):
+            self.kernel.control_store.check()
+
+    def test_new_claim_write_set_must_match_its_current_envelope(self) -> None:
+        self.initialize("claim-authority-envelope-binding")
+        prepared = self.prepare("claim-envelope-binding")
+        run = read_json(self.run_dir / "workflow/run.json")
+        attempt_id = hashlib.sha256(
+            f"task-attempt\0{prepared.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        with self.assertRaises(KernelConflict):
+            self.kernel.control_store.claim_task(
+                authority_id=run["run_id"],
+                task_id=prepared.task_id,
+                envelope_sha256=sha256_file(prepared.envelope_path),
+                write_set=("workflow/undeclared-claim-output.json",),
+                attempt_path=(
+                    f"workflow/tasks/{prepared.task_id}/attempts/{attempt_id}"
+                ),
+                coordinator_session_id="envelope-coordinator",
+                worker_id="envelope-worker",
+                claimed_at="2026-07-15T04:00:00+00:00",
+            )
+        self.assertIsNone(
+            self.kernel.control_store.task_claim_for_task(prepared.task_id)
+        )
+
+    def test_missing_tampered_or_orphan_claim_authority_blocks_global_mutation(
+        self,
+    ) -> None:
+        for case in ("missing", "tampered", "orphan"):
+            with self.subTest(case=case):
+                self.initialize(f"claim-authority-{case}")
+                prepared = self.prepare(f"claim-authority-{case}-first")
+                self.claim(prepared)
+                other = self.prepare(f"claim-authority-{case}-other")
+                run = read_json(self.run_dir / "workflow/run.json")
+                other_attempt_id = hashlib.sha256(
+                    f"task-attempt\0{other.task_id}\0{1}".encode("utf-8")
+                ).hexdigest()[:24]
+                with sqlite3.connect(self.kernel.control_store.path) as connection:
+                    connection.row_factory = sqlite3.Row
+                    if case == "missing":
+                        connection.execute(
+                            "DELETE FROM task_claim_authorities WHERE task_id=?",
+                            (prepared.task_id,),
+                        )
+                    elif case == "tampered":
+                        connection.execute(
+                            "UPDATE task_claim_authorities "
+                            "SET claim_record_json='{}' WHERE task_id=?",
+                            (prepared.task_id,),
+                        )
+                    else:
+                        connection.execute("PRAGMA foreign_keys=OFF")
+                        source = connection.execute(
+                            "SELECT claim_record_json FROM task_claim_authorities "
+                            "WHERE task_id=?",
+                            (prepared.task_id,),
+                        ).fetchone()
+                        orphan_record = json.loads(source["claim_record_json"])
+                        orphan_record["task_id"] = "orphan-task-claim-authority"
+                        orphan_record["task_root_path"] = (
+                            "workflow/tasks/orphan-task-claim-authority"
+                        )
+                        orphan_bytes = canonical_json_bytes(orphan_record)
+                        connection.execute(
+                            "INSERT INTO task_claim_authorities("
+                            "task_id, claim_record_json, claim_record_sha256) "
+                            "VALUES (?, ?, ?)",
+                            (
+                                orphan_record["task_id"],
+                                orphan_bytes.decode("utf-8"),
+                                hashlib.sha256(orphan_bytes).hexdigest(),
+                            ),
+                        )
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.check()
+                with self.assertRaises(ControlStoreUnavailable):
+                    self.kernel.control_store.claim_task(
+                        authority_id=run["run_id"],
+                        task_id=other.task_id,
+                        envelope_sha256=sha256_file(other.envelope_path),
+                        write_set=(PATCH_CANONICAL,),
+                        attempt_path=(
+                            f"workflow/tasks/{other.task_id}/attempts/"
+                            f"{other_attempt_id}"
+                        ),
+                        coordinator_session_id="other-coordinator",
+                        worker_id="other-worker",
+                        claimed_at="2026-07-15T04:00:00+00:00",
+                    )
+                self.assertIsNone(
+                    self.kernel.control_store.task_claim_for_task(other.task_id)
+                )
+
+    def test_valid_reclaim_promotion_and_terminal_overlap_remain_allowed(self) -> None:
+        prepared, first = self.ready("claim-authority-valid-lifecycle")
+        replacement = self.kernel.reclaim_task(
+            self.run_dir,
+            task_id=prepared.task_id,
+            expected_attempt_id=first.attempt_id,
+            expected_claim_generation=first.claim_generation,
+            coordinator_session_id="replacement-coordinator",
+            worker_id="replacement-worker",
+            reason="valid explicit ownership handoff",
+        )
+        self.write_patch(prepared, replacement)
+        self.complete(prepared, replacement)
+        self.promote(prepared, replacement)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 7)
+
+        later = self.prepare("claim-authority-terminal-overlap")
+        run = read_json(self.run_dir / "workflow/run.json")
+        later_attempt_id = hashlib.sha256(
+            f"task-attempt\0{later.task_id}\0{1}".encode("utf-8")
+        ).hexdigest()[:24]
+        later_claim = self.kernel.control_store.claim_task(
+            authority_id=run["run_id"],
+            task_id=later.task_id,
+            envelope_sha256=sha256_file(later.envelope_path),
+            write_set=(PATCH_CANONICAL,),
+            attempt_path=(
+                f"workflow/tasks/{later.task_id}/attempts/{later_attempt_id}"
+            ),
+            coordinator_session_id="later-coordinator",
+            worker_id="later-worker",
+            claimed_at="2026-07-15T05:00:00+00:00",
+        )
+        self.assertEqual(later_claim["state"], "ACTIVE")
+        self.assertEqual(self.kernel.control_store.check().schema_version, 7)
+
+    def test_v6_claim_authority_migration_is_lossless_or_rolls_back_atomically(
+        self,
+    ) -> None:
+        self.initialize("claim-authority-v6-lossless")
+        prepared = self.prepare("claim-authority-v6-lossless-task")
+        self.claim(prepared)
+        self.downgrade_claim_authority_to_v6()
+        migrated = VideoWorkflowKernel(self.workspace)
+        self.assertEqual(migrated.control_store.check().schema_version, 7)
+        with sqlite3.connect(migrated.control_store.path) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM task_claim_authorities"
+                ).fetchone()[0],
+                1,
+            )
+
+        self.initialize("claim-authority-v6-drift")
+        prepared = self.prepare("claim-authority-v6-drift-task")
+        self.claim(prepared)
+        self.downgrade_claim_authority_to_v6()
+        envelope = read_json(prepared.envelope_path)
+        envelope["write_set"] = ["workflow/drifted-after-v6.json"]
+        envelope["required_outputs"][0]["canonical_path"] = (
+            "workflow/drifted-after-v6.json"
+        )
+        write_json_atomic(prepared.envelope_path, envelope)
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(self.workspace)
+        with sqlite3.connect(self.kernel.control_store.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name='task_claim_authorities'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                6,
+            )
 
 
 class ContractAndPromptRepairTests(unittest.TestCase):
@@ -2099,7 +2479,7 @@ class ContractAndPromptRepairTests(unittest.TestCase):
             '"tests.video_workflow.test_issue5_review_repairs"', collector
         )
         self.assertIn(
-            "control_store_v1_through_v5_migrate_atomically_to_v6", collector
+            "control_store_v1_through_v6_migrate_atomically_to_v7", collector
         )
         for result_name in (
             "multiple_reclaims_preserve_complete_ordered_audit_history",
@@ -2107,6 +2487,11 @@ class ContractAndPromptRepairTests(unittest.TestCase):
             "reclaim_history_corruption_blocks_global_mutation",
             "prepared_prior_generation_preservation_rebuilds_before_publication",
             "v5_reclaim_history_migration_is_lossless_or_fails_atomically",
+            "authenticated_claim_authority_preserves_valid_reclaim_promotion_and_terminal_overlap",
+            "claim_authority_projection_and_lifecycle_tamper_fail_closed",
+            "overlapping_active_claim_write_sets_fail_closed",
+            "missing_tampered_or_orphan_claim_authority_blocks_global_mutation",
+            "v6_claim_authority_migration_is_lossless_or_fails_atomically",
         ):
             self.assertIn(result_name, collector)
         self.assertIn('"slice2-review-repairs"', validator)

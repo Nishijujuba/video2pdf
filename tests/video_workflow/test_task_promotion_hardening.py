@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 import uuid
 
 
@@ -491,6 +493,94 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
             ).fetchone()
         self.assertEqual(state, "COMMITTED")
         self.assertEqual(record["last_mutation_intent_id"], mutation_id)
+
+    def test_committed_replay_reconciles_source_drift_and_stales_checkpoints(self) -> None:
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.patch(prepared, claimed)
+        self.complete(prepared, claimed)
+        self.promote(prepared, claimed)
+
+        source = self.run_dir / "source/media/video.fixture"
+        source.write_bytes(source.read_bytes() + b"drift-before-committed-replay")
+
+        with self.assertRaises(ArtifactDrift):
+            self.promote(prepared, claimed)
+
+        record = read_json(self.run_dir / "workflow/run.json")
+        self.assertEqual(
+            {checkpoint["status"] for checkpoint in record["checkpoints"].values()},
+            {"stale"},
+        )
+
+    def test_committed_replay_uses_immutable_envelope_prompt_after_upgrade(self) -> None:
+        prepared = self.prepare()
+        claimed = self.claim(prepared)
+        self.patch(prepared, claimed)
+        self.complete(prepared, claimed)
+        self.promote(prepared, claimed)
+        envelope = read_json(prepared.envelope_path)
+
+        upgraded_prompt = b"upgraded role prompt\n\nupgraded platform prompt\n"
+        upgraded_provenance = {
+            "sha256": hashlib.sha256(upgraded_prompt).hexdigest(),
+            "role_template": {
+                **envelope["generated_prompt"]["role_template"],
+                "version": "2.0.0",
+                "path": "prompts/video-workflow/roles/source-acquisition.v2.md",
+                "sha256": hashlib.sha256(b"upgraded role prompt\n").hexdigest(),
+            },
+            "platform_overlay": {
+                **envelope["generated_prompt"]["platform_overlay"],
+                "version": "2.0.0",
+                "path": "prompts/video-workflow/platforms/fixture.v2.md",
+                "sha256": hashlib.sha256(b"upgraded platform prompt\n").hexdigest(),
+            },
+        }
+        with patch(
+            "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
+            return_value=(upgraded_prompt, upgraded_provenance),
+        ):
+            replay = self.promote(prepared, claimed)
+
+        self.assertEqual(replay.classification, "committed_complete")
+
+    def test_new_task_completion_accepts_older_envelope_prompt_in_namespace(self) -> None:
+        first = self.prepare("source-acquisition-decision-1")
+        first_claim = self.claim(first)
+        self.patch(first, first_claim, rationale="First decision.")
+        self.complete(first, first_claim)
+        self.promote(first, first_claim)
+        first_envelope = read_json(first.envelope_path)
+
+        upgraded_prompt = b"schema-compatible upgraded role\n\nplatform overlay\n"
+        upgraded_provenance = {
+            "sha256": hashlib.sha256(upgraded_prompt).hexdigest(),
+            "role_template": {
+                **first_envelope["generated_prompt"]["role_template"],
+                "path": "prompts/video-workflow/roles/source-acquisition.next.md",
+                "sha256": hashlib.sha256(b"schema-compatible upgraded role\n").hexdigest(),
+            },
+            "platform_overlay": {
+                **first_envelope["generated_prompt"]["platform_overlay"],
+                "path": "prompts/video-workflow/platforms/fixture.next.md",
+                "sha256": hashlib.sha256(b"platform overlay\n").hexdigest(),
+            },
+        }
+        with patch(
+            "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
+            return_value=(upgraded_prompt, upgraded_provenance),
+        ):
+            second = self.prepare("source-acquisition-decision-2")
+            second_claim = self.claim(second, worker_id="worker-2")
+            self.patch(second, second_claim, rationale="Second decision.")
+            completion = self.complete(second, second_claim)
+            promotion = self.promote(second, second_claim)
+
+        self.assertEqual(
+            completion.classification, "validated_waiting_for_promotion"
+        )
+        self.assertEqual(promotion.classification, "committed_complete")
 
     def test_journal_tamper_and_intent_marker_contradiction_block_recovery(self) -> None:
         prepared = self.prepare()

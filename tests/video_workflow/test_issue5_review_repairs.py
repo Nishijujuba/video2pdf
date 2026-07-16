@@ -2099,8 +2099,16 @@ class ContractAndPromptRepairTests(unittest.TestCase):
             '"tests.video_workflow.test_issue5_review_repairs"', collector
         )
         self.assertIn(
-            "control_store_v1_through_v4_migrate_atomically_to_v5", collector
+            "control_store_v1_through_v5_migrate_atomically_to_v6", collector
         )
+        for result_name in (
+            "multiple_reclaims_preserve_complete_ordered_audit_history",
+            "missing_or_drifted_prior_generation_preservation_fails_closed",
+            "reclaim_history_corruption_blocks_global_mutation",
+            "prepared_prior_generation_preservation_rebuilds_before_publication",
+            "v5_reclaim_history_migration_is_lossless_or_fails_atomically",
+        ):
+            self.assertIn(result_name, collector)
         self.assertIn('"slice2-review-repairs"', validator)
 
 

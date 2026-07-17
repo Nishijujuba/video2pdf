@@ -443,12 +443,22 @@ class ControlStore:
 
     def _connect(self) -> sqlite3.Connection:
         connection = self._connect_raw()
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=EXTRA")
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        return connection
+        try:
+            connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            journal_mode = str(
+                connection.execute("PRAGMA journal_mode").fetchone()[0]
+            ).lower()
+            if journal_mode != "delete":
+                raise ControlStoreUnavailable(
+                    f"Control Store journal_mode is not DELETE: {journal_mode}"
+                )
+            connection.execute("PRAGMA synchronous=EXTRA")
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA trusted_schema=OFF")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
     def _assert_mutation_allowed(self) -> None:
         if not self.recovery_sentinel_path.exists():
@@ -648,7 +658,14 @@ class ControlStore:
             raise ControlStoreUnavailable("Control Store anchor identity is invalid")
         if marker != self._identity_record("marker"):
             raise ControlStoreUnavailable("Control Store marker identity is invalid")
-        self._migrate_existing()
+        try:
+            self._migrate_existing()
+        except ControlStoreUnavailable:
+            raise
+        except (sqlite3.Error, OSError) as exc:
+            raise ControlStoreUnavailable(
+                f"Control Store migration failed: {exc}"
+            ) from exc
         try:
             connection = self._connect_raw()
             try:

@@ -34,6 +34,19 @@ For Acceptance Reviewer subagents, use `wait_agent` with `timeout_ms: 3600000` s
 
 A `wait_agent` timeout means only that the current wait window expired. It does not mean the subagent failed, stalled, or produced an invalid review. Do not interrupt or close a normally running Acceptance Reviewer because of `wait_agent` timeout alone. Interrupt or close it only when the reviewer reports an explicit error, violates the allowed artifact boundary, exceeds the one-hour wait window without producing required output, or the user asks to stop.
 
+### Long-running Process Wait Policy
+
+- Use the maximum wait interval permitted by the active tool and runtime policy.
+- Treat an unchanged process state as expected.
+- Do not restate unchanged implementation, commit, review, or worktree facts.
+- Emit progress updates only when:
+  1. new output appears;
+  2. the phase changes;
+  3. an error, timeout risk, or user decision appears;
+  4. the process completes;
+  5. a higher-priority runtime instruction requires a heartbeat.
+- When a mandatory heartbeat is required, emit one short line: `Still running; no new output or status changes.`
+
 ### Visual Acceptance Input Policy
 
 Visual acceptance must inspect every rendered PDF page image individually. A `contact_sheet`, montage, overview image, selected key pages, thumbnails, sampled pages, or any reduced visual input set is auxiliary navigation material only and cannot serve as the basis for a pass/fail decision.

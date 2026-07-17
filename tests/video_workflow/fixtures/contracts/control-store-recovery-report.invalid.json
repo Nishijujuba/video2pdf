@@ -1,0 +1,22 @@
+{
+  "schema_name": "control-store-recovery-report",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "operation_id": "restore-00000000000000000000000000000000",
+  "selected_backup": {"backup_id": "backup-a", "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "database_sha256": "1111111111111111111111111111111111111111111111111111111111111111", "store_id": "2222222222222222222222222222222222222222222222222222222222222222", "schema_version": 8},
+  "quiescence": {"status": "passed", "writer_lock": "sqlite_exclusive", "sentinel_path": "D:\\workspace\\.workflow-control-recovery.json"},
+  "quarantined_artifacts": [],
+  "integrity_results": {
+    "selected_candidate": {"status": "passed", "quick_check": "ok", "foreign_keys": "ok", "exact_schema_and_semantics": "passed"},
+    "staged_candidate": {"status": "passed", "quick_check": "ok", "foreign_keys": "ok", "exact_schema_and_semantics": "passed"},
+    "published_store": {"status": "passed", "quick_check": "ok", "foreign_keys": "ok", "exact_schema_and_semantics": "passed"}
+  },
+  "schema_validation": {"selected_version": 8, "required_version": 8, "validation": "exact_match", "migration": "rejected_not_performed"},
+  "reconciled_identities": [],
+  "resource_recovery": {"current_coordinator_session_id": "control-store-restore-0", "lost_coordinator_session_ids": [], "transitioned_lease_ids": [], "unknown_lease_ids": [], "capacity_released": false, "resource_usage": {"bilibili_download": 0, "youtube_download": 0, "whisper": 0, "codex_semantic": 0, "latex": 0, "pdf_render": 0, "visual_acceptance": 0}, "selected_store_inventory": {"status": "readable", "active_claims": [], "nonterminal_leases": [], "resource_usage": {"bilibili_download": 0, "youtube_download": 0, "whisper": 0, "codex_semantic": 0, "latex": 0, "pdf_render": 0, "visual_acceptance": 0}}, "quarantined_live_inventory": {"status": "unreadable_or_invalid", "active_claims": [], "nonterminal_leases": [], "resource_usage": null}, "conservative_capacity_unresolved": false},
+  "unresolved_gaps": [],
+  "final_global_status": "passed",
+  "global_mutation_blocked": false,
+  "unblock_requires_sentinel_absent": true,
+  "reported_at": "2026-07-17T02:20:00+08:00"
+}

@@ -23,6 +23,7 @@ from video2pdf_workflow_kernel.errors import (  # noqa: E402
     ContractError,
     ControlStoreUnavailable,
     KernelConflict,
+    ResourceAdmissionFault,
     TaskFault,
 )
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
@@ -48,6 +49,10 @@ TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
 TASK_START = "2026-07-15T01:02:03+08:00"
 
 
+def trusted_task_provider_verifier(**identity: object) -> str:
+    return f"provider-proof://task-hardening/{identity['terminal_result_id']}"
+
+
 class Slice2Harness:
     workspace: Path
     kernel: VideoWorkflowKernel
@@ -60,7 +65,13 @@ class Slice2Harness:
         root = TEST_RUNS / f"s2-{identity}"
         self.workspace = root / "workspace"
         self.workspace.mkdir(parents=True)
-        self.kernel = VideoWorkflowKernel(self.workspace)
+        self.kernel = VideoWorkflowKernel(
+            self.workspace,
+            resource_provider_verifiers={
+                "task-hardening-provider": trusted_task_provider_verifier,
+            },
+        )
+        self._resource_launches: set[str] = set()
         self.run_dir = self.kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start=TASK_START,
@@ -111,6 +122,7 @@ class Slice2Harness:
         return output
 
     def complete(self, prepared, claimed, **kwargs):
+        self.confirm_resource_launch(claimed)
         return self.kernel.complete_task(
             self.run_dir,
             task_id=prepared.task_id,
@@ -118,6 +130,32 @@ class Slice2Harness:
             claim_generation=claimed.claim_generation,
             **kwargs,
         )
+
+    def confirm_resource_launch(self, claimed, *, required: bool = False) -> None:
+        if claimed.attempt_id in self._resource_launches:
+            return
+        if getattr(claimed, "resource_admission", None) is None and not required:
+            return
+        launch_tokens: list[str] = []
+        self.kernel.launch_admitted_task(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            ("codex_semantic",),
+            lambda launch_token: launch_tokens.append(launch_token) or "started",
+        )
+        self.kernel.release_resource_lease(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            launch_tokens[0],
+            terminal_evidence={
+                "evidence_class": "provider_terminal_result",
+                "provider": "task-hardening-provider",
+                "terminal_result_id": f"task-hardening-{claimed.attempt_id}",
+                "declared_outcome": "succeeded",
+                "observed_at": TASK_START,
+            },
+        )
+        self._resource_launches.add(claimed.attempt_id)
 
     def promote(self, prepared, claimed, **kwargs):
         return self.kernel.promote_task(
@@ -177,7 +215,7 @@ class TaskPersistenceBoundaryTests(unittest.TestCase, Slice2Harness):
             with self.subTest(fault_point=fault_point):
                 self.initialize(f"claim-{fault_point}")
                 prepared = self.prepare()
-                with self.assertRaises(TaskFault):
+                with self.assertRaises((TaskFault, ResourceAdmissionFault)):
                     self.claim(prepared, fault_point=fault_point)
                 resumed = self.claim(prepared)
                 self.assertTrue((resumed.attempt_dir / "attempt.json").is_file())
@@ -925,9 +963,11 @@ class TaskPublicCliTests(unittest.TestCase, Slice2Harness):
         )
         claimed_result = type("Claim", (), {
             "attempt_id": attempt_id,
+            "claim_generation": claim_generation,
             "attempt_dir": Path(claimed["data"]["attempt_dir"]),
         })()
         self.patch(prepared_result, claimed_result)
+        self.confirm_resource_launch(claimed_result, required=True)
         completed, gate = self.cli(
             "task-complete",
             "--run-dir", str(self.run_dir),
@@ -1036,9 +1076,11 @@ class TaskPublicCliTests(unittest.TestCase, Slice2Harness):
         )
         replacement_result = SimpleNamespace(
             attempt_id=replacement["data"]["attempt_id"],
+            claim_generation=replacement["data"]["claim_generation"],
             attempt_dir=Path(replacement["data"]["attempt_dir"]),
         )
         self.patch(prepared_result, replacement_result)
+        self.confirm_resource_launch(replacement_result, required=True)
         for command in ("task-complete", "task-promote"):
             completed, result = self.cli(
                 command,

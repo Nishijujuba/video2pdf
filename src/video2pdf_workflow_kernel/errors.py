@@ -50,6 +50,23 @@ class ControlStoreUnavailable(KernelError):
     exit_code = 50
 
 
+class ResourceAdmissionBlocked(KernelError):
+    classification = "resource_admission_blocked"
+    exit_code = 30
+
+
+class ResourceAdmissionFault(KernelError):
+    classification = "injected_resource_admission_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Resource Admission fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
 class InitializationFault(KernelError):
     classification = "injected_initialization_fault"
     exit_code = 60

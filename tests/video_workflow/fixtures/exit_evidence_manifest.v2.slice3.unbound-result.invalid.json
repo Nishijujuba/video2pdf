@@ -1,0 +1,32 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {"number": 3, "name": "cross-run-resource-admission"},
+  "slice_base_commit": "aaaaeac5747fddc0915a59df34de47e6e8cfec48",
+  "implementation_commit": "0000000000000000000000000000000000000000",
+  "evidence_paths": ["evidence/slice-03/exit-evidence-manifest.json", "evidence/slice-03/logs/test1.log"],
+  "generated_at": "2026-07-17T00:00:00Z",
+  "activation_scope": {"kind": "none", "runtime_authority_change": false, "components_activated": [], "legacy_track_authority": "preserved"},
+  "commands": [
+    {"test_id": "command-one", "command": ["python", "-m", "unittest"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-03/logs/test1.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true},
+    {"test_id": "command-two", "command": ["python", "-m", "unittest"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-03/logs/test2.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true},
+    {"test_id": "command-three", "command": ["git", "diff", "--check"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-03/logs/test3.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "conforms": true}
+  ],
+  "expected_checkpoints": [{"name": "source_ready", "status": "current"}, {"name": "source_acquisition_decision_ready", "status": "current"}],
+  "fixtures": [{"role": "contract_fixture", "path": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.valid.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}],
+  "results": {"positive": ["positive_result"], "negative": ["negative_result"], "quota": ["quota_result"], "fencing": ["fencing_result"], "fairness": ["fairness_result"], "restart": ["restart_result"], "recovery": ["recovery_result"]},
+  "result_bindings": [
+    {"result_id": "positive_result", "result_kind": "positive", "command_id": "command-one", "test_target": "tests.video_workflow.test_one.Tests.test_positive"},
+    {"result_id": "negative_result", "result_kind": "negative", "command_id": "command-one", "test_target": "tests.video_workflow.test_one.Tests.test_negative"},
+    {"result_id": "quota_result", "result_kind": "quota", "command_id": "command-one", "test_target": "tests.video_workflow.test_one.Tests.test_quota"},
+    {"result_id": "fencing_result", "result_kind": "fencing", "command_id": "command-one", "test_target": "tests.video_workflow.test_one.Tests.test_fencing"},
+    {"result_id": "fairness_result", "result_kind": "fairness", "command_id": "command-two", "test_target": "tests.video_workflow.test_two.Tests.test_fairness"},
+    {"result_id": "restart_result", "result_kind": "restart", "command_id": "command-two", "test_target": "tests.video_workflow.test_two.Tests.test_restart"}
+  ],
+  "fault_points": ["after_claim_before_enqueue", "after_claim_enqueue_before_schedule", "after_claim_schedule_before_commit", "after_reclaim_before_enqueue", "after_reclaim_enqueue_before_schedule", "after_reclaim_schedule_before_commit"],
+  "artifact_fingerprints": [{"role": "implementation_artifact", "path": "src/video2pdf_workflow_kernel/resource_admission.py", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

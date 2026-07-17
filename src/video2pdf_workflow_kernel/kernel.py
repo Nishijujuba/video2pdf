@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from .adapters import FixturePlatformAdapter
 from .artifact_plan import ARTIFACT_PLAN_BINDINGS
@@ -53,7 +53,30 @@ RUN_STATE_MUTATION_FAULT_POINTS = frozenset(
 class VideoWorkflowKernel:
     """Deep Kernel interface; CLI and workflow adapters delegate here."""
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        *,
+        resource_provider_verifiers: Mapping[str, Callable[..., str]] | None = None,
+        local_process_inspector: Callable[..., str | None] | None = None,
+        _control_store_recovery_token: str | None = None,
+    ) -> None:
+        provider_verifiers = dict(resource_provider_verifiers or {})
+        if any(
+            not isinstance(provider, str)
+            or not provider.strip()
+            or not callable(verifier)
+            for provider, verifier in provider_verifiers.items()
+        ):
+            raise ContractError(
+                "Resource provider verifier registry is invalid"
+            )
+        if local_process_inspector is not None and not callable(
+            local_process_inspector
+        ):
+            raise ContractError("local process inspector must be callable")
+        self._resource_provider_verifiers = provider_verifiers
+        self._local_process_inspector = local_process_inspector
         self.project_root = Path(__file__).resolve().parents[2]
         self.workspace_root = workspace_root.resolve()
         self.contracts = ContractRegistry(self.project_root)
@@ -61,7 +84,9 @@ class VideoWorkflowKernel:
         self.scaffold = load_scaffold(self.project_root, self.contracts)
         if ControlStore.identity_evidence_exists(self.workspace_root):
             self.control_store: ControlStore | None = ControlStore(
-                self.workspace_root, self.contracts
+                self.workspace_root,
+                self.contracts,
+                recovery_operation_token=_control_store_recovery_token,
             )
             self.control_store.check()
         else:
@@ -457,6 +482,8 @@ class VideoWorkflowKernel:
         *,
         logical_task_key: str,
         prepared_at: str,
+        required_resources: tuple[str, ...] | None = ("codex_semantic",),
+        batch_id: str | None = None,
         fault_point: str | None = None,
     ) -> Any:
         from .task_execution import TaskExecution
@@ -465,6 +492,8 @@ class VideoWorkflowKernel:
             run_dir,
             logical_task_key=logical_task_key,
             prepared_at=prepared_at,
+            required_resources=required_resources,
+            batch_id=batch_id,
             fault_point=fault_point,
         )
 
@@ -491,6 +520,158 @@ class VideoWorkflowKernel:
         from .task_execution import TaskExecution
 
         return TaskExecution(self).reclaim_task(run_dir, **kwargs)
+
+    def resource_status(self, task_id: str, attempt_id: str) -> Any:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).status(task_id, attempt_id)
+
+    def backup_control_store(
+        self,
+        backup_dir: Path,
+        *,
+        backup_id: str,
+        coordinator_session_id: str,
+        created_at: str,
+    ) -> dict[str, Any]:
+        from .control_store_recovery import ControlStoreRecovery
+
+        store = self._preflight_control_store()
+        return ControlStoreRecovery(
+            self.workspace_root,
+            project_root=self.project_root,
+        ).create_backup(
+            store,
+            backup_dir,
+            backup_id=backup_id,
+            coordinator_session_id=coordinator_session_id,
+            created_at=created_at,
+        )
+
+    def resource_scheduler_status(self) -> dict[str, Any]:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).scheduler_status()
+
+    def resource_capacity_status(self) -> dict[str, Any]:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).capacity_status()
+
+    def activate_resource_configuration(
+        self, configuration: dict[str, Any]
+    ) -> dict[str, Any]:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).activate_configuration(configuration)
+
+    def set_resource_circuit_breaker(
+        self,
+        resource_class: str,
+        *,
+        state: str,
+        reason: str,
+        platform: str | None = None,
+    ) -> dict[str, Any]:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).set_circuit_breaker(
+            resource_class,
+            state=state,
+            reason=reason,
+            platform=platform,
+        )
+
+    def resource_circuit_breaker_status(self) -> list[dict[str, Any]]:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).circuit_breaker_status()
+
+    def resource_reconcile(
+        self,
+        *,
+        current_coordinator_session_id: str,
+        lost_coordinator_session_ids: tuple[str, ...],
+    ) -> dict[str, Any]:
+        from .resource_recovery import ResourceRecovery
+
+        return ResourceRecovery(
+            self,
+            provider_verifiers=self._resource_provider_verifiers,
+            local_process_inspector=self._local_process_inspector,
+        ).reconcile(
+            current_coordinator_session_id=current_coordinator_session_id,
+            lost_coordinator_session_ids=lost_coordinator_session_ids,
+        )
+
+    def resource_resolve(
+        self,
+        lease_id: str,
+        attempt_id: str,
+        expected_claim_generation: int,
+        *,
+        resolution_evidence: dict[str, Any],
+    ) -> Any:
+        from .resource_recovery import ResourceRecovery
+
+        return ResourceRecovery(
+            self,
+            provider_verifiers=self._resource_provider_verifiers,
+            local_process_inspector=self._local_process_inspector,
+        ).resolve(
+            lease_id,
+            attempt_id,
+            expected_claim_generation,
+            resolution_evidence=resolution_evidence,
+        )
+
+    def task_claim_status(self, task_id: str) -> dict[str, Any] | None:
+        store = self._preflight_control_store()
+        row = store.task_claim_for_task(task_id)
+        if row is None:
+            return None
+        return {
+            "task_id": str(row["task_id"]),
+            "attempt_id": str(row["attempt_id"]),
+            "claim_generation": int(row["claim_generation"]),
+            "state": str(row["state"]).lower(),
+        }
+
+    def release_resource_lease(
+        self,
+        attempt_id: str,
+        claim_generation: int,
+        launch_token: str,
+        *,
+        terminal_evidence: dict[str, Any],
+    ) -> Any:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).release_resource_lease(
+            attempt_id,
+            claim_generation,
+            launch_token,
+            terminal_evidence=terminal_evidence,
+        )
+
+    def launch_admitted_task(
+        self,
+        attempt_id: str,
+        claim_generation: int,
+        required_resources: tuple[str, ...],
+        launcher: Any,
+        *,
+        fault_point: str | None = None,
+    ) -> Any:
+        from .resource_admission import ResourceAdmission
+
+        return ResourceAdmission(self).launch_admitted_task(
+            attempt_id,
+            claim_generation,
+            required_resources,
+            launcher,
+            fault_point=fault_point,
+        )
 
     def complete_task(self, run_dir: Path, **kwargs: Any) -> Any:
         from .task_execution import TaskExecution
@@ -534,6 +715,13 @@ class VideoWorkflowKernel:
         run_dir = Path(binding["output_path"]).resolve()
         if expected_run_dir is not None and expected_run_dir.resolve() != run_dir:
             raise KernelConflict("Run wrapper path disagrees with authority dispatcher")
+        initialization = store.intent_for_run(authority_id)
+        if (
+            initialization is not None
+            and str(initialization["state"])
+            in {"PREPARED", "PUBLISHED", "RECORD_COMMITTED"}
+        ):
+            self.reconcile_initialization(authority_id)
         return self._reconcile_kernel_run(run_dir, fault_point=fault_point)
 
     def _reconcile_kernel_run(

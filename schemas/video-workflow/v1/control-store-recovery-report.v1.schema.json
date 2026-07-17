@@ -1,0 +1,534 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "operation_id",
+    "selected_backup",
+    "quiescence",
+    "quarantined_artifacts",
+    "integrity_results",
+    "schema_validation",
+    "reconciled_identities",
+    "resource_recovery",
+    "unresolved_gaps",
+    "final_global_status",
+    "global_mutation_blocked",
+    "unblock_requires_sentinel_absent",
+    "reported_at"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-recovery-report"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "operation_id": {"type": "string", "pattern": "^restore-[0-9a-f]{32}$"},
+    "selected_backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backup_id", "manifest_sha256", "database_sha256", "store_id", "schema_version"],
+      "properties": {
+        "backup_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "manifest_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "database_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "schema_version": {"const": 8}
+      }
+    },
+    "quiescence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "writer_lock", "sentinel_path"],
+      "properties": {
+        "status": {"const": "passed"},
+        "writer_lock": {"enum": ["sqlite_exclusive", "atomic_directory_quarantine", "canonical_database_absent"]},
+        "sentinel_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"}
+      }
+    },
+    "quarantined_artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/quarantined_artifact"}
+    },
+    "integrity_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected_candidate", "staged_candidate", "published_store"],
+      "properties": {
+        "selected_candidate": {"$ref": "#/$defs/integrity_result"},
+        "staged_candidate": {"$ref": "#/$defs/integrity_result"},
+        "published_store": {"$ref": "#/$defs/integrity_result"}
+      }
+    },
+    "schema_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected_version", "required_version", "validation", "migration"],
+      "properties": {
+        "selected_version": {"const": 8},
+        "required_version": {"const": 8},
+        "validation": {"const": "exact_match"},
+        "migration": {"const": "rejected_not_performed"}
+      }
+    },
+    "reconciled_identities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["authority_kind", "authority_id", "outcome"],
+        "properties": {
+          "authority_kind": {"const": "kernel_run"},
+          "authority_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+          "outcome": {"const": "reconciled"}
+        }
+      }
+    },
+    "resource_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_coordinator_session_id", "lost_coordinator_session_ids", "transitioned_lease_ids", "unknown_lease_ids", "capacity_released", "resource_usage", "selected_store_inventory", "quarantined_live_inventory", "conservative_capacity_unresolved"],
+      "properties": {
+        "current_coordinator_session_id": {"type": "string", "minLength": 1},
+        "lost_coordinator_session_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "transitioned_lease_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "unknown_lease_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "capacity_released": {"const": false},
+        "resource_usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"],
+          "properties": {
+            "bilibili_download": {"type": "integer", "minimum": 0},
+            "youtube_download": {"type": "integer", "minimum": 0},
+            "whisper": {"type": "integer", "minimum": 0},
+            "codex_semantic": {"type": "integer", "minimum": 0},
+            "latex": {"type": "integer", "minimum": 0},
+            "pdf_render": {"type": "integer", "minimum": 0},
+            "visual_acceptance": {"type": "integer", "minimum": 0}
+          }
+        },
+        "selected_store_inventory": {
+          "allOf": [
+            {"$ref": "#/$defs/resource_authority_inventory"},
+            {
+              "properties": {"status": {"const": "readable"}},
+              "required": ["status"]
+            }
+          ]
+        },
+        "quarantined_live_inventory": {"$ref": "#/$defs/resource_authority_inventory"},
+        "conservative_capacity_unresolved": {"type": "boolean"}
+      }
+    },
+    "unresolved_gaps": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/recovery_gap"}
+    },
+    "final_global_status": {"enum": ["passed", "blocked"]},
+    "global_mutation_blocked": {"type": "boolean"},
+    "unblock_requires_sentinel_absent": {"const": true},
+    "reported_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"final_global_status": {"const": "passed"}}, "required": ["final_global_status"]},
+      "then": {
+        "properties": {
+          "global_mutation_blocked": {"const": false},
+          "resource_recovery": {
+            "properties": {"conservative_capacity_unresolved": {"const": false}}
+          },
+          "unresolved_gaps": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "global_mutation_blocked": {"const": true},
+          "unresolved_gaps": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resource_recovery": {
+            "properties": {
+              "quarantined_live_inventory": {
+                "properties": {"status": {"const": "unreadable_or_invalid"}},
+                "required": ["status"]
+              }
+            },
+            "required": ["quarantined_live_inventory"]
+          }
+        },
+        "required": ["resource_recovery"]
+      },
+      "then": {
+        "properties": {
+          "resource_recovery": {
+            "properties": {"conservative_capacity_unresolved": {"const": true}}
+          },
+          "final_global_status": {"const": "blocked"},
+          "unresolved_gaps": {
+            "contains": {
+              "properties": {
+                "classification": {"const": "quarantined_live_resource_inventory_unreadable_or_invalid"}
+              },
+              "required": ["classification"]
+            },
+            "minContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resource_recovery": {
+            "properties": {"conservative_capacity_unresolved": {"const": true}},
+            "required": ["conservative_capacity_unresolved"]
+          }
+        },
+        "required": ["resource_recovery"]
+      },
+      "then": {
+        "properties": {
+          "final_global_status": {"const": "blocked"},
+          "unresolved_gaps": {
+            "contains": {
+              "properties": {
+                "classification": {
+                  "enum": [
+                    "quarantined_live_claim_not_in_selected_store",
+                    "selected_store_claim_not_in_quarantined_live",
+                    "quarantined_live_claim_differs_from_selected_store",
+                    "quarantined_live_lease_not_in_selected_store",
+                    "selected_store_lease_not_in_quarantined_live",
+                    "quarantined_live_lease_differs_from_selected_store",
+                    "quarantined_live_resource_inventory_unreadable_or_invalid"
+                  ]
+                }
+              },
+              "required": ["classification"]
+            },
+            "minContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "unresolved_gaps": {
+            "contains": {
+              "properties": {
+                "classification": {
+                  "enum": [
+                    "quarantined_live_claim_not_in_selected_store",
+                    "selected_store_claim_not_in_quarantined_live",
+                    "quarantined_live_claim_differs_from_selected_store",
+                    "quarantined_live_lease_not_in_selected_store",
+                    "selected_store_lease_not_in_quarantined_live",
+                    "quarantined_live_lease_differs_from_selected_store",
+                    "quarantined_live_resource_inventory_unreadable_or_invalid"
+                  ]
+                }
+              },
+              "required": ["classification"]
+            },
+            "minContains": 1
+          }
+        },
+        "required": ["unresolved_gaps"]
+      },
+      "then": {
+        "properties": {
+          "resource_recovery": {
+            "properties": {"conservative_capacity_unresolved": {"const": true}}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "resource_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"],
+      "properties": {
+        "bilibili_download": {"type": "integer", "minimum": 0},
+        "youtube_download": {"type": "integer", "minimum": 0},
+        "whisper": {"type": "integer", "minimum": 0},
+        "codex_semantic": {"type": "integer", "minimum": 0},
+        "latex": {"type": "integer", "minimum": 0},
+        "pdf_render": {"type": "integer", "minimum": 0},
+        "visual_acceptance": {"type": "integer", "minimum": 0}
+      }
+    },
+    "active_claim_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "authority_id", "attempt_id", "claim_generation", "coordinator_session_id", "worker_id"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "authority_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "coordinator_session_id": {"type": "string", "minLength": 1},
+        "worker_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "nonterminal_lease_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lease_id", "task_id", "attempt_id", "claim_generation", "coordinator_session_id", "worker_id", "state", "required_resources"],
+      "properties": {
+        "lease_id": {"type": "string", "minLength": 1},
+        "task_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "coordinator_session_id": {"type": "string", "minLength": 1},
+        "worker_id": {"type": "string", "minLength": 1},
+        "state": {"enum": ["starting", "active", "unknown"]},
+        "required_resources": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"]}}
+      }
+    },
+    "resource_authority_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "active_claims", "nonterminal_leases", "resource_usage"],
+      "properties": {
+        "status": {"enum": ["readable", "absent", "unreadable_or_invalid"]},
+        "active_claims": {"type": "array", "items": {"$ref": "#/$defs/active_claim_inventory"}},
+        "nonterminal_leases": {"type": "array", "items": {"$ref": "#/$defs/nonterminal_lease_inventory"}},
+        "resource_usage": {
+          "oneOf": [
+            {"$ref": "#/$defs/resource_usage"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "readable"}}, "required": ["status"]},
+          "then": {"properties": {"resource_usage": {"$ref": "#/$defs/resource_usage"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "absent"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "active_claims": {"maxItems": 0},
+              "nonterminal_leases": {"maxItems": 0},
+              "resource_usage": {
+                "type": "object",
+                "properties": {
+                  "bilibili_download": {"const": 0},
+                  "youtube_download": {"const": 0},
+                  "whisper": {"const": 0},
+                  "codex_semantic": {"const": 0},
+                  "latex": {"const": 0},
+                  "pdf_render": {"const": 0},
+                  "visual_acceptance": {"const": 0}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "unreadable_or_invalid"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "active_claims": {"maxItems": 0},
+              "nonterminal_leases": {"maxItems": 0},
+              "resource_usage": {"type": "null"}
+            }
+          }
+        }
+      ]
+    },
+    "integrity_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "quick_check", "foreign_keys", "exact_schema_and_semantics"],
+      "properties": {
+        "status": {"const": "passed"},
+        "quick_check": {"const": "ok"},
+        "foreign_keys": {"const": "ok"},
+        "exact_schema_and_semantics": {"const": "passed"}
+      }
+    },
+    "quarantined_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_kind", "original_path", "quarantine_path"],
+      "properties": {
+        "artifact_kind": {"enum": ["database", "marker", "anchor", "sqlite_sidecar", "control_directory", "control_metadata"]},
+        "original_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "quarantine_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "restored_intent_match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent_kind", "authority_id", "state"],
+      "properties": {
+        "intent_kind": {"enum": ["initialization", "run_state_mutation", "task_promotion"]},
+        "authority_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "state": {"type": "string", "minLength": 1}
+      }
+    },
+    "file_fingerprint_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_kind", "path", "expected_sha256", "actual_sha256", "status"],
+      "properties": {
+        "evidence_kind": {"enum": ["initialization_prepared_run", "task_promotion_journal", "task_attempt_output", "prior_artifact_generation"]},
+        "path": {"type": "string", "minLength": 1},
+        "expected_sha256": {
+          "oneOf": [
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "actual_sha256": {
+          "oneOf": [
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "status": {"enum": ["available", "matching", "missing", "hash_mismatch", "linked_or_non_file"]}
+      }
+    },
+    "canonical_artifact_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_id", "path", "generation", "expected_sha256", "actual_sha256", "status"],
+      "properties": {
+        "logical_id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "expected_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "actual_sha256": {
+          "oneOf": [
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "status": {"enum": ["matching", "missing", "hash_mismatch", "linked_or_non_file", "path_escape"]}
+      }
+    },
+    "recovery_gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "authority_kind", "authority_id"],
+      "properties": {
+        "classification": {"enum": ["orphaned_filesystem_commit", "missing_filesystem_authority", "authority_binding_contradiction", "authority_reconciliation_failed", "active_claim_requires_manual_recovery", "quarantined_live_claim_not_in_selected_store", "selected_store_claim_not_in_quarantined_live", "quarantined_live_claim_differs_from_selected_store", "quarantined_live_lease_not_in_selected_store", "selected_store_lease_not_in_quarantined_live", "quarantined_live_lease_differs_from_selected_store", "quarantined_live_resource_inventory_unreadable_or_invalid"]},
+        "authority_kind": {"enum": ["kernel_run", "task_claim", "resource_lease", "control_store"]},
+        "authority_id": {"type": "string", "minLength": 1},
+        "run_dir": {"type": "string", "minLength": 3},
+        "bound_output_path": {"type": ["string", "null"]},
+        "coordination_record_path": {"const": "workflow/run.json"},
+        "coordination_revision": {"type": ["integer", "null"], "minimum": 1},
+        "missing_intent_id": {"type": ["string", "null"]},
+        "missing_intent_kind": {"enum": ["initialization", "subsequent_mutation", "unavailable_from_coordination_record"]},
+        "intent_authority_status": {"enum": ["absent_from_selected_store", "present_in_selected_store", "ambiguous_in_selected_store", "not_provable_from_coordination_record"]},
+        "restored_intent_matches": {"type": "array", "items": {"$ref": "#/$defs/restored_intent_match"}},
+        "run_record_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "artifact_generations": {"type": "object", "minProperties": 1},
+        "canonical_artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/canonical_artifact_evidence"}},
+        "staging_evidence_status": {"enum": ["available", "partial", "unavailable"]},
+        "staging_evidence": {"type": "array", "items": {"$ref": "#/$defs/file_fingerprint_evidence"}},
+        "preservation_status": {"enum": ["not_applicable", "not_required", "complete", "incomplete", "unavailable"]},
+        "preservation_evidence": {"type": "array", "items": {"$ref": "#/$defs/file_fingerprint_evidence"}},
+        "restored_authority_sha256": {
+          "oneOf": [
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "initialization_state": {"type": ["string", "null"]},
+        "error_classification": {"type": "string", "minLength": 1},
+        "diagnostic": {"type": "string", "minLength": 1},
+        "task_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "claim_coordinator_session_id": {"type": "string", "minLength": 1},
+        "difference": {"enum": ["quarantined_live_only", "selected_store_only", "identity_mismatch"]},
+        "lease_id": {"type": "string", "minLength": 1},
+        "lease_state": {"enum": ["starting", "active", "unknown"]},
+        "required_resources": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"]}}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"classification": {"const": "orphaned_filesystem_commit"}},
+            "required": ["classification"]
+          },
+          "then": {
+            "required": [
+              "run_dir",
+              "coordination_record_path",
+              "coordination_revision",
+              "missing_intent_id",
+              "missing_intent_kind",
+              "intent_authority_status",
+              "restored_intent_matches",
+              "run_record_sha256",
+              "artifact_generations",
+              "canonical_artifacts",
+              "staging_evidence_status",
+              "staging_evidence",
+              "preservation_status",
+              "preservation_evidence"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {"missing_intent_kind": {"const": "unavailable_from_coordination_record"}},
+            "required": ["missing_intent_kind"]
+          },
+          "then": {
+            "properties": {
+              "missing_intent_id": {"type": "null"},
+              "intent_authority_status": {"const": "not_provable_from_coordination_record"},
+              "restored_intent_matches": {"maxItems": 0},
+              "staging_evidence_status": {"const": "unavailable"},
+              "staging_evidence": {"maxItems": 0},
+              "preservation_status": {"const": "unavailable"},
+              "preservation_evidence": {"maxItems": 0}
+            }
+          },
+          "else": {
+            "properties": {
+              "missing_intent_id": {"type": "string", "minLength": 1},
+              "intent_authority_status": {
+                "enum": ["absent_from_selected_store", "present_in_selected_store", "ambiguous_in_selected_store"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"staging_evidence_status": {"enum": ["available", "partial"]}},
+            "required": ["staging_evidence_status"]
+          },
+          "then": {"properties": {"staging_evidence": {"minItems": 1}}},
+          "else": {"properties": {"staging_evidence": {"maxItems": 0}}}
+        },
+        {
+          "if": {
+            "properties": {"preservation_status": {"enum": ["complete", "incomplete"]}},
+            "required": ["preservation_status"]
+          },
+          "then": {"properties": {"preservation_evidence": {"minItems": 1}}},
+          "else": {"properties": {"preservation_evidence": {"maxItems": 0}}}
+        }
+      ]
+    }
+  }
+}

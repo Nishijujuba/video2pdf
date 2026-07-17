@@ -1,0 +1,55 @@
+{
+  "schema_name": "orphaned-filesystem-commit-report",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "operation_id": "restore-00000000000000000000000000000000",
+  "selected_backup_id": "backup-a",
+  "classification": "orphaned_filesystem_commit",
+  "gaps": [
+    {
+      "classification": "orphaned_filesystem_commit",
+      "authority_kind": "kernel_run",
+      "authority_id": "11111111111111111111111111111111",
+      "run_dir": "D:\\workspace\\Run_20260717_010203",
+      "coordination_record_path": "workflow/run.json",
+      "coordination_revision": 1,
+      "missing_intent_id": "initialization-intent-1",
+      "missing_intent_kind": "initialization",
+      "intent_authority_status": "absent_from_selected_store",
+      "restored_intent_matches": [],
+      "run_record_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "artifact_generations": {
+        "source_manifest": {
+          "path": "source/manifest.json",
+          "generation": 1,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "producer": "kernel:verified-import"
+        }
+      },
+      "canonical_artifacts": [
+        {
+          "logical_id": "source_manifest",
+          "path": "source/manifest.json",
+          "generation": 1,
+          "expected_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "actual_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "status": "matching"
+        }
+      ],
+      "staging_evidence_status": "available",
+      "staging_evidence": [
+        {
+          "evidence_kind": "initialization_prepared_run",
+          "path": "待删除/bootstrap/prepared-run.json",
+          "expected_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "actual_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "status": "matching"
+        }
+      ],
+      "preservation_status": "not_applicable",
+      "preservation_evidence": []
+    }
+  ],
+  "global_mutation_blocked": true,
+  "manual_recovery_required": true
+}

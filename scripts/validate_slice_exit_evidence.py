@@ -11,6 +11,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+SCRIPTS = PROJECT_ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -21,6 +24,16 @@ from video2pdf_workflow_kernel.evidence import (
     fingerprint_implementation_changes,
     git_output,
     sha256_file,
+)
+from slice3_exit_evidence_contract import (
+    COMMANDS as SLICE3_COMMANDS,
+    EVIDENCE_PREFIX as SLICE3_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as SLICE3_EXPECTED_CHECKPOINTS,
+    FAULT_POINTS as SLICE3_FAULT_POINTS,
+    FIXTURE_SPECS as SLICE3_FIXTURE_SPECS,
+    RESULT_BINDINGS as SLICE3_RESULT_BINDINGS,
+    RESULTS as SLICE3_RESULTS,
+    SLICE_BASE_COMMIT as SLICE3_BASE_COMMIT,
 )
 
 
@@ -64,6 +77,33 @@ SLICE_CONFIGS = {
         ],
         "result_kinds": ["positive", "negative", "fencing", "recovery"],
         "required_fencing_results": ["late_and_superseded_workers_are_fenced"],
+    },
+    3: {
+        "base_commit": SLICE3_BASE_COMMIT,
+        "evidence_prefix": SLICE3_EVIDENCE_PREFIX,
+        "checkpoints": SLICE3_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _ in SLICE3_COMMANDS],
+        "commands": [
+            {
+                "test_id": test_id,
+                "command": list(command),
+                "expected_exit_code": 0,
+            }
+            for test_id, command in SLICE3_COMMANDS
+        ],
+        "result_kinds": [
+            "positive",
+            "negative",
+            "quota",
+            "fencing",
+            "fairness",
+            "restart",
+            "recovery",
+        ],
+        "results": SLICE3_RESULTS,
+        "result_bindings": SLICE3_RESULT_BINDINGS,
+        "fixture_specs": SLICE3_FIXTURE_SPECS,
+        "fault_points": list(SLICE3_FAULT_POINTS),
     },
 }
 
@@ -193,6 +233,30 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError(
             "Slice Exit Evidence commands differ from the registered closed test set"
         )
+    config = slice_config(manifest)
+    expected_commands = config.get("commands")
+    if expected_commands is not None:
+        provided_commands = [
+            {
+                "test_id": command["test_id"],
+                "command": command["command"],
+                "expected_exit_code": command["expected_exit_code"],
+            }
+            for command in commands
+        ]
+        expected_exit_codes = [command["expected_exit_code"] for command in commands]
+        if any(code != 0 for code in expected_exit_codes):
+            raise EvidenceError(
+                "Slice Exit Evidence expected exit code must be zero for every closed command"
+            )
+        if provided_commands != expected_commands:
+            raise EvidenceError(
+                "Slice Exit Evidence closed command vector differs from its registered authority"
+            )
+        if any(command["actual_exit_code"] != 0 for command in commands):
+            raise EvidenceError(
+                "Slice Exit Evidence closed command did not exit successfully"
+            )
     for command in commands:
         derived = command["actual_exit_code"] == command["expected_exit_code"]
         if command["conforms"] != derived:
@@ -204,7 +268,20 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError(
             "Slice Exit Evidence checkpoints differ from the registered Slice authority"
         )
-    config = slice_config(manifest)
+    expected_fixture_specs = config.get("fixture_specs")
+    if expected_fixture_specs is not None:
+        provided_fixture_specs = [
+            (fixture["role"], fixture["path"]) for fixture in manifest["fixtures"]
+        ]
+        if provided_fixture_specs != list(expected_fixture_specs):
+            raise EvidenceError(
+                "Slice Exit Evidence fixtures differ from the registered closed fixture set"
+            )
+    expected_fault_points = config.get("fault_points")
+    if expected_fault_points is not None and manifest.get("fault_points") != expected_fault_points:
+        raise EvidenceError(
+            "Slice Exit Evidence fault points differ from the registered closed fault set"
+        )
     result_identities = [
         identity
         for values in manifest["results"].values()
@@ -219,6 +296,45 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError(
             f"Slice fencing evidence is incomplete: {sorted(missing_fencing)}"
         )
+    expected_results = config.get("results")
+    if expected_results is not None and manifest["results"] != expected_results:
+        raise EvidenceError(
+            "Slice Exit Evidence results differ from the registered closed result set"
+        )
+    expected_bindings = config.get("result_bindings")
+    if expected_bindings is not None:
+        bindings = manifest.get("result_bindings", [])
+        expected_result_pairs = {
+            (result_id, kind)
+            for kind, values in manifest["results"].items()
+            for result_id in values
+        }
+        provided_result_pairs = {
+            (binding["result_id"], binding["result_kind"])
+            for binding in bindings
+        }
+        if (
+            len(bindings) != len(provided_result_pairs)
+            or provided_result_pairs != expected_result_pairs
+        ):
+            raise EvidenceError(
+                "Slice Exit Evidence result bindings differ from the complete result set"
+            )
+        command_by_id = {command["test_id"]: command for command in commands}
+        for binding in bindings:
+            command = command_by_id.get(binding["command_id"])
+            if command is None:
+                raise EvidenceError(
+                    "Slice Exit Evidence result binding names an unknown command"
+                )
+            if binding["test_target"] not in command["command"]:
+                raise EvidenceError(
+                    "Slice Exit Evidence result binding lacks an explicitly executed test target"
+                )
+        if bindings != expected_bindings:
+            raise EvidenceError(
+                "Slice Exit Evidence result bindings differ from the registered authority"
+            )
     derived_pass = (
         all(command["conforms"] for command in commands)
         and all(manifest["results"][kind] for kind in config["result_kinds"])
@@ -292,6 +408,46 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             )
 
 
+def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
+    marker = (
+        f"EVIDENCE_IMPLEMENTATION_COMMIT: {manifest['implementation_commit']}".encode(
+            "ascii"
+        )
+    )
+    for command in manifest["commands"]:
+        path = resolve_project_path(command["log"]["path"])
+        marker_lines = [line for line in path.read_bytes().splitlines() if line == marker]
+        if len(marker_lines) != 1:
+            raise EvidenceError(
+                "command log implementation commit marker is missing, duplicated, or stale: "
+                f"{command['test_id']}"
+            )
+    fault_points = manifest.get("fault_points")
+    if fault_points is not None:
+        admission = next(
+            (
+                command
+                for command in manifest["commands"]
+                if command["test_id"] == "slice3-resource-admission"
+            ),
+            None,
+        )
+        if admission is None:
+            raise EvidenceError(
+                "fault point provenance requires the Slice 3 Resource Admission command"
+            )
+        lines = resolve_project_path(admission["log"]["path"]).read_bytes().splitlines()
+        expected_lines = [
+            f"EVIDENCE_FAULT_POINT: {fault_point}".encode("ascii")
+            for fault_point in fault_points
+        ]
+        actual_lines = [line for line in lines if line.startswith(b"EVIDENCE_FAULT_POINT: ")]
+        if actual_lines != expected_lines:
+            raise EvidenceError(
+                "Resource Admission command log fault point provenance is missing, duplicated, or stale"
+            )
+
+
 def validate_manifest(
     manifest_path: Path, *, schema_only: bool, pre_publication: bool
 ) -> None:
@@ -311,6 +467,7 @@ def validate_manifest(
         return
     validate_semantics(value)
     validate_bindings(value, manifest_path)
+    validate_command_log_provenance(value)
     validate_implementation_artifacts(value)
     validate_lineage(value, manifest_path, pre_publication=pre_publication)
 

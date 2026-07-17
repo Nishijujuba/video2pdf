@@ -20,6 +20,7 @@ from video2pdf_workflow_kernel.errors import (  # noqa: E402
     ArtifactDrift,
     ContractError,
     KernelConflict,
+    ResourceAdmissionBlocked,
     TaskFault,
 )
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
@@ -36,11 +37,20 @@ TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
 TASK_START = "2026-07-15T01:02:03+08:00"
 
 
+def trusted_task_provider_verifier(**identity: object) -> str:
+    return f"provider-proof://task-test/{identity['terminal_result_id']}"
+
+
 class TaskPromotionTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.workspace = TEST_RUNS / f"slice2-{uuid.uuid4().hex}" / "workspace"
         self.workspace.mkdir(parents=True)
-        self.kernel = VideoWorkflowKernel(self.workspace)
+        self.kernel = VideoWorkflowKernel(
+            self.workspace,
+            resource_provider_verifiers={
+                "task-test-provider": trusted_task_provider_verifier,
+            },
+        )
         traced = self.kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start=TASK_START,
@@ -48,7 +58,7 @@ class TaskPromotionTestCase(unittest.TestCase):
         )
         self.run_dir = traced.run_dir
 
-    def prepare_and_claim(self):
+    def prepare_and_claim(self, *, launch: bool = True):
         prepared = self.kernel.prepare_source_acquisition_task(
             self.run_dir,
             logical_task_key="source-acquisition-decision",
@@ -60,7 +70,83 @@ class TaskPromotionTestCase(unittest.TestCase):
             coordinator_session_id="coordinator-test",
             worker_id="worker-test",
         )
+        if launch:
+            launch_tokens: list[str] = []
+            self.kernel.launch_admitted_task(
+                claimed.attempt_id,
+                claimed.claim_generation,
+                ("codex_semantic",),
+                lambda launch_token: launch_tokens.append(launch_token) or "started",
+            )
+            self.kernel.release_resource_lease(
+                claimed.attempt_id,
+                claimed.claim_generation,
+                launch_tokens[0],
+                terminal_evidence={
+                    "evidence_class": "provider_terminal_result",
+                    "provider": "task-test-provider",
+                    "terminal_result_id": f"task-test-result-{claimed.attempt_id}",
+                    "declared_outcome": "succeeded",
+                    "observed_at": TASK_START,
+                },
+            )
         return prepared, claimed
+
+    def test_v2_completion_requires_confirmed_launch_authority(self) -> None:
+        prepared, claimed = self.prepare_and_claim(launch=False)
+        self.write_patch(prepared, claimed)
+
+        with self.assertRaises(ResourceAdmissionBlocked):
+            self.complete(prepared, claimed)
+        with self.assertRaises(ResourceAdmissionBlocked):
+            self.promote(prepared, claimed)
+        self.assertFalse(
+            (self.run_dir / "workflow/source-acquisition-judgment-patch.json").exists()
+        )
+
+        launch_tokens: list[str] = []
+        self.kernel.launch_admitted_task(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            ("codex_semantic",),
+            lambda launch_token: launch_tokens.append(launch_token) or "started",
+        )
+        with self.assertRaises(ResourceAdmissionBlocked):
+            self.complete(prepared, claimed)
+        self.kernel.release_resource_lease(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            launch_tokens[0],
+            terminal_evidence={
+                "evidence_class": "provider_terminal_result",
+                "provider": "task-test-provider",
+                "terminal_result_id": f"task-test-result-{claimed.attempt_id}",
+                "declared_outcome": "succeeded",
+                "observed_at": TASK_START,
+            },
+        )
+        completed = self.complete(prepared, claimed)
+        self.assertEqual(completed.classification, "validated_waiting_for_promotion")
+
+    def test_v1_committed_lifecycle_replay_keeps_legacy_completion_behavior(self) -> None:
+        prepared = self.kernel.prepare_source_acquisition_task(
+            self.run_dir,
+            logical_task_key="legacy-source-acquisition-decision",
+            prepared_at=TASK_START,
+            required_resources=None,
+        )
+        self.assertEqual(read_json(prepared.envelope_path)["schema_version"], "1.0.0")
+        claimed = self.kernel.claim_task(
+            self.run_dir,
+            prepared.task_id,
+            coordinator_session_id="legacy-coordinator",
+            worker_id="legacy-worker",
+        )
+        self.write_patch(prepared, claimed)
+        completed = self.complete(prepared, claimed)
+        self.assertEqual(completed.classification, "validated_waiting_for_promotion")
+        promoted = self.promote(prepared, claimed)
+        self.assertEqual(promoted.classification, "committed_complete")
 
     def write_patch(self, prepared, claimed, **changes) -> Path:
         envelope = read_json(prepared.envelope_path)
@@ -240,6 +326,25 @@ class TaskPromotionTestCase(unittest.TestCase):
         with self.assertRaises(KernelConflict):
             self.promote(prepared, first)
 
+        replacement_tokens: list[str] = []
+        self.kernel.launch_admitted_task(
+            second.attempt_id,
+            second.claim_generation,
+            ("codex_semantic",),
+            lambda launch_token: replacement_tokens.append(launch_token) or "started",
+        )
+        self.kernel.release_resource_lease(
+            second.attempt_id,
+            second.claim_generation,
+            replacement_tokens[0],
+            terminal_evidence={
+                "evidence_class": "provider_terminal_result",
+                "provider": "task-test-provider",
+                "terminal_result_id": f"task-test-result-{second.attempt_id}",
+                "declared_outcome": "succeeded",
+                "observed_at": TASK_START,
+            },
+        )
         self.write_patch(prepared, second)
         self.complete(prepared, second)
         self.promote(prepared, second)

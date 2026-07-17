@@ -31,6 +31,51 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/control-store-identity.invalid.json"
     },
     {
+      "schema_name": "control-store-backup-manifest",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.invalid.json"
+    },
+    {
+      "schema_name": "control-store-recovery-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.invalid.json"
+    },
+    {
+      "schema_name": "orphaned-filesystem-commit-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/orphaned-filesystem-commit-report.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/orphaned-filesystem-commit-report.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/orphaned-filesystem-commit-report.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/orphaned-filesystem-commit-report.invalid.json"
+    },
+    {
+      "schema_name": "control-store-restore-state",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-restore-state.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-restore-state.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-restore-state.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-restore-state.invalid.json"
+    },
+    {
+      "schema_name": "control-store-restore-sentinel",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-restore-sentinel.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-restore-sentinel.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-restore-sentinel.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-restore-sentinel.invalid.json"
+    },
+    {
       "schema_name": "bootstrap-record",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/bootstrap-record.v1.schema.json",
@@ -100,6 +145,27 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/scaffold-ledger.invalid.json"
     },
     {
+      "schema_name": "resource-admission-configuration",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/resource-admission-configuration.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/resource-admission-configuration.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["resource-admission-configuration-v1"],
+      "canonical_instance": "schemas/video-workflow/v1/resource-admission.v1.json",
+      "positive_example": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.invalid.json"
+    },
+    {
+      "schema_name": "resource-lease-resolution-evidence",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/resource-lease-resolution-evidence.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/resource-lease-resolution-evidence.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["resource-lease-resolution-evidence-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.invalid.json"
+    },
+    {
       "schema_name": "subagent-task-envelope",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/subagent-task-envelope.v1.schema.json",
@@ -157,6 +223,16 @@
       "invariants": ["run-record-freshness-v2"],
       "positive_example": "tests/video_workflow/fixtures/contracts/run-record.v2.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/run-record.v2.invalid.json"
+    },
+    {
+      "schema_name": "subagent-task-envelope",
+      "schema_version": "2.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v2/subagent-task-envelope.v2.schema.json",
+      "schema_path": "schemas/video-workflow/v2/subagent-task-envelope.v2.schema.json",
+      "kind": "contract",
+      "invariants": ["task-envelope-bindings-v2"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.invalid.json"
     }
   ]
 }

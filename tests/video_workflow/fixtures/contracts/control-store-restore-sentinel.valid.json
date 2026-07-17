@@ -1,0 +1,17 @@
+{
+  "schema_name": "control-store-restore-sentinel",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "operation_id": "restore-00000000000000000000000000000000",
+  "operation": "restore",
+  "state": "PREPARED",
+  "backup_id": "backup-a",
+  "selected_backup_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "coordinator_session_id": "coordinator-restore-a",
+  "created_at": "2026-07-17T02:20:00+08:00",
+  "recovery_token_epoch": 1,
+  "recovery_token_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "state_path": "D:\\workspace\\待删除\\control-store-restores\\restore-00000000000000000000000000000000\\restore-state.json",
+  "state_revision": 1,
+  "state_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+}

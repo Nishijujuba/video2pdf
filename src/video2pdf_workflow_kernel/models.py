@@ -43,6 +43,31 @@ class ControlStoreHealth:
 
 
 @dataclass(frozen=True)
+class ResourceAdmissionState:
+    queue_id: str
+    task_id: str
+    attempt_id: str
+    run_id: str
+    fairness_group_id: str
+    batch_id: str | None
+    claim_generation: int
+    queue_state: str
+    required_resources: tuple[str, ...]
+    configuration_id: str
+    configuration_version: int
+    configuration_sha256: str
+    lease_id: str | None
+    lease_state: str | None
+    launch_token: str | None
+    launch_authorization_state: str | None
+    launch_required_resources: tuple[str, ...] | None
+    launch_eligible: bool
+    bypass_count: int
+    reservation_state: str
+    reservation_seq: int | None
+
+
+@dataclass(frozen=True)
 class TaskPreparationResult:
     run_id: str
     run_dir: Path
@@ -61,6 +86,7 @@ class TaskClaimResult:
     attempt_id: str
     claim_generation: int
     attempt_dir: Path
+    resource_admission: ResourceAdmissionState | None = None
     classification: str = "task_claimed"
 
 

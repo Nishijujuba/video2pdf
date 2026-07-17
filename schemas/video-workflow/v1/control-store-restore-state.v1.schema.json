@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-restore-state.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "kernel_version", "operation_id",
+    "backup_id", "selected_backup_sha256", "workspace_path", "backup_dir",
+    "coordinator_session_id", "restored_at", "selected_manifest",
+    "selected_backup_inventory", "writer_lock", "quarantined_artifacts",
+    "quarantined_live_inventory", "resource_inventory_gaps",
+    "recovery_token_epoch", "recovery_token_sha256", "state",
+    "state_revision", "state_history"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-restore-state"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "operation_id": {"type": "string", "pattern": "^restore-[0-9a-f]{32}$"},
+    "backup_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "selected_backup_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "workspace_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "backup_dir": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "restored_at": {"type": "string", "format": "date-time"},
+    "selected_manifest": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json"},
+    "selected_backup_inventory": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json#/$defs/resource_authority_inventory"},
+    "writer_lock": {"type": ["string", "null"], "enum": [null, "sqlite_exclusive", "atomic_directory_quarantine", "canonical_database_absent"]},
+    "quarantined_artifacts": {"type": "array", "items": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json#/$defs/quarantined_artifact"}},
+    "quarantined_live_inventory": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json#/$defs/resource_authority_inventory"}
+      ]
+    },
+    "resource_inventory_gaps": {"type": "array", "items": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json#/$defs/recovery_gap"}},
+    "recovery_token_epoch": {"type": "integer", "minimum": 1},
+    "recovery_token_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "recovery_report_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "recovery_report_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "orphan_report_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "orphan_report_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "state": {"enum": ["PREPARED", "OLD_MOVED", "NEW_PUBLISHED", "VALIDATED", "RECONCILING", "COMMITTED", "BLOCKED"]},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "state_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "recorded_at"],
+        "properties": {
+          "state": {"enum": ["PREPARED", "OLD_MOVED", "NEW_PUBLISHED", "VALIDATED", "RECONCILING", "COMMITTED", "BLOCKED"]},
+          "recorded_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["state"],
+        "properties": {"state": {"enum": ["COMMITTED", "BLOCKED"]}}
+      },
+      "then": {"required": ["recovery_report_path", "recovery_report_sha256"]}
+    },
+    {
+      "if": {
+        "anyOf": [
+          {"required": ["orphan_report_path"]},
+          {"required": ["orphan_report_sha256"]}
+        ]
+      },
+      "then": {"required": ["orphan_report_path", "orphan_report_sha256"]}
+    }
+  ]
+}

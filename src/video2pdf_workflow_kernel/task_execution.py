@@ -16,6 +16,7 @@ from .errors import (
     ContractError,
     ControlStoreUnavailable,
     KernelConflict,
+    ResourceAdmissionBlocked,
     TaskFault,
 )
 from .models import (
@@ -23,6 +24,10 @@ from .models import (
     TaskCompletionResult,
     TaskPreparationResult,
     TaskPromotionResult,
+)
+from .resource_admission import (
+    RESOURCE_CLAIM_FAULT_POINTS,
+    RESOURCE_RECLAIM_FAULT_POINTS,
 )
 from .prompts import generate_source_acquisition_prompt
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
@@ -33,10 +38,10 @@ PREPARATION_FAULT_POINTS = frozenset(
 )
 CLAIM_FAULT_POINTS = frozenset(
     {"after_claim_committed", "after_attempt_record_written"}
-)
+) | RESOURCE_CLAIM_FAULT_POINTS
 RECLAIM_FAULT_POINTS = frozenset(
     {"after_reclaim_committed", "after_reclaim_attempt_record_written"}
-)
+) | RESOURCE_RECLAIM_FAULT_POINTS
 COMPLETION_FAULT_POINTS = frozenset(
     {
         "after_completion_prepared",
@@ -333,6 +338,12 @@ class TaskExecution:
             record,
             logical_task_key=str(envelope["logical_task_key"]),
             prepared_at=str(envelope["prepared_at"]),
+            required_resources=(
+                tuple(envelope["resource_request"])
+                if envelope.get("schema_version") == "2.0.0"
+                else None
+            ),
+            batch_id=envelope.get("batch_id"),
         )
         if expected["task_id"] != task_id:
             raise ArtifactDrift("prepared Task deterministic identity drifted")
@@ -703,6 +714,8 @@ class TaskExecution:
         *,
         logical_task_key: str,
         prepared_at: str,
+        required_resources: tuple[str, ...] | None,
+        batch_id: str | None,
     ) -> tuple[dict[str, Any], bytes]:
         if not logical_task_key or any(
             char not in "abcdefghijklmnopqrstuvwxyz0123456789-"
@@ -724,8 +737,7 @@ class TaskExecution:
                 data={"drifted_paths": [source["path"]]},
             )
         prior = record["artifact_generations"].get("source_acquisition_decision")
-        identity = canonical_json_bytes(
-            {
+        identity_fields = {
                 "authority_kind": "kernel_run",
                 "run_id": record["run_id"],
                 "expected_coordination_revision": record["coordination_revision"],
@@ -736,7 +748,19 @@ class TaskExecution:
                 "prior_decision_generation": None if prior is None else prior["generation"],
                 "prior_decision_sha256": None if prior is None else prior["sha256"],
             }
-        )
+        if required_resources is not None:
+            if (
+                not required_resources
+                or tuple(sorted(required_resources)) != required_resources
+                or len(required_resources) != len(set(required_resources))
+            ):
+                raise ContractError(
+                    "Resource Request must be non-empty, unique, and stably sorted"
+                )
+            identity_fields["resource_request"] = list(required_resources)
+            identity_fields["fairness_group_id"] = batch_id or record["run_id"]
+            identity_fields["batch_id"] = batch_id
+        identity = canonical_json_bytes(identity_fields)
         task_id = hashlib.sha256(identity).hexdigest()[:32]
         task_root = f"workflow/tasks/{task_id}"
         prompt, provenance = generate_source_acquisition_prompt(self.project_root)
@@ -745,7 +769,7 @@ class TaskExecution:
         )
         envelope = {
             "schema_name": "subagent-task-envelope",
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0" if required_resources is not None else "1.0.0",
             "kernel_version": "2.0.0",
             "task_id": task_id,
             "logical_task_key": logical_task_key,
@@ -792,6 +816,11 @@ class TaskExecution:
                 "known_gaps",
             ],
         }
+        if required_resources is not None:
+            envelope["resource_request"] = list(required_resources)
+            envelope["fairness_group_id"] = batch_id or record["run_id"]
+            if batch_id is not None:
+                envelope["batch_id"] = batch_id
         self.contracts.validate("subagent-task-envelope", envelope)
         return envelope, prompt
 
@@ -801,6 +830,8 @@ class TaskExecution:
         *,
         logical_task_key: str,
         prepared_at: str,
+        required_resources: tuple[str, ...] | None = ("codex_semantic",),
+        batch_id: str | None = None,
         fault_point: str | None = None,
     ) -> TaskPreparationResult:
         if fault_point is not None and fault_point not in PREPARATION_FAULT_POINTS:
@@ -821,6 +852,8 @@ class TaskExecution:
             record,
             logical_task_key=logical_task_key,
             prepared_at=prepared_at,
+            required_resources=required_resources,
+            batch_id=batch_id,
         )
         task_id = envelope["task_id"]
         task_dir = self._safe_run_path(
@@ -901,6 +934,12 @@ class TaskExecution:
             record,
             logical_task_key=envelope["logical_task_key"],
             prepared_at=envelope["prepared_at"],
+            required_resources=(
+                tuple(envelope["resource_request"])
+                if envelope.get("schema_version") == "2.0.0"
+                else None
+            ),
+            batch_id=envelope.get("batch_id"),
         )
         if use_persisted_protected_snapshot:
             # Once a Claim durably binds the Envelope fingerprint, the prepared
@@ -982,6 +1021,13 @@ class TaskExecution:
             attempt_dir.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging, attempt_dir)
         _inject(fault_point, after_write_fault_point)
+        resource_admission = None
+        if envelope.get("schema_version") == "2.0.0":
+            from .resource_admission import ResourceAdmission
+
+            resource_admission = ResourceAdmission(self.kernel).status(
+                task_id, attempt_id
+            )
         return TaskClaimResult(
             run_id=envelope["authority_binding"]["run_id"],
             run_dir=run_dir,
@@ -989,6 +1035,7 @@ class TaskExecution:
             attempt_id=attempt_id,
             claim_generation=int(claim["claim_generation"]),
             attempt_dir=attempt_dir,
+            resource_admission=resource_admission,
         )
 
     def claim_task(
@@ -1010,17 +1057,42 @@ class TaskExecution:
             f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
         ).hexdigest()[:24]
         attempt_rel = f"workflow/tasks/{task_id}/attempts/{attempt_id}"
-        store = self.kernel._preflight_control_store()
-        claim = store.claim_task(
-            authority_id=record["run_id"],
-            task_id=task_id,
-            envelope_sha256=sha256_file(run_dir / envelope["task_root_path"] / "task.json"),
-            write_set=tuple(envelope["write_set"]),
-            attempt_path=attempt_rel,
-            coordinator_session_id=coordinator_session_id,
-            worker_id=worker_id,
-            claimed_at=_utc_now(),
-        )
+        if envelope.get("schema_version") == "2.0.0":
+            from .resource_admission import ResourceAdmission
+
+            claim = ResourceAdmission(self.kernel).claim_task(
+                authority_id=record["run_id"],
+                task_id=task_id,
+                envelope_sha256=sha256_file(
+                    run_dir / envelope["task_root_path"] / "task.json"
+                ),
+                write_set=tuple(envelope["write_set"]),
+                attempt_path=attempt_rel,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                claimed_at=_utc_now(),
+                required_resources=tuple(envelope["resource_request"]),
+                fairness_group_id=str(envelope["fairness_group_id"]),
+                batch_id=envelope.get("batch_id"),
+                fault_point=(
+                    fault_point
+                    if fault_point in RESOURCE_CLAIM_FAULT_POINTS
+                    else None
+                ),
+            )
+        else:
+            claim = self.kernel._preflight_control_store().claim_task(
+                authority_id=record["run_id"],
+                task_id=task_id,
+                envelope_sha256=sha256_file(
+                    run_dir / envelope["task_root_path"] / "task.json"
+                ),
+                write_set=tuple(envelope["write_set"]),
+                attempt_path=attempt_rel,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                claimed_at=_utc_now(),
+            )
         _inject(fault_point, "after_claim_committed")
         return self._create_attempt_record(
             run_dir,
@@ -1052,17 +1124,40 @@ class TaskExecution:
             f"task-attempt\0{task_id}\0{generation}".encode("utf-8")
         ).hexdigest()[:24]
         attempt_rel = f"workflow/tasks/{task_id}/attempts/{attempt_id}"
-        claim = self.kernel._preflight_control_store().reclaim_task(
-            authority_id=record["run_id"],
-            task_id=task_id,
-            expected_attempt_id=expected_attempt_id,
-            expected_claim_generation=expected_claim_generation,
-            attempt_path=attempt_rel,
-            coordinator_session_id=coordinator_session_id,
-            worker_id=worker_id,
-            reason=reason,
-            reclaimed_at=_utc_now(),
-        )
+        if envelope.get("schema_version") == "2.0.0":
+            from .resource_admission import ResourceAdmission
+
+            claim = ResourceAdmission(self.kernel).reclaim_task(
+                authority_id=record["run_id"],
+                task_id=task_id,
+                expected_attempt_id=expected_attempt_id,
+                expected_claim_generation=expected_claim_generation,
+                attempt_path=attempt_rel,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                reason=reason,
+                reclaimed_at=_utc_now(),
+                required_resources=tuple(envelope["resource_request"]),
+                fairness_group_id=str(envelope["fairness_group_id"]),
+                batch_id=envelope.get("batch_id"),
+                fault_point=(
+                    fault_point
+                    if fault_point in RESOURCE_RECLAIM_FAULT_POINTS
+                    else None
+                ),
+            )
+        else:
+            claim = self.kernel._preflight_control_store().reclaim_task(
+                authority_id=record["run_id"],
+                task_id=task_id,
+                expected_attempt_id=expected_attempt_id,
+                expected_claim_generation=expected_claim_generation,
+                attempt_path=attempt_rel,
+                coordinator_session_id=coordinator_session_id,
+                worker_id=worker_id,
+                reason=reason,
+                reclaimed_at=_utc_now(),
+            )
         _inject(fault_point, "after_reclaim_committed")
         return self._create_attempt_record(
             run_dir,
@@ -1123,6 +1218,23 @@ class TaskExecution:
             or claim["envelope_sha256"] != sha256_file(task_dir / "task.json")
         ):
             raise KernelConflict("Task Completion Gate fencing token is stale")
+        if envelope.get("schema_version") == "2.0.0":
+            resource = store.resource_status(task_id, attempt_id)
+            if (
+                resource is None
+                or int(resource["claim_generation"]) != claim_generation
+                or resource["state"] != "ADMITTED"
+                or resource["lease_state"] not in {"released", "resolved"}
+                or resource["launch_authorization_state"] != "COMPLETED"
+            ):
+                raise ResourceAdmissionBlocked(
+                    "Task Completion requires a confirmed Resource launch authority",
+                    data={
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "claim_generation": claim_generation,
+                    },
+                )
         if claim["attempt_state"] not in {
             "CLAIMED",
             "VALIDATED_WAITING_FOR_PROMOTION",

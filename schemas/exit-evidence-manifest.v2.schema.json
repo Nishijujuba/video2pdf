@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2]},
+        "number": {"enum": [1, 2, 3]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -88,9 +88,24 @@
       "properties": {
         "positive": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "negative": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "quota": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "fencing": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "fairness": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "restart": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "recovery": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       }
+    },
+    "result_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/resultBinding"}
+    },
+    "fault_points": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]{2,119}$"}
     },
     "artifact_fingerprints": {
       "type": "array",
@@ -121,7 +136,9 @@
             "name": {"const": "offline-source-ready-tracer"}
           }
         },
-        "slice_base_commit": {"const": "96089b99c9ae63fff61107e1920fc3481ffc0802"}
+        "slice_base_commit": {"const": "96089b99c9ae63fff61107e1920fc3481ffc0802"},
+        "result_bindings": false,
+        "fault_points": false
       }
     },
     {
@@ -133,7 +150,22 @@
           }
         },
         "slice_base_commit": {"const": "904f46409b87aca96aeecf5cb0be4855c2cfdafa"},
-        "results": {"required": ["fencing"]}
+        "results": {"required": ["fencing"]},
+        "result_bindings": false,
+        "fault_points": false
+      }
+    },
+    {
+      "required": ["result_bindings", "fault_points"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 3},
+            "name": {"const": "cross-run-resource-admission"}
+          }
+        },
+        "slice_base_commit": {"const": "aaaaeac5747fddc0915a59df34de47e6e8cfec48"},
+        "results": {"required": ["quota", "fencing", "fairness", "restart", "recovery"]}
       }
     }
   ],
@@ -162,6 +194,17 @@
         "actual_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
         "log": {"$ref": "#/$defs/fingerprintedArtifact"},
         "conforms": {"type": "boolean"}
+      }
+    },
+    "resultBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result_id", "result_kind", "command_id", "test_target"],
+      "properties": {
+        "result_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,119}$"},
+        "result_kind": {"enum": ["positive", "negative", "quota", "fencing", "fairness", "restart", "recovery"]},
+        "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "test_target": {"type": "string", "pattern": "^tests\\.video_workflow\\.[A-Za-z0-9_.]+$"}
       }
     }
   }

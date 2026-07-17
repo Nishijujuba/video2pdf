@@ -9,7 +9,8 @@ from typing import Any
 from .adapters import FixturePlatformAdapter
 from .contracts import ContractRegistry
 from .control_store import ControlStore
-from .errors import CliUsageError, KernelError
+from .control_store_recovery import ControlStoreRecovery
+from .errors import CliUsageError, ControlStoreUnavailable, KernelError
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult
 from .task_execution import (
@@ -36,6 +37,30 @@ def _parser() -> argparse.ArgumentParser:
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
+
+    store_backup = commands.add_parser("control-store-backup")
+    store_backup.add_argument("--workspace-root", required=True, type=Path)
+    store_backup.add_argument("--backup-dir", required=True, type=Path)
+    store_backup.add_argument("--backup-id", required=True)
+    store_backup.add_argument("--coordinator-session-id", required=True)
+    store_backup.add_argument("--created-at", required=True)
+
+    store_restore = commands.add_parser("control-store-restore")
+    store_restore.add_argument("--workspace-root", required=True, type=Path)
+    store_restore.add_argument("--backup-dir", required=True, type=Path)
+    store_restore.add_argument("--backup-id", required=True)
+    store_restore.add_argument("--coordinator-session-id", required=True)
+    store_restore.add_argument("--restored-at", required=True)
+
+    store_restore_resume = commands.add_parser("control-store-restore-resume")
+    store_restore_resume.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    store_restore_resume.add_argument("--operation-id", required=True)
+    store_restore_resume.add_argument("--resumed-at", required=True)
+
+    store_recovery_status = commands.add_parser("control-store-recovery-status")
+    store_recovery_status.add_argument("--workspace-root", required=True, type=Path)
 
     probe = commands.add_parser("bootstrap-probe")
     _add_trace_inputs(probe)
@@ -103,6 +128,65 @@ def _parser() -> argparse.ArgumentParser:
     task_promote.add_argument("--claim-generation", required=True, type=int)
     task_promote.add_argument("--fault-point", choices=sorted(PROMOTION_FAULT_POINTS))
 
+    resource_status = commands.add_parser("resource-status")
+    resource_status.add_argument("--workspace-root", required=True, type=Path)
+    resource_status.add_argument("--task-id", required=True)
+    resource_status.add_argument("--attempt-id", required=True)
+
+    resource_scheduler_status = commands.add_parser("resource-scheduler-status")
+    resource_scheduler_status.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+
+    resource_capacity_status = commands.add_parser("resource-capacity-status")
+    resource_capacity_status.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+
+    resource_config_activate = commands.add_parser("resource-config-activate")
+    resource_config_activate.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    resource_config_activate.add_argument(
+        "--configuration", required=True, type=Path
+    )
+
+    resource_breaker_set = commands.add_parser("resource-breaker-set")
+    resource_breaker_set.add_argument("--workspace-root", required=True, type=Path)
+    resource_breaker_set.add_argument("--resource-class", required=True)
+    resource_breaker_set.add_argument(
+        "--state", required=True, choices=("open", "closed")
+    )
+    resource_breaker_set.add_argument("--reason", required=True)
+    resource_breaker_set.add_argument(
+        "--platform", choices=("bilibili", "youtube")
+    )
+
+    resource_breaker_status = commands.add_parser("resource-breaker-status")
+    resource_breaker_status.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+
+    resource_reconcile = commands.add_parser("resource-reconcile")
+    resource_reconcile.add_argument("--workspace-root", required=True, type=Path)
+    resource_reconcile.add_argument(
+        "--current-coordinator-session-id", required=True
+    )
+    resource_reconcile.add_argument(
+        "--lost-coordinator-session-id", action="append", default=[]
+    )
+
+    resource_resolve = commands.add_parser("resource-resolve")
+    resource_resolve.add_argument("--workspace-root", required=True, type=Path)
+    resource_resolve.add_argument("--lease-id", required=True)
+    resource_resolve.add_argument("--attempt-id", required=True)
+    resource_resolve.add_argument(
+        "--expected-claim-generation", required=True, type=int
+    )
+    resource_resolve.add_argument(
+        "--resolution-evidence", required=True, type=Path
+    )
+
     capability = commands.add_parser("adapter-capability-check")
     capability.add_argument("--fixture", required=True, type=Path)
     capability.add_argument("--capability", required=True)
@@ -158,8 +242,87 @@ def _error(command: str, error: KernelError) -> dict:
     }
 
 
+def _resource_status_data(status: Any) -> dict[str, Any]:
+    return {
+        "queue_id": status.queue_id,
+        "task_id": status.task_id,
+        "attempt_id": status.attempt_id,
+        "claim_generation": status.claim_generation,
+        "queue_state": status.queue_state,
+        "required_resources": list(status.required_resources),
+        "configuration_id": status.configuration_id,
+        "configuration_version": status.configuration_version,
+        "configuration_sha256": status.configuration_sha256,
+        "lease_id": status.lease_id,
+        "lease_state": status.lease_state,
+        "bypass_count": status.bypass_count,
+        "reservation_state": status.reservation_state,
+        "reservation_seq": status.reservation_seq,
+        "launch_authorization_state": status.launch_authorization_state,
+        "launch_required_resources": (
+            None
+            if status.launch_required_resources is None
+            else list(status.launch_required_resources)
+        ),
+        "launch_eligible": status.launch_eligible,
+    }
+
+
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "control-store-restore":
+        result = ControlStoreRecovery(
+            args.workspace_root,
+            project_root=project_root,
+        ).restore_selected(
+            args.backup_dir,
+            backup_id=args.backup_id,
+            coordinator_session_id=args.coordinator_session_id,
+            restored_at=args.restored_at,
+        )
+        if result["classification"] != "control_store_restore_complete":
+            evidence_path = result.get("orphan_report_path") or result["report_path"]
+            raise ControlStoreUnavailable(
+                "Control Store restore completed with unresolved global authority",
+                data={**result, "evidence_path": str(evidence_path)},
+            )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["report_path"]),
+        )
+    if command == "control-store-restore-resume":
+        result = ControlStoreRecovery(
+            args.workspace_root,
+            project_root=project_root,
+        ).resume_restore(
+            operation_id=args.operation_id,
+            resumed_at=args.resumed_at,
+        )
+        if result["classification"] != "control_store_restore_complete":
+            evidence_path = result.get("orphan_report_path") or result["report_path"]
+            raise ControlStoreUnavailable(
+                "Control Store restore resume completed with unresolved global authority",
+                data={**result, "evidence_path": str(evidence_path)},
+            )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["report_path"]),
+        )
+    if command == "control-store-recovery-status":
+        result = ControlStoreRecovery(
+            args.workspace_root,
+            project_root=project_root,
+        ).diagnostic_status()
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            result.get("recovery_report_path") or result.get("sentinel_path"),
+        )
     if command == "contracts-check":
         registry = ContractRegistry(project_root, args.registry)
         return _ok(command, "contracts_valid", registry.check(), str(registry.registry_path))
@@ -179,6 +342,20 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "atomic_replace_checked": health.atomic_replace_checked,
             },
             str(health.path),
+        )
+    if command == "control-store-backup":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        result = kernel.backup_control_store(
+            args.backup_dir,
+            backup_id=args.backup_id,
+            coordinator_session_id=args.coordinator_session_id,
+            created_at=args.created_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["manifest_path"]),
         )
     if command == "bootstrap-probe":
         kernel = VideoWorkflowKernel(args.workspace_root)
@@ -317,6 +494,28 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "attempt_id": result.attempt_id,
                 "claim_generation": result.claim_generation,
                 "attempt_dir": str(result.attempt_dir),
+                "resource_admission": (
+                    None
+                    if result.resource_admission is None
+                    else {
+                        "queue_id": result.resource_admission.queue_id,
+                        "queue_state": result.resource_admission.queue_state,
+                        "required_resources": list(
+                            result.resource_admission.required_resources
+                        ),
+                        "configuration_id": result.resource_admission.configuration_id,
+                        "configuration_version": result.resource_admission.configuration_version,
+                        "configuration_sha256": result.resource_admission.configuration_sha256,
+                        "lease_id": result.resource_admission.lease_id,
+                        "lease_state": result.resource_admission.lease_state,
+                        "bypass_count": result.resource_admission.bypass_count,
+                        "reservation_state": result.resource_admission.reservation_state,
+                        "reservation_seq": result.resource_admission.reservation_seq,
+                        "launch_authorization_state": result.resource_admission.launch_authorization_state,
+                        "launch_required_resources": result.resource_admission.launch_required_resources,
+                        "launch_eligible": result.resource_admission.launch_eligible,
+                    }
+                ),
             },
             str(result.attempt_dir / "attempt.json"),
         )
@@ -340,6 +539,90 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "claim_generation": result.claim_generation,
             },
             str(result.completion_path),
+        )
+    if command == "resource-status":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        status = kernel.resource_status(args.task_id, args.attempt_id)
+        return _ok(
+            command,
+            "resource_admission_status",
+            _resource_status_data(status),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-scheduler-status":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        return _ok(
+            command,
+            "resource_scheduler_status",
+            kernel.resource_scheduler_status(),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-capacity-status":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        return _ok(
+            command,
+            "resource_capacity_status",
+            kernel.resource_capacity_status(),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-config-activate":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        return _ok(
+            command,
+            "resource_configuration_activated",
+            kernel.activate_resource_configuration(
+                read_json(args.configuration.resolve())
+            ),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-breaker-set":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        return _ok(
+            command,
+            "resource_circuit_breaker_updated",
+            kernel.set_resource_circuit_breaker(
+                args.resource_class,
+                state=args.state,
+                reason=args.reason,
+                platform=args.platform,
+            ),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-breaker-status":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        return _ok(
+            command,
+            "resource_circuit_breaker_status",
+            {"breakers": kernel.resource_circuit_breaker_status()},
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-reconcile":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        result = kernel.resource_reconcile(
+            current_coordinator_session_id=args.current_coordinator_session_id,
+            lost_coordinator_session_ids=tuple(
+                args.lost_coordinator_session_id
+            ),
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
+        )
+    if command == "resource-resolve":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        status = kernel.resource_resolve(
+            args.lease_id,
+            args.attempt_id,
+            args.expected_claim_generation,
+            resolution_evidence=read_json(args.resolution_evidence.resolve()),
+        )
+        return _ok(
+            command,
+            "resource_lease_resolved",
+            _resource_status_data(status),
+            str(args.workspace_root / ".workflow-control/control.sqlite3"),
         )
     if command == "task-promote":
         run_dir = args.run_dir.resolve()

@@ -1,0 +1,1 @@
+{"schema_name":"resource-lease-resolution-evidence","schema_version":"1.0.0","kernel_version":"2.0.0","lease_id":"bad","attempt_id":"bad","claim_generation":0,"evidence_class":"local_process_terminated","declared_outcome":"terminated","observed_at":"no-time","evidence":{"pid":1234}}

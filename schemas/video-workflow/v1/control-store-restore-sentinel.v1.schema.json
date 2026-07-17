@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-restore-sentinel.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "kernel_version", "operation_id",
+    "operation", "state", "backup_id", "selected_backup_sha256",
+    "coordinator_session_id", "created_at", "recovery_token_epoch",
+    "recovery_token_sha256", "state_path", "state_revision", "state_sha256"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-restore-sentinel"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "operation_id": {"type": "string", "pattern": "^restore-[0-9a-f]{32}$"},
+    "operation": {"const": "restore"},
+    "state": {"enum": ["PREPARED", "OLD_MOVED", "NEW_PUBLISHED", "VALIDATED", "RECONCILING", "COMMITTED", "BLOCKED"]},
+    "backup_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "selected_backup_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "recovery_token_epoch": {"type": "integer", "minimum": 1},
+    "recovery_token_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "state_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "state_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "orphan_report_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "orphan_report_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "recovery_report_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "recovery_report_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "failure": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {"enum": ["COMMITTED", "BLOCKED"]}
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["recovery_report_path", "recovery_report_sha256"]
+      }
+    },
+    {
+      "if": {"required": ["recovery_report_path"]},
+      "then": {"required": ["recovery_report_sha256"]}
+    },
+    {
+      "if": {"required": ["recovery_report_sha256"]},
+      "then": {"required": ["recovery_report_path"]}
+    }
+  ]
+}

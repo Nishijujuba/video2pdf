@@ -34,6 +34,20 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
 TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
 TASK_START = "2026-07-15T01:02:03+08:00"
+RESOURCE_V8_TABLES = (
+    "resource_lease_resources",
+    "resource_leases",
+    "resource_control_events",
+    "resource_circuit_breakers",
+    "resource_fairness_cursors",
+    "resource_queue_entries",
+    "resource_sequences",
+    "resource_configurations",
+)
+
+
+def trusted_transaction_provider_verifier(**identity: object) -> str:
+    return f"provider-proof://transaction-scope/{identity['terminal_result_id']}"
 
 
 class ControlStoreTransactionScopeTests(unittest.TestCase):
@@ -79,6 +93,25 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
             prepared.task_id,
             coordinator_session_id="transaction-coordinator",
             worker_id=f"worker-{logical_task_key}",
+        )
+        launch_tokens: list[str] = []
+        kernel.launch_admitted_task(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            ("codex_semantic",),
+            lambda launch_token: launch_tokens.append(launch_token) or "started",
+        )
+        kernel.release_resource_lease(
+            claimed.attempt_id,
+            claimed.claim_generation,
+            launch_tokens[0],
+            terminal_evidence={
+                "evidence_class": "provider_terminal_result",
+                "provider": "transaction-scope-provider",
+                "terminal_result_id": f"transaction-scope-{claimed.attempt_id}",
+                "declared_outcome": "succeeded",
+                "observed_at": TASK_START,
+            },
         )
         envelope = read_json(prepared.envelope_path)
         output = claimed.attempt_dir / "o/p.json"
@@ -183,7 +216,12 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
 
     def test_claim_overlap_scan_runs_in_read_snapshot_before_writer_lock(self) -> None:
         workspace = self.new_workspace("claim-overlap-phase")
-        kernel = VideoWorkflowKernel(workspace)
+        kernel = VideoWorkflowKernel(
+            workspace,
+            resource_provider_verifiers={
+                "transaction-scope-provider": trusted_transaction_provider_verifier,
+            },
+        )
         run_dir = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start=TASK_START,
@@ -249,7 +287,12 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
 
     def test_promotion_and_run_state_authority_work_precedes_writer_lock(self) -> None:
         workspace = self.new_workspace("promotion-writer-phase")
-        kernel = VideoWorkflowKernel(workspace)
+        kernel = VideoWorkflowKernel(
+            workspace,
+            resource_provider_verifiers={
+                "transaction-scope-provider": trusted_transaction_provider_verifier,
+            },
+        )
         run_dir = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start=TASK_START,
@@ -262,8 +305,11 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
         )
         observed_operations: list[str] = []
         writer_phase_violations: list[str] = []
+        instrument_authority_work = True
 
         def observe(operation: str) -> None:
+            if not instrument_authority_work:
+                return
             observed_operations.append(operation)
             probe = sqlite3.connect(
                 kernel.control_store.path,
@@ -364,11 +410,15 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
             )
             self.assertIsNotNone(first_intent)
 
-            second, second_claim = self.prepare_completed_task(
-                kernel,
-                run_dir,
-                logical_task_key="transaction-promotion-abort",
-            )
+            instrument_authority_work = False
+            try:
+                second, second_claim = self.prepare_completed_task(
+                    kernel,
+                    run_dir,
+                    logical_task_key="transaction-promotion-abort",
+                )
+            finally:
+                instrument_authority_work = True
             with self.assertRaises(TaskFault):
                 kernel.promote_task(
                     run_dir,
@@ -521,8 +571,12 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
         )
         with sqlite3.connect(kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            for table in RESOURCE_V8_TABLES:
+                connection.execute(f"DROP TABLE IF EXISTS {table}")
             connection.execute("DROP TABLE task_claim_authorities")
-            connection.execute("DELETE FROM schema_migrations WHERE version=7")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (7, 8)"
+            )
 
         original_read_json = control_store_module.read_json
         original_sha256_file = control_store_module.sha256_file
@@ -573,7 +627,7 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(inspected), 2)
         self.assertEqual(writer_phase_violations, [])
-        self.assertEqual(migrated.control_store.check().schema_version, 7)
+        self.assertEqual(migrated.control_store.check().schema_version, 8)
 
     def test_concurrent_valid_mutations_retry_without_lost_updates(self) -> None:
         store = self.new_store("concurrent-valid")

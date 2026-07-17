@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/resource-admission-configuration.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "configuration_id", "configuration_version", "bypass_threshold", "resources"],
+  "properties": {
+    "schema_name": {"const": "resource-admission-configuration"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "configuration_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+    "configuration_version": {"type": "integer", "minimum": 1},
+    "bypass_threshold": {"type": "integer", "minimum": 1, "maximum": 100000},
+    "resources": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_class", "capacity"],
+        "properties": {
+          "resource_class": {
+            "enum": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"]
+          },
+          "capacity": {"type": "integer", "minimum": 0, "maximum": 64}
+        }
+      }
+    }
+  }
+}

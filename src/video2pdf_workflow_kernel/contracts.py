@@ -59,9 +59,12 @@ KNOWN_INVARIANTS = frozenset(
         "run-record-freshness-v2",
         "scaffold-contract-directories-v1",
         "source-manifest-paths-and-fingerprints-v1",
+        "resource-admission-configuration-v1",
+        "resource-lease-resolution-evidence-v1",
         "task-attempt-path-v1",
         "task-completion-bindings-v1",
         "task-envelope-bindings-v1",
+        "task-envelope-bindings-v2",
         "task-promotion-journal-paths-v1",
     }
 )
@@ -241,6 +244,73 @@ def _validate_task_envelope(instance: dict[str, Any]) -> None:
         _validate_project_relative_path(source["path"], prefix="prompts")
 
 
+def _validate_resource_admission_configuration(instance: dict[str, Any]) -> None:
+    expected = {
+        "bilibili_download",
+        "youtube_download",
+        "whisper",
+        "codex_semantic",
+        "latex",
+        "pdf_render",
+        "visual_acceptance",
+    }
+    actual = [item["resource_class"] for item in instance["resources"]]
+    if len(actual) != len(set(actual)) or set(actual) != expected:
+        raise ContractError(
+            "Resource Admission Configuration must define every Resource Class exactly once"
+        )
+
+
+def _validate_task_envelope_v2(instance: dict[str, Any]) -> None:
+    _validate_task_envelope(instance)
+    resources = instance["resource_request"]
+    if resources != sorted(resources):
+        raise ContractError("Task Envelope Resource Request must use stable sorted order")
+    run_id = instance["authority_binding"]["run_id"]
+    batch_id = instance.get("batch_id")
+    expected_group = batch_id if batch_id is not None else run_id
+    if instance["fairness_group_id"] != expected_group:
+        raise ContractError(
+            "Task Envelope Fairness Group must equal its Batch or standalone Run identity"
+        )
+
+
+def _validate_resource_lease_resolution_evidence(instance: dict[str, Any]) -> None:
+    evidence_class = instance["evidence_class"]
+    evidence = instance["evidence"]
+    expected_keys = {
+        "local_process_terminated": {
+            "pid",
+            "process_creation_identity",
+            "launch_token",
+            "inspection_proof_reference",
+        },
+        "provider_terminal_result": {
+            "provider",
+            "terminal_result_id",
+            "verification_proof_reference",
+        },
+        "explicit_human_resolution": {
+            "reason",
+            "observed_termination_basis",
+            "coordinator_identity",
+        },
+    }
+    allowed_outcomes = {
+        "local_process_terminated": {"terminated"},
+        "provider_terminal_result": {"succeeded", "failed", "cancelled"},
+        "explicit_human_resolution": {"terminated"},
+    }
+    if set(evidence) != expected_keys[evidence_class]:
+        raise ContractError(
+            "Resource Lease resolution evidence shape disagrees with its class"
+        )
+    if instance["declared_outcome"] not in allowed_outcomes[evidence_class]:
+        raise ContractError(
+            "Resource Lease resolution outcome disagrees with its evidence class"
+        )
+
+
 def _validate_task_attempt(instance: dict[str, Any]) -> None:
     expected = (
         f"workflow/tasks/{instance['task_id']}/attempts/{instance['attempt_id']}"
@@ -294,11 +364,14 @@ INVARIANT_VALIDATORS = {
     "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,
     "run-record-freshness-v2": _validate_task_capable_run_record,
+    "resource-admission-configuration-v1": _validate_resource_admission_configuration,
+    "resource-lease-resolution-evidence-v1": _validate_resource_lease_resolution_evidence,
     "scaffold-contract-directories-v1": _validate_scaffold_contract,
     "source-manifest-paths-and-fingerprints-v1": _validate_source_manifest,
     "task-attempt-path-v1": _validate_task_attempt,
     "task-completion-bindings-v1": _validate_task_completion,
     "task-envelope-bindings-v1": _validate_task_envelope,
+    "task-envelope-bindings-v2": _validate_task_envelope_v2,
     "task-promotion-journal-paths-v1": _validate_task_promotion_journal,
 }
 

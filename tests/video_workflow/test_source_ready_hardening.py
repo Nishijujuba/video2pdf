@@ -23,6 +23,16 @@ FIXTURE = (
     PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "source-ready-tracer"
 )
 CONTRACT_FIXTURES = PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "contracts"
+RESOURCE_V8_TABLES = (
+    "resource_lease_resources",
+    "resource_leases",
+    "resource_control_events",
+    "resource_circuit_breakers",
+    "resource_fairness_cursors",
+    "resource_queue_entries",
+    "resource_sequences",
+    "resource_configurations",
+)
 TEST_RUNS = PROJECT_ROOT / "待删除" / "kernel-hardening-test-runs"
 
 
@@ -344,6 +354,8 @@ class PersistenceHardeningTests(unittest.TestCase):
         }
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            for table in RESOURCE_V8_TABLES:
+                connection.execute(f"DROP TABLE IF EXISTS {table}")
             columns = {
                 row[1]
                 for row in connection.execute(
@@ -370,7 +382,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 7)
+        self.assertEqual(migrated.control_store.check().schema_version, 8)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -543,8 +555,15 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "artifact-plan",
                 "bootstrap-record",
                 "common-definitions",
+                "control-store-backup-manifest",
                 "control-store-identity",
+                "control-store-recovery-report",
+                "control-store-restore-sentinel",
+                "control-store-restore-state",
                 "fixture-package",
+                "orphaned-filesystem-commit-report",
+                "resource-admission-configuration",
+                "resource-lease-resolution-evidence",
                 "run-record",
                 "scaffold-contract",
                 "scaffold-ledger",

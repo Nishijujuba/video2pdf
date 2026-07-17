@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/resource-lease-resolution-evidence.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "lease_id", "attempt_id", "claim_generation", "evidence_class", "declared_outcome", "observed_at", "evidence"],
+  "properties": {
+    "schema_name": {"const": "resource-lease-resolution-evidence"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "lease_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+    "claim_generation": {"type": "integer", "minimum": 1},
+    "evidence_class": {"enum": ["local_process_terminated", "provider_terminal_result", "explicit_human_resolution"]},
+    "declared_outcome": {"enum": ["terminated", "succeeded", "failed", "cancelled"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "evidence": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"evidence_class": {"const": "local_process_terminated"}}, "required": ["evidence_class"]},
+      "then": {
+        "properties": {
+          "declared_outcome": {"const": "terminated"},
+          "evidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["pid", "process_creation_identity", "launch_token", "inspection_proof_reference"],
+            "properties": {
+              "pid": {"type": "integer", "minimum": 1},
+              "process_creation_identity": {"type": "string", "minLength": 1},
+              "launch_token": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+              "inspection_proof_reference": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"evidence_class": {"const": "provider_terminal_result"}}, "required": ["evidence_class"]},
+      "then": {
+        "properties": {
+          "declared_outcome": {"enum": ["succeeded", "failed", "cancelled"]},
+          "evidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["provider", "terminal_result_id", "verification_proof_reference"],
+            "properties": {
+              "provider": {"type": "string", "minLength": 1},
+              "terminal_result_id": {"type": "string", "minLength": 1},
+              "verification_proof_reference": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"evidence_class": {"const": "explicit_human_resolution"}}, "required": ["evidence_class"]},
+      "then": {
+        "properties": {
+          "declared_outcome": {"const": "terminated"},
+          "evidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["reason", "observed_termination_basis", "coordinator_identity"],
+            "properties": {
+              "reason": {"type": "string", "minLength": 1},
+              "observed_termination_basis": {"type": "string", "minLength": 1},
+              "coordinator_identity": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

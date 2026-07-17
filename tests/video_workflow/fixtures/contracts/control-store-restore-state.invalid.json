@@ -1,0 +1,23 @@
+{
+  "schema_name": "control-store-restore-state",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "operation_id": "restore-00000000000000000000000000000000",
+  "backup_id": "backup-a",
+  "selected_backup_sha256": "invalid",
+  "workspace_path": "D:\\workspace",
+  "backup_dir": "D:\\backups\\backup-a",
+  "coordinator_session_id": "coordinator-restore-a",
+  "restored_at": "2026-07-17T02:20:00+08:00",
+  "selected_manifest": {},
+  "selected_backup_inventory": {"status": "absent", "active_claims": [], "nonterminal_leases": [], "resource_usage": null},
+  "writer_lock": null,
+  "quarantined_artifacts": [],
+  "quarantined_live_inventory": null,
+  "resource_inventory_gaps": [],
+  "recovery_token_epoch": 1,
+  "recovery_token_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "state": "PREPARED",
+  "state_revision": -1,
+  "state_history": []
+}

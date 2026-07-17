@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "backup_id",
+    "operation_id",
+    "created_at",
+    "coordinator_session_id",
+    "snapshot_method",
+    "quiescence_proven",
+    "store_id",
+    "workspace_path",
+    "control_store_schema_version",
+    "candidate_integrity",
+    "active_resource_configuration",
+    "run_authorities",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-backup-manifest"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "backup_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "operation_id": {"type": "string", "pattern": "^backup-[0-9a-f]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "snapshot_method": {"const": "sqlite_backup_api"},
+    "quiescence_proven": {"const": true},
+    "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "workspace_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "control_store_schema_version": {"const": 8},
+    "candidate_integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "quick_check", "foreign_keys", "exact_schema_and_semantics"],
+      "properties": {
+        "status": {"const": "ok"},
+        "quick_check": {"const": "ok"},
+        "foreign_keys": {"const": "ok"},
+        "exact_schema_and_semantics": {"const": "passed"}
+      }
+    },
+    "active_resource_configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configuration_id", "configuration_version", "configuration_sha256"],
+      "properties": {
+        "configuration_id": {"type": "string", "minLength": 1},
+        "configuration_version": {"type": "integer", "minimum": 1},
+        "configuration_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "run_authorities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"}
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database", "marker", "anchor"],
+      "properties": {
+        "database": {"$ref": "#/$defs/database_artifact"},
+        "marker": {"$ref": "#/$defs/marker_artifact"},
+        "anchor": {"$ref": "#/$defs/anchor_artifact"}
+      }
+    }
+  },
+  "$defs": {
+    "database_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"const": "control.sqlite3"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "marker_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"const": "control-store.json"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "anchor_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"const": "anchor.json"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    }
+  }
+}

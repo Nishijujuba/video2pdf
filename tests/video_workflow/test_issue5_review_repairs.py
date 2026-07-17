@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import sqlite3
@@ -9,6 +10,8 @@ import sys
 import unittest
 import uuid
 from unittest import mock
+
+from jsonschema import Draft202012Validator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +29,10 @@ from video2pdf_workflow_kernel.errors import (  # noqa: E402
     UnknownContractVersion,
 )
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
-from video2pdf_workflow_kernel.task_execution import TaskExecution  # noqa: E402
+from video2pdf_workflow_kernel.task_execution import (  # noqa: E402
+    RECLAIM_FAULT_POINTS,
+    TaskExecution,
+)
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
     read_json,
@@ -1525,10 +1531,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             )
 
     def test_reclaim_faults_resume_same_replacement_and_conflicts_reject(self) -> None:
-        for fault_point in (
-            "after_reclaim_committed",
-            "after_reclaim_attempt_record_written",
-        ):
+        for fault_point in sorted(RECLAIM_FAULT_POINTS):
             with self.subTest(fault_point=fault_point):
                 self.initialize(fault_point)
                 prepared = self.prepare()
@@ -2418,6 +2421,81 @@ class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
 
 
 class ContractAndPromptRepairTests(unittest.TestCase):
+    def test_slice2_evidence_semantics_bind_required_fencing_identity(self) -> None:
+        path = PROJECT_ROOT / "scripts/validate_slice_exit_evidence.py"
+        spec = importlib.util.spec_from_file_location("slice2_evidence_validator", path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+
+        manifest = read_json(
+            PROJECT_ROOT / "evidence/slice-02/exit-evidence-manifest.json"
+        )
+        fencing_identity = "late_and_superseded_workers_are_fenced"
+        for identities in manifest["results"].values():
+            if fencing_identity in identities:
+                identities.remove(fencing_identity)
+        manifest["results"]["fencing"] = [fencing_identity]
+        validator.validate_semantics(manifest)
+
+        unrelated = copy.deepcopy(manifest)
+        unrelated["results"]["fencing"] = ["unrelated_fencing_claim"]
+        with self.assertRaisesRegex(
+            validator.EvidenceError, "fencing evidence is incomplete"
+        ):
+            validator.validate_semantics(unrelated)
+
+        duplicated = copy.deepcopy(manifest)
+        duplicated["results"]["fencing"].append(
+            duplicated["results"]["positive"][0]
+        )
+        with self.assertRaisesRegex(
+            validator.EvidenceError, "unique across evidence kinds"
+        ):
+            validator.validate_semantics(duplicated)
+
+    def test_slice2_exit_evidence_requires_first_class_fencing_results(self) -> None:
+        schema = read_json(
+            PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
+        )
+        validator = Draft202012Validator(schema)
+        manifest = read_json(
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/exit_evidence_manifest.v2.valid.json"
+        )
+
+        self.assertEqual(list(validator.iter_errors(manifest)), [])
+
+        manifest["slice"] = {
+            "number": 2,
+            "name": "fenced-task-execution-and-promotion",
+        }
+        manifest["slice_base_commit"] = (
+            "904f46409b87aca96aeecf5cb0be4855c2cfdafa"
+        )
+        missing_fencing = list(validator.iter_errors(manifest))
+
+        def error_tree(error):
+            yield error
+            for child in error.context:
+                yield from error_tree(child)
+
+        self.assertTrue(
+            any(
+                error.validator == "required"
+                and "'fencing' is a required property" in error.message
+                for root_error in missing_fencing
+                for error in error_tree(root_error)
+            ),
+            missing_fencing,
+        )
+
+        manifest["results"]["fencing"] = [
+            "claim_generation_blocks_late_worker_publication"
+        ]
+        self.assertEqual(list(validator.iter_errors(manifest)), [])
+
     def test_run_record_versions_share_true_identity_and_major_paths(self) -> None:
         manifest = read_json(PROJECT_ROOT / "schemas/video-workflow/registry.v1.json")
         run_entries = [
@@ -2501,6 +2579,10 @@ class ContractAndPromptRepairTests(unittest.TestCase):
             "raw_writer_race_invalidates_stale_preflight",
             "legacy_migration_artifact_validation_precedes_writer_lock",
             "concurrent_valid_mutations_retry_without_lost_updates",
+            "public_task_cli_covers_reclaim_and_promotion_recovery",
+            "public_cli_reclaim_fences_prior_attempt",
+            "preparation_boundaries_resume_idempotently",
+            "reclaim_boundaries_resume_idempotently",
         ):
             self.assertIn(result_name, collector)
         self.assertIn('"slice2-review-repairs"', validator)

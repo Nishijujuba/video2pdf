@@ -28,6 +28,9 @@ from .prompts import generate_source_acquisition_prompt
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
+PREPARATION_FAULT_POINTS = frozenset(
+    {"after_task_root_published"}
+)
 CLAIM_FAULT_POINTS = frozenset(
     {"after_claim_committed", "after_attempt_record_written"}
 )
@@ -798,7 +801,10 @@ class TaskExecution:
         *,
         logical_task_key: str,
         prepared_at: str,
+        fault_point: str | None = None,
     ) -> TaskPreparationResult:
+        if fault_point is not None and fault_point not in PREPARATION_FAULT_POINTS:
+            raise ContractError(f"unknown Task preparation fault point: {fault_point}")
         run_dir = run_dir.resolve()
         # Task creation is a Run resume boundary.  Reconcile every registered
         # Source and Task authority before deriving or writing another Task
@@ -837,6 +843,7 @@ class TaskExecution:
                 os.replace(staging, task_dir)
             except FileExistsError:
                 self._verify_task_files(run_dir, envelope, prompt)
+            _inject(fault_point, "after_task_root_published")
         return TaskPreparationResult(
             run_id=record["run_id"],
             run_dir=run_dir,

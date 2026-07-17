@@ -41,6 +41,7 @@ SLICE_CONFIGS = {
             "slice1-syntax",
             "slice1-diff-check",
         ],
+        "result_kinds": ["positive", "negative", "recovery"],
     },
     2: {
         "base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
@@ -61,6 +62,8 @@ SLICE_CONFIGS = {
             "slice2-syntax",
             "slice2-diff-check",
         ],
+        "result_kinds": ["positive", "negative", "fencing", "recovery"],
+        "required_fencing_results": ["late_and_superseded_workers_are_fenced"],
     },
 }
 
@@ -201,9 +204,24 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError(
             "Slice Exit Evidence checkpoints differ from the registered Slice authority"
         )
+    config = slice_config(manifest)
+    result_identities = [
+        identity
+        for values in manifest["results"].values()
+        for identity in values
+    ]
+    if len(result_identities) != len(set(result_identities)):
+        raise EvidenceError("result identities must be unique across evidence kinds")
+    missing_fencing = set(config.get("required_fencing_results", [])) - set(
+        manifest["results"].get("fencing", [])
+    )
+    if missing_fencing:
+        raise EvidenceError(
+            f"Slice fencing evidence is incomplete: {sorted(missing_fencing)}"
+        )
     derived_pass = (
         all(command["conforms"] for command in commands)
-        and all(manifest["results"][kind] for kind in ("positive", "negative", "recovery"))
+        and all(manifest["results"][kind] for kind in config["result_kinds"])
         and not any(item["blocking"] for item in manifest["unresolved_exceptions"])
     )
     if (manifest["overall_decision"] == "pass") != derived_pass:

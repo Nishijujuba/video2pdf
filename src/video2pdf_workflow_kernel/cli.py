@@ -15,6 +15,7 @@ from .models import BootstrapProbeResult
 from .task_execution import (
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
+    PREPARATION_FAULT_POINTS,
     PROMOTION_FAULT_POINTS,
     RECLAIM_FAULT_POINTS,
 )
@@ -69,6 +70,7 @@ def _parser() -> argparse.ArgumentParser:
     task_prepare.add_argument("--run-dir", required=True, type=Path)
     task_prepare.add_argument("--logical-task-key", required=True)
     task_prepare.add_argument("--prepared-at")
+    task_prepare.add_argument("--fault-point", choices=sorted(PREPARATION_FAULT_POINTS))
 
     task_claim = commands.add_parser("task-claim")
     task_claim.add_argument("--run-dir", required=True, type=Path)
@@ -271,6 +273,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             run_dir,
             logical_task_key=args.logical_task_key,
             prepared_at=args.prepared_at or record["task_start"],
+            fault_point=args.fault_point,
         )
         return _ok(
             command,

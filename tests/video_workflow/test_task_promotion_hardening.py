@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import uuid
@@ -28,6 +29,7 @@ from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
 from video2pdf_workflow_kernel.task_execution import (  # noqa: E402
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
+    PREPARATION_FAULT_POINTS,
     PROMOTION_FAULT_POINTS,
     TaskExecution,
     _is_link_or_reparse,
@@ -65,11 +67,12 @@ class Slice2Harness:
             request_id=f"s2-{identity}",
         ).run_dir
 
-    def prepare(self, key: str = "source-acquisition-decision"):
+    def prepare(self, key: str = "source-acquisition-decision", **kwargs):
         return self.kernel.prepare_source_acquisition_task(
             self.run_dir,
             logical_task_key=key,
             prepared_at=TASK_START,
+            **kwargs,
         )
 
     def claim(self, prepared, **kwargs):
@@ -127,6 +130,33 @@ class Slice2Harness:
 
 
 class TaskPersistenceBoundaryTests(unittest.TestCase, Slice2Harness):
+    def test_every_preparation_persistence_boundary_is_idempotently_resumable(self) -> None:
+        for fault_point in sorted(PREPARATION_FAULT_POINTS):
+            with self.subTest(fault_point=fault_point):
+                self.initialize(f"prepare-{fault_point}")
+                logical_key = f"source-acquisition-{fault_point.replace('_', '-')}"
+                with self.assertRaises(TaskFault):
+                    self.prepare(logical_key, fault_point=fault_point)
+
+                self.kernel.reconcile_run(self.run_dir)
+                resumed = self.prepare(logical_key)
+                envelope_bytes = resumed.envelope_path.read_bytes()
+                prompt_bytes = resumed.prompt_path.read_bytes()
+                replay = self.prepare(logical_key)
+
+                self.assertEqual(replay.task_id, resumed.task_id)
+                self.assertEqual(replay.envelope_path.read_bytes(), envelope_bytes)
+                self.assertEqual(replay.prompt_path.read_bytes(), prompt_bytes)
+                canonical_tasks = [
+                    path
+                    for path in (self.run_dir / "workflow/tasks").iterdir()
+                    if path.is_dir()
+                ]
+                self.assertEqual(canonical_tasks, [resumed.task_dir])
+                self.assertIsNone(
+                    self.kernel.control_store.task_claim_for_task(resumed.task_id)
+                )
+
     def test_every_claim_persistence_boundary_is_idempotently_resumable(self) -> None:
         for fault_point in sorted(CLAIM_FAULT_POINTS):
             with self.subTest(fault_point=fault_point):
@@ -910,6 +940,143 @@ class TaskPublicCliTests(unittest.TestCase, Slice2Harness):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(reconciled["classification"], "authority_reconciled")
+
+    def test_public_cli_resumes_interrupted_task_preparation(self) -> None:
+        arguments = (
+            "--run-dir", str(self.run_dir),
+            "--logical-task-key", "source-acquisition-cli-prepare-recovery",
+            "--prepared-at", TASK_START,
+        )
+        completed, fault = self.cli(
+            "task-prepare",
+            *arguments,
+            "--fault-point", "after_task_root_published",
+        )
+        self.assertEqual(completed.returncode, 60)
+        self.assertEqual(fault["classification"], "injected_task_fault")
+
+        completed, reconciled = self.cli(
+            "reconcile-run", "--run-dir", str(self.run_dir)
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(reconciled["data"]["outcome"], "current_state_verified")
+
+        completed, resumed = self.cli("task-prepare", *arguments)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        completed, replay = self.cli("task-prepare", *arguments)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(replay["data"]["task_id"], resumed["data"]["task_id"])
+        self.assertEqual(replay["evidence_path"], resumed["evidence_path"])
+
+    def test_public_cli_reclaim_fences_prior_attempt_and_promotes_replacement(self) -> None:
+        completed, prepared = self.cli(
+            "task-prepare",
+            "--run-dir", str(self.run_dir),
+            "--logical-task-key", "source-acquisition-cli-reclaim",
+            "--prepared-at", TASK_START,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        task_id = prepared["data"]["task_id"]
+        completed, first = self.cli(
+            "task-claim",
+            "--run-dir", str(self.run_dir),
+            "--task-id", task_id,
+            "--coordinator-session-id", "cli-coordinator-first",
+            "--worker-id", "cli-worker-first",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        completed, replacement = self.cli(
+            "task-reclaim",
+            "--run-dir", str(self.run_dir),
+            "--task-id", task_id,
+            "--expected-attempt-id", first["data"]["attempt_id"],
+            "--expected-claim-generation", str(first["data"]["claim_generation"]),
+            "--coordinator-session-id", "cli-coordinator-recovery",
+            "--worker-id", "cli-worker-replacement",
+            "--reason", "public CLI recovery after worker loss",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(replacement["data"]["claim_generation"], 2)
+        self.assertNotEqual(
+            replacement["data"]["attempt_id"], first["data"]["attempt_id"]
+        )
+
+        completed, late = self.cli(
+            "task-complete",
+            "--run-dir", str(self.run_dir),
+            "--task-id", task_id,
+            "--attempt-id", first["data"]["attempt_id"],
+            "--claim-generation", str(first["data"]["claim_generation"]),
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(late["status"], "error")
+        self.assertEqual(completed.returncode, 30)
+        self.assertEqual(late["classification"], "identity_or_path_conflict")
+
+        prepared_result = self.kernel.prepare_source_acquisition_task(
+            self.run_dir,
+            logical_task_key="source-acquisition-cli-reclaim",
+            prepared_at=TASK_START,
+        )
+        replacement_result = SimpleNamespace(
+            attempt_id=replacement["data"]["attempt_id"],
+            attempt_dir=Path(replacement["data"]["attempt_dir"]),
+        )
+        self.patch(prepared_result, replacement_result)
+        for command in ("task-complete", "task-promote"):
+            completed, result = self.cli(
+                command,
+                "--run-dir", str(self.run_dir),
+                "--task-id", task_id,
+                "--attempt-id", replacement["data"]["attempt_id"],
+                "--claim-generation", str(replacement["data"]["claim_generation"]),
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(result["classification"], "committed_complete")
+
+    def test_public_cli_reconcile_run_recovers_interrupted_task_promotion(self) -> None:
+        prepared = self.prepare("source-acquisition-cli-reconcile-run")
+        claimed = self.claim(prepared)
+        self.patch(prepared, claimed)
+        self.complete(prepared, claimed)
+
+        completed, fault = self.cli(
+            "task-promote",
+            "--run-dir", str(self.run_dir),
+            "--task-id", prepared.task_id,
+            "--attempt-id", claimed.attempt_id,
+            "--claim-generation", str(claimed.claim_generation),
+            "--fault-point", "after_run_record_commit_marker",
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(fault["status"], "error")
+        self.assertEqual(completed.returncode, 60)
+        self.assertEqual(fault["classification"], "injected_task_fault")
+
+        completed, reconciled = self.cli(
+            "reconcile-run", "--run-dir", str(self.run_dir)
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(reconciled["classification"], "source_ready_current")
+        self.assertEqual(reconciled["data"]["outcome"], "new_state_complete")
+        self.assertTrue(
+            (self.run_dir / "workflow/source-acquisition-judgment-patch.json").is_file()
+        )
+        intent = self.kernel.control_store.task_promotion_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        claim = self.kernel.control_store.task_claim_for_attempt(
+            prepared.task_id, claimed.attempt_id
+        )
+        self.assertEqual(intent["state"], "COMMITTED")
+        self.assertEqual(claim["state"], "TERMINAL")
+
+        completed, replay = self.cli(
+            "reconcile-run", "--run-dir", str(self.run_dir)
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(replay["data"]["outcome"], "current_state_verified")
 
     def test_cli_unknown_authority_kind_is_one_machine_error(self) -> None:
         completed, envelope = self.cli(

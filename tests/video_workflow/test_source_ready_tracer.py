@@ -140,41 +140,37 @@ class ContractsCliTests(unittest.TestCase):
                 self.assertTrue((PROJECT_ROOT / contract["negative_example"]).is_file())
 
     def test_generic_exit_evidence_v2_schema_fixtures(self) -> None:
-        valid = subprocess.run(
-            [
-                sys.executable,
-                "-X",
-                "utf8",
-                "-B",
-                str(EXIT_V2_VALIDATOR),
-                str(FIXTURE.parent / "exit_evidence_manifest.v2.valid.json"),
-                "--schema-only",
-            ],
-            cwd=PROJECT_ROOT,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
+        cases = (
+            ("exit_evidence_manifest.v2.valid.json", 0),
+            ("exit_evidence_manifest.v2.invalid.json", 1),
+            ("exit_evidence_manifest.v2.slice2.valid.json", 0),
+            ("exit_evidence_manifest.v2.slice2.missing-fencing.invalid.json", 1),
         )
-        invalid = subprocess.run(
-            [
-                sys.executable,
-                "-X",
-                "utf8",
-                "-B",
-                str(EXIT_V2_VALIDATOR),
-                str(FIXTURE.parent / "exit_evidence_manifest.v2.invalid.json"),
-                "--schema-only",
-            ],
-            cwd=PROJECT_ROOT,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(valid.returncode, 0, valid.stderr)
-        self.assertEqual(invalid.returncode, 1)
-        self.assertIn("INVALID:", invalid.stderr)
+        for fixture_name, expected_returncode in cases:
+            with self.subTest(fixture=fixture_name):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-X",
+                        "utf8",
+                        "-B",
+                        str(EXIT_V2_VALIDATOR),
+                        str(FIXTURE.parent / fixture_name),
+                        "--schema-only",
+                    ],
+                    cwd=PROJECT_ROOT,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    expected_returncode,
+                    completed.stderr,
+                )
+                if expected_returncode:
+                    self.assertIn("INVALID:", completed.stderr)
 
     def test_parser_failure_uses_the_same_machine_result_envelope(self) -> None:
         completed, envelope = run_cli("trace-source-ready")

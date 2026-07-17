@@ -457,6 +457,7 @@ class VideoWorkflowKernel:
         *,
         logical_task_key: str,
         prepared_at: str,
+        fault_point: str | None = None,
     ) -> Any:
         from .task_execution import TaskExecution
 
@@ -464,6 +465,7 @@ class VideoWorkflowKernel:
             run_dir,
             logical_task_key=logical_task_key,
             prepared_at=prepared_at,
+            fault_point=fault_point,
         )
 
     def claim_task(

@@ -88,6 +88,7 @@
       "properties": {
         "positive": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "negative": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "fencing": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "recovery": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       }
     },
@@ -131,7 +132,8 @@
             "name": {"const": "fenced-task-execution-and-promotion"}
           }
         },
-        "slice_base_commit": {"const": "904f46409b87aca96aeecf5cb0be4855c2cfdafa"}
+        "slice_base_commit": {"const": "904f46409b87aca96aeecf5cb0be4855c2cfdafa"},
+        "results": {"required": ["fencing"]}
       }
     }
   ],

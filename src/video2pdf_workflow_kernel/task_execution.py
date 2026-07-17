@@ -2070,12 +2070,18 @@ class TaskExecution:
         record, run_path, run_sha = self._run_record(run_dir)
         store = self.kernel._preflight_control_store()
         durable_task_ids = store.task_ids_for_authority(str(record["run_id"]))
-        if record["schema_version"] == "1.0.0" and not durable_task_ids:
+        task_namespace = run_dir / "workflow/tasks"
+        if (
+            record["schema_version"] == "1.0.0"
+            and not durable_task_ids
+            and not os.path.lexists(task_namespace)
+        ):
             return
         # Reconciliation passes no skip binding: every durable Attempt,
-        # including the current in-progress or committed Attempt, must be
-        # present and authentic.  Execution gates use a narrowly bound skip
-        # only while separately validating their current Attempt.
+        # including an unclaimed prepared root and every current in-progress
+        # or committed Attempt, must be present and authentic.  Execution
+        # gates use a narrowly bound skip only while separately validating
+        # their current Attempt.
         self._verify_task_root_inventory(
             run_dir,
             run_id=str(record["run_id"]),

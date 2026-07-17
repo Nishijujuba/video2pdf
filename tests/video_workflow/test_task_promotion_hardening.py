@@ -157,6 +157,21 @@ class TaskPersistenceBoundaryTests(unittest.TestCase, Slice2Harness):
                     self.kernel.control_store.task_claim_for_task(resumed.task_id)
                 )
 
+    def test_reconciliation_rejects_tampered_unclaimed_preparation(self) -> None:
+        self.initialize("prepare-unclaimed-tamper")
+        with self.assertRaises(TaskFault):
+            self.prepare(
+                "source-acquisition-unclaimed-tamper",
+                fault_point="after_task_root_published",
+            )
+
+        task_roots = list((self.run_dir / "workflow/tasks").iterdir())
+        self.assertEqual(len(task_roots), 1)
+        (task_roots[0] / "prompt.md").write_bytes(b"tampered prompt\n")
+
+        with self.assertRaises(ArtifactDrift):
+            self.kernel.reconcile_run(self.run_dir)
+
     def test_every_claim_persistence_boundary_is_idempotently_resumable(self) -> None:
         for fault_point in sorted(CLAIM_FAULT_POINTS):
             with self.subTest(fault_point=fault_point):

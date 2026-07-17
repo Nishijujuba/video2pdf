@@ -1,0 +1,1307 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 3,
+    "name": "cross-run-resource-admission"
+  },
+  "slice_base_commit": "aaaaeac5747fddc0915a59df34de47e6e8cfec48",
+  "implementation_commit": "27ce3c0164fda7818aeeccc0a650a11fbf4f4f07",
+  "evidence_paths": [
+    "evidence/slice-03/exit-evidence-manifest.json",
+    "evidence/slice-03/logs/slice0-regression.log",
+    "evidence/slice-03/logs/slice3-contracts.log",
+    "evidence/slice-03/logs/slice1-regression.log",
+    "evidence/slice-03/logs/slice2-regression.log",
+    "evidence/slice-03/logs/slice3-resource-admission.log",
+    "evidence/slice-03/logs/slice3-control-store-recovery.log",
+    "evidence/slice-03/logs/slice3-exit-evidence-contracts.log",
+    "evidence/slice-03/logs/slice2-exit-evidence.log",
+    "evidence/slice-03/logs/slice3-syntax.log",
+    "evidence/slice-03/logs/slice3-diff-check.log"
+  ],
+  "generated_at": "2026-07-17T21:27:35Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice0-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_legacy_baseline"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice0-regression.log",
+        "sha256": "71fe9871908c85c80f8c7889c86dbd17cea4edc967b80f4dd2f8ecc160223b84"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-contracts.log",
+        "sha256": "af9e0e0ef10c3d750c5fc8167efe39cfb6fccf2795ca3604b7b6874b8e32740f"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_source_ready_tracer",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_issue4_gate4",
+        "tests.video_workflow.test_issue4_gate7"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice1-regression.log",
+        "sha256": "9a7d436b3563901f641fec06af39f2490032677c9a298221b900c9070fc4b2cf"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice2-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_task_promotion",
+        "tests.video_workflow.test_task_promotion_hardening",
+        "tests.video_workflow.test_issue5_review_repairs",
+        "tests.video_workflow.test_control_store_transaction_scope"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice2-regression.log",
+        "sha256": "d2dd879ab07727413535d12e81b57eed430213d6860448210876e4853ec9d150"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-resource-admission",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_multi_resource_request_is_atomic_and_launch_requires_admission",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_invalidates_queued_attempt_and_preserves_admitted_lease",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launch_authorization_is_resource_bound_and_single_use",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_multi_resource_launch_requires_the_exact_immutable_request",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_crash_after_launch_authorization_cannot_replay_callback",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_two_level_round_robin_is_deterministic_and_survives_restart",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_round_robin_cursor_keeps_position_after_served_identity_dequeues",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reserved_admission_advances_fairness_cursor_before_next_ordinary_turn",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_zero_quota_rejects_before_claim_or_queue_is_persisted",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_quota_downshift_drains_without_preemption_and_unrelated_work_runs",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_draining_reservations_are_disjoint_and_stably_ordered",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_circuit_breaker_blocks_only_its_resource_class",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_new_reservation_blocks_later_same_pass_overlap",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_unknown_lease_survives_reclaim_until_evidence_bearing_resolution",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_process_and_provider_resolution_require_trusted_verifier_proof",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_local_process_resolution_stays_unknown_while_matching_process_runs",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_resource_resolution_rejects_self_asserted_trust_booleans",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_claim_resource_transaction_faults_roll_back_without_partial_authority",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_resource_transaction_faults_roll_back_and_replay_cleanly",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_temporarily_unschedulable_reservation_blocks_full_set_but_not_disjoint_resources",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_resource_control_cli_exposes_public_operational_seams",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launcher_failure_paths_persist_one_audited_unknown_event_and_remain_fenced",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_stale_claim_after_blocked_launch_callback_commits_unknown_before_conflict",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launch_completion_with_wrong_lease_generation_has_zero_mutation",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reconciled_inflight_launch_persists_identity_for_trusted_resolution",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_rejects_unverified_provider_result_without_releasing_capacity",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_requires_provider_result_bound_to_lease_attempt_and_launch_authority",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_accepts_only_trusted_matching_local_process_proof",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_advances_claim_and_queues_replacement_when_quota_is_zero",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_provider_resolution_replay_reuses_persisted_proof_before_verifier",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_local_process_resolution_replay_reuses_persisted_proof_before_inspector",
+        "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_configuration_requires_every_fixed_resource_class_exactly_once",
+        "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_multi_resource_quota_race_is_atomic_across_processes",
+        "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_same_task_claim_race_has_exactly_one_owner",
+        "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_launch_race_invokes_callback_exactly_once_across_processes",
+        "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_hard_crash_after_callback_cannot_replay_launch",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_missing_lease_resource_or_required_index_fails_closed",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_configuration_and_queue_lease_tampering_fails_closed",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_queue_and_normalized_lease_double_tamper_breaks_request_binding",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_real_v7_store_migrates_atomically_to_complete_v8",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_partial_v8_resource_migration_fails_closed_without_repairing_it",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_resource_schema_and_sequence_authorities_are_closed_and_exact",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_lease_launch_and_terminal_state_matrix_rejects_double_tamper",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_event_cursor_and_breaker_identity_tampering_fails_closed",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_queue_and_reservation_lifecycle_tampering_fails_closed",
+        "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_append_only_resource_sequence_gaps_fail_closed"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-resource-admission.log",
+        "sha256": "145eabf61e29f9f3052ee28ac68064c033b92f7c15a68b289fef0f206ac761e3"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-control-store-recovery",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_backup_uses_sqlite_backup_api_and_passes_integrity",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_reconciles_every_run_through_public_kernel_authority",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_orphaned_filesystem_commit_blocks_global_mutation_after_restore",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_missing_corrupt_and_schema_mismatched_backups_fail_closed",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_requires_quiescence_and_explicit_selected_backup",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_corrupt_live_store_uses_atomic_quarantine_and_persists_failure_evidence",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_recovers_every_persistent_state_boundary",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_subsequent_orphan_records_task_staging_and_preservation_evidence",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_one_record_ahead_windows",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_survives_partial_publication",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_cli_recovers_hard_exit_and_fences_concurrency",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_impossible_authority_and_report_drift",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_initial_sentinel_before_prepared_history",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_preserves_resource_transition_evidence_after_hard_exit",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_blocked_state_ahead_and_preserves_report_bindings",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_non_file_active_sentinel_authority",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_recovery_contract_rejects_contradictory_resource_inventory",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_windows_junction_authority_boundaries",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_lock_rechecks_open_handle_path_identity",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_first_restore_path_revalidates_committed_report_before_archive",
+        "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_busy_quiescence_failure_does_not_quarantine_or_publish"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-control-store-recovery.log",
+        "sha256": "f407a83eb321efc875da7e3b2a29a865541b468d81d89da956f757464513e884"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-exit-evidence-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_schema_requires_first_class_result_kinds",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_semantics_bind_exact_results_commands_and_fqn_targets",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_semantics_reject_unbound_result_fixture",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_registers_ten_closed_commands_and_correct_paths",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_logs_include_exact_implementation_marker",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_refuses_dirty_implementation_head",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_validator_rejects_missing_or_wrong_log_commit_marker",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_validator_binds_six_fault_points_to_admission_log",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_closed_test_targets_and_fixtures_resolve",
+        "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_fixed_base_is_registered_exactly"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-exit-evidence-contracts.log",
+        "sha256": "adade9b2f0910589abcfbe8f1f8c81de69bd11ef2f36da03746c35dd882481dd"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice2-exit-evidence",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/validate_slice_exit_evidence.py",
+        "evidence/slice-02/exit-evidence-manifest.json"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice2-exit-evidence.log",
+        "sha256": "a503a6cfebedb68398095f731854c03209d32af1f61f8cc7d31626dbd9a3d854"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-syntax",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-c",
+        "import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+[pathlib.Path('scripts/video_workflow.py'),pathlib.Path('scripts/validate_slice_exit_evidence.py'),pathlib.Path('scripts/slice3_exit_evidence_contract.py'),pathlib.Path('scripts/collect_slice3_exit_evidence.py'),pathlib.Path('tests/video_workflow/test_issue6_exit_evidence.py')];[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-syntax.log",
+        "sha256": "a1cea88901ad9cda7aae5d17b923d8576f55f2cc0a29e81e1d36e863f1a42005"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "aaaaeac5747fddc0915a59df34de47e6e8cfec48...HEAD"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-03/logs/slice3-diff-check.log",
+        "sha256": "a3cb62ddf4aa89175d6d9fb968020c2a3cb76b74b8e987dc4d695ea3f6f135f9"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "source_ready",
+      "status": "current"
+    },
+    {
+      "name": "source_acquisition_decision_ready",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/fixture.json",
+      "sha256": "8ccb6c25da07005e06c0d12fed74aa5ea07b6a927858209fc941c587c44d1c58"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/metadata/platform.json",
+      "sha256": "781453792ea3bbe5ffe175c8e10ae60727e4fd929792dbc43e469e640c2e4f2d"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/subtitles/subtitle.en.srt",
+      "sha256": "f1d7129dcc4d529697e478f9bce2b5faf4c1a54d33c73356dfdeb08708e03a81"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/media/video.fixture",
+      "sha256": "915fabd6ff048fbaf8a874b98b62bd2daf99c5d2aca3a169d322c66551d4d503"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/cover/cover.fixture",
+      "sha256": "c447f52ffa12c1a7673d412488db92f94a552532516b61eb6fa8de3f7fcd5d5f"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.valid.json",
+      "sha256": "85f669b090838eec0624b8b4b878e8ff8ece47e784d98029bacdd8c4a198070d"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.invalid.json",
+      "sha256": "72f72a1dff90a17e7b0c1af222b9535c897000921d99fe6791117505f3ef6357"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.valid.json",
+      "sha256": "ff56f68cee8fd1502621ed88788ad5095047291d9235736e430e216db5cd804a"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.invalid.json",
+      "sha256": "a72fe553869afa735987cbcdc9cdfc98a204c0ac9872f434c4c067256652073c"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.valid.json",
+      "sha256": "a94c2facc3dc89519be9de06d49279645ca3546a3a3fae050f7ff538ae99b738"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.invalid.json",
+      "sha256": "c67af731b2c774f132a060d8ac21c49a9b135ceedb5d78a929601548070a7050"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.valid.json",
+      "sha256": "3a3e4a05da96d52c2e92763bd7da63c1afb0040a0e1b513b73c0797e521f5417"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.invalid.json",
+      "sha256": "f9ef940f2a421c92f92b55db3077235855703c22147b73e84e9cad213ef36893"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.valid.json",
+      "sha256": "101862e932810fe4ea62d0f5070d63ab0ab81d00a299b3d49825f0e84d77c4f0"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.invalid.json",
+      "sha256": "2aa18bd96be3d65dd7b8903fa8de394fbb2f2e256b71b943d88db9f1156cfd98"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.valid.json",
+      "sha256": "498776837edfdc12b196e69dd0f62da8b2d14443618c5a2d7e7588f88d03033d"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.missing-domain.invalid.json",
+      "sha256": "5595bb7e02fdb8877172e0127adf0ee46910244295c5245028bf6850f0a03ccb"
+    },
+    {
+      "role": "negative_semantic_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.unbound-result.invalid.json",
+      "sha256": "93bc696c34dd462e94523cf49aa9bf3473087f2497ba3b4fbebf8fdec8836e4a"
+    }
+  ],
+  "results": {
+    "positive": [
+      "all_seven_resource_classes_are_launch_guarded",
+      "exact_immutable_resource_request_controls_launch",
+      "resource_and_platform_breakers_preserve_unrelated_progress",
+      "resource_schema_and_sequence_authorities_are_closed_and_exact",
+      "public_resource_operations_are_cli_accessible",
+      "public_restore_resume_cli_is_operational",
+      "trusted_matching_local_process_proof_releases_normal_lease"
+    ],
+    "negative": [
+      "post_authorization_crash_cannot_replay_launch",
+      "zero_quota_fails_before_claim_or_queue",
+      "self_asserted_resolution_trust_is_rejected",
+      "missing_resource_schema_or_index_fails_closed",
+      "configuration_queue_and_lease_tampering_fails_closed",
+      "normalized_request_double_tamper_fails_closed",
+      "partial_v8_resource_migration_fails_closed",
+      "lease_launch_terminal_double_tamper_fails_closed",
+      "event_cursor_breaker_identity_tamper_fails_closed",
+      "launcher_exception_or_invalid_identity_commits_unknown_lease",
+      "queue_and_reservation_lifecycle_tampering_fails_closed",
+      "append_only_sequence_gap_or_exhaustion_fails_closed",
+      "invalid_restore_lock_or_committed_report_drift_fails_closed",
+      "unverified_provider_result_cannot_release_capacity",
+      "non_file_active_restore_sentinel_authority_fails_closed",
+      "contradictory_resource_inventory_contract_is_rejected",
+      "windows_junction_restore_authority_is_rejected",
+      "first_restore_committed_report_drift_blocks_archive",
+      "busy_quiescence_failure_does_not_quarantine_or_publish",
+      "duplicate_resource_class_configuration_is_rejected"
+    ],
+    "quota": [
+      "atomic_multi_resource_admission",
+      "overcommitted_quota_downshift_drains",
+      "multiprocess_file_backed_quota_never_oversubscribes",
+      "quota_zero_reclaim_advances_claim_and_queues_replacement"
+    ],
+    "fencing": [
+      "reclaim_preserves_prior_physical_lease",
+      "unknown_lease_remains_capacity_bearing_until_resolution",
+      "resolution_evidence_is_trusted_and_identity_bound",
+      "same_task_claim_race_has_exactly_one_owner",
+      "launch_authority_is_single_use_across_processes",
+      "failed_launcher_consumes_authority_and_remains_fenced",
+      "stale_launch_confirmation_is_fenced_after_unknown_commit",
+      "reclaimed_attempt_status_projection_remains_fenced",
+      "wrong_generation_launch_completion_has_zero_mutation",
+      "concurrent_restore_resume_is_fenced_by_operation_lock",
+      "provider_terminal_result_is_bound_to_lease_attempt_and_launch_authority",
+      "restore_lock_open_handle_path_identity_is_rechecked"
+    ],
+    "fairness": [
+      "two_level_run_and_batch_round_robin",
+      "cursor_position_survives_served_identity_dequeue",
+      "reserved_admission_advances_fairness_cursor",
+      "disjoint_reservations_follow_stable_sequence",
+      "new_active_reservation_blocks_same_pass_overlap",
+      "active_reservation_blocks_its_full_set_while_disjoint_resources_progress"
+    ],
+    "restart": [
+      "scheduler_cursor_and_sequence_rehydrate",
+      "reservation_state_and_sequence_rehydrate",
+      "breaker_scope_and_state_rehydrate",
+      "unknown_capacity_rehydrates",
+      "hard_crash_launch_authority_cannot_replay_after_restart",
+      "claim_resource_fault_restart_has_no_partial_authority",
+      "launcher_failure_unknown_state_rehydrates_and_cannot_replay",
+      "restore_resume_converges_from_every_persistent_boundary",
+      "state_sentinel_half_write_windows_are_repaired",
+      "partial_control_store_publication_resumes",
+      "hard_exit_restore_resume_converges_via_public_cli",
+      "initial_sentinel_before_prepared_history_resumes_via_public_cli",
+      "resource_transition_reconciliation_resumes_after_hard_exit",
+      "blocked_state_ahead_window_resumes",
+      "provider_resolution_replay_reuses_persisted_proof",
+      "local_process_resolution_replay_reuses_persisted_proof",
+      "busy_quiescence_prepared_restore_resumes_after_contention"
+    ],
+    "recovery": [
+      "sqlite_backup_api_snapshot_passes_integrity",
+      "explicit_restore_uses_public_kernel_reconciliation",
+      "orphaned_filesystem_commit_blocks_global_mutation",
+      "invalid_backup_classes_fail_closed",
+      "restore_requires_quiescence_and_explicit_backup",
+      "matching_process_stays_unknown_until_trusted_termination_proof",
+      "v7_resource_store_migrates_atomically_to_v8",
+      "reclaim_resource_fault_replay_converges_cleanly",
+      "post_backup_live_resource_inventory_is_reported_exactly",
+      "severe_live_store_corruption_is_atomically_quarantined",
+      "orphan_blocking_evidence_is_exact_and_durable",
+      "subsequent_orphan_staging_and_preservation_evidence_is_exact",
+      "reconciled_inflight_launch_identity_supports_trusted_resolution",
+      "resource_transition_evidence_survives_reconcile_hard_exit",
+      "blocked_recovery_and_orphan_reports_remain_hash_bound",
+      "first_restore_report_revalidation_preserves_resumable_authority"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "all_seven_resource_classes_are_launch_guarded",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launch_authorization_is_resource_bound_and_single_use"
+    },
+    {
+      "result_id": "exact_immutable_resource_request_controls_launch",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_multi_resource_launch_requires_the_exact_immutable_request"
+    },
+    {
+      "result_id": "resource_and_platform_breakers_preserve_unrelated_progress",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_circuit_breaker_blocks_only_its_resource_class"
+    },
+    {
+      "result_id": "resource_schema_and_sequence_authorities_are_closed_and_exact",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_resource_schema_and_sequence_authorities_are_closed_and_exact"
+    },
+    {
+      "result_id": "public_resource_operations_are_cli_accessible",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_resource_control_cli_exposes_public_operational_seams"
+    },
+    {
+      "result_id": "public_restore_resume_cli_is_operational",
+      "result_kind": "positive",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_cli_recovers_hard_exit_and_fences_concurrency"
+    },
+    {
+      "result_id": "trusted_matching_local_process_proof_releases_normal_lease",
+      "result_kind": "positive",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_accepts_only_trusted_matching_local_process_proof"
+    },
+    {
+      "result_id": "post_authorization_crash_cannot_replay_launch",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_crash_after_launch_authorization_cannot_replay_callback"
+    },
+    {
+      "result_id": "zero_quota_fails_before_claim_or_queue",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_zero_quota_rejects_before_claim_or_queue_is_persisted"
+    },
+    {
+      "result_id": "self_asserted_resolution_trust_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_resource_resolution_rejects_self_asserted_trust_booleans"
+    },
+    {
+      "result_id": "missing_resource_schema_or_index_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_missing_lease_resource_or_required_index_fails_closed"
+    },
+    {
+      "result_id": "configuration_queue_and_lease_tampering_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_configuration_and_queue_lease_tampering_fails_closed"
+    },
+    {
+      "result_id": "normalized_request_double_tamper_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_queue_and_normalized_lease_double_tamper_breaks_request_binding"
+    },
+    {
+      "result_id": "partial_v8_resource_migration_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_partial_v8_resource_migration_fails_closed_without_repairing_it"
+    },
+    {
+      "result_id": "lease_launch_terminal_double_tamper_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_lease_launch_and_terminal_state_matrix_rejects_double_tamper"
+    },
+    {
+      "result_id": "event_cursor_breaker_identity_tamper_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_event_cursor_and_breaker_identity_tampering_fails_closed"
+    },
+    {
+      "result_id": "launcher_exception_or_invalid_identity_commits_unknown_lease",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launcher_failure_paths_persist_one_audited_unknown_event_and_remain_fenced"
+    },
+    {
+      "result_id": "queue_and_reservation_lifecycle_tampering_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_queue_and_reservation_lifecycle_tampering_fails_closed"
+    },
+    {
+      "result_id": "append_only_sequence_gap_or_exhaustion_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_append_only_resource_sequence_gaps_fail_closed"
+    },
+    {
+      "result_id": "invalid_restore_lock_or_committed_report_drift_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_impossible_authority_and_report_drift"
+    },
+    {
+      "result_id": "unverified_provider_result_cannot_release_capacity",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_rejects_unverified_provider_result_without_releasing_capacity"
+    },
+    {
+      "result_id": "non_file_active_restore_sentinel_authority_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_non_file_active_sentinel_authority"
+    },
+    {
+      "result_id": "contradictory_resource_inventory_contract_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_recovery_contract_rejects_contradictory_resource_inventory"
+    },
+    {
+      "result_id": "windows_junction_restore_authority_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_rejects_windows_junction_authority_boundaries"
+    },
+    {
+      "result_id": "first_restore_committed_report_drift_blocks_archive",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_first_restore_path_revalidates_committed_report_before_archive"
+    },
+    {
+      "result_id": "busy_quiescence_failure_does_not_quarantine_or_publish",
+      "result_kind": "negative",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_busy_quiescence_failure_does_not_quarantine_or_publish"
+    },
+    {
+      "result_id": "duplicate_resource_class_configuration_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_configuration_requires_every_fixed_resource_class_exactly_once"
+    },
+    {
+      "result_id": "atomic_multi_resource_admission",
+      "result_kind": "quota",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_multi_resource_request_is_atomic_and_launch_requires_admission"
+    },
+    {
+      "result_id": "overcommitted_quota_downshift_drains",
+      "result_kind": "quota",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_quota_downshift_drains_without_preemption_and_unrelated_work_runs"
+    },
+    {
+      "result_id": "multiprocess_file_backed_quota_never_oversubscribes",
+      "result_kind": "quota",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_multi_resource_quota_race_is_atomic_across_processes"
+    },
+    {
+      "result_id": "quota_zero_reclaim_advances_claim_and_queues_replacement",
+      "result_kind": "quota",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_advances_claim_and_queues_replacement_when_quota_is_zero"
+    },
+    {
+      "result_id": "reclaim_preserves_prior_physical_lease",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_invalidates_queued_attempt_and_preserves_admitted_lease"
+    },
+    {
+      "result_id": "unknown_lease_remains_capacity_bearing_until_resolution",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_unknown_lease_survives_reclaim_until_evidence_bearing_resolution"
+    },
+    {
+      "result_id": "resolution_evidence_is_trusted_and_identity_bound",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_process_and_provider_resolution_require_trusted_verifier_proof"
+    },
+    {
+      "result_id": "same_task_claim_race_has_exactly_one_owner",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_same_task_claim_race_has_exactly_one_owner"
+    },
+    {
+      "result_id": "launch_authority_is_single_use_across_processes",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_launch_race_invokes_callback_exactly_once_across_processes"
+    },
+    {
+      "result_id": "failed_launcher_consumes_authority_and_remains_fenced",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launcher_failure_paths_persist_one_audited_unknown_event_and_remain_fenced"
+    },
+    {
+      "result_id": "stale_launch_confirmation_is_fenced_after_unknown_commit",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_stale_claim_after_blocked_launch_callback_commits_unknown_before_conflict"
+    },
+    {
+      "result_id": "reclaimed_attempt_status_projection_remains_fenced",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_invalidates_queued_attempt_and_preserves_admitted_lease"
+    },
+    {
+      "result_id": "wrong_generation_launch_completion_has_zero_mutation",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launch_completion_with_wrong_lease_generation_has_zero_mutation"
+    },
+    {
+      "result_id": "concurrent_restore_resume_is_fenced_by_operation_lock",
+      "result_kind": "fencing",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_cli_recovers_hard_exit_and_fences_concurrency"
+    },
+    {
+      "result_id": "provider_terminal_result_is_bound_to_lease_attempt_and_launch_authority",
+      "result_kind": "fencing",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_normal_release_requires_provider_result_bound_to_lease_attempt_and_launch_authority"
+    },
+    {
+      "result_id": "restore_lock_open_handle_path_identity_is_rechecked",
+      "result_kind": "fencing",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_lock_rechecks_open_handle_path_identity"
+    },
+    {
+      "result_id": "two_level_run_and_batch_round_robin",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_two_level_round_robin_is_deterministic_and_survives_restart"
+    },
+    {
+      "result_id": "cursor_position_survives_served_identity_dequeue",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_round_robin_cursor_keeps_position_after_served_identity_dequeues"
+    },
+    {
+      "result_id": "reserved_admission_advances_fairness_cursor",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reserved_admission_advances_fairness_cursor_before_next_ordinary_turn"
+    },
+    {
+      "result_id": "disjoint_reservations_follow_stable_sequence",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_draining_reservations_are_disjoint_and_stably_ordered"
+    },
+    {
+      "result_id": "new_active_reservation_blocks_same_pass_overlap",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_new_reservation_blocks_later_same_pass_overlap"
+    },
+    {
+      "result_id": "active_reservation_blocks_its_full_set_while_disjoint_resources_progress",
+      "result_kind": "fairness",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_temporarily_unschedulable_reservation_blocks_full_set_but_not_disjoint_resources"
+    },
+    {
+      "result_id": "scheduler_cursor_and_sequence_rehydrate",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_two_level_round_robin_is_deterministic_and_survives_restart"
+    },
+    {
+      "result_id": "reservation_state_and_sequence_rehydrate",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_draining_reservations_are_disjoint_and_stably_ordered"
+    },
+    {
+      "result_id": "breaker_scope_and_state_rehydrate",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_circuit_breaker_blocks_only_its_resource_class"
+    },
+    {
+      "result_id": "unknown_capacity_rehydrates",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_unknown_lease_survives_reclaim_until_evidence_bearing_resolution"
+    },
+    {
+      "result_id": "hard_crash_launch_authority_cannot_replay_after_restart",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission_multiprocess.ResourceAdmissionMultiprocessTests.test_hard_crash_after_callback_cannot_replay_launch"
+    },
+    {
+      "result_id": "claim_resource_fault_restart_has_no_partial_authority",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_claim_resource_transaction_faults_roll_back_without_partial_authority"
+    },
+    {
+      "result_id": "launcher_failure_unknown_state_rehydrates_and_cannot_replay",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_launcher_failure_paths_persist_one_audited_unknown_event_and_remain_fenced"
+    },
+    {
+      "result_id": "restore_resume_converges_from_every_persistent_boundary",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_recovers_every_persistent_state_boundary"
+    },
+    {
+      "result_id": "state_sentinel_half_write_windows_are_repaired",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_one_record_ahead_windows"
+    },
+    {
+      "result_id": "partial_control_store_publication_resumes",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_survives_partial_publication"
+    },
+    {
+      "result_id": "hard_exit_restore_resume_converges_via_public_cli",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_cli_recovers_hard_exit_and_fences_concurrency"
+    },
+    {
+      "result_id": "initial_sentinel_before_prepared_history_resumes_via_public_cli",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_initial_sentinel_before_prepared_history"
+    },
+    {
+      "result_id": "resource_transition_reconciliation_resumes_after_hard_exit",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_preserves_resource_transition_evidence_after_hard_exit"
+    },
+    {
+      "result_id": "blocked_state_ahead_window_resumes",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_blocked_state_ahead_and_preserves_report_bindings"
+    },
+    {
+      "result_id": "provider_resolution_replay_reuses_persisted_proof",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_provider_resolution_replay_reuses_persisted_proof_before_verifier"
+    },
+    {
+      "result_id": "local_process_resolution_replay_reuses_persisted_proof",
+      "result_kind": "restart",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_local_process_resolution_replay_reuses_persisted_proof_before_inspector"
+    },
+    {
+      "result_id": "busy_quiescence_prepared_restore_resumes_after_contention",
+      "result_kind": "restart",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_busy_quiescence_failure_does_not_quarantine_or_publish"
+    },
+    {
+      "result_id": "sqlite_backup_api_snapshot_passes_integrity",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_backup_uses_sqlite_backup_api_and_passes_integrity"
+    },
+    {
+      "result_id": "explicit_restore_uses_public_kernel_reconciliation",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_reconciles_every_run_through_public_kernel_authority"
+    },
+    {
+      "result_id": "orphaned_filesystem_commit_blocks_global_mutation",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_orphaned_filesystem_commit_blocks_global_mutation_after_restore"
+    },
+    {
+      "result_id": "invalid_backup_classes_fail_closed",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_missing_corrupt_and_schema_mismatched_backups_fail_closed"
+    },
+    {
+      "result_id": "restore_requires_quiescence_and_explicit_backup",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_requires_quiescence_and_explicit_selected_backup"
+    },
+    {
+      "result_id": "matching_process_stays_unknown_until_trusted_termination_proof",
+      "result_kind": "recovery",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_local_process_resolution_stays_unknown_while_matching_process_runs"
+    },
+    {
+      "result_id": "v7_resource_store_migrates_atomically_to_v8",
+      "result_kind": "recovery",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_control_store_integrity.ResourceControlStoreIntegrityTests.test_real_v7_store_migrates_atomically_to_complete_v8"
+    },
+    {
+      "result_id": "reclaim_resource_fault_replay_converges_cleanly",
+      "result_kind": "recovery",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_resource_transaction_faults_roll_back_and_replay_cleanly"
+    },
+    {
+      "result_id": "post_backup_live_resource_inventory_is_reported_exactly",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_reconciles_every_run_through_public_kernel_authority"
+    },
+    {
+      "result_id": "severe_live_store_corruption_is_atomically_quarantined",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_corrupt_live_store_uses_atomic_quarantine_and_persists_failure_evidence"
+    },
+    {
+      "result_id": "orphan_blocking_evidence_is_exact_and_durable",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_orphaned_filesystem_commit_blocks_global_mutation_after_restore"
+    },
+    {
+      "result_id": "subsequent_orphan_staging_and_preservation_evidence_is_exact",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_subsequent_orphan_records_task_staging_and_preservation_evidence"
+    },
+    {
+      "result_id": "reconciled_inflight_launch_identity_supports_trusted_resolution",
+      "result_kind": "recovery",
+      "command_id": "slice3-resource-admission",
+      "test_target": "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reconciled_inflight_launch_persists_identity_for_trusted_resolution"
+    },
+    {
+      "result_id": "resource_transition_evidence_survives_reconcile_hard_exit",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_preserves_resource_transition_evidence_after_hard_exit"
+    },
+    {
+      "result_id": "blocked_recovery_and_orphan_reports_remain_hash_bound",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_restore_resume_repairs_blocked_state_ahead_and_preserves_report_bindings"
+    },
+    {
+      "result_id": "first_restore_report_revalidation_preserves_resumable_authority",
+      "result_kind": "recovery",
+      "command_id": "slice3-control-store-recovery",
+      "test_target": "tests.video_workflow.test_control_store_recovery.ControlStoreRecoveryTests.test_first_restore_path_revalidates_committed_report_before_archive"
+    }
+  ],
+  "fault_points": [
+    "after_claim_before_enqueue",
+    "after_claim_enqueue_before_schedule",
+    "after_claim_schedule_before_commit",
+    "after_reclaim_before_enqueue",
+    "after_reclaim_enqueue_before_schedule",
+    "after_reclaim_schedule_before_commit"
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": ".gitattributes",
+      "sha256": "d49f639b23845a82ede2f3e65d3a448903cb0709b936773d6b79d385e7923dbe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "744d3ae209c9588d04c3a6eb4bb616b0b549bd6d7ed49bab15c45a7cad988328"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/registry.v1.json",
+      "sha256": "9b81360a1693664a7fb11b181d5186804a2ee9f3dde27fa87aa223ad52685f9e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",
+      "sha256": "4bfaefdcc0d30a99667f3dc961a0f724ed91b63898aa32364bea511c91ff3d52"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json",
+      "sha256": "2f4f1594ee10d9c20c211001e08dbd4a3a332ce510e28af349752e3014325820"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-restore-sentinel.v1.schema.json",
+      "sha256": "488f495bd1ca94b4a91d0e60737e478dd69512acd04d8a484158c24e03b09e8e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-restore-state.v1.schema.json",
+      "sha256": "a32877c2b401510699e87dbb08c4c958e81bec33fddadcfab7633eb583dfd133"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/orphaned-filesystem-commit-report.v1.schema.json",
+      "sha256": "8477da6c222501fd8ea69b674cd69c37bbd9b569a3de2290945abf88ba422604"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/resource-admission-configuration.v1.schema.json",
+      "sha256": "0f2a9cf2d77c37e6db0046200956e0cf6ffe6687ad5937bdec80a3d336059878"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/resource-admission.v1.json",
+      "sha256": "82e65b830f1cf51e73f91ad58e7fe1bba9259294100d705dbd04d48185a27600"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/resource-lease-resolution-evidence.v1.schema.json",
+      "sha256": "09d90d49ecb1d92c124b458779b9002431eaa98a6ef10c1d1929592006901ebe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v2/subagent-task-envelope.v2.schema.json",
+      "sha256": "786d24b465a349e319679b404cf956b38d43844df67e9d2af34ddd87c9744346"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice3_exit_evidence.py",
+      "sha256": "3f5946839d43d0a15e267b941a9f6a45dea39b216b65014308cecde8f25999f1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice3_exit_evidence_contract.py",
+      "sha256": "b9e374a418450217991c0c90ee21d2d14c4fea851f4b749d94e7a6b6adfe440c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "766226ef46f9576939b02fd4e716e2882e572d1dedabef1c3288986d8ead4b94"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/__init__.py",
+      "sha256": "888ad744e2140cd750a08866accf9c5473643df279f9d57ad14e6aaa9df611d6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "c75eeceb40c9e096655d2a1e3ff4f1dddfd72df31830a8419d80b88eb04d28ac"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/contracts.py",
+      "sha256": "06010d0aed2329b766d269a57a515aea30b6f7e047e698582ef5d75d360ebed3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/control_store.py",
+      "sha256": "39a80a0b925efdd31570777d5f56657ffe5e2b9dc9f8a2243fff8ee12fdb5082"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/control_store_recovery.py",
+      "sha256": "0b970abbd02c07df1f2f7e2925fc6e8285b19c9b45c7f5f9deaf51b7b8ec1758"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "a5bd7a1f380dc74a3ec92004ba320962128a3777e3f8048f6bb55d5b32316faa"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "8fd857b508ba9d702395b6b84a0d761d745a62d4fb98ced91e92374d99ee09b3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/models.py",
+      "sha256": "e6a306e31e192514ce694bccda3586681c44f024350a185a1cfe64864a0f146e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/resource_admission.py",
+      "sha256": "6374a85a739ee44a5b9b3761585464d899b48f51be572fd0e0f2dbd1c51c51c4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/resource_recovery.py",
+      "sha256": "1be83b3bef35547627b9a2fcd3c1422e78ae2fa5bee0338b0d3370524b3c27a0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/task_execution.py",
+      "sha256": "21909bcef20a299ad09614cfd00b9c014ee8dda405478567a7e3d4446fbbb086"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.invalid.json",
+      "sha256": "f9ef940f2a421c92f92b55db3077235855703c22147b73e84e9cad213ef36893"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.valid.json",
+      "sha256": "3a3e4a05da96d52c2e92763bd7da63c1afb0040a0e1b513b73c0797e521f5417"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.invalid.json",
+      "sha256": "2aa18bd96be3d65dd7b8903fa8de394fbb2f2e256b71b943d88db9f1156cfd98"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.valid.json",
+      "sha256": "101862e932810fe4ea62d0f5070d63ab0ab81d00a299b3d49825f0e84d77c4f0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-restore-sentinel.invalid.json",
+      "sha256": "4221947c54ec7a5a22ee955fd8887d7ece00854856de047680b1966221b50fa5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-restore-sentinel.valid.json",
+      "sha256": "c26aa1b402eaf07b7faa64352026f6fe91169233635f8bcad97f9d8a9c021396"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-restore-state.invalid.json",
+      "sha256": "c6c415c88144f21c4d942ac43ae97ceb87078b06d0fae3380654965db324e420"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-restore-state.valid.json",
+      "sha256": "920aecf53e043815c5f5d437cd130303e12c9082c443e90b23c4cce29b02fe1b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/orphaned-filesystem-commit-report.invalid.json",
+      "sha256": "3c17fdfd854329b933e87217910a5623e0d903d2d07f77dfe639d195c8053e1c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/orphaned-filesystem-commit-report.valid.json",
+      "sha256": "8eb9fda10913b251551c1880b9835fb01bdd908b312f642b055dbf4447222f20"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.invalid.json",
+      "sha256": "72f72a1dff90a17e7b0c1af222b9535c897000921d99fe6791117505f3ef6357"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/resource-admission-configuration.valid.json",
+      "sha256": "85f669b090838eec0624b8b4b878e8ff8ece47e784d98029bacdd8c4a198070d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.invalid.json",
+      "sha256": "a72fe553869afa735987cbcdc9cdfc98a204c0ac9872f434c4c067256652073c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/resource-lease-resolution-evidence.valid.json",
+      "sha256": "ff56f68cee8fd1502621ed88788ad5095047291d9235736e430e216db5cd804a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.invalid.json",
+      "sha256": "c67af731b2c774f132a060d8ac21c49a9b135ceedb5d78a929601548070a7050"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v2.valid.json",
+      "sha256": "a94c2facc3dc89519be9de06d49279645ca3546a3a3fae050f7ff538ae99b738"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.missing-domain.invalid.json",
+      "sha256": "5595bb7e02fdb8877172e0127adf0ee46910244295c5245028bf6850f0a03ccb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.unbound-result.invalid.json",
+      "sha256": "93bc696c34dd462e94523cf49aa9bf3473087f2497ba3b4fbebf8fdec8836e4a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice3.valid.json",
+      "sha256": "498776837edfdc12b196e69dd0f62da8b2d14443618c5a2d7e7588f88d03033d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/helpers/resource_admission_process_worker.py",
+      "sha256": "9151335a769471be22fac8b610d99cce9a8dceb5643ec9bc1177230564b348f1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_control_store_recovery.py",
+      "sha256": "5857eee1c5b3f125dd61831d6f998330884f45a869904c6565a447b257970e86"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_control_store_transaction_scope.py",
+      "sha256": "4fd4cdea0413325cc8836cd6c94be505718e54f688bcf1fae99d3f43af4a1ba7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate7.py",
+      "sha256": "722c4e6e2fccb6027488ebaa4493afbb79b56bb90bc3e817892f5d87a02d9457"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue5_review_repairs.py",
+      "sha256": "2f0ad4ec14efb6084e5c3e4bae20ffe6a5abc69c78653020331190bcf604d9d5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue6_exit_evidence.py",
+      "sha256": "eebe10edb82d1dc0d466063ca7ba84ad5083f03e9cc04daef97951431a333211"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_resource_admission.py",
+      "sha256": "9b6698a657f9640df8a0db3d8c84395b46cd8e94669bc8ff077bf47299ac3600"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_resource_admission_multiprocess.py",
+      "sha256": "042c6c3ed6111c83ab562ba1a05480411b82198059e372ec67ddb3090b2e11ff"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_resource_control_store_integrity.py",
+      "sha256": "16bc9e710eb08a4987c72cec6ea28ba7f2eb4908d48a6b5546465d352c5faa45"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_hardening.py",
+      "sha256": "a939b8c49772fcfbe22b28d0bd2e80db59c2c7ea1e98073fa0a6c3d45fd3fc32"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "27bfc7fafb57a1de2588dd7be670fe29bb8a1f185e122235800f6e31cfe5871a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_task_promotion.py",
+      "sha256": "09fe30460d5206388ba60bb00631d7dee3728bd0830b22a0482b17d1a4b530fb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_task_promotion_hardening.py",
+      "sha256": "4a4c2a344ea460d9e77eb2bfbcd00249902266be1369e8fb976bf173edf12479"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

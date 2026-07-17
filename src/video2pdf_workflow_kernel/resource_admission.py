@@ -816,6 +816,24 @@ class ResourceAdmission:
         self.kernel.contracts.validate(
             "resource-admission-configuration", configuration
         )
+        resources = configuration.get("resources")
+        configured_classes = (
+            []
+            if not isinstance(resources, list)
+            else [
+                item.get("resource_class") if isinstance(item, dict) else None
+                for item in resources
+            ]
+        )
+        if (
+            len(configured_classes) != len(RESOURCE_CLASSES)
+            or any(not isinstance(item, str) for item in configured_classes)
+            or set(configured_classes) != set(RESOURCE_CLASSES)
+        ):
+            raise ContractError(
+                "Resource Admission Configuration must govern every fixed "
+                "Resource Class exactly once"
+            )
         configuration_json = canonical_json_bytes(configuration).decode("utf-8")
         configuration_sha256 = hashlib.sha256(
             configuration_json.encode("utf-8")

@@ -15,6 +15,16 @@
       "type": "array",
       "minItems": 7,
       "maxItems": 7,
+      "uniqueItems": true,
+      "allOf": [
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "bilibili_download"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "youtube_download"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "whisper"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "codex_semantic"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "latex"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "pdf_render"}}}},
+        {"contains": {"required": ["resource_class"], "properties": {"resource_class": {"const": "visual_acceptance"}}}}
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,

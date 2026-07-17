@@ -54,6 +54,7 @@ RESOURCE_ADMISSION_TEST_TARGETS = (
     "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_reclaim_advances_claim_and_queues_replacement_when_quota_is_zero",
     "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_provider_resolution_replay_reuses_persisted_proof_before_verifier",
     "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_local_process_resolution_replay_reuses_persisted_proof_before_inspector",
+    "tests.video_workflow.test_resource_admission.ResourceAdmissionTests.test_configuration_requires_every_fixed_resource_class_exactly_once",
 )
 
 MULTIPROCESS_TEST_TARGETS = (
@@ -276,6 +277,7 @@ RESULTS = {
         "windows_junction_restore_authority_is_rejected",
         "first_restore_committed_report_drift_blocks_archive",
         "busy_quiescence_failure_does_not_quarantine_or_publish",
+        "duplicate_resource_class_configuration_is_rejected",
     ],
     "quota": [
         "atomic_multi_resource_admission",
@@ -512,6 +514,12 @@ RESULT_BINDINGS = [
         "negative",
         "slice3-control-store-recovery",
         CONTROL_STORE_RECOVERY_TEST_TARGETS[20],
+    ),
+    _binding(
+        "duplicate_resource_class_configuration_is_rejected",
+        "negative",
+        "slice3-resource-admission",
+        RESOURCE_ADMISSION_TEST_TARGETS[31],
     ),
     _binding(
         "atomic_multi_resource_admission",

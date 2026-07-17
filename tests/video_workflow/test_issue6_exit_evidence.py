@@ -350,7 +350,7 @@ class Slice3ExitEvidenceTests(unittest.TestCase):
         resource_command = dict(collector.COMMANDS)[
             "slice3-resource-admission"
         ]
-        self.assertEqual(len(contract.RESOURCE_ADMISSION_TEST_TARGETS), 31)
+        self.assertEqual(len(contract.RESOURCE_ADMISSION_TEST_TARGETS), 32)
         self.assertEqual(len(contract.CONTROL_STORE_RECOVERY_TEST_TARGETS), 21)
         for target in (
             *contract.RESOURCE_ADMISSION_TEST_TARGETS,
@@ -517,7 +517,7 @@ class Slice3ExitEvidenceTests(unittest.TestCase):
             *contract.CONTROL_STORE_RECOVERY_TEST_TARGETS,
             *contract.EXIT_EVIDENCE_TEST_TARGETS,
         )
-        self.assertEqual(len(targets), 76)
+        self.assertEqual(len(targets), 77)
         self.assertEqual(len(targets), len(set(targets)))
         bound_targets = {
             binding["test_target"] for binding in contract.RESULT_BINDINGS

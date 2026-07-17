@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import unittest
+from unittest import mock
 import uuid
 
 
@@ -1497,6 +1498,27 @@ class ResourceAdmissionTests(unittest.TestCase):
         self.assertIsNone(self.kernel.task_claim_status(prepared.task_id))
         with self.assertRaises(ControlStoreUnavailable):
             self.kernel.resource_status(prepared.task_id, "missing-attempt")
+
+    def test_configuration_requires_every_fixed_resource_class_exactly_once(
+        self,
+    ) -> None:
+        duplicate_configuration = self.configuration(version=2, capacities={})
+        duplicate_configuration["resources"] = [
+            {"resource_class": "latex", "capacity": capacity}
+            for capacity in range(7)
+        ]
+
+        with self.assertRaises(ContractError):
+            self.kernel.activate_resource_configuration(duplicate_configuration)
+
+        with mock.patch.object(self.kernel.contracts, "validate", return_value=None):
+            with self.assertRaisesRegex(
+                ContractError,
+                "must govern every fixed Resource Class exactly once",
+            ):
+                self.kernel.activate_resource_configuration(
+                    duplicate_configuration
+                )
 
     def test_quota_downshift_drains_without_preemption_and_unrelated_work_runs(self) -> None:
         _, codex_one = self.prepare_and_claim(

@@ -8,7 +8,7 @@
     "name": "fenced-task-execution-and-promotion"
   },
   "slice_base_commit": "904f46409b87aca96aeecf5cb0be4855c2cfdafa",
-  "implementation_commit": "45e24aa8d4eb7d60ce1acd132424fb3d4bcd7366",
+  "implementation_commit": "9efcf4c05aaa046b75b10521cdf5d6000b095bd9",
   "evidence_paths": [
     "evidence/slice-02/exit-evidence-manifest.json",
     "evidence/slice-02/logs/slice0-regression.log",
@@ -22,7 +22,7 @@
     "evidence/slice-02/logs/slice2-syntax.log",
     "evidence/slice-02/logs/slice2-diff-check.log"
   ],
-  "generated_at": "2026-07-16T22:12:32Z",
+  "generated_at": "2026-07-17T03:50:06Z",
   "activation_scope": {
     "kind": "none",
     "runtime_authority_change": false,
@@ -46,7 +46,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice0-regression.log",
-        "sha256": "edd0c567d7769e088e4ef0c5c97fea1b941dc9df384fed288b58364c6a1fccfe"
+        "sha256": "6e1667c3557d0fc55992590d5e5bc9594b259090b3ec268268a2098a25110228"
       },
       "conforms": true
     },
@@ -65,7 +65,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-contracts.log",
-        "sha256": "cd2775249ff4befe33500229c3f6d8724e70c3c9c6282d91c00f2e23347883b4"
+        "sha256": "482a07c2c5a42c6b1fdb6ae6222c2f7ac5d05b08cfe114f1e5043a8e88293583"
       },
       "conforms": true
     },
@@ -88,7 +88,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-regression.log",
-        "sha256": "ea0be9db41609cfc25658a943495ebe902defb1084ffe357a61126f23450688a"
+        "sha256": "f8e49b25e6055e0323bff43b591ef3df98d91d02d292f0be02d0392de5b5c547"
       },
       "conforms": true
     },
@@ -108,7 +108,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion.log",
-        "sha256": "05b004c246af5dc578f673140fe08a353672e9a5739ef0b36786fd2c810d4c0a"
+        "sha256": "73c838440cbe0f3bcca9509f3822e4f8dd4b4ce325e4dc50e9aa7afd04fe5f68"
       },
       "conforms": true
     },
@@ -128,7 +128,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-task-promotion-hardening.log",
-        "sha256": "8690b6fba743ccac154756e61d294986bdebac44559ce5f284e2bf784b5ec13e"
+        "sha256": "3a72b43ae4fd6da5a094b17b3feec89d8ae3e92f3aaf69cd74bfe710e64fb57d"
       },
       "conforms": true
     },
@@ -148,7 +148,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-review-repairs.log",
-        "sha256": "1a89cc18f94cae7e323e9ea7b87ca20bc4c060babfe584ffae64f6798a885c5a"
+        "sha256": "24681eecc05cb98e71a399bf7969a07cf2cabf46eb6bbf13eee3a5e02fe23a6c"
       },
       "conforms": true
     },
@@ -168,7 +168,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-control-store-transaction-scope.log",
-        "sha256": "c53707935aaefb78ab0e7fd3845d2ee77374fa1bbeba2a9f51a3662ad12e0c7c"
+        "sha256": "0fd32c080e5bfd14503c28e12d00bc25edb70c07c9ca021bd96fe93845d47e73"
       },
       "conforms": true
     },
@@ -187,7 +187,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice1-exit-evidence.log",
-        "sha256": "5a9e28b9915b3d471386c8ec4e642e784384ad9d992dbd74e4d15f009a6b34a4"
+        "sha256": "29c2f9ccf833330bad25cb27d3d8012551c2d86d9b14e78379726e94372a7073"
       },
       "conforms": true
     },
@@ -206,7 +206,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-syntax.log",
-        "sha256": "27026b8841ec6fac804c052a7aed586f536749d6eda54ecdc47b5c6cc662e025"
+        "sha256": "205efacc805762aa7e093160421473ce7480ccfd9d0fb48131a3e6a7cd0a6c09"
       },
       "conforms": true
     },
@@ -223,7 +223,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/slice-02/logs/slice2-diff-check.log",
-        "sha256": "848e4f2198ebbfbd4e8d69103109bb1ea529da8f0617ff50337b258d7a7708f7"
+        "sha256": "aefad8b00c4e39810e77807167d4abfa52b81718ed085d738d270cd5c00142ea"
       },
       "conforms": true
     }
@@ -273,15 +273,13 @@
       "promotion_registers_artifact_generation_and_checkpoint",
       "same_run_publication_is_serialized_with_cross_run_independence",
       "second_generation_preserves_prior_bytes",
-      "multiple_reclaims_preserve_complete_ordered_audit_history",
-      "authenticated_claim_authority_preserves_valid_reclaim_promotion_and_terminal_overlap",
       "control_store_authority_preflight_precedes_writer_lock",
       "concurrent_valid_mutations_retry_without_lost_updates",
       "public_reconcile_authority_dispatches_kernel_run",
-      "reconcile_run_wraps_the_same_authority_handler"
+      "reconcile_run_wraps_the_same_authority_handler",
+      "public_task_cli_covers_reclaim_and_promotion_recovery"
     ],
     "negative": [
-      "late_and_superseded_workers_are_fenced",
       "undeclared_outputs_and_direct_canonical_writes_fail_closed",
       "protected_fields_stale_inputs_and_stale_revisions_fail_closed",
       "absolute_backslash_device_reparse_and_trailing_paths_fail_closed",
@@ -291,14 +289,22 @@
       "run_wide_files_directories_and_unknown_task_roots_fail_closed",
       "every_nonterminal_recovery_revalidates_source_freshness",
       "missing_or_drifted_prior_generation_preservation_fails_closed",
+      "raw_writer_race_invalidates_stale_preflight"
+    ],
+    "fencing": [
+      "late_and_superseded_workers_are_fenced",
+      "multiple_reclaims_preserve_complete_ordered_audit_history",
       "reclaim_history_corruption_blocks_global_mutation",
+      "authenticated_claim_authority_preserves_valid_reclaim_promotion_and_terminal_overlap",
       "claim_authority_projection_and_lifecycle_tamper_fail_closed",
       "overlapping_active_claim_write_sets_fail_closed",
       "missing_tampered_or_orphan_claim_authority_blocks_global_mutation",
-      "raw_writer_race_invalidates_stale_preflight"
+      "public_cli_reclaim_fences_prior_attempt"
     ],
     "recovery": [
+      "preparation_boundaries_resume_idempotently",
       "claim_boundaries_resume_idempotently",
+      "reclaim_boundaries_resume_idempotently",
       "completion_boundaries_resume_idempotently",
       "promotion_boundaries_converge_to_one_committed_generation",
       "committed_mutation_hash_chain_covers_task_and_source_drift",
@@ -315,23 +321,28 @@
   "artifact_fingerprints": [
     {
       "role": "implementation_artifact",
+      "path": ".gitattributes",
+      "sha256": "2a6ed2fc3b9ec81f4110b0fc489b5daa90e97fc238aee7cd94318d6cd09a4f7e"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "prompts/video-workflow/platforms/fixture.v1.md",
-      "sha256": "87b931e61e591b3719d288b41501b4ee7395049aa4d925f8b95db5b4fd57f835"
+      "sha256": "193bf571ba819140cb86ac8d7e169027dfe1a9bcb0a98e6903e30975314d7505"
     },
     {
       "role": "implementation_artifact",
       "path": "prompts/video-workflow/registry.v1.json",
-      "sha256": "0cbc8d32fa06f0945cd0c5422847be92c663a5698ceaa2738af7e39f54328b6b"
+      "sha256": "b679e06e2325817a98721c152c9816ee5e14cd1330f61e50f2f744271fe81140"
     },
     {
       "role": "implementation_artifact",
       "path": "prompts/video-workflow/roles/source-acquisition.v1.md",
-      "sha256": "b1309e72f2b4773e0d904e99559928b660ff4860242cbfc55bbb96c6e83bfa4d"
+      "sha256": "296865f2f71189ab071c9b63824a00dc2b036ac33080b509a3719235e8da4617"
     },
     {
       "role": "implementation_artifact",
       "path": "schemas/exit-evidence-manifest.v2.schema.json",
-      "sha256": "5094b72acdd0840abb4453bc8169282743e338f54a5fa08b9295fe8b1aaabd78"
+      "sha256": "731278289fb1f86f2337b1036cf07ae705bfc3745a4e53cee7faa5508c402b53"
     },
     {
       "role": "implementation_artifact",
@@ -376,12 +387,12 @@
     {
       "role": "implementation_artifact",
       "path": "scripts/collect_slice2_exit_evidence.py",
-      "sha256": "cdb0b4250f84b7108b25d0ceb56cd3325bf008da3d910c8d699508235168af69"
+      "sha256": "b031c67f52014afb53d535a425cc6444fc9d3a8444b9639705194058717b690e"
     },
     {
       "role": "implementation_artifact",
       "path": "scripts/validate_slice_exit_evidence.py",
-      "sha256": "4e2ceac6f878eeb9afc25b9676dd773bce4d8537c153c06edac1d4edfd85c3fe"
+      "sha256": "63360ca93223c2f96568ab4044b083186bc86f2d82fb55c0bb6989de8ecdd45a"
     },
     {
       "role": "implementation_artifact",
@@ -391,7 +402,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/cli.py",
-      "sha256": "3d5114d846a46a37797beaf8a1bfb3775f3b4898bf4c43f4f8a8b0c450f70688"
+      "sha256": "a71c1d7d0f2073cfb9182b74f41ab4fa7c349b1ef954883ee190b7b924d11438"
     },
     {
       "role": "implementation_artifact",
@@ -411,7 +422,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/kernel.py",
-      "sha256": "288d1e7106985c26faa5b5ed699508892422f0c875b32fb20d637265b5c49032"
+      "sha256": "a05317304b63bc248cbb386a2c9c387e581ac16183d43ed82eb841e49bf66aad"
     },
     {
       "role": "implementation_artifact",
@@ -426,7 +437,7 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/task_execution.py",
-      "sha256": "09eaa2f02d0746d5cfa2530ec66abffac5b3bb881a6cb0573bfbe5dc1d7e029b"
+      "sha256": "7d0c8605d3548e9459703f27ee5ff51d53ec293bd03fd40a700966ac67123c72"
     },
     {
       "role": "implementation_artifact",
@@ -490,6 +501,16 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice2.missing-fencing.invalid.json",
+      "sha256": "5586f66e77c3be1608c9fa2ee5d98d0c7bb2cd774f2c6d850ddb81af66026622"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice2.valid.json",
+      "sha256": "4c85a1aa23a56cf067852a309af5666f3b06b5ed1770039ae384a2db16712d52"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "tests/video_workflow/test_control_store_transaction_scope.py",
       "sha256": "90296a74b2b2109dd9f0fe55600b6c66313ae8f39d93381dc43ae266e32141da"
     },
@@ -501,7 +522,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue5_review_repairs.py",
-      "sha256": "cfec2e32015aef5576a8e8c879b2c04b9642cdf1cc2da3eeedb51ef302528f87"
+      "sha256": "7fbb43d17a6f394f298bcc64730e58590f19aabca5c2596b7ae99451ab6266d0"
     },
     {
       "role": "implementation_artifact",
@@ -511,7 +532,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_source_ready_tracer.py",
-      "sha256": "9aa39616830c7a148f8fd3865a326b8e2125de2a4a1aebb1a360f1327b4fe952"
+      "sha256": "c29566e1cb873736c9bbe4a932d73fd0eeabe590f32bbd70234b8017e1e4516b"
     },
     {
       "role": "implementation_artifact",
@@ -521,7 +542,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_task_promotion_hardening.py",
-      "sha256": "74b98b69b23517f892007194ddef6e012ba9276f4272888eb79a73f3c01b4c09"
+      "sha256": "83edae33896b4d45fc99c33680f00aca0af0b2eaa2f7bb7be02ee01dad04a389"
     }
   ],
   "unresolved_exceptions": [],

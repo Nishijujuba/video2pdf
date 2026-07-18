@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,20 @@ MANIFEST_VALIDATOR = PROJECT_ROOT / "scripts" / "validate_exit_evidence_manifest
 DEFINITION_VALIDATOR = PROJECT_ROOT / "scripts" / "validate_legacy_baseline_definition.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REQUIRED_CATEGORIES = {"pyramid", "compile", "acceptance", "delivery_guard", "batch"}
+CLI_FIXTURE_PATHS = (
+    ".gitattributes",
+    ".gitignore",
+    "scripts/collect_legacy_baseline.py",
+    "scripts/legacy_baseline_contracts.py",
+    "scripts/validate_exit_evidence_manifest.py",
+    "scripts/validate_legacy_baseline_definition.py",
+    "schemas/exit-evidence-manifest.v1.schema.json",
+    "schemas/legacy-baseline-definition.v1.schema.json",
+    "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json",
+    "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json",
+    "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json",
+    "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json",
+)
 
 
 def sha256_text(value: str) -> str:
@@ -54,14 +69,47 @@ def run_git(repo: Path, *arguments: str) -> str:
 
 
 class LegacyBaselineCliTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        fixture_parent = PROJECT_ROOT / "待删除" / "kernel-test-runs"
+        fixture_parent.mkdir(parents=True, exist_ok=True)
+        cls.cli_project_root = (
+            fixture_parent / f"legacy-baseline-fixture-{time.time_ns()}"
+        )
+        cls.cli_project_root.mkdir(parents=True, exist_ok=False)
+        run_git(cls.cli_project_root, "init", "--initial-branch=main")
+        run_git(cls.cli_project_root, "config", "user.name", "Video Workflow Tests")
+        run_git(
+            cls.cli_project_root,
+            "config",
+            "user.email",
+            "video-workflow-tests@example.invalid",
+        )
+        run_git(cls.cli_project_root, "config", "commit.gpgsign", "false")
+        run_git(cls.cli_project_root, "config", "core.autocrlf", "false")
+        run_git(cls.cli_project_root, "commit", "--allow-empty", "-m", "fixture base")
+        for relative in CLI_FIXTURE_PATHS:
+            source = PROJECT_ROOT / relative
+            destination = cls.cli_project_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        run_git(cls.cli_project_root, "add", "--", ".")
+        run_git(cls.cli_project_root, "commit", "-m", "fixture snapshot")
+        cls.collector = (
+            cls.cli_project_root / "scripts" / "collect_legacy_baseline.py"
+        )
+        cls.manifest_validator = (
+            cls.cli_project_root / "scripts" / "validate_exit_evidence_manifest.py"
+        )
+
     def setUp(self) -> None:
-        trash_root = PROJECT_ROOT / "待删除" / "kernel-test-runs"
+        trash_root = self.cli_project_root / "待删除" / "kernel-test-runs"
         trash_root.mkdir(parents=True, exist_ok=True)
         self.run_root = trash_root / f"legacy-baseline-{time.time_ns()}"
         self.run_root.mkdir(parents=True)
         self.commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             check=True,
             capture_output=True,
             text=True,
@@ -139,7 +187,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
             "slice_verifications": [verification],
             "authority_guards": [
                 {
-                    "path": self.authority_path.relative_to(PROJECT_ROOT).as_posix(),
+                    "path": self.authority_path.relative_to(
+                        self.cli_project_root
+                    ).as_posix(),
                     "required_substrings": ["Legacy Track remains authoritative."],
                 }
             ],
@@ -160,7 +210,7 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 "-X",
                 "utf8",
                 "-B",
-                str(COLLECTOR),
+                str(self.collector),
                 "--definition",
                 str(definition),
                 "--output",
@@ -172,7 +222,7 @@ class LegacyBaselineCliTests(unittest.TestCase):
             command.extend(["--implementation-commit", implementation_commit])
         return subprocess.run(
             command,
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -185,12 +235,12 @@ class LegacyBaselineCliTests(unittest.TestCase):
         definition = self.write_definition()
 
         first = self.run_collector(definition, suffix="repeatable")
+        self.assertEqual(0, first.returncode, first.stderr)
         first_manifest = self.read_manifest("repeatable")
         second = self.run_collector(definition, suffix="repeatable")
+        self.assertEqual(0, second.returncode, second.stderr)
         second_manifest = self.read_manifest("repeatable")
 
-        self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(0, second.returncode, second.stderr)
         baseline_commands = [entry for entry in first_manifest["commands"] if entry["scope"] == "legacy_baseline"]
         self.assertEqual(REQUIRED_CATEGORIES, {entry["category"] for entry in baseline_commands})
         self.assertEqual(5, len(baseline_commands))
@@ -199,7 +249,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
         self.assertEqual("sha256-utf8-lf-v1", first_manifest["fingerprint_algorithm"])
         self.assertEqual(self.commit, first_manifest["implementation_commit"])
         expected_evidence_paths = {
-            (self.run_root / "manifest-repeatable.json").relative_to(PROJECT_ROOT).as_posix(),
+            (self.run_root / "manifest-repeatable.json")
+            .relative_to(self.cli_project_root)
+            .as_posix(),
             *{
                 command["log"][f"{kind}_path"]
                 for command in first_manifest["commands"]
@@ -223,11 +275,11 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 "-X",
                 "utf8",
                 "-B",
-                str(MANIFEST_VALIDATOR),
+                str(self.manifest_validator),
                 str(self.run_root / "manifest-repeatable.json"),
                 "--pre-publication",
             ],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -244,9 +296,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
             }
         )
         status_result = self.run_collector(status_definition, suffix="status-drift")
+        self.assertNotEqual(0, status_result.returncode, status_result.stderr)
         status_manifest = self.read_manifest("status-drift")
 
-        self.assertNotEqual(0, status_result.returncode)
         failed_status = next(entry for entry in status_manifest["commands"] if entry["category"] == "batch")
         self.assertEqual("pass", failed_status["expected_status"])
         self.assertEqual("fail", failed_status["actual_status"])
@@ -261,9 +313,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
             }
         )
         log_result = self.run_collector(log_definition, suffix="log-drift")
+        self.assertNotEqual(0, log_result.returncode, log_result.stderr)
         log_manifest = self.read_manifest("log-drift")
 
-        self.assertNotEqual(0, log_result.returncode)
         failed_log = next(entry for entry in log_manifest["commands"] if entry["category"] == "pyramid")
         self.assertEqual("pass", failed_log["actual_status"])
         self.assertNotEqual(failed_log["expected_log_sha256"], failed_log["log"]["normalized_sha256"])
@@ -287,7 +339,7 @@ class LegacyBaselineCliTests(unittest.TestCase):
         definition_path = self.write_definition()
         ancestor = subprocess.run(
             ["git", "rev-parse", "HEAD~1"],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             check=True,
             capture_output=True,
             text=True,
@@ -310,7 +362,10 @@ class LegacyBaselineCliTests(unittest.TestCase):
         self.assertEqual(0, collected.returncode, collected.stderr)
         manifest_path = self.run_root / "manifest-tampered-binding.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        log_path = PROJECT_ROOT / manifest["commands"][0]["log"]["normalized_path"]
+        log_path = (
+            self.cli_project_root
+            / manifest["commands"][0]["log"]["normalized_path"]
+        )
         lf_bytes = log_path.read_bytes()
         log_path.write_bytes(lf_bytes.replace(b"\n", b"\r\n"))
 
@@ -320,10 +375,10 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 "-X",
                 "utf8",
                 "-B",
-                str(MANIFEST_VALIDATOR),
+                str(self.manifest_validator),
                 str(manifest_path),
             ],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -337,11 +392,11 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 "-X",
                 "utf8",
                 "-B",
-                str(MANIFEST_VALIDATOR),
+                str(self.manifest_validator),
                 str(manifest_path),
                 "--pre-publication",
             ],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -356,11 +411,11 @@ class LegacyBaselineCliTests(unittest.TestCase):
                 "-X",
                 "utf8",
                 "-B",
-                str(MANIFEST_VALIDATOR),
+                str(self.manifest_validator),
                 str(manifest_path),
                 "--pre-publication",
             ],
-            cwd=PROJECT_ROOT,
+            cwd=self.cli_project_root,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -370,7 +425,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
         self.assertIn("fingerprint mismatch", validated.stderr)
 
     def test_normalization_removes_declared_run_identity_noise_only(self) -> None:
-        spec = importlib.util.spec_from_file_location("collect_legacy_baseline", COLLECTOR)
+        spec = importlib.util.spec_from_file_location(
+            "collect_legacy_baseline", self.collector
+        )
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader if spec else None)
         module = importlib.util.module_from_spec(spec)
@@ -378,14 +435,14 @@ class LegacyBaselineCliTests(unittest.TestCase):
         spec.loader.exec_module(module)
         first = (
             "ERROR: idle timeout; report: "
-            f"{PROJECT_ROOT}\\待删除\\skill-tests\\idle-timeout-1784043830963755900"
+            f"{self.cli_project_root}\\待删除\\skill-tests\\idle-timeout-1784043830963755900"
             "\\待删除\\latex-build\\20260714_234350_968754_9dd2f9a4\\compile_report.json\n"
             "alias: \\234350_fc6bf7\\main.tex\n"
             "document_id=1234567890123456\n"
         )
         second = (
             "ERROR: idle timeout; report: "
-            f"{PROJECT_ROOT}\\待删除\\skill-tests\\idle-timeout-1784043940086707600"
+            f"{self.cli_project_root}\\待删除\\skill-tests\\idle-timeout-1784043940086707600"
             "\\待删除\\latex-build\\20260714_234540_092708_81b5e789\\compile_report.json\n"
             "alias: \\234540_edf1b1\\main.tex\n"
             "document_id=1234567890123456\n"
@@ -426,7 +483,9 @@ class LegacyBaselineCliTests(unittest.TestCase):
         )
 
     def test_atomic_publish_failure_preserves_previous_evidence(self) -> None:
-        spec = importlib.util.spec_from_file_location("collect_legacy_baseline", COLLECTOR)
+        spec = importlib.util.spec_from_file_location(
+            "collect_legacy_baseline", self.collector
+        )
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader if spec else None)
         module = importlib.util.module_from_spec(spec)

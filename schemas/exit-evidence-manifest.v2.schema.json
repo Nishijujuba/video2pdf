@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3]},
+        "number": {"enum": [1, 2, 3, 4]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -107,6 +107,33 @@
       "uniqueItems": true,
       "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]{2,119}$"}
     },
+    "platform_smokes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/platformSmokeEvidence"},
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["platform"],
+            "properties": {"platform": {"const": "bilibili"}}
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["platform"],
+            "properties": {"platform": {"const": "youtube"}}
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
     "artifact_fingerprints": {
       "type": "array",
       "minItems": 1,
@@ -138,7 +165,8 @@
         },
         "slice_base_commit": {"const": "96089b99c9ae63fff61107e1920fc3481ffc0802"},
         "result_bindings": false,
-        "fault_points": false
+        "fault_points": false,
+        "platform_smokes": false
       }
     },
     {
@@ -152,7 +180,8 @@
         "slice_base_commit": {"const": "904f46409b87aca96aeecf5cb0be4855c2cfdafa"},
         "results": {"required": ["fencing"]},
         "result_bindings": false,
-        "fault_points": false
+        "fault_points": false,
+        "platform_smokes": false
       }
     },
     {
@@ -165,7 +194,21 @@
           }
         },
         "slice_base_commit": {"const": "aaaaeac5747fddc0915a59df34de47e6e8cfec48"},
-        "results": {"required": ["quota", "fencing", "fairness", "restart", "recovery"]}
+        "results": {"required": ["quota", "fencing", "fairness", "restart", "recovery"]},
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings", "fault_points", "platform_smokes"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 4},
+            "name": {"const": "production-source-acquisition"}
+          }
+        },
+        "slice_base_commit": {"const": "654362017fa974946fb252af5311868bb47efcf0"},
+        "results": {"required": ["fencing", "restart", "recovery"]}
       }
     }
   ],
@@ -205,6 +248,90 @@
         "result_kind": {"enum": ["positive", "negative", "quota", "fencing", "fairness", "restart", "recovery"]},
         "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
         "test_target": {"type": "string", "pattern": "^tests\\.video_workflow\\.[A-Za-z0-9_.]+$"}
+      }
+    },
+    "platformSmokeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "adapter_id",
+        "adapter_contract_version",
+        "provider_kind",
+        "run_id",
+        "command_id",
+        "command_argv_redacted",
+        "authentication_classification",
+        "tool_versions",
+        "target_checkpoint",
+        "source_manifest",
+        "sanitized_log",
+        "runtime_policy_sha256",
+        "recorded_at"
+      ],
+      "properties": {
+        "platform": {"enum": ["bilibili", "youtube"]},
+        "adapter_id": {"enum": ["bilibili", "youtube"]},
+        "adapter_contract_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "provider_kind": {"const": "live"},
+        "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "command_argv_redacted": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "authentication_classification": {
+          "enum": [
+            "not_applicable",
+            "anonymous",
+            "cookie_accepted",
+            "cookie_missing",
+            "cookie_unreadable",
+            "cookie_rejected",
+            "cookie_expired"
+          ]
+        },
+        "tool_versions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "target_checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "status", "evidence_sha256"],
+          "properties": {
+            "name": {"const": "source_ready"},
+            "status": {"const": "current"},
+            "evidence_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "source_manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "canonical_platform", "canonical_item_id", "source_identity", "source_version"],
+          "properties": {
+            "path": {"$ref": "#/$defs/projectPath"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "canonical_platform": {"enum": ["bilibili", "youtube"]},
+            "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "source_identity": {"$ref": "#/$defs/sha256"},
+            "source_version": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "sanitized_log": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "no_secret_scan"],
+          "properties": {
+            "path": {"$ref": "#/$defs/projectPath"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "no_secret_scan": {"const": "pass"}
+          }
+        },
+        "runtime_policy_sha256": {"$ref": "#/$defs/sha256"},
+        "recorded_at": {"type": "string", "format": "date-time"}
       }
     }
   }

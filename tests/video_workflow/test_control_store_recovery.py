@@ -65,7 +65,10 @@ class ControlStoreRecoveryTests(unittest.TestCase):
         )
 
     def new_workspace(self, label: str) -> Path:
-        root = TEST_RUNS / f"control-store-recovery-{label}-{uuid.uuid4().hex[:8]}"
+        # Recovery labels describe the scenario and can be very long. Keep the
+        # filesystem identity compact so non-path-budget tests remain within the
+        # workflow's intentional 240 UTF-16-unit ceiling as reserved paths grow.
+        root = TEST_RUNS / f"csr-{uuid.uuid4().hex[:8]}"
         workspace = root / "workspace"
         workspace.mkdir(parents=True, exist_ok=False)
         return workspace
@@ -804,7 +807,7 @@ class ControlStoreRecoveryTests(unittest.TestCase):
         )
         connection = sqlite3.connect(mismatched / "control.sqlite3")
         try:
-            connection.execute("DELETE FROM schema_migrations WHERE version=8")
+            connection.execute("DELETE FROM schema_migrations WHERE version=9")
             connection.commit()
         finally:
             connection.close()

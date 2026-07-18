@@ -1,0 +1,27 @@
+{
+  "schema_name":"subagent-task-envelope",
+  "schema_version":"3.0.0",
+  "kernel_version":"2.0.0",
+  "task_id":"be735f2d6974b705152a68f6f3d52d3a",
+  "logical_task_key":"source-acquisition-provider-epoch-1",
+  "role":"source_acquisition",
+  "task_stage":"provider_acquisition",
+  "platform":"bilibili",
+  "source_epoch":1,
+  "authority_binding":{"kind":"kernel_run","run_id":"00000000000000000000000000000000","expected_coordination_revision":1,"target_checkpoint":"source_candidates_ready"},
+  "prepared_at":"2026-07-18T01:00:00Z",
+  "task_root_path":"workflow/tasks/be735f2d6974b705152a68f6f3d52d3a",
+  "input_artifacts":[{"logical_id":"bootstrap_record","path":"待删除/bootstrap/probe.json","generation":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "allowed_read_paths":["待删除/bootstrap/probe.json"],
+  "protected_run_snapshot":[{"path":"workflow/run.json","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+  "write_set":["work/source-acquisition/candidate-inventory.json","work/source-acquisition/decision.skeleton.json","work/source-acquisition/candidates/e1"],
+  "required_outputs":[
+    {"logical_id":"source_candidate_inventory","attempt_relative_path":"o/candidate-inventory.json","canonical_path":"work/source-acquisition/candidate-inventory.json","schema_name":"source-candidate-inventory","schema_version":"1.0.0","expected_prior_generation":null,"expected_prior_sha256":null},
+    {"logical_id":"source_acquisition_decision_skeleton","attempt_relative_path":"o/decision.skeleton.json","canonical_path":"work/source-acquisition/decision.skeleton.json","schema_name":"source-acquisition-decision-skeleton","schema_version":"1.0.0","expected_prior_generation":null,"expected_prior_sha256":null}
+  ],
+  "generated_prompt":null,
+  "bounded_semantic_fields":[],
+  "whisper_audio_candidate":null,
+  "resource_request":["bilibili_download"],
+  "fairness_group_id":"00000000000000000000000000000000"
+}

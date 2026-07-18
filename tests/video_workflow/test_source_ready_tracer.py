@@ -683,7 +683,7 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
         )
         report = kernel.control_store.check()
         self.assertEqual(report.status, "ok")
-        self.assertEqual(report.schema_version, 8)
+        self.assertEqual(report.schema_version, 9)
         self.assertEqual(report.pragmas["journal_mode"].lower(), "delete")
         self.assertEqual(int(report.pragmas["synchronous"]), 3)
         self.assertEqual(int(report.pragmas["foreign_keys"]), 1)

@@ -16,6 +16,32 @@ class BootstrapProbeResult:
 
 
 @dataclass(frozen=True)
+class ProductionBootstrapResult:
+    run_id: str
+    request_id: str
+    record_path: Path
+    original_title: str
+    task_start: str
+    canonical_platform: str
+    canonical_item_id: str
+    source_identity: str
+
+
+@dataclass(frozen=True)
+class DeterministicLocatorRequest:
+    source_url: str
+    original_title: str
+    explicit_item_selector: str | None = None
+
+
+@dataclass(frozen=True)
+class ProductionInitializationResult:
+    run_id: str
+    run_dir: Path
+    classification: str = "source_acquisition_pending"
+
+
+@dataclass(frozen=True)
 class TraceResult:
     run_id: str
     run_dir: Path

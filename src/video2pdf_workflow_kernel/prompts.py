@@ -13,6 +13,15 @@ ROLE_IDENTITY = "source-acquisition"
 PLATFORM_IDENTITY = "fixture"
 ROLE_PATH = "prompts/video-workflow/roles/source-acquisition.v1.md"
 PLATFORM_PATH = "prompts/video-workflow/platforms/fixture.v1.md"
+ROLE_PATHS = {
+    ("source-acquisition", "1.0.0"): ROLE_PATH,
+    ("source-acquisition", "2.0.0"): "prompts/video-workflow/roles/source-acquisition.v2.md",
+}
+PLATFORM_PATHS = {
+    ("fixture", "1.0.0"): PLATFORM_PATH,
+    ("bilibili", "1.0.0"): "prompts/video-workflow/platforms/bilibili.v1.md",
+    ("youtube", "1.0.0"): "prompts/video-workflow/platforms/youtube.v1.md",
+}
 
 
 def _canonical_markdown(path: Path) -> bytes:
@@ -29,27 +38,50 @@ def _canonical_markdown(path: Path) -> bytes:
 
 
 def _entry(
-    entries: Any, identity: str, expected_path: str, category: str
+    entries: Any,
+    identity: str,
+    version: str,
+    expected: dict[tuple[str, str], str] | str,
+    category: str | None = None,
 ) -> dict[str, str]:
-    if not isinstance(entries, list) or len(entries) != 1:
-        raise ContractError(f"prompt registry must contain one Slice 2 {category}")
-    raw = entries[0]
-    if not isinstance(raw, dict) or set(raw) != {"identity", "version", "path"}:
-        raise ContractError(f"prompt registry {category} entry is not closed")
-    if (
-        raw["identity"] != identity
-        or raw["version"] != "1.0.0"
-        or raw["path"] != expected_path
-    ):
-        raise ContractError(
-            f"prompt registry {category} identity/version/path is unsupported"
-        )
-    if not isinstance(raw["path"], str):
-        raise ContractError(f"prompt registry {category} path is invalid")
-    return raw
+    if category is None:
+        expected_path = version
+        category = str(expected)
+        version = "1.0.0"
+        expected = {(identity, version): expected_path}
+    if not isinstance(expected, dict):
+        raise ContractError(f"prompt registry {category} expectation is invalid")
+    if not isinstance(entries, list) or not entries:
+        raise ContractError(f"prompt registry must contain versioned {category} entries")
+    by_identity: dict[tuple[str, str], dict[str, str]] = {}
+    for raw in entries:
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"identity", "version", "path"}
+            or not all(isinstance(raw[key], str) for key in raw)
+        ):
+            raise ContractError(f"prompt registry {category} entry is not closed")
+        key = (raw["identity"], raw["version"])
+        if key in by_identity or key not in expected or raw["path"] != expected[key]:
+            raise ContractError(
+                f"prompt registry {category} identity/version/path is unsupported"
+            )
+        by_identity[key] = raw
+    if set(by_identity) != set(expected):
+        raise ContractError(f"prompt registry {category} entries are incomplete")
+    try:
+        return by_identity[(identity, version)]
+    except KeyError as exc:
+        raise ContractError(f"requested prompt {category} is unsupported") from exc
 
 
-def generate_source_acquisition_prompt(project_root: Path) -> tuple[bytes, dict[str, Any]]:
+def generate_source_acquisition_prompt(
+    project_root: Path,
+    *,
+    role_version: str = "1.0.0",
+    platform: str = "fixture",
+    platform_version: str = "1.0.0",
+) -> tuple[bytes, dict[str, Any]]:
     registry_path = (project_root / PROMPT_REGISTRY).resolve()
     try:
         registry_path.relative_to(project_root.resolve())
@@ -68,9 +100,19 @@ def generate_source_acquisition_prompt(project_root: Path) -> tuple[bytes, dict[
         or registry["schema_version"] != "1.0.0"
     ):
         raise ContractError("Video Workflow prompt registry version is unsupported")
-    role = _entry(registry["roles"], ROLE_IDENTITY, ROLE_PATH, "role")
+    role = _entry(
+        registry["roles"],
+        ROLE_IDENTITY,
+        role_version,
+        ROLE_PATHS,
+        "role",
+    )
     platform = _entry(
-        registry["platforms"], PLATFORM_IDENTITY, PLATFORM_PATH, "platform"
+        registry["platforms"],
+        platform,
+        platform_version,
+        PLATFORM_PATHS,
+        "platform",
     )
     sources: list[tuple[dict[str, str], bytes]] = []
     for entry in (role, platform):

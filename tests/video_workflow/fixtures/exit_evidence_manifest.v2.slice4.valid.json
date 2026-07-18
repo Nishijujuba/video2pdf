@@ -1,0 +1,110 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {"number": 4, "name": "production-source-acquisition"},
+  "slice_base_commit": "654362017fa974946fb252af5311868bb47efcf0",
+  "implementation_commit": "1111111111111111111111111111111111111111",
+  "evidence_paths": [
+    "evidence/slice-04/exit-evidence-manifest.json",
+    "evidence/slice-04/logs/one.log",
+    "evidence/slice-04/logs/two.log",
+    "evidence/slice-04/logs/three.log"
+  ],
+  "generated_at": "2026-07-18T00:00:00Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "one",
+      "command": ["python", "one"],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {"role": "command_log", "path": "evidence/slice-04/logs/one.log", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+      "conforms": true
+    },
+    {
+      "test_id": "two",
+      "command": ["python", "two"],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {"role": "command_log", "path": "evidence/slice-04/logs/two.log", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+      "conforms": true
+    },
+    {
+      "test_id": "three",
+      "command": ["python", "three"],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {"role": "command_log", "path": "evidence/slice-04/logs/three.log", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"},
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {"name": "source_candidates_ready", "status": "current"},
+    {"name": "source_acquisition_decision_ready", "status": "current"},
+    {"name": "source_ready", "status": "current"}
+  ],
+  "fixtures": [
+    {"role": "recorded_provider_fixture_package", "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/recording.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"}
+  ],
+  "results": {
+    "positive": ["recorded_sources_pass"],
+    "negative": ["secret_output_fails_closed"],
+    "fencing": ["provider_launch_is_fenced"],
+    "restart": ["publication_retry_is_idempotent"],
+    "recovery": ["publication_faults_recover"]
+  },
+  "result_bindings": [
+    {"result_id": "recorded_sources_pass", "result_kind": "positive", "command_id": "one", "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_platform_adapters_share_one_neutral_interface"},
+    {"result_id": "secret_output_fails_closed", "result_kind": "negative", "command_id": "one", "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_platform_adapters_share_one_neutral_interface"},
+    {"result_id": "provider_launch_is_fenced", "result_kind": "fencing", "command_id": "one", "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_platform_adapters_share_one_neutral_interface"},
+    {"result_id": "publication_retry_is_idempotent", "result_kind": "restart", "command_id": "one", "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_platform_adapters_share_one_neutral_interface"},
+    {"result_id": "publication_faults_recover", "result_kind": "recovery", "command_id": "one", "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_platform_adapters_share_one_neutral_interface"}
+  ],
+  "fault_points": ["after_source_publication_intent_prepared"],
+  "platform_smokes": [
+    {
+      "platform": "bilibili",
+      "adapter_id": "bilibili",
+      "adapter_contract_version": "1.0.0",
+      "provider_kind": "live",
+      "run_id": "11111111111111111111111111111111",
+      "command_id": "two",
+      "command_argv_redacted": ["python", "-m", "yt_dlp", "--cookies", "<COOKIE_FILE>", "https://www.bilibili.com/video/BVfixture"],
+      "authentication_classification": "cookie_accepted",
+      "tool_versions": {"yt-dlp": "2026.07.01"},
+      "target_checkpoint": {"name": "source_ready", "status": "current", "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555"},
+      "source_manifest": {"path": "evidence/slice-04/smokes/bilibili.source-manifest.json", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "canonical_platform": "bilibili", "canonical_item_id": "BVfixture", "source_identity": "dd6b933d59836211a04ab1ccf32e2fad3bb38ae2f2fb9c49990479710fd7bce8", "source_version": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+      "sanitized_log": {"path": "evidence/slice-04/logs/slice4-bilibili-live-smoke.log", "sha256": "7777777777777777777777777777777777777777777777777777777777777777", "no_secret_scan": "pass"},
+      "runtime_policy_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "recorded_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "platform": "youtube",
+      "adapter_id": "youtube",
+      "adapter_contract_version": "1.0.0",
+      "provider_kind": "live",
+      "run_id": "22222222222222222222222222222222",
+      "command_id": "three",
+      "command_argv_redacted": ["python", "-m", "yt_dlp", "--cookies", "<COOKIE_FILE>", "--js-runtimes", "node", "https://www.youtube.com/watch?v=fixture"],
+      "authentication_classification": "cookie_accepted",
+      "tool_versions": {"yt-dlp": "2026.07.01", "node": "22.0.0"},
+      "target_checkpoint": {"name": "source_ready", "status": "current", "evidence_sha256": "9999999999999999999999999999999999999999999999999999999999999999"},
+      "source_manifest": {"path": "evidence/slice-04/smokes/youtube.source-manifest.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "canonical_platform": "youtube", "canonical_item_id": "fixture", "source_identity": "29b904fde7a539c8557a8207fe433904ddaff2d5ac0095626c0f8dcdf8629137", "source_version": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+      "sanitized_log": {"path": "evidence/slice-04/logs/slice4-youtube-live-smoke.log", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "no_secret_scan": "pass"},
+      "runtime_policy_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "recorded_at": "2026-07-18T00:00:00Z"
+    }
+  ],
+  "artifact_fingerprints": [
+    {"role": "implementation_artifact", "path": "src/video2pdf_workflow_kernel/kernel.py", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

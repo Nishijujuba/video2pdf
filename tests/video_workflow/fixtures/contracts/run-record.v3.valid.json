@@ -1,0 +1,51 @@
+{
+  "schema_name":"run-record",
+  "schema_version":"3.0.0",
+  "kernel_version":"2.0.0",
+  "scaffold_version":"1.0.0",
+  "run_id":"00000000000000000000000000000000",
+  "request_id":"issue-7-recorded-bilibili",
+  "platform_adapter":"bilibili",
+  "adapter_contract_version":"1.0.0",
+  "canonical_platform":"bilibili",
+  "canonical_item_id":"BV1Issue7001",
+  "source_identity_scheme":"canonical-platform-item-v1",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "source_version_scheme":"source-content-v1",
+  "source_version":"956e831ae1860223cf8029838eb9e977793241f39f7d76bbb5ab2e7f2c904ccb",
+  "original_title":"Issue 7 recorded source",
+  "normalized_title":"Issue 7 recorded source",
+  "task_start":"2026-07-18T09:00:00+08:00",
+  "output_path":"D:\\workspace\\Issue 7 recorded source_20260718_090000",
+  "deliverable_version":1,
+  "version_basis":"source_only",
+  "requested_source_acquisition_mode":"fresh_download",
+  "source_acquisition_mode":"fresh_download",
+  "source_epoch":1,
+  "source_state":"ready",
+  "source_blocker":null,
+  "phase":"source_ready",
+  "initialization_intent_id":"initialize-issue-7",
+  "coordination_revision":4,
+  "last_mutation_intent_id":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "artifact_plan":"workflow/artifact-plan.json",
+  "artifact_generations":{
+    "bootstrap_record":{"path":"待删除/bootstrap/probe.json","generation":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","producer":"kernel:bootstrap","committed_at":"2026-07-18T01:00:00Z","source_epoch":0},
+    "source_candidate_inventory":{"path":"work/source-acquisition/candidate-inventory.json","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","producer":"kernel:source-candidates","committed_at":"2026-07-18T01:01:00Z","source_epoch":1},
+    "source_acquisition_decision_skeleton":{"path":"work/source-acquisition/decision.skeleton.json","generation":1,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","producer":"kernel:source-prepare","committed_at":"2026-07-18T01:01:00Z","source_epoch":1},
+    "source_acquisition_decision":{"path":"workflow/source-acquisition-judgment-patch.json","generation":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","producer":"task:11111111111111111111111111111111/222222222222222222222222","committed_at":"2026-07-18T01:02:00Z","source_epoch":1},
+    "source_manifest":{"path":"source/manifest.json","generation":1,"sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","producer":"kernel:source-finalize","committed_at":"2026-07-18T01:03:00Z","source_epoch":1}
+  },
+  "checkpoint_dependencies":{
+    "run_initialized":[],
+    "source_candidates_ready":["run_initialized"],
+    "source_acquisition_decision_ready":["source_candidates_ready"],
+    "source_ready":["source_acquisition_decision_ready"]
+  },
+  "checkpoints":{
+    "run_initialized":{"status":"current","artifact_bindings":[{"logical_id":"bootstrap_record","generation":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"prerequisite_bindings":[],"evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","completed_at":"2026-07-18T01:00:00Z"},
+    "source_candidates_ready":{"status":"current","artifact_bindings":[{"logical_id":"source_candidate_inventory","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"prerequisite_bindings":[{"checkpoint":"run_initialized","evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","completed_at":"2026-07-18T01:01:00Z"},
+    "source_acquisition_decision_ready":{"status":"current","artifact_bindings":[{"logical_id":"source_candidate_inventory","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"logical_id":"source_acquisition_decision_skeleton","generation":1,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},{"logical_id":"source_acquisition_decision","generation":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"prerequisite_bindings":[{"checkpoint":"source_candidates_ready","evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"evidence_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","completed_at":"2026-07-18T01:02:00Z"},
+    "source_ready":{"status":"current","artifact_bindings":[{"logical_id":"source_candidate_inventory","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"logical_id":"source_acquisition_decision","generation":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},{"logical_id":"source_manifest","generation":1,"sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"prerequisite_bindings":[{"checkpoint":"source_acquisition_decision_ready","evidence_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"evidence_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","completed_at":"2026-07-18T01:03:00Z"}
+  }
+}

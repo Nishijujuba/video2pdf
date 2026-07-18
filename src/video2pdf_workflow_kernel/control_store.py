@@ -33,7 +33,7 @@ from .utils import (
 )
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 BUSY_TIMEOUT_MS = 5000
 RESOURCE_CLASSES = frozenset(
     {
@@ -166,6 +166,36 @@ TASK_PROMOTION_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_task_promotion_per_run "
     "ON task_promotion_intents(run_id) "
     "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+)
+SOURCE_PUBLICATION_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS source_publication_intents ("
+    "intent_id TEXT PRIMARY KEY, "
+    "run_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+    "source_epoch INTEGER NOT NULL CHECK(source_epoch >= 1), "
+    "expected_run_revision INTEGER NOT NULL CHECK(expected_run_revision >= 1), "
+    "predecessor_committed_sha256 TEXT NOT NULL, "
+    "replacement_run_record_sha256 TEXT NOT NULL, "
+    "replacement_run_record_json TEXT NOT NULL, "
+    "source_manifest_sha256 TEXT NOT NULL, "
+    "source_identity TEXT NOT NULL, source_version TEXT NOT NULL, "
+    "journal_sha256 TEXT, "
+    "state TEXT NOT NULL CHECK(state IN "
+    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED','COMMITTED','ABORTED')), "
+    "intent_identity TEXT NOT NULL UNIQUE)"
+)
+SOURCE_PUBLICATION_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_source_publication_per_run "
+    "ON source_publication_intents(run_id) "
+    "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+)
+SOURCE_PUBLICATION_EPOCH_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS one_source_publication_epoch_per_run "
+    "ON source_publication_intents(run_id, source_epoch) WHERE state!='ABORTED'"
+)
+SOURCE_PUBLICATION_REVISION_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS one_source_publication_revision_per_run "
+    "ON source_publication_intents(run_id, expected_run_revision) "
+    "WHERE state!='ABORTED'"
 )
 TASK_RECLAIM_TRANSITIONS_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS task_reclaim_transitions ("
@@ -532,6 +562,14 @@ class ControlStore:
                 connection.execute("BEGIN")
                 snapshot_data_version = self._data_version(connection)
                 self._validate_reclaim_history_before_mutation(connection)
+                version = int(
+                    connection.execute(
+                        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
+                    ).fetchone()[0]
+                )
+                if version >= 9:
+                    self._validate_source_publication_table(connection)
+                    self._validate_source_publication_rows(connection)
                 plan = planner(connection)
                 connection.execute("COMMIT")
                 if not self._begin_immediate_if_snapshot_unchanged(
@@ -605,6 +643,7 @@ class ControlStore:
             self._create_run_state_mutation_identity_table(connection)
             self._create_task_tables(connection)
             self._create_resource_tables(connection)
+            self._create_source_publication_table(connection)
             self._insert_resource_configuration(
                 connection,
                 resource_configuration,
@@ -623,6 +662,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (6)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (7)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (8)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (9)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -802,6 +842,83 @@ class ControlStore:
         ControlStore._validate_task_tables(connection)
         ControlStore._validate_task_claim_authority_table(connection)
         ControlStore._validate_task_reclaim_transition_table(connection)
+
+    @staticmethod
+    def _create_source_publication_table(connection: sqlite3.Connection) -> None:
+        connection.execute(SOURCE_PUBLICATION_TABLE_SQL)
+        connection.execute(SOURCE_PUBLICATION_INDEX_SQL)
+        connection.execute(SOURCE_PUBLICATION_EPOCH_INDEX_SQL)
+        connection.execute(SOURCE_PUBLICATION_REVISION_INDEX_SQL)
+        ControlStore._validate_source_publication_table(connection)
+
+    @staticmethod
+    def _validate_source_publication_table(
+        connection: sqlite3.Connection,
+    ) -> None:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(source_publication_intents)"
+            ).fetchall()
+        }
+        expected_columns = {
+            "intent_id",
+            "run_id",
+            "source_epoch",
+            "expected_run_revision",
+            "predecessor_committed_sha256",
+            "replacement_run_record_sha256",
+            "replacement_run_record_json",
+            "source_manifest_sha256",
+            "source_identity",
+            "source_version",
+            "journal_sha256",
+            "state",
+            "intent_identity",
+        }
+        if columns != expected_columns:
+            raise ControlStoreUnavailable(
+                "Control Store Source Publication table is incomplete"
+            )
+        expected_sql = {
+            "source_publication_intents": SOURCE_PUBLICATION_TABLE_SQL,
+            "one_nonterminal_source_publication_per_run": (
+                SOURCE_PUBLICATION_INDEX_SQL
+            ),
+            "one_source_publication_epoch_per_run": (
+                SOURCE_PUBLICATION_EPOCH_INDEX_SQL
+            ),
+            "one_source_publication_revision_per_run": (
+                SOURCE_PUBLICATION_REVISION_INDEX_SQL
+            ),
+        }
+        for name, expected in expected_sql.items():
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name=?", (name,)
+            ).fetchone()
+            if row is None or _normalized_sql(row[0]) != _normalized_sql(expected):
+                raise ControlStoreUnavailable(
+                    f"Control Store SQL authority differs for {name}"
+                )
+
+        allowed_objects = {
+            ("table", "source_publication_intents"),
+            ("index", "one_nonterminal_source_publication_per_run"),
+            ("index", "one_source_publication_epoch_per_run"),
+            ("index", "one_source_publication_revision_per_run"),
+        }
+        actual_objects = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                "SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL "
+                "AND (name LIKE 'source_publication_%' "
+                "OR name LIKE '%source_publication%')"
+            ).fetchall()
+        }
+        if actual_objects != allowed_objects:
+            raise ControlStoreUnavailable(
+                "Control Store has unsupported Source Publication schema objects"
+            )
 
     @staticmethod
     def _create_resource_tables(connection: sqlite3.Connection) -> None:
@@ -3409,7 +3526,7 @@ class ControlStore:
                 or mutation["mutation_id"] != legacy_identity
                 or mutation["mutation_identity"] != legacy_identity
                 or (
-                    replacement.get("schema_version") == "2.0.0"
+                    replacement.get("schema_version") in {"2.0.0", "3.0.0"}
                     and replacement.get("last_mutation_intent_id")
                     != legacy_identity
                 )
@@ -3668,6 +3785,29 @@ class ControlStore:
                     version = 8
                 if version == 8:
                     self._validate_resource_tables(connection)
+                    source_publication_objects = {
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE "
+                            "name IN ('source_publication_intents', "
+                            "'one_nonterminal_source_publication_per_run', "
+                            "'one_source_publication_epoch_per_run', "
+                            "'one_source_publication_revision_per_run')"
+                        ).fetchall()
+                    }
+                    if source_publication_objects:
+                        raise ControlStoreUnavailable(
+                            "Control Store v8 has a partial v9 Source Publication migration"
+                        )
+                    self._create_source_publication_table(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (9)"
+                    )
+                    version = 9
+                if version == 9:
+                    self._validate_resource_tables(connection)
+                    self._validate_source_publication_table(connection)
+                    self._validate_source_publication_rows(connection)
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -3937,6 +4077,10 @@ class ControlStore:
             )
             connection.execute("INSERT INTO schema_migrations(version) VALUES (8)")
             version = 8
+        if version == 8:
+            self._create_source_publication_table(connection)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (9)")
+            version = 9
         self._ensure_maintenance_indexes(connection)
         if version != SCHEMA_VERSION or self._migration_versions(connection) != list(
             range(1, SCHEMA_VERSION + 1)
@@ -4183,6 +4327,7 @@ class ControlStore:
                     "task_promotion_identity_versions",
                     "task_promotion_intents",
                     "task_reclaim_transitions",
+                    "source_publication_intents",
                     "resource_configurations",
                     "resource_sequences",
                     "resource_queue_entries",
@@ -4201,6 +4346,9 @@ class ControlStore:
                     "SELECT run_id FROM run_state_mutation_intents WHERE state='PREPARED' "
                     "UNION ALL "
                     "SELECT run_id FROM task_promotion_intents WHERE state IN "
+                    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED') "
+                    "UNION ALL "
+                    "SELECT run_id FROM source_publication_intents WHERE state IN "
                     "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')) "
                     "GROUP BY run_id HAVING COUNT(*) > 1"
                 ).fetchall()
@@ -4229,6 +4377,8 @@ class ControlStore:
                 self._validate_task_claim_authority_table(connection)
                 self._validate_task_claim_authority_rows(connection)
                 self._validate_resource_tables(connection)
+                self._validate_source_publication_table(connection)
+                self._validate_source_publication_rows(connection)
                 if not self._maintenance_index_is_valid(connection):
                     raise ControlStoreUnavailable(
                         "Control Store Task Claim maintenance index is invalid"
@@ -4421,7 +4571,7 @@ class ControlStore:
         canonical_platform: str,
         canonical_item_id: str,
         source_identity: str,
-        source_manifest_sha256: str,
+        source_manifest_sha256: str | None,
     ) -> None:
         values = (
             expected_run_record_sha256,
@@ -4487,7 +4637,8 @@ class ControlStore:
                     "AND canonical_platform IS NOT NULL "
                     "AND canonical_item_id IS NOT NULL "
                     "AND source_identity IS NOT NULL "
-                    "AND source_manifest_sha256 IS NOT NULL",
+                    "AND (source_manifest_sha256 IS NOT NULL "
+                    "OR canonical_platform IN ('bilibili','youtube'))",
                     (new_state, run_record_sha256, intent_id, expected_state),
                 )
             else:
@@ -4633,7 +4784,7 @@ class ControlStore:
             or mutation["mutation_identity"] != expected_mutation_id
             or version["row_identity"] != expected_row_identity
             or (
-                replacement.get("schema_version") == "2.0.0"
+                replacement.get("schema_version") in {"2.0.0", "3.0.0"}
                 and replacement.get("last_mutation_intent_id")
                 != expected_mutation_id
             )
@@ -4660,6 +4811,142 @@ class ControlStore:
             )
         for mutation in mutations:
             self._validate_run_state_mutation_row(connection, mutation)
+
+    @staticmethod
+    def derive_source_publication_intent_id(
+        *,
+        run_id: str,
+        source_epoch: int,
+        expected_run_revision: int,
+        old_run_record_sha256: str,
+    ) -> str:
+        payload = "\0".join(
+            (
+                "source-publication-v1",
+                run_id,
+                str(source_epoch),
+                str(expected_run_revision),
+                old_run_record_sha256,
+            )
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def derive_source_publication_row_identity(
+        *,
+        intent_id: str,
+        replacement_run_record_sha256: str,
+        source_manifest_sha256: str,
+        source_identity: str,
+        source_version: str,
+    ) -> str:
+        payload = "\0".join(
+            (
+                "source-publication-evidence-v1",
+                intent_id,
+                replacement_run_record_sha256,
+                source_manifest_sha256,
+                source_identity,
+                source_version,
+            )
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _validate_source_publication_row(
+        self,
+        publication: sqlite3.Row,
+    ) -> dict:
+        replacement_json = str(publication["replacement_run_record_json"])
+        try:
+            replacement = json.loads(replacement_json)
+            self.contracts.validate_run_record(replacement)
+        except (json.JSONDecodeError, ContractError) as exc:
+            raise ControlStoreUnavailable(
+                "Source Publication replacement contract is invalid"
+            ) from exc
+        canonical = canonical_json_bytes(replacement).decode("utf-8")
+        replacement_sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        hashes = (
+            publication["predecessor_committed_sha256"],
+            publication["replacement_run_record_sha256"],
+            publication["source_manifest_sha256"],
+            publication["source_identity"],
+            publication["source_version"],
+        )
+        if any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None for value in hashes):
+            raise ControlStoreUnavailable(
+                "Source Publication fingerprint authority is invalid"
+            )
+        journal_sha = publication["journal_sha256"]
+        if journal_sha is not None and re.fullmatch(
+            r"[0-9a-f]{64}", str(journal_sha)
+        ) is None:
+            raise ControlStoreUnavailable(
+                "Source Publication journal fingerprint is invalid"
+            )
+        if publication["state"] in {
+            "FILES_PUBLISHED",
+            "RECORD_COMMITTED",
+            "COMMITTED",
+        } and journal_sha is None:
+            raise ControlStoreUnavailable(
+                "Source Publication lifecycle lacks its journal authority"
+            )
+        expected_intent_id = self.derive_source_publication_intent_id(
+            run_id=str(publication["run_id"]),
+            source_epoch=int(publication["source_epoch"]),
+            expected_run_revision=int(publication["expected_run_revision"]),
+            old_run_record_sha256=str(
+                publication["predecessor_committed_sha256"]
+            ),
+        )
+        expected_identity = self.derive_source_publication_row_identity(
+            intent_id=expected_intent_id,
+            replacement_run_record_sha256=replacement_sha,
+            source_manifest_sha256=str(publication["source_manifest_sha256"]),
+            source_identity=str(publication["source_identity"]),
+            source_version=str(publication["source_version"]),
+        )
+        source_manifest = replacement.get("artifact_generations", {}).get(
+            "source_manifest"
+        )
+        if (
+            canonical != replacement_json
+            or replacement_sha != publication["replacement_run_record_sha256"]
+            or publication["intent_id"] != expected_intent_id
+            or publication["intent_identity"] != expected_identity
+            or replacement.get("schema_version") != "3.0.0"
+            or replacement.get("run_id") != publication["run_id"]
+            or replacement.get("coordination_revision")
+            != int(publication["expected_run_revision"]) + 1
+            or replacement.get("last_mutation_intent_id") != expected_intent_id
+            or replacement.get("source_epoch") != int(publication["source_epoch"])
+            or replacement.get("source_identity") != publication["source_identity"]
+            or replacement.get("source_version") != publication["source_version"]
+            or replacement.get("source_state") != "ready"
+            or replacement.get("source_blocker") is not None
+            or replacement.get("phase") != "source_ready"
+            or not isinstance(source_manifest, dict)
+            or source_manifest.get("sha256")
+            != publication["source_manifest_sha256"]
+            or source_manifest.get("source_epoch")
+            != int(publication["source_epoch"])
+        ):
+            raise ControlStoreUnavailable(
+                "Source Publication replacement authority is invalid"
+            )
+        return replacement
+
+    def _validate_source_publication_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        rows = connection.execute(
+            "SELECT * FROM source_publication_intents ORDER BY intent_id"
+        ).fetchall()
+        for row in rows:
+            self._validate_source_publication_row(row)
+        for run_id in {str(row["run_id"]) for row in rows}:
+            self._current_run_record_sha(connection, run_id)
 
     def _current_run_record_sha(
         self, connection: sqlite3.Connection, run_id: str
@@ -4713,8 +5000,36 @@ class ControlStore:
                     ],
                 }
             )
+        source_table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='source_publication_intents'"
+        ).fetchone() is not None
+        source_rows = (
+            connection.execute(
+                "SELECT * FROM source_publication_intents "
+                "WHERE run_id=? AND state='COMMITTED' "
+                "ORDER BY expected_run_revision",
+                (run_id,),
+            ).fetchall()
+            if source_table_exists
+            else []
+        )
+        source_publications = []
+        for row in source_rows:
+            self._validate_source_publication_row(row)
+            source_publications.append(
+                {
+                    "expected_run_revision": row["expected_run_revision"],
+                    "predecessor_committed_sha256": row[
+                        "predecessor_committed_sha256"
+                    ],
+                    "replacement_run_record_sha256": row[
+                        "replacement_run_record_sha256"
+                    ],
+                }
+            )
         mutations = sorted(
-            [*run_state_mutations, *task_mutations],
+            [*run_state_mutations, *task_mutations, *source_publications],
             key=lambda row: int(row["expected_run_revision"]),
         )
         for mutation in mutations:
@@ -4731,9 +5046,15 @@ class ControlStore:
 
     @staticmethod
     def _next_run_revision(connection: sqlite3.Connection, run_id: str) -> int:
+        tables = ["run_state_mutation_intents", "task_promotion_intents"]
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='source_publication_intents'"
+        ).fetchone() is not None:
+            tables.append("source_publication_intents")
         revisions = [
             int(row[0])
-            for table in ("run_state_mutation_intents", "task_promotion_intents")
+            for table in tables
             for row in connection.execute(
                 f"SELECT expected_run_revision FROM {table} "
                 "WHERE run_id=? AND state='COMMITTED'",
@@ -4770,6 +5091,19 @@ class ControlStore:
                 (run_id,),
             ).fetchall()
         )
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='source_publication_intents'"
+        ).fetchone() is not None:
+            slots.extend(
+                ("source_publication", str(row[0]))
+                for row in connection.execute(
+                    "SELECT intent_id FROM source_publication_intents "
+                    "WHERE run_id=? AND state IN "
+                    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+                    (run_id,),
+                ).fetchall()
+            )
         allowed = [] if owner_kind is None else [(owner_kind, owner_id)]
         if slots != allowed:
             raise KernelConflict(
@@ -4831,12 +5165,12 @@ class ControlStore:
             replacement_run_record_sha256=replacement_sha,
         )
         if (
-            replacement_run_record.get("schema_version") == "2.0.0"
+            replacement_run_record.get("schema_version") in {"2.0.0", "3.0.0"}
             and replacement_run_record.get("last_mutation_intent_id")
             != mutation_id
         ):
             raise KernelConflict(
-                "v2 run-state mutation replacement lacks its intent identity"
+                "versioned run-state mutation replacement lacks its intent identity"
             )
 
         def plan_run_state_mutation(connection: sqlite3.Connection) -> str:
@@ -4948,6 +5282,19 @@ class ControlStore:
         finally:
             connection.close()
 
+    def run_state_mutation_by_id(self, mutation_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM run_state_mutation_intents WHERE mutation_id=?",
+                (mutation_id,),
+            ).fetchone()
+            if row is not None:
+                self._validate_run_state_mutation_row(connection, row)
+            return row
+        finally:
+            connection.close()
+
     def _validate_prepared_run_state_mutation(
         self, connection: sqlite3.Connection, mutation: sqlite3.Row
     ) -> None:
@@ -4962,7 +5309,7 @@ class ControlStore:
             or mutation["old_run_record_sha256"] != predecessor
             or mutation["predecessor_committed_sha256"] != predecessor
             or (
-                replacement.get("schema_version") == "2.0.0"
+                replacement.get("schema_version") in {"2.0.0", "3.0.0"}
                 and replacement.get("last_mutation_intent_id")
                 != mutation["mutation_id"]
             )
@@ -5011,6 +5358,462 @@ class ControlStore:
             if cursor.rowcount == 1:
                 return
             raise KernelConflict("run-state mutation commit compare-and-swap failed")
+
+    def prepare_source_publication(
+        self,
+        *,
+        run_id: str,
+        source_epoch: int,
+        expected_run_revision: int,
+        old_run_record_sha256: str,
+        replacement_run_record: dict,
+        source_manifest_sha256: str,
+        source_identity: str,
+        source_version: str,
+    ) -> sqlite3.Row:
+        self.contracts.validate_run_record(replacement_run_record)
+        supplied_hashes = (
+            old_run_record_sha256,
+            source_manifest_sha256,
+            source_identity,
+            source_version,
+        )
+        if (
+            not isinstance(source_epoch, int)
+            or isinstance(source_epoch, bool)
+            or source_epoch < 1
+            or not isinstance(expected_run_revision, int)
+            or isinstance(expected_run_revision, bool)
+            or expected_run_revision < 1
+            or any(
+                re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in supplied_hashes
+            )
+        ):
+            raise ContractError("Source Publication authority inputs are invalid")
+        intent_id = self.derive_source_publication_intent_id(
+            run_id=run_id,
+            source_epoch=source_epoch,
+            expected_run_revision=expected_run_revision,
+            old_run_record_sha256=old_run_record_sha256,
+        )
+        replacement_json = canonical_json_bytes(replacement_run_record).decode("utf-8")
+        replacement_sha = hashlib.sha256(
+            replacement_json.encode("utf-8")
+        ).hexdigest()
+        intent_identity = self.derive_source_publication_row_identity(
+            intent_id=intent_id,
+            replacement_run_record_sha256=replacement_sha,
+            source_manifest_sha256=source_manifest_sha256,
+            source_identity=source_identity,
+            source_version=source_version,
+        )
+        source_manifest = replacement_run_record.get(
+            "artifact_generations", {}
+        ).get("source_manifest")
+        if (
+            replacement_run_record.get("schema_version") != "3.0.0"
+            or replacement_run_record.get("run_id") != run_id
+            or replacement_run_record.get("coordination_revision")
+            != expected_run_revision + 1
+            or replacement_run_record.get("last_mutation_intent_id") != intent_id
+            or replacement_run_record.get("source_epoch") != source_epoch
+            or replacement_run_record.get("source_identity") != source_identity
+            or replacement_run_record.get("source_version") != source_version
+            or replacement_run_record.get("source_state") != "ready"
+            or replacement_run_record.get("source_blocker") is not None
+            or replacement_run_record.get("phase") != "source_ready"
+            or not isinstance(source_manifest, dict)
+            or source_manifest.get("sha256") != source_manifest_sha256
+            or source_manifest.get("source_epoch") != source_epoch
+        ):
+            raise KernelConflict(
+                "Source Publication replacement lacks its immutable authority binding"
+            )
+
+        def plan_source_publication(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str]:
+            existing = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if existing is not None:
+                self._validate_source_publication_row(existing)
+                if (
+                    existing["intent_identity"] != intent_identity
+                    or existing["replacement_run_record_json"] != replacement_json
+                ):
+                    raise KernelConflict(
+                        "Source Publication replay changed its immutable evidence"
+                    )
+                if existing["state"] in {
+                    "PREPARED",
+                    "FILES_PUBLISHED",
+                    "RECORD_COMMITTED",
+                }:
+                    self._assert_run_promotion_slot(
+                        connection,
+                        run_id,
+                        owner_kind="source_publication",
+                        owner_id=intent_id,
+                    )
+                return "REPLAY", intent_identity
+            predecessor = self._current_run_record_sha(connection, run_id)
+            if predecessor is None:
+                raise KernelConflict(
+                    "Source Publication has no committed Run predecessor"
+                )
+            if predecessor != old_run_record_sha256:
+                raise ArtifactDrift(
+                    "Source Publication Run predecessor is stale",
+                    data={"drifted_paths": ["workflow/run.json"]},
+                )
+            if self._next_run_revision(connection, run_id) != expected_run_revision:
+                raise KernelConflict(
+                    "Source Publication expected Run revision is stale"
+                )
+            self._assert_run_promotion_slot(connection, run_id)
+            conflicting = connection.execute(
+                "SELECT intent_id FROM source_publication_intents WHERE run_id=? "
+                "AND state!='ABORTED' "
+                "AND (source_epoch=? OR expected_run_revision=?)",
+                (run_id, source_epoch, expected_run_revision),
+            ).fetchone()
+            if conflicting is not None:
+                raise KernelConflict(
+                    "Source Publication source epoch or Run revision is already bound"
+                )
+            return "INSERT", intent_identity
+
+        with self._planned_immediate(plan_source_publication) as (
+            connection,
+            plan,
+        ):
+            action, planned_identity = plan
+            if action == "REPLAY":
+                replay = connection.execute(
+                    "SELECT * FROM source_publication_intents WHERE intent_id=? "
+                    "AND intent_identity=?",
+                    (intent_id, planned_identity),
+                ).fetchone()
+                if replay is None:
+                    raise KernelConflict(
+                        "Source Publication replay compare-and-swap failed"
+                    )
+                return replay
+            try:
+                connection.execute(
+                    "INSERT INTO source_publication_intents("
+                    "intent_id, run_id, source_epoch, expected_run_revision, "
+                    "predecessor_committed_sha256, replacement_run_record_sha256, "
+                    "replacement_run_record_json, source_manifest_sha256, "
+                    "source_identity, source_version, journal_sha256, state, "
+                    "intent_identity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, "
+                    "'PREPARED', ?)",
+                    (
+                        intent_id,
+                        run_id,
+                        source_epoch,
+                        expected_run_revision,
+                        old_run_record_sha256,
+                        replacement_sha,
+                        replacement_json,
+                        source_manifest_sha256,
+                        source_identity,
+                        source_version,
+                        planned_identity,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise KernelConflict(
+                    "Source Publication compare-and-set failed"
+                ) from exc
+            inserted = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=? "
+                "AND intent_identity=? AND state='PREPARED' "
+                "AND journal_sha256 IS NULL",
+                (intent_id, planned_identity),
+            ).fetchone()
+            if inserted is None:
+                raise KernelConflict(
+                    "Source Publication insert compare-and-swap failed"
+                )
+            return inserted
+
+    def bind_source_publication_journal(
+        self, intent_id: str, journal_sha256: str
+    ) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", journal_sha256) is None:
+            raise ContractError("Source Publication journal fingerprint is invalid")
+
+        def plan_journal_binding(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str, str | None]:
+            row = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict(
+                    "Source Publication journal requires a known intent"
+                )
+            self._validate_source_publication_row(row)
+            if row["journal_sha256"] is not None:
+                if row["journal_sha256"] != journal_sha256:
+                    raise ArtifactDrift(
+                        "Source Publication journal fingerprint changed"
+                    )
+                return "REPLAY", str(row["intent_identity"]), str(
+                    row["journal_sha256"]
+                )
+            if row["state"] != "PREPARED":
+                raise KernelConflict(
+                    "Source Publication journal requires PREPARED state"
+                )
+            return "BIND", str(row["intent_identity"]), None
+
+        with self._planned_immediate(plan_journal_binding) as (
+            connection,
+            plan,
+        ):
+            action, intent_identity, expected_journal = plan
+            if action == "REPLAY":
+                replay = connection.execute(
+                    "SELECT 1 FROM source_publication_intents WHERE intent_id=? "
+                    "AND intent_identity=? AND journal_sha256=?",
+                    (intent_id, intent_identity, expected_journal),
+                ).fetchone()
+                if replay is None:
+                    raise KernelConflict(
+                        "Source Publication journal replay compare-and-swap failed"
+                    )
+                return
+            cursor = connection.execute(
+                "UPDATE source_publication_intents SET journal_sha256=? "
+                "WHERE intent_id=? AND intent_identity=? AND state='PREPARED' "
+                "AND journal_sha256 IS NULL",
+                (journal_sha256, intent_id, intent_identity),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict(
+                    "Source Publication journal compare-and-swap failed"
+                )
+
+    def transition_source_publication(
+        self,
+        intent_id: str,
+        *,
+        expected_state: str,
+        new_state: str,
+    ) -> None:
+        allowed = {
+            ("PREPARED", "FILES_PUBLISHED"),
+            ("FILES_PUBLISHED", "RECORD_COMMITTED"),
+        }
+        if (expected_state, new_state) not in allowed:
+            raise ContractError("invalid Source Publication transition")
+
+        def plan_transition(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str, str]:
+            row = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("Source Publication intent is absent")
+            self._validate_source_publication_row(row)
+            state = str(row["state"])
+            if state == new_state:
+                return "REPLAY", str(row["intent_identity"]), str(
+                    row["journal_sha256"]
+                )
+            if state != expected_state or row["journal_sha256"] is None:
+                raise KernelConflict(
+                    "Source Publication transition compare-and-set failed"
+                )
+            return "TRANSITION", str(row["intent_identity"]), str(
+                row["journal_sha256"]
+            )
+
+        with self._planned_immediate(plan_transition) as (connection, plan):
+            action, intent_identity, journal_sha256 = plan
+            if action == "REPLAY":
+                replay = connection.execute(
+                    "SELECT 1 FROM source_publication_intents WHERE intent_id=? "
+                    "AND intent_identity=? AND state=? AND journal_sha256=?",
+                    (intent_id, intent_identity, new_state, journal_sha256),
+                ).fetchone()
+                if replay is None:
+                    raise KernelConflict(
+                        "Source Publication transition replay compare-and-swap failed"
+                    )
+                return
+            cursor = connection.execute(
+                "UPDATE source_publication_intents SET state=? "
+                "WHERE intent_id=? AND intent_identity=? AND state=? "
+                "AND journal_sha256=?",
+                (
+                    new_state,
+                    intent_id,
+                    intent_identity,
+                    expected_state,
+                    journal_sha256,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict(
+                    "Source Publication transition compare-and-swap failed"
+                )
+
+    def commit_source_publication(self, intent_id: str) -> None:
+        def plan_commit(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str, str]:
+            row = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("Source Publication intent is absent")
+            self._validate_source_publication_row(row)
+            if row["state"] == "COMMITTED":
+                if self._current_run_record_sha(
+                    connection, str(row["run_id"])
+                ) is None:
+                    raise ControlStoreUnavailable(
+                        "committed Source Publication lacks a complete Run chain"
+                    )
+                return "REPLAY", str(row["intent_identity"]), str(
+                    row["journal_sha256"]
+                )
+            if row["state"] != "RECORD_COMMITTED":
+                raise KernelConflict(
+                    "Source Publication cannot commit before its coordination marker"
+                )
+            predecessor = self._current_run_record_sha(
+                connection, str(row["run_id"])
+            )
+            if predecessor != row["predecessor_committed_sha256"]:
+                raise ControlStoreUnavailable(
+                    "Source Publication predecessor changed before final commit"
+                )
+            if self._next_run_revision(
+                connection, str(row["run_id"])
+            ) != int(row["expected_run_revision"]):
+                raise ControlStoreUnavailable(
+                    "Source Publication revision changed before final commit"
+                )
+            return "COMMIT", str(row["intent_identity"]), str(
+                row["journal_sha256"]
+            )
+
+        with self._planned_immediate(plan_commit) as (connection, plan):
+            action, intent_identity, journal_sha256 = plan
+            if action == "REPLAY":
+                replay = connection.execute(
+                    "SELECT 1 FROM source_publication_intents WHERE intent_id=? "
+                    "AND intent_identity=? AND state='COMMITTED' "
+                    "AND journal_sha256=?",
+                    (intent_id, intent_identity, journal_sha256),
+                ).fetchone()
+                if replay is None:
+                    raise KernelConflict(
+                        "Source Publication commit replay compare-and-swap failed"
+                    )
+                return
+            cursor = connection.execute(
+                "UPDATE source_publication_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND intent_identity=? "
+                "AND state='RECORD_COMMITTED' AND journal_sha256=?",
+                (intent_id, intent_identity, journal_sha256),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict(
+                    "Source Publication commit compare-and-swap failed"
+                )
+
+    def abort_source_publication(self, intent_id: str) -> None:
+        def plan_abort(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str, str | None]:
+            row = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("Source Publication intent is absent")
+            self._validate_source_publication_row(row)
+            journal_sha = (
+                None
+                if row["journal_sha256"] is None
+                else str(row["journal_sha256"])
+            )
+            if row["state"] == "ABORTED":
+                return "REPLAY", str(row["intent_identity"]), journal_sha
+            if row["state"] != "PREPARED":
+                raise KernelConflict(
+                    "Source Publication can abort only before files are published"
+                )
+            return "ABORT", str(row["intent_identity"]), journal_sha
+
+        with self._planned_immediate(plan_abort) as (connection, plan):
+            action, intent_identity, journal_sha = plan
+            if action == "REPLAY":
+                replay = connection.execute(
+                    "SELECT 1 FROM source_publication_intents WHERE intent_id=? "
+                    "AND intent_identity=? AND state='ABORTED' "
+                    "AND journal_sha256 IS ?",
+                    (intent_id, intent_identity, journal_sha),
+                ).fetchone()
+                if replay is None:
+                    raise KernelConflict(
+                        "Source Publication abort replay compare-and-swap failed"
+                    )
+                return
+            cursor = connection.execute(
+                "UPDATE source_publication_intents SET state='ABORTED' "
+                "WHERE intent_id=? AND intent_identity=? AND state='PREPARED' "
+                "AND journal_sha256 IS ?",
+                (intent_id, intent_identity, journal_sha),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict(
+                    "Source Publication abort compare-and-swap failed"
+                )
+
+    def source_publication_by_id(self, intent_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is not None:
+                self._validate_source_publication_row(row)
+            return row
+        finally:
+            connection.close()
+
+    def active_source_publication(self, run_id: str) -> sqlite3.Row | None:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM source_publication_intents WHERE run_id=? "
+                "AND state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+                (run_id,),
+            ).fetchall()
+            if len(rows) > 1:
+                raise ControlStoreUnavailable(
+                    "Run has multiple non-terminal Source Publications"
+                )
+            if not rows:
+                return None
+            self._validate_source_publication_row(rows[0])
+            return rows[0]
+        finally:
+            connection.close()
 
     @staticmethod
     def _write_sets_overlap(left_json: str, right: tuple[str, ...]) -> bool:

@@ -571,11 +571,12 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
         )
         with sqlite3.connect(kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE source_publication_intents")
             for table in RESOURCE_V8_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
             connection.execute("DROP TABLE task_claim_authorities")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (7, 8)"
+                "DELETE FROM schema_migrations WHERE version IN (7, 8, 9)"
             )
 
         original_read_json = control_store_module.read_json
@@ -627,7 +628,7 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(inspected), 2)
         self.assertEqual(writer_phase_violations, [])
-        self.assertEqual(migrated.control_store.check().schema_version, 8)
+        self.assertEqual(migrated.control_store.check().schema_version, 9)
 
     def test_concurrent_valid_mutations_retry_without_lost_updates(self) -> None:
         store = self.new_store("concurrent-valid")

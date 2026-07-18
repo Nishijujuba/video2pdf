@@ -46,6 +46,17 @@ def max_reserved_path_units(output_path: Path, scaffold: dict) -> int:
     )
 
 
+def output_component_budget(workspace_root: Path, scaffold: dict) -> int:
+    """Return the title-component budget that keeps every reserved path valid."""
+
+    absolute_budget = int(scaffold["max_absolute_path_utf16_units"])
+    # max_reserved_path_units(workspace_root, ...) already includes the separator
+    # before each reserved descendant. One additional separator is required for
+    # the output directory component inserted between those two path segments.
+    available = absolute_budget - max_reserved_path_units(workspace_root, scaffold) - 1
+    return min(int(scaffold["max_output_component_utf16_units"]), available)
+
+
 def validate_path_budget(output_path: Path, scaffold: dict) -> int:
     if utf16_units(output_path.name) > scaffold["max_output_component_utf16_units"]:
         raise PathBudgetError("output directory component exceeds UTF-16 budget")

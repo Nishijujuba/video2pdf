@@ -1,0 +1,25 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {"number": 4, "name": "production-source-acquisition"},
+  "slice_base_commit": "654362017fa974946fb252af5311868bb47efcf0",
+  "implementation_commit": "1111111111111111111111111111111111111111",
+  "evidence_paths": ["manifest.json", "one.log"],
+  "generated_at": "2026-07-18T00:00:00Z",
+  "activation_scope": {"kind": "none", "runtime_authority_change": false, "components_activated": [], "legacy_track_authority": "preserved"},
+  "commands": [
+    {"test_id": "one", "command": ["python"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "one.log", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}, "conforms": true},
+    {"test_id": "two", "command": ["python"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "two.log", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"}, "conforms": true},
+    {"test_id": "three", "command": ["python"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "three.log", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}, "conforms": true}
+  ],
+  "expected_checkpoints": [{"name": "source_ready", "status": "current"}],
+  "fixtures": [{"role": "fixture", "path": "fixture.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"}],
+  "results": {"positive": ["p"], "negative": ["n"], "fencing": ["f"], "restart": ["s"], "recovery": ["r"]},
+  "result_bindings": [{"result_id": "p", "result_kind": "positive", "command_id": "one", "test_target": "tests.video_workflow.test_example.ExampleTests.test_example"}],
+  "fault_points": ["after_source_publication_intent_prepared"],
+  "artifact_fingerprints": [{"role": "implementation_artifact", "path": "kernel.py", "sha256": "5555555555555555555555555555555555555555555555555555555555555555"}],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

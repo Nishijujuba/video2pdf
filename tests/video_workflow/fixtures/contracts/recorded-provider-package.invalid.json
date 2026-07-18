@@ -1,0 +1,11 @@
+{
+  "$schema": "https://video2pdf.local/schemas/video-workflow/v1/recorded-provider-package.v1.schema.json",
+  "schema_name": "recorded-provider-package",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "recording_id": "bilibili-extra-field-v1",
+  "canonical_platform": "bilibili",
+  "adapter": {"id": "bilibili-yt-dlp.v1", "contract_version": "1.0.0"},
+  "commands": [],
+  "unregistered_field": true
+}

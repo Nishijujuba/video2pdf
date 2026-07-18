@@ -1,0 +1,97 @@
+{
+  "schema_name": "source-reopen-journal",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "intent_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "run_id": "00000000000000000000000000000000",
+  "reason": "replace stale production evidence",
+  "prior_source_epoch": 1,
+  "expected_run_revision": 4,
+  "prior_run_record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "replacement_run_record_sha256": "40abbb405586c48d6690b6dd934bf3ec23dd87aeb38994ea0c56722c2c72425c",
+  "replacement_run_record": {
+    "schema_name": "run-record",
+    "schema_version": "3.0.0",
+    "kernel_version": "2.0.0",
+    "scaffold_version": "1.0.0",
+    "run_id": "00000000000000000000000000000000",
+    "request_id": "source-reopen-contract-fixture",
+    "platform_adapter": "bilibili",
+    "adapter_contract_version": "1.0.0",
+    "canonical_platform": "bilibili",
+    "canonical_item_id": "BV1Issue7001",
+    "source_identity_scheme": "canonical-platform-item-v1",
+    "source_identity": "0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+    "source_version_scheme": "source-content-v1",
+    "source_version": null,
+    "original_title": "Issue 7 recorded source",
+    "normalized_title": "Issue 7 recorded source",
+    "task_start": "2026-07-18T09:00:00+08:00",
+    "output_path": "D:\\workspace\\Issue 7 recorded source_20260718_090000",
+    "deliverable_version": 1,
+    "version_basis": "source_only",
+    "requested_source_acquisition_mode": "fresh_download",
+    "source_acquisition_mode": "fresh_download",
+    "source_epoch": 2,
+    "source_state": "stale",
+    "source_blocker": null,
+    "phase": "source_acquisition",
+    "initialization_intent_id": "initialize-issue-7",
+    "coordination_revision": 5,
+    "last_mutation_intent_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "artifact_plan": "workflow/artifact-plan.json",
+    "artifact_generations": {
+      "bootstrap_record": {
+        "path": "待删除/bootstrap/probe.json",
+        "generation": 1,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "producer": "kernel:bootstrap",
+        "committed_at": "2026-07-18T01:00:00Z",
+        "source_epoch": 0
+      },
+      "source_manifest": {
+        "path": "source/manifest.json",
+        "generation": 1,
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "producer": "kernel:source-finalize",
+        "committed_at": "2026-07-18T01:03:00Z",
+        "source_epoch": 1
+      }
+    },
+    "checkpoint_dependencies": {
+      "run_initialized": [],
+      "source_candidates_ready": ["run_initialized"],
+      "source_acquisition_decision_ready": ["source_candidates_ready"],
+      "source_ready": ["source_acquisition_decision_ready"]
+    },
+    "checkpoints": {
+      "run_initialized": {
+        "status": "current",
+        "artifact_bindings": [
+          {
+            "logical_id": "bootstrap_record",
+            "generation": 1,
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "prerequisite_bindings": [],
+        "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "completed_at": "2026-07-18T01:00:00Z"
+      }
+    }
+  },
+  "source_manifest_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "coordination_record_path": "workflow/run.json",
+  "journal_path": "待删除/source-reopens/0000000000000000000000000000000000000000000000000000000000000000/reopen.json",
+  "preservations": [
+    {
+      "logical_id": "source_package",
+      "kind": "source_tree",
+      "current_path": "source",
+      "preservation_path": "待删除/source-reopens/0000000000000000000000000000000000000000000000000000000000000000/previous/source",
+      "evidence_path": "source/manifest.json",
+      "expected_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ],
+  "state": "PREPARED"
+}

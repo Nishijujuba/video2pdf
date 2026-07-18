@@ -2,9 +2,12 @@
   "schema_name": "video-workflow-prompt-registry",
   "schema_version": "1.0.0",
   "roles": [
-    {"identity": "source-acquisition", "version": "1.0.0", "path": "prompts/video-workflow/roles/source-acquisition.v1.md"}
+    {"identity": "source-acquisition", "version": "1.0.0", "path": "prompts/video-workflow/roles/source-acquisition.v1.md"},
+    {"identity": "source-acquisition", "version": "2.0.0", "path": "prompts/video-workflow/roles/source-acquisition.v2.md"}
   ],
   "platforms": [
-    {"identity": "fixture", "version": "1.0.0", "path": "prompts/video-workflow/platforms/fixture.v1.md"}
+    {"identity": "fixture", "version": "1.0.0", "path": "prompts/video-workflow/platforms/fixture.v1.md"},
+    {"identity": "bilibili", "version": "1.0.0", "path": "prompts/video-workflow/platforms/bilibili.v1.md"},
+    {"identity": "youtube", "version": "1.0.0", "path": "prompts/video-workflow/platforms/youtube.v1.md"}
   ]
 }

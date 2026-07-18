@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -717,6 +718,21 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
         write_json_atomic(patch_path, patch)
         with self.assertRaises((ArtifactDrift, KernelConflict)):
             self.promote(prepared, claimed)
+
+    def test_hardlinked_required_output_is_rejected_before_completion(self) -> None:
+        prepared = self.prepare("hardlinked-required-output")
+        claimed = self.claim(prepared)
+        patch_path = self.patch(prepared, claimed)
+        mirror_root = (
+            PROJECT_ROOT
+            / "待删除/task-attempt-hardlinks"
+            / uuid.uuid4().hex
+        )
+        mirror_root.mkdir(parents=True, exist_ok=False)
+        os.link(patch_path, mirror_root / patch_path.name)
+
+        with self.assertRaisesRegex(ContractError, "independent regular file"):
+            self.complete(prepared, claimed)
 
     def test_extra_directory_and_symlink_or_reparse_output_fail_closed(self) -> None:
         prepared = self.prepare()

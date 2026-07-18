@@ -1,0 +1,30 @@
+{
+  "schema_name":"source-candidate-inventory",
+  "schema_version":"1.0.0",
+  "kernel_version":"2.0.0",
+  "run_id":"00000000000000000000000000000000",
+  "acquisition_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_epoch":1,
+  "mode":"fresh_download",
+  "adapter":{"id":"bilibili","contract_version":"1.0.0"},
+  "canonical_platform":"bilibili",
+  "canonical_item_id":"BV1Issue7001",
+  "source_identity_scheme":"canonical-platform-item-v1",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "provider":{"kind":"recorded_fixture","recording_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tool_versions":[{"name":"recorded-bilibili","version":"1.0.0"},{"name":"ffprobe","version":"7.1"}]},
+  "authentication_classification":"cookie_accepted",
+  "policy_binding":{"policy_id":"source-acquisition-policy","version":"1.0.0","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","content_classification":"language_learning","subtitle_language_priority":["en","zh-Hans"],"whisper_allowed":true},
+  "source_metadata":{"original_title":"Issue 7 recorded source","duration_seconds":120},
+  "commands":[
+    {"command_id":"metadata","purpose":"metadata_probe","command_argv_redacted":["recorded-bilibili","--cookies","<localized-cookie-file>","--probe","https://www.bilibili.com/video/BV1Issue7001"],"exit_classification":"success","sanitized_log_sha256":"1111111111111111111111111111111111111111111111111111111111111111"},
+    {"command_id":"download","purpose":"download","command_argv_redacted":["recorded-bilibili","--cookies=<localized-cookie-file>","--download","https://www.bilibili.com/video/BV1Issue7001"],"exit_classification":"success","sanitized_log_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}
+  ],
+  "candidates":[
+    {"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"metadata","staged_path":"work/source-acquisition/candidates/e1/metadata/platform.json","media_type":"application/json","sha256":"1111111111111111111111111111111111111111111111111111111111111111","size_bytes":100,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["metadata"],"codec_names":["json"]}},
+    {"candidate_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","role":"cover","staged_path":"work/source-acquisition/candidates/e1/cover/cover.jpg","media_type":"image/jpeg","sha256":"2222222222222222222222222222222222222222222222222222222222222222","size_bytes":200,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["image"],"codec_names":["jpeg"]}},
+    {"candidate_id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","role":"video","staged_path":"work/source-acquisition/candidates/e1/media/video.mp4","media_type":"video/mp4","sha256":"3333333333333333333333333333333333333333333333333333333333333333","size_bytes":3000,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["video","audio"],"codec_names":["h264","aac"]}},
+    {"candidate_id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","role":"subtitle","staged_path":"work/source-acquisition/candidates/e1/subtitles/subtitle.en.srt","media_type":"application/x-subrip","sha256":"4444444444444444444444444444444444444444444444444444444444444444","size_bytes":400,"origin":"platform_download","language":"en","subtitle_kind":"manual","technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["subtitle"],"codec_names":["subrip"]}}
+  ],
+  "import_binding":null,
+  "status":"candidates_ready"
+}

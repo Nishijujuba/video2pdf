@@ -10,7 +10,7 @@
   "quiescence_proven": true,
   "store_id": "0000000000000000000000000000000000000000000000000000000000000000",
   "workspace_path": "D:\\workspace",
-  "control_store_schema_version": 8,
+  "control_store_schema_version": 9,
   "candidate_integrity": {
     "status": "ok",
     "quick_check": "ok",

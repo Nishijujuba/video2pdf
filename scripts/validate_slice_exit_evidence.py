@@ -25,6 +25,7 @@ from video2pdf_workflow_kernel.evidence import (
     git_output,
     sha256_file,
 )
+from video2pdf_workflow_kernel.source_acquisition import derive_source_identity
 from slice3_exit_evidence_contract import (
     COMMANDS as SLICE3_COMMANDS,
     EVIDENCE_PREFIX as SLICE3_EVIDENCE_PREFIX,
@@ -34,6 +35,18 @@ from slice3_exit_evidence_contract import (
     RESULT_BINDINGS as SLICE3_RESULT_BINDINGS,
     RESULTS as SLICE3_RESULTS,
     SLICE_BASE_COMMIT as SLICE3_BASE_COMMIT,
+)
+from slice4_exit_evidence_contract import (
+    COMMANDS as SLICE4_COMMANDS,
+    EVIDENCE_PREFIX as SLICE4_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as SLICE4_EXPECTED_CHECKPOINTS,
+    FAULT_POINT_BINDINGS as SLICE4_FAULT_POINT_BINDINGS,
+    FAULT_POINTS as SLICE4_FAULT_POINTS,
+    FIXTURE_SPECS as SLICE4_FIXTURE_SPECS,
+    PLATFORM_SMOKE_SPECS as SLICE4_PLATFORM_SMOKE_SPECS,
+    RESULT_BINDINGS as SLICE4_RESULT_BINDINGS,
+    RESULTS as SLICE4_RESULTS,
+    SLICE_BASE_COMMIT as SLICE4_BASE_COMMIT,
 )
 
 
@@ -104,6 +117,31 @@ SLICE_CONFIGS = {
         "result_bindings": SLICE3_RESULT_BINDINGS,
         "fixture_specs": SLICE3_FIXTURE_SPECS,
         "fault_points": list(SLICE3_FAULT_POINTS),
+        "fault_point_bindings": [
+            {"fault_point": point, "command_id": "slice3-resource-admission"}
+            for point in SLICE3_FAULT_POINTS
+        ],
+    },
+    4: {
+        "base_commit": SLICE4_BASE_COMMIT,
+        "evidence_prefix": SLICE4_EVIDENCE_PREFIX,
+        "checkpoints": SLICE4_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _ in SLICE4_COMMANDS],
+        "commands": [
+            {
+                "test_id": test_id,
+                "command": list(command),
+                "expected_exit_code": 0,
+            }
+            for test_id, command in SLICE4_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "fencing", "restart", "recovery"],
+        "results": SLICE4_RESULTS,
+        "result_bindings": SLICE4_RESULT_BINDINGS,
+        "fixture_specs": SLICE4_FIXTURE_SPECS,
+        "fault_points": list(SLICE4_FAULT_POINTS),
+        "fault_point_bindings": list(SLICE4_FAULT_POINT_BINDINGS),
+        "platform_smoke_specs": list(SLICE4_PLATFORM_SMOKE_SPECS),
     },
 }
 
@@ -335,6 +373,7 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
             raise EvidenceError(
                 "Slice Exit Evidence result bindings differ from the registered authority"
             )
+    validate_platform_smokes(manifest, config)
     derived_pass = (
         all(command["conforms"] for command in commands)
         and all(manifest["results"][kind] for kind in config["result_kinds"])
@@ -344,6 +383,89 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
         raise EvidenceError("overall_decision differs from its evidence")
     if manifest["overall_decision"] == "pass" and manifest["unresolved_exceptions"]:
         raise EvidenceError("passing evidence cannot contain unresolved exceptions")
+
+
+def validate_platform_smokes(
+    manifest: dict[str, Any], config: dict[str, Any]
+) -> None:
+    expected_specs = config.get("platform_smoke_specs")
+    provided = manifest.get("platform_smokes")
+    if expected_specs is None:
+        if provided is not None:
+            raise EvidenceError("platform smoke evidence is unsupported for this Slice")
+        return
+    if not isinstance(provided, list) or len(provided) != len(expected_specs):
+        raise EvidenceError("platform smoke evidence differs from the registered closed set")
+    command_by_id = {command["test_id"]: command for command in manifest["commands"]}
+    for smoke, spec in zip(provided, expected_specs, strict=True):
+        platform = spec["platform"]
+        command = command_by_id.get(spec["command_id"])
+        source_manifest = smoke.get("source_manifest", {})
+        canonical_item_id = source_manifest.get("canonical_item_id")
+        expected_source_identity = (
+            derive_source_identity(platform, canonical_item_id)
+            if isinstance(canonical_item_id, str) and canonical_item_id
+            else None
+        )
+        if (
+            smoke.get("platform") != platform
+            or smoke.get("adapter_id") != platform
+            or smoke.get("command_id") != spec["command_id"]
+            or command is None
+            or smoke.get("authentication_classification") != "cookie_accepted"
+            or smoke.get("target_checkpoint", {}).get("name") != "source_ready"
+            or smoke.get("target_checkpoint", {}).get("status") != "current"
+            or source_manifest.get("path") != spec["source_manifest_path"]
+            or smoke.get("sanitized_log", {}).get("path")
+            != spec["sanitized_log_path"]
+            or smoke.get("sanitized_log", {}).get("path")
+            != command["log"]["path"]
+            or smoke.get("sanitized_log", {}).get("sha256")
+            != command["log"]["sha256"]
+            or smoke.get("target_checkpoint", {}).get("evidence_sha256")
+            != source_manifest.get("sha256")
+            or source_manifest.get("canonical_platform") != platform
+            or source_manifest.get("source_identity") != expected_source_identity
+        ):
+            raise EvidenceError(
+                f"platform smoke evidence differs from the registered {platform} authority"
+            )
+        argv = smoke.get("command_argv_redacted", [])
+        cookie_indexes = [index for index, token in enumerate(argv) if token == "--cookies"]
+        placeholder_indexes = [
+            index for index, token in enumerate(argv) if token == "<COOKIE_FILE>"
+        ]
+        unsafe_tokens = [
+            token
+            for token in argv
+            if token != "<COOKIE_FILE>"
+            and (
+                token.lower().startswith("cookie:")
+                or "private-cookie" in token.lower()
+                or token.lower().endswith("cookies.txt")
+                or (len(token) > 2 and token[1] == ":" and token[2] in "/\\")
+            )
+        ]
+        if (
+            len(cookie_indexes) != 1
+            or placeholder_indexes != [cookie_indexes[0] + 1]
+            or unsafe_tokens
+        ):
+            raise EvidenceError(
+                f"platform smoke redacted command argv is unsafe for {platform}"
+            )
+        if platform == "youtube":
+            runtime_indexes = [
+                index for index, token in enumerate(argv) if token == "--js-runtimes"
+            ]
+            if (
+                len(runtime_indexes) != 1
+                or runtime_indexes[0] + 1 >= len(argv)
+                or argv[runtime_indexes[0] + 1] != "node"
+            ):
+                raise EvidenceError(
+                    "platform smoke redacted command argv omits the YouTube Node.js runtime"
+                )
 
 
 def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
@@ -387,12 +509,21 @@ def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
 def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_paths = {command["log"]["path"] for command in manifest["commands"]}
-    expected_evidence_paths = {manifest_relative, *log_paths}
+    smoke_manifest_paths = {
+        smoke["source_manifest"]["path"]
+        for smoke in manifest.get("platform_smokes", [])
+    }
+    expected_evidence_paths = {manifest_relative, *log_paths, *smoke_manifest_paths}
     if set(manifest["evidence_paths"]) != expected_evidence_paths:
-        raise EvidenceError("evidence_paths must be exactly manifest plus command logs")
+        raise EvidenceError(
+            "evidence_paths must be exactly manifest, command logs, and platform smoke manifests"
+        )
     seen: set[str] = set()
     bound = [command["log"] for command in manifest["commands"]]
     bound.extend(manifest["fixtures"])
+    bound.extend(
+        smoke["source_manifest"] for smoke in manifest.get("platform_smokes", [])
+    )
     for item in bound:
         path = resolve_project_path(item["path"])
         identity = str(path).casefold()
@@ -424,28 +555,39 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
             )
     fault_points = manifest.get("fault_points")
     if fault_points is not None:
-        admission = next(
-            (
-                command
-                for command in manifest["commands"]
-                if command["test_id"] == "slice3-resource-admission"
-            ),
-            None,
-        )
-        if admission is None:
-            raise EvidenceError(
-                "fault point provenance requires the Slice 3 Resource Admission command"
-            )
-        lines = resolve_project_path(admission["log"]["path"]).read_bytes().splitlines()
-        expected_lines = [
-            f"EVIDENCE_FAULT_POINT: {fault_point}".encode("ascii")
-            for fault_point in fault_points
-        ]
-        actual_lines = [line for line in lines if line.startswith(b"EVIDENCE_FAULT_POINT: ")]
-        if actual_lines != expected_lines:
-            raise EvidenceError(
-                "Resource Admission command log fault point provenance is missing, duplicated, or stale"
-            )
+        if "slice" in manifest or "slice_base_commit" in manifest:
+            bindings = slice_config(manifest).get("fault_point_bindings", [])
+        else:
+            # Compatibility for the focused Slice 3 provenance unit test. Full
+            # manifests always resolve through the registered Slice authority.
+            bindings = [
+                {"fault_point": point, "command_id": "slice3-resource-admission"}
+                for point in fault_points
+            ]
+        if [item["fault_point"] for item in bindings] != fault_points:
+            raise EvidenceError("fault point provenance binding authority is stale")
+        command_by_id = {
+            command["test_id"]: command for command in manifest["commands"]
+        }
+        for command_id in dict.fromkeys(item["command_id"] for item in bindings):
+            command = command_by_id.get(command_id)
+            if command is None:
+                raise EvidenceError(
+                    f"fault point provenance requires registered command: {command_id}"
+                )
+            lines = resolve_project_path(command["log"]["path"]).read_bytes().splitlines()
+            expected_lines = [
+                f"EVIDENCE_FAULT_POINT: {item['fault_point']}".encode("ascii")
+                for item in bindings
+                if item["command_id"] == command_id
+            ]
+            actual_lines = [
+                line for line in lines if line.startswith(b"EVIDENCE_FAULT_POINT: ")
+            ]
+            if actual_lines != expected_lines:
+                raise EvidenceError(
+                    f"fault point provenance is missing, duplicated, or stale: {command_id}"
+                )
 
 
 def validate_manifest(

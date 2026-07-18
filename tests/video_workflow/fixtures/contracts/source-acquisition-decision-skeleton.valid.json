@@ -1,0 +1,16 @@
+{
+  "schema_name":"source-acquisition-decision-skeleton",
+  "schema_version":"1.0.0",
+  "kernel_version":"2.0.0",
+  "run_id":"00000000000000000000000000000000",
+  "source_epoch":1,
+  "acquisition_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "task_id":"11111111111111111111111111111111",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "candidate_inventory":{"path":"work/source-acquisition/candidate-inventory.json","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "policy_binding":{"policy_id":"source-acquisition-policy","version":"1.0.0","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "allowed_judgment":{"subtitle_candidate_ids":["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],"whisper_choices":["not_required","unavailable","use_whisper"],"whisper_audio_candidate_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","known_gap_codes":["missing_subtitles","partial_subtitles","subtitle_quality"]},
+  "required_judgment_fields":["selected_subtitle_candidate_id","subtitle_selection_rationale","whisper_fallback.choice","whisper_fallback.rationale","known_gaps"],
+  "target_checkpoint":"source_acquisition_decision_ready",
+  "status":"prepared"
+}

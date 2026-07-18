@@ -18,4 +18,8 @@ tests/video_workflow/test_task_promotion_hardening.py text eol=lf
 tests/video_workflow/fixtures/contracts/** text eol=lf
 tests/video_workflow/fixtures/exit_evidence_manifest.v2.*.json text eol=lf
 tests/video_workflow/fixtures/source-ready-tracer/** -text
+tests/video_workflow/fixtures/providers/** text eol=lf
+tests/video_workflow/fixtures/providers/**/outputs/*.srt text eol=lf -diff
+tests/video_workflow/fixtures/providers/**/outputs/*.jpg -text -diff
+tests/video_workflow/fixtures/providers/**/outputs/*.mp4 -text -diff
 evidence/slice-*/** text eol=lf

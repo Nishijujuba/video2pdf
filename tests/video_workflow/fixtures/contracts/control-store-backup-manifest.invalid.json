@@ -10,7 +10,7 @@
   "quiescence_proven": false,
   "store_id": "0000000000000000000000000000000000000000000000000000000000000000",
   "workspace_path": "D:\\workspace",
-  "control_store_schema_version": 8,
+  "control_store_schema_version": 9,
   "candidate_integrity": {"status": "ok", "quick_check": "ok", "foreign_keys": "ok", "exact_schema_and_semantics": "passed"},
   "active_resource_configuration": {"configuration_id": "resource-admission-default-v1", "configuration_version": 1, "configuration_sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
   "run_authorities": [],

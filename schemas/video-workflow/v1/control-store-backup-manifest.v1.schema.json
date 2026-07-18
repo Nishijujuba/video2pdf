@@ -33,7 +33,7 @@
     "quiescence_proven": {"const": true},
     "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
     "workspace_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
-    "control_store_schema_version": {"const": 8},
+    "control_store_schema_version": {"const": 9},
     "candidate_integrity": {
       "type": "object",
       "additionalProperties": false,

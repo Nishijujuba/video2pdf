@@ -27,6 +27,10 @@ work/
 *.wav
 *.mp3
 
+# immutable recorded-provider media fixtures
+!tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/video.mp4
+!tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/video.mp4
+
 # PDF tracking policy:
 # ignore PDFs by default, and track only PDFs under workspace/
 *.pdf

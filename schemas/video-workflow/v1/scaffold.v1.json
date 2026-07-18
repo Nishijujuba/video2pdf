@@ -38,8 +38,10 @@
     "review/acceptance/rendered_pages/page_000000.png",
     "workflow/tasks/00000000000000000000000000000000/attempts/00000000/result-envelope.json",
     "workflow/tasks/00000000000000000000000000000000/attempts/000000000000000000000000/o/p.json",
+    "workflow/tasks/00000000000000000000000000000000/attempts/000000000000000000000000/o/candidates/c",
     "workflow/tasks/00000000000000000000000000000000/attempts/000000000000000000000000/p.json",
     "待删除/task-promotions/00000000000000000000000000000000/g00000001/previous/decision.json",
+    "待删除/task-promotions/00000000000000000000000000000000/g00000001/previous/candidates/c",
     "待删除/acceptance-rendered-pages/page_000000.png"
   ]
 }

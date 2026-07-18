@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/bootstrap-record.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "run_id",
+    "request_id",
+    "task_start",
+    "requested_source_acquisition_mode",
+    "adapter",
+    "source_request",
+    "canonical_platform",
+    "canonical_item_id",
+    "source_identity_scheme",
+    "source_identity",
+    "original_title",
+    "availability",
+    "probe_execution",
+    "status"
+  ],
+  "properties": {
+    "schema_name": {"const": "bootstrap-record"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "task_start": {"type": "string", "format": "date-time"},
+    "requested_source_acquisition_mode": {"enum": ["fresh_download", "verified_import"]},
+    "adapter": {"$ref": "#/$defs/adapter"},
+    "source_request": {
+      "oneOf": [
+        {"$ref": "#/$defs/freshRequest"},
+        {"$ref": "#/$defs/importRequest"}
+      ]
+    },
+    "canonical_platform": {"enum": ["bilibili", "youtube"]},
+    "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_identity_scheme": {"const": "canonical-platform-item-v1"},
+    "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "original_title": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "availability": {
+      "oneOf": [
+        {"$ref": "#/$defs/availability"},
+        {"$ref": "#/$defs/pendingAvailability"}
+      ]
+    },
+    "probe_execution": {"$ref": "#/$defs/probeExecution"},
+    "status": {"const": "probe_complete"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"requested_source_acquisition_mode": {"const": "fresh_download"}}},
+      "then": {"properties": {"source_request": {"$ref": "#/$defs/freshRequest"}}},
+      "else": {"properties": {"source_request": {"$ref": "#/$defs/importRequest"}}}
+    }
+  ],
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "contract_version", "canonical_platform"],
+      "properties": {
+        "id": {"enum": ["bilibili", "youtube"]},
+        "contract_version": {"const": "1.0.0"},
+        "canonical_platform": {"enum": ["bilibili", "youtube"]}
+      }
+    },
+    "freshRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "canonical_locator"],
+      "properties": {
+        "kind": {"const": "fresh_download"},
+        "canonical_locator": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "importRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "prior_output_path", "prior_run_id", "prior_source_manifest_sha256"],
+      "properties": {
+        "kind": {"const": "verified_import"},
+        "prior_output_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "prior_run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "prior_source_manifest_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_seconds", "chapter_count", "subtitle_languages", "media_format_classes"],
+      "properties": {
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "chapter_count": {"type": "integer", "minimum": 0},
+        "subtitle_languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "media_format_classes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["combined", "video_only", "audio_only"]}
+        }
+      }
+    },
+    "pendingAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "duration_seconds",
+        "chapter_count",
+        "subtitle_languages",
+        "media_format_classes"
+      ],
+      "properties": {
+        "status": {"const": "pending"},
+        "duration_seconds": {"type": "null"},
+        "chapter_count": {"type": "null"},
+        "subtitle_languages": {"const": []},
+        "media_format_classes": {"const": []}
+      }
+    },
+    "resourceAdmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_class", "configuration_version", "configuration_sha256", "lease_id"],
+      "properties": {
+        "resource_class": {"enum": ["bilibili_download", "youtube_download"]},
+        "configuration_version": {"type": "integer", "minimum": 1},
+        "configuration_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "lease_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "probeExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_kind",
+        "command_argv_redacted",
+        "authentication_classification",
+        "normalized_result_sha256",
+        "resource_admission"
+      ],
+      "properties": {
+        "provider_kind": {"enum": ["deterministic_locator", "recorded_fixture", "verified_import"]},
+        "command_argv_redacted": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 2000}
+        },
+        "authentication_classification": {"$ref": "#/$defs/authenticationClassification"},
+        "normalized_result_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "resource_admission": {
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/resourceAdmission"}
+          ]
+        }
+      }
+    },
+    "authenticationClassification": {
+      "enum": [
+        "not_applicable",
+        "anonymous",
+        "cookie_accepted",
+        "cookie_missing",
+        "cookie_unreadable",
+        "cookie_rejected",
+        "cookie_expired"
+      ]
+    }
+  }
+}

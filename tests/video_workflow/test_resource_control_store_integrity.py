@@ -275,12 +275,15 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
         database = kernel.control_store.path
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE source_publication_intents")
             for table in RESOURCE_V8_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
-            connection.execute("DELETE FROM schema_migrations WHERE version=8")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (8, 9)"
+            )
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 8)
+        self.assertEqual(migrated.control_store.check().schema_version, 9)
         with sqlite3.connect(database) as connection:
             versions = [
                 row[0]
@@ -306,7 +309,7 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
                     "VALUES ('duplicate-version', 1, '1.0.0', ?, '{}', 'RETIRED')",
                     ("f" * 64,),
                 )
-        self.assertEqual(versions, list(range(1, 9)))
+        self.assertEqual(versions, list(range(1, 10)))
         self.assertEqual(tables, set(RESOURCE_V8_TABLES))
         self.assertEqual(active_configurations, 1)
 
@@ -317,8 +320,11 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
         database = kernel.control_store.path
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE source_publication_intents")
             connection.execute("DROP TABLE resource_control_events")
-            connection.execute("DELETE FROM schema_migrations WHERE version=8")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (8, 9)"
+            )
 
         with self.assertRaisesRegex(
             ControlStoreUnavailable,

@@ -13,6 +13,7 @@ from .control_store_recovery import ControlStoreRecovery
 from .errors import CliUsageError, ControlStoreUnavailable, KernelError
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult
+from .source_live_smoke import run_source_live_smoke
 from .task_execution import (
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
@@ -73,9 +74,29 @@ def _parser() -> argparse.ArgumentParser:
 
     source_import = commands.add_parser("source-import")
     source_import.add_argument("--workspace-root", required=True, type=Path)
-    source_import.add_argument("--probe", required=True, type=Path)
-    source_import.add_argument("--fixture", required=True, type=Path)
+    source_import.add_argument("--probe", type=Path)
+    source_import.add_argument("--fixture", type=Path)
+    source_import.add_argument("--prior-run-dir", type=Path)
+    source_import.add_argument("--task-start")
+    source_import.add_argument("--request-id")
     source_import.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
+
+    source_blocker_resolve = commands.add_parser("source-blocker-resolve")
+    source_blocker_resolve.add_argument("--run-dir", required=True, type=Path)
+    source_blocker_resolve.add_argument(
+        "--authentication-classification",
+        required=True,
+        choices=("cookie_accepted",),
+    )
+    source_blocker_resolve.add_argument(
+        "--credential-evidence",
+        required=True,
+        type=Path,
+    )
+    source_blocker_resolve.add_argument(
+        "--credential-evidence-sha256",
+        required=True,
+    )
 
     trace = commands.add_parser("trace-source-ready")
     _add_trace_inputs(trace)
@@ -190,6 +211,11 @@ def _parser() -> argparse.ArgumentParser:
     capability = commands.add_parser("adapter-capability-check")
     capability.add_argument("--fixture", required=True, type=Path)
     capability.add_argument("--capability", required=True)
+
+    source_live_smoke = commands.add_parser("source-live-smoke")
+    source_live_smoke.add_argument("--spec", required=True, type=Path)
+    source_live_smoke.add_argument("--credential-profile", required=True)
+    source_live_smoke.add_argument("--work-root", required=True, type=Path)
     return parser
 
 
@@ -371,7 +397,56 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             {"run_id": result.run_id, "probe_record": str(result.record_path)},
             str(result.record_path),
         )
+    if command == "source-import" and args.prior_run_dir is not None:
+        if (
+            args.probe is not None
+            or args.fixture is not None
+            or args.fault_point is not None
+            or args.task_start is None
+            or args.request_id is None
+        ):
+            raise CliUsageError(
+                "production source-import requires --prior-run-dir, --task-start, "
+                "and --request-id without fixture arguments"
+            )
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        result = kernel.import_verified_source(
+            prior_run_dir=args.prior_run_dir,
+            task_start=args.task_start,
+            request_id=args.request_id,
+        )
+        record = read_json(result.run_dir / "workflow/run.json")
+        manifest = read_json(result.manifest_path)
+        return _ok(
+            command,
+            "verified_source_imported",
+            {
+                "run_id": record["run_id"],
+                "run_dir": str(result.run_dir),
+                "source_identity": result.source_identity,
+                "source_version": result.source_version,
+                "source_manifest_sha256": result.manifest_sha256,
+                "prior_run_id": manifest["provenance"]["prior_run_id"],
+                "prior_source_manifest_sha256": manifest["provenance"][
+                    "prior_source_manifest_sha256"
+                ],
+                "checkpoint": "source_ready",
+                "checkpoint_status": record["checkpoints"]["source_ready"][
+                    "status"
+                ],
+            },
+            str(result.manifest_path),
+        )
     if command in {"init-run", "source-import"}:
+        if command == "source-import" and (
+            args.probe is None
+            or args.fixture is None
+            or args.task_start is not None
+            or args.request_id is not None
+        ):
+            raise CliUsageError(
+                "fixture source-import requires --probe and --fixture only"
+            )
         kernel = VideoWorkflowKernel(args.workspace_root)
         result = kernel.initialize_verified_import(
             probe=_probe_from_path(args.probe, kernel.contracts),
@@ -389,6 +464,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             fault_point=args.fault_point,
         )
         return _trace_envelope(command, result)
+    if command == "source-blocker-resolve":
+        run_dir = args.run_dir.resolve()
+        kernel = VideoWorkflowKernel(run_dir.parent)
+        result = kernel.resolve_source_user_input(
+            run_dir,
+            authentication_classification=args.authentication_classification,
+            credential_evidence=read_json(args.credential_evidence.resolve()),
+            credential_evidence_sha256=args.credential_evidence_sha256,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(run_dir / "workflow/run.json"),
+        )
     if command == "reconcile-run":
         if args.run_id is not None:
             if args.workspace_root is None or args.run_dir is not None:
@@ -681,6 +771,33 @@ def main(argv: list[str] | None = None) -> int:
         args = _parser().parse_args(argv)
         command = args.command
         project_root = Path(__file__).resolve().parents[2]
+        if command == "source-live-smoke":
+            try:
+                report = run_source_live_smoke(
+                    spec_path=args.spec,
+                    credential_profile=args.credential_profile,
+                    work_root=args.work_root,
+                    project_root=project_root,
+                )
+            except KernelError as exc:
+                print(
+                    f"ERROR: source live smoke failed ({exc.classification})",
+                    file=sys.stderr,
+                )
+                return exc.exit_code
+            except Exception:
+                print("ERROR: source live smoke failed (kernel_error)", file=sys.stderr)
+                return 70
+            sys.stdout.write(
+                json.dumps(
+                    report,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            return 0
         envelope = _execute(args, project_root)
         exit_code = 0
     except KernelError as exc:

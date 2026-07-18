@@ -232,7 +232,7 @@ class PersistenceHardeningTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import write_json_atomic
 
-        root = new_test_root("prepared-run-tamper")
+        root = new_test_root("prt")
         kernel = VideoWorkflowKernel(root / "workspace")
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
@@ -354,6 +354,7 @@ class PersistenceHardeningTests(unittest.TestCase):
         }
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("DROP TABLE source_publication_intents")
             for table in RESOURCE_V8_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
             columns = {
@@ -382,7 +383,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 8)
+        self.assertEqual(migrated.control_store.check().schema_version, 9)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -562,13 +563,19 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "control-store-restore-state",
                 "fixture-package",
                 "orphaned-filesystem-commit-report",
+                "recorded-provider-package",
                 "resource-admission-configuration",
                 "resource-lease-resolution-evidence",
                 "run-record",
                 "scaffold-contract",
                 "scaffold-ledger",
+                "source-acquisition-decision-skeleton",
                 "source-acquisition-judgment-patch",
+                "source-candidate-inventory",
+                "source-credential-resolution-evidence",
                 "source-manifest",
+                "source-publication-journal",
+                "source-reopen-journal",
                 "subagent-task-envelope",
                 "task-attempt",
                 "task-completion-record",
@@ -578,6 +585,14 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         )
         self.assertIn(
             "run-record@2.0.0",
+            envelope["data"]["registered_contract_versions"],
+        )
+        self.assertIn(
+            "run-record@3.0.0",
+            envelope["data"]["registered_contract_versions"],
+        )
+        self.assertIn(
+            "subagent-task-envelope@3.0.0",
             envelope["data"]["registered_contract_versions"],
         )
 

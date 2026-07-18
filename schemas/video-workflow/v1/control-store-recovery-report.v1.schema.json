@@ -35,7 +35,7 @@
         "manifest_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
         "database_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
         "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
-        "schema_version": {"const": 8}
+        "schema_version": {"const": 9}
       }
     },
     "quiescence": {
@@ -67,8 +67,8 @@
       "additionalProperties": false,
       "required": ["selected_version", "required_version", "validation", "migration"],
       "properties": {
-        "selected_version": {"const": 8},
-        "required_version": {"const": 8},
+        "selected_version": {"const": 9},
+        "required_version": {"const": 9},
         "validation": {"const": "exact_match"},
         "migration": {"const": "rejected_not_performed"}
       }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,7 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CLI = PROJECT_ROOT / "scripts/persisted_command.py"
 
 
-def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    *arguments: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-X", "utf8", "-B", str(CLI), *arguments],
         cwd=PROJECT_ROOT,
@@ -21,10 +25,179 @@ def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
         text=True,
         encoding="utf-8",
         check=False,
+        env=env,
     )
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_log_persistence_failure_fails_closed_with_sanitized_information(self) -> None:
+        secret = f"sensitive-log-error-{uuid.uuid4().hex}"
+        hook_dir = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-hooks"
+            / uuid.uuid4().hex
+        )
+        hook_dir.mkdir(parents=True)
+        (hook_dir / "sitecustomize.py").write_text(
+            "import io\n"
+            "import sys\n"
+            "original_open = io.open\n"
+            "def injected_open(file, *args, **kwargs):\n"
+            "    mode = args[0] if args else kwargs.get('mode', 'r')\n"
+            "    if '_supervise' in sys.argv and str(file).endswith('stdout.log') and 'ab' in mode:\n"
+            f"        raise OSError({secret!r})\n"
+            "    return original_open(file, *args, **kwargs)\n"
+            "io.open = injected_open\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"log persistence failure {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('child exited successfully', flush=True)",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "5",
+        )
+
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        status = json.loads(waited.stdout)["data"]["status"]
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["exit_code"], 0)
+        self.assertEqual(
+            status["failure"],
+            {
+                "kind": "log_persistence_failed",
+                "message": "one or more command logs could not be persisted",
+            },
+        )
+        self.assertNotIn(secret, json.dumps(status["failure"]))
+        self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "0\n")
+
+    def test_missing_executable_is_launch_failed_without_exit_code(self) -> None:
+        secret = f"must-not-leak-{uuid.uuid4().hex}"
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"launch failure {uuid.uuid4().hex}",
+            "--",
+            f"missing-executable-{secret}",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "5",
+        )
+
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["status"]["state"], "launch_failed")
+        self.assertIsNone(data["status"]["exit_code"])
+        self.assertEqual(
+            data["status"]["failure"],
+            {
+                "kind": "child_launch_failed",
+                "message": "target process could not be launched",
+            },
+        )
+        self.assertNotIn(secret, json.dumps(data["status"]["failure"]))
+        self.assertIsNone(data["exit_code_path"])
+        self.assertFalse((run_dir / "exit-code.txt").exists())
+
+    def test_declared_nonzero_exit_is_succeeded_and_persisted(self) -> None:
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"accepted nonzero {uuid.uuid4().hex}",
+            "--accepted-exit-code",
+            "7",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "raise SystemExit(7)",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        reclassification = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--accepted-exit-code",
+            "0",
+        )
+        self.assertEqual(reclassification.returncode, 2)
+        command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
+        self.assertEqual(command["accepted_exit_codes"], [7])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["command"]["accepted_exit_codes"], [7])
+        self.assertEqual(data["status"]["state"], "succeeded")
+        self.assertEqual(data["status"]["exit_code"], 7)
+        self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "7\n")
+
+    def test_unexpected_nonzero_exit_is_failed_with_actual_code(self) -> None:
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"unexpected nonzero {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "raise SystemExit(7)",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        status = json.loads(waited.stdout)["data"]["status"]
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["exit_code"], 7)
+        self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "7\n")
+
     def test_start_returns_durable_identity_and_command_outlives_launcher(self) -> None:
         task_name = f"detached/success {uuid.uuid4().hex}"
         marker = PROJECT_ROOT / "待删除/long-running-test-markers" / f"{uuid.uuid4().hex}.txt"
@@ -66,6 +239,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual(command["schema_name"], "persisted-command")
         self.assertEqual(command["schema_version"], "1.0.0")
         self.assertEqual(command["run_id"], run_id)
+        self.assertEqual(command["accepted_exit_codes"], [0])
         self.assertEqual(status["schema_name"], "persisted-command-status")
         self.assertEqual(status["schema_version"], "1.0.0")
         self.assertEqual(status["run_id"], run_id)

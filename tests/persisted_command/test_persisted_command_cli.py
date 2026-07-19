@@ -104,6 +104,55 @@ def run_with_supervisor_hook(
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_short_cookie_value_is_detected_in_persisted_output(self) -> None:
+        secret_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-secrets"
+            / uuid.uuid4().hex
+        )
+        secret_root.mkdir(parents=True)
+        cookie_file = secret_root / "cookies.txt"
+        cookie_value = "q7z"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\t{cookie_value}\n",
+            encoding="utf-8",
+        )
+        child = (
+            "import pathlib,sys; "
+            "line=pathlib.Path(sys.argv[2]).read_text(encoding='utf-8').splitlines()[1]; "
+            "print(line.split('\\t')[-1], flush=True)"
+        )
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"short cookie {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            "--cookies",
+            str(cookie_file),
+        )
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            f"{cookie_value}\n",
+        )
+        self.assertNotIn(
+            cookie_value,
+            shareable_metadata(run_dir, started, waited),
+        )
+
     def test_supervisor_handoff_failure_terminalizes_with_sanitized_evidence(
         self,
     ) -> None:

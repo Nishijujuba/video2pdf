@@ -180,7 +180,7 @@ def _add_cookie_file_secrets(
         ):
             continue
         fields = line.split("\t")
-        if len(fields) >= 7 and len(fields[-1]) >= 4:
+        if len(fields) >= 7 and fields[-1]:
             _add_secret_value(values, fields[-1])
 
 

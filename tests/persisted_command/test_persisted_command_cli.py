@@ -30,6 +30,69 @@ def run_cli(
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_log_close_failure_also_fails_closed(self) -> None:
+        secret = f"sensitive-log-close-{uuid.uuid4().hex}"
+        hook_dir = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-hooks"
+            / uuid.uuid4().hex
+        )
+        hook_dir.mkdir(parents=True)
+        (hook_dir / "sitecustomize.py").write_text(
+            "import io\n"
+            "import sys\n"
+            "original_open = io.open\n"
+            "class CloseFailure:\n"
+            "    def __init__(self, wrapped): self.wrapped = wrapped\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, *ignored): self.close()\n"
+            "    def __getattr__(self, name): return getattr(self.wrapped, name)\n"
+            "    def close(self):\n"
+            "        self.wrapped.close()\n"
+            f"        raise OSError({secret!r})\n"
+            "def injected_open(file, *args, **kwargs):\n"
+            "    opened = original_open(file, *args, **kwargs)\n"
+            "    mode = args[0] if args else kwargs.get('mode', 'r')\n"
+            "    if '_supervise' in sys.argv and str(file).endswith('stdout.log') and 'ab' in mode:\n"
+            "        return CloseFailure(opened)\n"
+            "    return opened\n"
+            "io.open = injected_open\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"log close failure {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('child exited successfully', flush=True)",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        status = json.loads(waited.stdout)["data"]["status"]
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["exit_code"], 0)
+        self.assertEqual(status["failure"]["kind"], "log_persistence_failed")
+        self.assertNotIn(secret, json.dumps(status["failure"]))
+
     def test_log_persistence_failure_fails_closed_with_sanitized_information(self) -> None:
         secret = f"sensitive-log-error-{uuid.uuid4().hex}"
         hook_dir = (

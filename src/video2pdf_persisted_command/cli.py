@@ -247,48 +247,51 @@ def _supervise(run_dir: Path) -> int:
         reader.start()
 
     log_persistence_failed = False
-    with ExitStack() as logs:
-        stream_logs: dict[str, BinaryIO] = {}
-        merged_log: BinaryIO | None = None
-        try:
-            stream_logs = {
-                "stdout": logs.enter_context(
-                    (run_dir / "stdout.log").open("ab", buffering=0)
-                ),
-                "stderr": logs.enter_context(
-                    (run_dir / "stderr.log").open("ab", buffering=0)
-                ),
-            }
-            merged_log = logs.enter_context(
-                (run_dir / "command.log").open("ab", buffering=0)
-            )
-        except OSError:
-            log_persistence_failed = True
-
-        finished_readers = 0
-        while finished_readers < len(readers):
-            event = events.get()
-            if event is None:
-                finished_readers += 1
-                continue
-            stream_name, chunk = event
-            if log_persistence_failed:
-                continue
+    try:
+        with ExitStack() as logs:
+            stream_logs: dict[str, BinaryIO] = {}
+            merged_log: BinaryIO | None = None
             try:
-                stream_logs[stream_name].write(chunk)
-                assert merged_log is not None
-                merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+                stream_logs = {
+                    "stdout": logs.enter_context(
+                        (run_dir / "stdout.log").open("ab", buffering=0)
+                    ),
+                    "stderr": logs.enter_context(
+                        (run_dir / "stderr.log").open("ab", buffering=0)
+                    ),
+                }
+                merged_log = logs.enter_context(
+                    (run_dir / "command.log").open("ab", buffering=0)
+                )
             except OSError:
                 log_persistence_failed = True
 
-        if not log_persistence_failed:
-            try:
-                for log in (*stream_logs.values(), merged_log):
-                    assert log is not None
-                    log.flush()
-                    os.fsync(log.fileno())
-            except OSError:
-                log_persistence_failed = True
+            finished_readers = 0
+            while finished_readers < len(readers):
+                event = events.get()
+                if event is None:
+                    finished_readers += 1
+                    continue
+                stream_name, chunk = event
+                if log_persistence_failed:
+                    continue
+                try:
+                    stream_logs[stream_name].write(chunk)
+                    assert merged_log is not None
+                    merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+                except OSError:
+                    log_persistence_failed = True
+
+            if not log_persistence_failed:
+                try:
+                    for log in (*stream_logs.values(), merged_log):
+                        assert log is not None
+                        log.flush()
+                        os.fsync(log.fileno())
+                except OSError:
+                    log_persistence_failed = True
+    except OSError:
+        log_persistence_failed = True
 
     exit_code = process.wait()
     for reader in readers:

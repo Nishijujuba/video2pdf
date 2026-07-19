@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
@@ -13,7 +14,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Any, BinaryIO, Mapping, Sequence
+from typing import Any, BinaryIO, Literal, Mapping, Sequence
 
 
 COMMAND_SCHEMA_VERSION = "1.0.0"
@@ -54,6 +55,14 @@ _QUERY_SECRET = re.compile(
 _QUERY_SECRET_VALUE = re.compile(
     r"(?i)[?&](?:auth|authorization|cookie|csrf|po_token|session|signature|token|visitor_data)=([^&\s\"']+)"
 )
+
+
+@dataclass(frozen=True)
+class _ClassifiedArgument:
+    original: str
+    option: str
+    inline_value: str | None
+    kind: Literal["cookie_file", "secret", "sensitive_header", "ordinary"]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -149,9 +158,16 @@ def _add_secret_value(values: set[str], value: str) -> None:
     values.update({value, value.replace("\\", "/"), value.replace("/", "\\")})
 
 
-def _add_cookie_file_secrets(values: set[str], value: str) -> None:
+def _add_cookie_file_secrets(
+    values: set[str],
+    value: str,
+    working_directory: Path,
+) -> None:
     _add_secret_value(values, value)
     cookie_file = Path(value)
+    if not cookie_file.is_absolute():
+        cookie_file = working_directory / cookie_file
+    _add_secret_value(values, str(cookie_file.resolve(strict=False)))
     if not cookie_file.is_file():
         return
     try:
@@ -159,7 +175,9 @@ def _add_cookie_file_secrets(values: set[str], value: str) -> None:
     except OSError:
         return
     for line in cookie_text.splitlines():
-        if not line or line.startswith("#"):
+        if not line or (
+            line.startswith("#") and not line.startswith("#HttpOnly_")
+        ):
             continue
         fields = line.split("\t")
         if len(fields) >= 7 and len(fields[-1]) >= 4:
@@ -173,47 +191,76 @@ def _add_header_secret(values: set[str], value: str) -> None:
         _add_secret_value(values, payload[7:].strip())
 
 
+def _classify_argument(argument: str) -> _ClassifiedArgument:
+    option, separator, value = argument.partition("=")
+    lowered = option.lower()
+    if lowered in _COOKIE_FILE_ARGUMENTS:
+        kind = "cookie_file"
+    elif lowered in _SECRET_VALUE_ARGUMENTS:
+        kind = "secret"
+    elif lowered in _SENSITIVE_HEADER_ARGUMENTS:
+        kind = "sensitive_header"
+    else:
+        kind = "ordinary"
+    return _ClassifiedArgument(
+        original=argument,
+        option=option,
+        inline_value=value if separator else None,
+        kind=kind,
+    )
+
+
 def _capture_command_secret_values(
-    argv: Sequence[str],
+    arguments: Sequence[_ClassifiedArgument],
     *,
     environment: Mapping[str, str],
+    working_directory: Path,
 ) -> tuple[str, ...]:
     secret_values = set(_environment_secret_values(environment))
     capture_next = False
     next_value_is_cookie_file = False
-    for argument in argv:
+    for argument in arguments:
         if capture_next:
             if next_value_is_cookie_file:
-                _add_cookie_file_secrets(secret_values, argument)
+                _add_cookie_file_secrets(
+                    secret_values,
+                    argument.original,
+                    working_directory,
+                )
             else:
-                _add_secret_value(secret_values, argument)
+                _add_secret_value(secret_values, argument.original)
             capture_next = False
             next_value_is_cookie_file = False
             continue
 
-        option, separator, value = argument.partition("=")
-        lowered = option.lower()
-        if lowered in _COOKIE_FILE_ARGUMENTS:
-            if separator:
-                _add_cookie_file_secrets(secret_values, value)
+        if argument.kind == "cookie_file":
+            if argument.inline_value is not None:
+                _add_cookie_file_secrets(
+                    secret_values,
+                    argument.inline_value,
+                    working_directory,
+                )
             else:
                 capture_next = True
                 next_value_is_cookie_file = True
             continue
-        if lowered in _SECRET_VALUE_ARGUMENTS:
-            if separator:
-                _add_secret_value(secret_values, value)
+        if argument.kind == "secret":
+            if argument.inline_value is not None:
+                _add_secret_value(secret_values, argument.inline_value)
             else:
                 capture_next = True
             continue
-        if lowered in _SENSITIVE_HEADER_ARGUMENTS and separator:
-            if _SENSITIVE_HEADER.match(value):
-                _add_header_secret(secret_values, value)
+        if (
+            argument.kind == "sensitive_header"
+            and argument.inline_value is not None
+        ):
+            if _SENSITIVE_HEADER.match(argument.inline_value):
+                _add_header_secret(secret_values, argument.inline_value)
             continue
-        for matched in _QUERY_SECRET_VALUE.finditer(argument):
+        for matched in _QUERY_SECRET_VALUE.finditer(argument.original):
             _add_secret_value(secret_values, matched.group(1))
-        if _SENSITIVE_HEADER.match(argument):
-            _add_header_secret(secret_values, argument)
+        if _SENSITIVE_HEADER.match(argument.original):
+            _add_header_secret(secret_values, argument.original)
     return tuple(sorted(secret_values, key=len, reverse=True))
 
 
@@ -221,39 +268,50 @@ def _prepare_command_security(
     argv: Sequence[str],
     *,
     environment: Mapping[str, str],
+    working_directory: Path,
 ) -> tuple[list[str], tuple[str, ...]]:
+    arguments = tuple(_classify_argument(argument) for argument in argv)
     secret_values = _capture_command_secret_values(
-        argv,
+        arguments,
         environment=environment,
+        working_directory=working_directory,
     )
     redacted: list[str] = []
     redact_next_as: str | None = None
-    for argument in argv:
+    for argument in arguments:
         if redact_next_as is not None:
             redacted.append(redact_next_as)
             redact_next_as = None
             continue
 
-        option, separator, value = argument.partition("=")
-        lowered = option.lower()
-        if lowered in _COOKIE_FILE_ARGUMENTS:
+        if argument.kind == "cookie_file":
             redacted.append(
-                f"{option}=<localized-cookie-file>"
-                if separator
-                else argument
+                f"{argument.option}=<localized-cookie-file>"
+                if argument.inline_value is not None
+                else argument.original
             )
-            if not separator:
+            if argument.inline_value is None:
                 redact_next_as = "<localized-cookie-file>"
             continue
-        if lowered in _SECRET_VALUE_ARGUMENTS:
-            redacted.append(f"{option}=<redacted>" if separator else argument)
-            if not separator:
+        if argument.kind == "secret":
+            redacted.append(
+                f"{argument.option}=<redacted>"
+                if argument.inline_value is not None
+                else argument.original
+            )
+            if argument.inline_value is None:
                 redact_next_as = "<redacted>"
             continue
-        if lowered in _SENSITIVE_HEADER_ARGUMENTS and separator:
-            redacted.append(f"{option}={_redact_text(value, secret_values)}")
+        if (
+            argument.kind == "sensitive_header"
+            and argument.inline_value is not None
+        ):
+            redacted.append(
+                f"{argument.option}="
+                f"{_redact_text(argument.inline_value, secret_values)}"
+            )
             continue
-        redacted.append(_redact_text(argument, secret_values))
+        redacted.append(_redact_text(argument.original, secret_values))
     return redacted, secret_values
 
 
@@ -287,6 +345,30 @@ def _status(run_id: str, state: str, **fields: Any) -> dict[str, Any]:
     }
 
 
+def _record_supervisor_handoff_failure(
+    run_dir: Path,
+    command_record: Mapping[str, Any],
+    *,
+    supervisor_pid: int,
+) -> None:
+    _write_json_atomic(
+        run_dir / "status.json",
+        _status(
+            command_record["run_id"],
+            "launch_failed",
+            started_at=command_record["created_at"],
+            finished_at=_now(),
+            supervisor_pid=supervisor_pid,
+            child_pid=None,
+            exit_code=None,
+            failure={
+                "kind": "supervisor_handoff_failed",
+                "message": "target launch request could not be received",
+            },
+        ),
+    )
+
+
 def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     target_command = list(args.target_command)
     if target_command[:1] == ["--"]:
@@ -295,14 +377,18 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         raise ValueError("start requires a target command after --")
 
     environment = os.environ.copy()
-    environment_secrets = _environment_secret_values(environment)
-    safe_task_name = _redact_text(args.task_name, environment_secrets)
+    working_directory = (args.cwd or project_root).resolve()
     redacted_argv, _secret_values = _prepare_command_security(
         target_command,
         environment=environment,
+        working_directory=working_directory,
+    )
+    safe_task_name = _redact_text(args.task_name, _secret_values)
+    safe_working_directory = _redact_text(
+        str(working_directory),
+        _secret_values,
     )
     run_id, run_dir = _create_run_directory(project_root, safe_task_name)
-    working_directory = (args.cwd or project_root).resolve()
     created_at = _now()
     command_record = {
         "schema_name": "persisted-command",
@@ -311,7 +397,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         "task_name": safe_task_name,
         "normalized_task_name": _normalized_task_name(safe_task_name),
         "created_at": created_at,
-        "cwd": str(working_directory),
+        "cwd": safe_working_directory,
         "argv": redacted_argv,
         "accepted_exit_codes": sorted(set(args.accepted_exit_code or [0])),
     }
@@ -357,12 +443,26 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     supervisor = subprocess.Popen(supervisor_command, **options)
     assert supervisor.stdin is not None
     launch_request = json.dumps(
-        {"argv": target_command},
+        {
+            "argv": target_command,
+            "cwd": str(working_directory),
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    supervisor.stdin.write(launch_request)
-    supervisor.stdin.close()
+    try:
+        supervisor.stdin.write(launch_request)
+        supervisor.stdin.close()
+    except OSError:
+        try:
+            supervisor.stdin.close()
+        except OSError:
+            pass
+        _record_supervisor_handoff_failure(
+            run_dir,
+            command_record,
+            supervisor_pid=supervisor.pid,
+        )
     return {"run_id": run_id, "run_dir": str(run_dir)}
 
 
@@ -379,17 +479,36 @@ def _copy_stream(
     events.put(None)
 
 
-def _supervise(run_dir: Path, target_command: Sequence[str]) -> int:
+def _supervise(run_dir: Path) -> int:
     command_record = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     run_id = command_record["run_id"]
+    try:
+        launch_request = json.load(sys.stdin)
+        target_command = launch_request["argv"]
+        raw_working_directory = launch_request["cwd"]
+        if not isinstance(target_command, list) or not all(
+            isinstance(argument, str) for argument in target_command
+        ):
+            raise ValueError("target argv must be a list of strings")
+        if not isinstance(raw_working_directory, str):
+            raise ValueError("target cwd must be a string")
+        working_directory = Path(raw_working_directory)
+    except (KeyError, OSError, TypeError, ValueError):
+        _record_supervisor_handoff_failure(
+            run_dir,
+            command_record,
+            supervisor_pid=os.getpid(),
+        )
+        return 1
     _redacted_argv, secret_values = _prepare_command_security(
         target_command,
         environment=os.environ,
+        working_directory=working_directory,
     )
     try:
         process = subprocess.Popen(
             target_command,
-            cwd=command_record["cwd"],
+            cwd=working_directory,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -587,8 +706,7 @@ def _result(operation: str, data: dict[str, Any]) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.operation == "_supervise":
-        launch_request = json.load(sys.stdin)
-        return _supervise(args.run_dir.resolve(), launch_request["argv"])
+        return _supervise(args.run_dir.resolve())
     project_root = _project_root()
     timed_out = False
     if args.operation == "start":

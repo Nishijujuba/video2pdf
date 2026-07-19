@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from typing import Any
 import unittest
 import uuid
 
@@ -29,6 +30,45 @@ def run_cli(
     )
 
 
+def run_to_terminal(
+    *start_arguments: str,
+    env: dict[str, str] | None = None,
+    timeout_seconds: float = 20,
+) -> tuple[
+    subprocess.CompletedProcess[str],
+    subprocess.CompletedProcess[str],
+    Path,
+    dict[str, Any],
+]:
+    started = run_cli(*start_arguments, env=env)
+    if started.returncode != 0:
+        raise AssertionError(started.stderr or started.stdout)
+    run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+    waited = run_cli(
+        "wait",
+        "--run-dir",
+        str(run_dir),
+        "--timeout-seconds",
+        str(timeout_seconds),
+    )
+    if waited.returncode != 0:
+        raise AssertionError(waited.stderr or waited.stdout)
+    return started, waited, run_dir, json.loads(waited.stdout)["data"]
+
+
+def shareable_metadata(
+    run_dir: Path,
+    *responses: subprocess.CompletedProcess[str],
+) -> str:
+    return "\n".join(
+        (
+            *(response.stdout for response in responses),
+            (run_dir / "command.json").read_text(encoding="utf-8"),
+            (run_dir / "status.json").read_text(encoding="utf-8"),
+        )
+    )
+
+
 def run_with_supervisor_hook(
     *,
     task_name: str,
@@ -48,7 +88,7 @@ def run_with_supervisor_hook(
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
     )
-    started = run_cli(
+    _started, _waited, run_dir, data = run_to_terminal(
         "start",
         "--task-name",
         task_name,
@@ -60,22 +100,143 @@ def run_with_supervisor_hook(
         "print('child exited successfully', flush=True)",
         env=env,
     )
-    if started.returncode != 0:
-        raise AssertionError(started.stderr or started.stdout)
-    run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-    waited = run_cli(
-        "wait",
-        "--run-dir",
-        str(run_dir),
-        "--timeout-seconds",
-        "20",
-    )
-    if waited.returncode != 0:
-        raise AssertionError(waited.stderr or waited.stdout)
-    return run_dir, json.loads(waited.stdout)["data"]["status"]
+    return run_dir, data["status"]
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_supervisor_handoff_failure_terminalizes_with_sanitized_evidence(
+        self,
+    ) -> None:
+        secret = f"handoff-error-{uuid.uuid4().hex}"
+        hook_dir = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-hooks"
+            / uuid.uuid4().hex
+        )
+        hook_dir.mkdir(parents=True)
+        (hook_dir / "sitecustomize.py").write_text(
+            "import json\n"
+            "import sys\n"
+            "if '_supervise' in sys.argv:\n"
+            "    def injected_load(_stream):\n"
+            f"        raise OSError({secret!r})\n"
+            "    json.load = injected_load\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
+        )
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"handoff failure {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('must not launch')",
+            env=env,
+            timeout_seconds=5,
+        )
+        self.assertEqual(data["status"]["state"], "launch_failed")
+        self.assertEqual(
+            data["status"]["failure"],
+            {
+                "kind": "supervisor_handoff_failed",
+                "message": "target launch request could not be received",
+            },
+        )
+        self.assertIsNone(data["status"]["exit_code"])
+        self.assertIsNone(data["exit_code_path"])
+        self.assertNotIn(secret, waited.stdout)
+
+    def test_relative_httponly_cookie_is_resolved_from_target_cwd_and_detected(
+        self,
+    ) -> None:
+        working_directory = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-relative-cookie"
+            / uuid.uuid4().hex
+        )
+        working_directory.mkdir(parents=True)
+        cookie_value = f"httponly-cookie-{uuid.uuid4().hex}"
+        (working_directory / "cookies.txt").write_text(
+            "# Netscape HTTP Cookie File\n"
+            f"#HttpOnly_.example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\t{cookie_value}\n",
+            encoding="utf-8",
+        )
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"relative httponly cookie {uuid.uuid4().hex}",
+            "--cwd",
+            str(working_directory),
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "import pathlib; print(pathlib.Path('cookies.txt').read_text(encoding='utf-8'), flush=True)",
+            "--cookies",
+            "cookies.txt",
+        )
+        self.assertIn("<localized-cookie-file>", data["command"]["argv"])
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        self.assertIn(
+            cookie_value,
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+        )
+        shareable = shareable_metadata(run_dir, started, waited)
+        self.assertNotIn(cookie_value, shareable)
+
+    def test_task_name_and_cwd_do_not_repeat_known_or_environment_secrets(
+        self,
+    ) -> None:
+        token = f"task-token-{uuid.uuid4().hex}"
+        environment_secret = f"cwd-secret-{uuid.uuid4().hex}"
+        working_directory = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-cwd"
+            / environment_secret
+        )
+        working_directory.mkdir(parents=True)
+        env = os.environ.copy()
+        env["ISSUE21_API_TOKEN"] = environment_secret
+
+        started, waited, run_dir, _data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"task repeats {token}",
+            "--cwd",
+            str(working_directory),
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "import pathlib; print(pathlib.Path.cwd(), flush=True)",
+            "--token",
+            token,
+            env=env,
+        )
+        shareable = shareable_metadata(run_dir, started, waited)
+        self.assertNotIn(token, shareable)
+        self.assertNotIn(environment_secret, shareable)
+        self.assertIn(
+            str(working_directory),
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+        )
+
     def test_known_secrets_are_redacted_from_earlier_unlabelled_arguments(
         self,
     ) -> None:
@@ -94,7 +255,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         token = f"repeated-token-{uuid.uuid4().hex}"
 
-        started = run_cli(
+        started, waited, run_dir, _data = run_to_terminal(
             "start",
             "--task-name",
             f"repeated secrets {uuid.uuid4().hex}",
@@ -113,25 +274,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "--cookies",
             str(cookie_file),
         )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        shareable = "\n".join(
-            (
-                started.stdout,
-                waited.stdout,
-                (run_dir / "command.json").read_text(encoding="utf-8"),
-                (run_dir / "status.json").read_text(encoding="utf-8"),
-            )
-        )
+        shareable = shareable_metadata(run_dir, started, waited)
         for secret in (str(cookie_file), cookie_file.as_posix(), cookie_value, token):
             self.assertNotIn(secret, shareable)
 
@@ -140,7 +283,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         cookie_header = f"cookie-header-secret-{uuid.uuid4().hex}"
         child = "import sys; print(sys.argv[2].split()[-1], flush=True)"
 
-        started = run_cli(
+        started, waited, run_dir, data = run_to_terminal(
             "start",
             "--task-name",
             f"sensitive headers {uuid.uuid4().hex}",
@@ -154,18 +297,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             f"Authorization: Bearer {bearer_token}",
             f"--add-header=Cookie: {cookie_header}",
         )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
         self.assertEqual(
             data["command"]["argv"],
             [
@@ -186,14 +317,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "classification": "security_failure",
             },
         )
-        shareable = "\n".join(
-            (
-                started.stdout,
-                waited.stdout,
-                (run_dir / "command.json").read_text(encoding="utf-8"),
-                (run_dir / "status.json").read_text(encoding="utf-8"),
-            )
-        )
+        shareable = shareable_metadata(run_dir, started, waited)
         self.assertNotIn(bearer_token, shareable)
         self.assertNotIn(cookie_header, shareable)
         self.assertEqual(
@@ -202,7 +326,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
 
     def test_sanitized_logs_are_security_eligible_for_acceptance(self) -> None:
-        started = run_cli(
+        _started, _waited, _run_dir, data = run_to_terminal(
             "start",
             "--task-name",
             f"sanitized log {uuid.uuid4().hex}",
@@ -213,18 +337,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "-c",
             "print('sanitized output', flush=True)",
         )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        status = json.loads(waited.stdout)["data"]["status"]
+        status = data["status"]
         self.assertEqual(
             status["security"],
             {
@@ -261,7 +374,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "file=sys.stderr, flush=True)"
         )
 
-        started = run_cli(
+        started, waited, run_dir, data = run_to_terminal(
             "start",
             "--task-name",
             f"detected log secret {uuid.uuid4().hex}",
@@ -277,18 +390,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             str(cookie_file),
             env=env,
         )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
         self.assertEqual(data["status"]["state"], "succeeded")
         self.assertEqual(
             data["status"]["security"],
@@ -305,14 +406,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             cookie_value,
             (run_dir / "stderr.log").read_text(encoding="utf-8"),
         )
-        shareable = "\n".join(
-            (
-                started.stdout,
-                waited.stdout,
-                (run_dir / "command.json").read_text(encoding="utf-8"),
-                (run_dir / "status.json").read_text(encoding="utf-8"),
-            )
-        )
+        shareable = shareable_metadata(run_dir, started, waited)
         for secret in (str(cookie_file), cookie_value, token, environment_secret):
             self.assertNotIn(secret, shareable)
 
@@ -339,7 +433,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         env = os.environ.copy()
         env["ISSUE21_API_TOKEN"] = environment_secret
 
-        started = run_cli(
+        started, waited, run_dir, data = run_to_terminal(
             "start",
             "--task-name",
             f"secret-safe metadata {uuid.uuid4().hex}",
@@ -357,25 +451,8 @@ class PersistedCommandCliTests(unittest.TestCase):
             f"https://example.test/resource?token={query_secret}",
             env=env,
         )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
-        shareable = "\n".join(
-            (
-                started.stdout,
-                waited.stdout,
-                json.dumps(command, ensure_ascii=False),
-            )
-        )
+        command = data["command"]
+        shareable = shareable_metadata(run_dir, started, waited)
         for secret in (
             str(cookie_file),
             cookie_value,

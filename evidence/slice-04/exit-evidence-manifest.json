@@ -1,0 +1,1470 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 4,
+    "name": "production-source-acquisition"
+  },
+  "slice_base_commit": "654362017fa974946fb252af5311868bb47efcf0",
+  "implementation_commit": "be7739fed8e224ea5c7c8abd4cb7f33a2c706ff7",
+  "evidence_paths": [
+    "evidence/slice-04/exit-evidence-manifest.json",
+    "evidence/slice-04/logs/slice0-regression.log",
+    "evidence/slice-04/logs/slice4-contracts.log",
+    "evidence/slice-04/logs/slice1-regression.log",
+    "evidence/slice-04/logs/slice2-regression.log",
+    "evidence/slice-04/logs/slice3-regression.log",
+    "evidence/slice-04/logs/slice4-production-source-acquisition.log",
+    "evidence/slice-04/logs/slice4-platform-adapters.log",
+    "evidence/slice-04/logs/slice4-exit-evidence-contracts.log",
+    "evidence/slice-04/logs/slice3-exit-evidence.log",
+    "evidence/slice-04/logs/slice4-bilibili-live-smoke.log",
+    "evidence/slice-04/logs/slice4-youtube-live-smoke.log",
+    "evidence/slice-04/logs/slice4-syntax.log",
+    "evidence/slice-04/logs/slice4-diff-check.log",
+    "evidence/slice-04/smokes/bilibili.source-manifest.json",
+    "evidence/slice-04/smokes/youtube.source-manifest.json"
+  ],
+  "generated_at": "2026-07-19T01:46:30Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice0-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_legacy_baseline"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice0-regression.log",
+        "sha256": "12b63ce32cbda600a923340824545d910a52cea29c136807bce6b2132dfa800e"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-contracts.log",
+        "sha256": "e0ae7345d62a6b026668d748ab3e1a00038ae533cbca939bd309295fe627b8dd"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_source_ready_tracer",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_issue4_gate4",
+        "tests.video_workflow.test_issue4_gate7"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice1-regression.log",
+        "sha256": "7a406786bf1ba0918044af246c40306a7bc405aa36b656e68a2e2ce0f1e5121f"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice2-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_task_promotion",
+        "tests.video_workflow.test_task_promotion_hardening",
+        "tests.video_workflow.test_issue5_review_repairs",
+        "tests.video_workflow.test_control_store_transaction_scope"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice2-regression.log",
+        "sha256": "74946c517dc075d114f7fa644377ee5b3f9e4c36b3545478a5b12d471436f499"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_admission_multiprocess",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_control_store_recovery"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice3-regression.log",
+        "sha256": "76b098894ff8d528e21de1e84d77b3fa3c755bd87cf095e11acabcb7e8d87897"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-production-source-acquisition",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_source_identity_and_content_version_are_distinct_authorities",
+        "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_english_subtitle_policy_and_explicit_whisper_fallback_are_bounded",
+        "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_downstream_reader_rejects_noncurrent_validated_source_package",
+        "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_fresh_download_and_whisper_launch_only_through_resource_admission",
+        "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_cookie_rejection_is_user_input_and_opens_only_platform_breaker",
+        "tests.video_workflow.test_source_publication.SourcePublicationTests.test_publication_recovers_every_fault_and_commits_current_source",
+        "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_source_reopen_transitively_stales_dependents_and_recovers_fault_boundaries",
+        "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_cookie_rejection_persists_run_blocker_and_scoped_breaker",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_three_stage_source_tasks_complete_through_resource_admission",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_provider_inventory_authenticates_the_exact_candidate_staging_set",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_whisper_output_uses_a_strict_utf8_lf_srt_byte_contract",
+        "tests.video_workflow.test_source_package.SourcePackageTests.test_fresh_materializer_binds_controls_and_canonicalizes_every_artifact",
+        "tests.video_workflow.test_source_package.SourcePackageTests.test_verified_import_skips_agent_and_preserves_content_version",
+        "tests.video_workflow.test_source_package.SourcePackageTests.test_materializer_rejects_binding_drift_and_agent_mechanical_fields",
+        "tests.video_workflow.test_verified_source_import_cli.VerifiedSourceImportCliTests.test_public_source_import_creates_current_v2_package_without_semantic_task",
+        "tests.video_workflow.test_verified_source_import_cli.VerifiedSourceImportCliTests.test_public_source_import_rejects_a_noncurrent_prior_package",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_deterministic_locator_bootstrap_never_calls_an_adapter_or_runner",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_recorded_live_provider_only_starts_inside_resource_admission",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_cookie_rejection_from_admitted_provider_persists_run_blocker",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_provider_lease_is_released_when_candidate_materialization_fails",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_semantic_lease_is_released_when_judgment_callback_fails",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_semantic_lease_is_released_when_judgment_output_is_missing",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_provider_fails",
+        "tests.video_workflow.test_source_publication_control_store.SourcePublicationControlStoreTests.test_journal_binding_is_single_assignment_and_state_machine_commits_chain",
+        "tests.video_workflow.test_source_publication_control_store.SourcePublicationControlStoreTests.test_nonterminal_publication_owns_the_single_run_promotion_slot",
+        "tests.video_workflow.test_source_publication_integration.SourcePublicationIntegrationTests.test_kernel_finalizer_and_reconciler_commit_real_v9_publication",
+        "tests.video_workflow.test_source_reopen_integration.SourceReopenIntegrationTests.test_reconcile_commits_reopened_v3_run_to_file_backed_authority",
+        "tests.video_workflow.test_provider_secret_snapshot.ProviderSecretSnapshotTests.test_runner_redacts_pre_execution_cookie_after_provider_rewrites_jar",
+        "tests.video_workflow.test_validated_source_gate.ValidatedSourceGateTests.test_gate_rejects_an_extra_source_file",
+        "tests.video_workflow.test_validated_source_gate.ValidatedSourceGateTests.test_gate_rejects_a_hardlinked_source_artifact",
+        "tests.video_workflow.test_source_publication_preintent.SourcePublicationPreIntentTests.test_candidate_write_is_fenced_and_changed_timestamp_replays",
+        "tests.video_workflow.test_source_publication_preintent.SourcePublicationPreIntentTests.test_partial_candidate_write_resumes_from_frozen_intent",
+        "tests.video_workflow.test_source_reopen_contract.SourceReopenJournalContractTests.test_malformed_and_unknown_version_journals_fail_recovery_closed",
+        "tests.video_workflow.test_source_reopen_contract.SourceReopenJournalContractTests.test_batch_preflight_rejects_candidate_drift_before_any_move",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_transcript_output_is_missing",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_transcript_output_drifts",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_launch_token_is_ambiguous",
+        "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_smoke_case_rejects_an_ancestor_link_outside_its_boundary",
+        "tests.video_workflow.test_source_candidates.SourceCandidateTests.test_candidate_target_parent_junction_fails_before_any_publication",
+        "tests.video_workflow.test_source_package.SourcePackageTests.test_materializer_rejects_descendant_junction_before_writing_outside_run",
+        "tests.video_workflow.test_source_package.SourcePackageTests.test_materializer_rejects_a_hardlinked_candidate_file",
+        "tests.video_workflow.test_source_publication.SourcePublicationTests.test_publication_rejects_canonical_parent_junction_before_external_write",
+        "tests.video_workflow.test_verified_source_import_cli.VerifiedSourceImportCliTests.test_public_source_import_rejects_a_linked_prior_source_descendant",
+        "tests.video_workflow.test_provider_candidate_promotion.ProviderCandidatePromotionTests.test_reclaimed_provider_attempt_promotes_only_the_replacement_candidate_set",
+        "tests.video_workflow.test_provider_candidate_promotion.ProviderCandidatePromotionTests.test_completion_rejects_a_hardlinked_candidate_file",
+        "tests.video_workflow.test_task_promotion_hardening.TaskFailClosedTests.test_hardlinked_required_output_is_rejected_before_completion",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_cookie_rejected_run_resolves_after_platform_breaker_closes",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_source_blocker_resolution_cli_closes_the_user_input_transition",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_credential_resolution_reconcile_requires_bound_evidence",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_credential_resolution_recovery_rejects_missing_or_drifted_evidence",
+        "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_ready_source_reopens_and_republishes_changed_candidate_content",
+        "tests.video_workflow.test_production_source_drift_recovery.ProductionSourceDriftRecoveryTests.test_reconcile_commits_a_contract_valid_stale_v3_run",
+        "tests.video_workflow.test_production_artifact_plan_honesty.ProductionArtifactPlanHonestyTests.test_run_plan_excludes_circular_transaction_journal_authority"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-production-source-acquisition.log",
+        "sha256": "ed7c71475980af86451b5e85f69182be08bf7ceb99c608a328142e25a6c9d700"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-platform-adapters",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_production_adapters_share_one_runtime_checkable_interface",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_recording_is_cookie_first_and_materializes_canonical_outputs",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_recording_puts_node_on_every_ytdlp_command",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_cookie_rejection_is_a_closed_user_input_classification_without_secret_leak",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_runner_rejects_an_unconsumed_or_out_of_order_recording",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_subprocess_runner_redacts_secret_arguments_cookie_lines_and_values",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_translated_subtitle_filename_binds_requested_track",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_provider_manifest_is_closed_and_versioned",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_provider_rejects_declared_stdio_hash_drift",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_p2_probe_selection_drives_the_acquisition_command",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_acquire_rejects_a_different_item_before_provider_launch",
+        "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_acquire_rejects_a_different_item_before_provider_launch"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-platform-adapters.log",
+        "sha256": "c19c6dd05846711371e4b7e45f621135646b69ea73341862107fcbfd29003445"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-exit-evidence-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_scans_every_blob_before_first_write",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_contract_registers_closed_commands_and_platform_smokes",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_exit_evidence_command_covers_closed_test_class",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_schema_requires_exact_platform_smoke_set",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_semantics_bind_closed_smokes_results_and_faults",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_smoke_runner_only_delegates_to_product_cli",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_closed_command_covers_independent_review_repairs",
+        "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_prior_slice_fixture_bindings_use_their_implementation_commit"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-exit-evidence-contracts.log",
+        "sha256": "00601bb257e74f1acbade3af6adbfdf89b74d79ced403881ab874c6ea482af1e"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice3-exit-evidence",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/validate_slice_exit_evidence.py",
+        "evidence/slice-03/exit-evidence-manifest.json"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice3-exit-evidence.log",
+        "sha256": "994f4ee0512aec7928e4be7531b40bd8bf7d7f02151a5c57619a735c05c402b6"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-bilibili-live-smoke",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/run_slice4_platform_smoke.py",
+        "--spec",
+        "tests/video_workflow/fixtures/providers/bilibili/live-smoke-case.json",
+        "--credential-profile",
+        "bilibili-project-cookie",
+        "--work-root",
+        "workspace/待删除/slice4-live-smoke/bilibili"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-bilibili-live-smoke.log",
+        "sha256": "d19e2419e2b582d63095bcccab08ccc98787278f086d2bb26b5df72f8145ad5b"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-youtube-live-smoke",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/run_slice4_platform_smoke.py",
+        "--spec",
+        "tests/video_workflow/fixtures/providers/youtube/live-smoke-case.json",
+        "--credential-profile",
+        "youtube-project-cookie",
+        "--work-root",
+        "workspace/待删除/slice4-live-smoke/youtube"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-youtube-live-smoke.log",
+        "sha256": "df735cdf61e68d2b12b272bf9a6d1ff71061ecfac28f73fec7ac8c57a11f9173"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-syntax",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-c",
+        "import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+[pathlib.Path('scripts/video_workflow.py'),pathlib.Path('scripts/validate_slice_exit_evidence.py'),pathlib.Path('scripts/slice4_exit_evidence_contract.py'),pathlib.Path('scripts/collect_slice4_exit_evidence.py'),pathlib.Path('scripts/run_slice4_platform_smoke.py'),pathlib.Path('tests/video_workflow/test_issue7_exit_evidence.py')];[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-syntax.log",
+        "sha256": "c8529393c4e1bbbb21ee35dbfe3d7b1ca3219adfecd9b030da8c9ad7d8b8e987"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "654362017fa974946fb252af5311868bb47efcf0...HEAD"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-04/logs/slice4-diff-check.log",
+        "sha256": "bfa9dc70f414be8fa53dcaff1dadb659a3c43ad38c6d3b36279cb3240b7ff4b3"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "source_candidates_ready",
+      "status": "current"
+    },
+    {
+      "name": "source_acquisition_decision_ready",
+      "status": "current"
+    },
+    {
+      "name": "source_ready",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "recorded_provider_fixture_package",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/recording.json",
+      "sha256": "02945385c46151887fe486827ee9ddfb678504fb69771052d133efcca3ad712c"
+    },
+    {
+      "role": "recorded_provider_fixture_package",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/cookie-rejected/recording.json",
+      "sha256": "2824031d51ffc286478462a0fa36efb6ab19da975e88c18e09b635d9889b7b4b"
+    },
+    {
+      "role": "recorded_provider_fixture_package",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/recording.json",
+      "sha256": "e036cdea99cc4e2d4f5cfa5e68bd35d55151069782bae23cb3e1d45eed5a6e44"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice4.valid.json",
+      "sha256": "ed518e5359efce0dd76c3f34629a885a6b55f3f7e532fcf1654d96dc6b7b77bb"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice4.missing-platform-smoke.invalid.json",
+      "sha256": "6775d187a1db630340c0427c74f5b16a3518beb7be5ad70f2ae5c7a0cc04d3ec"
+    }
+  ],
+  "results": {
+    "positive": [
+      "platform_adapters_share_one_neutral_interface",
+      "recorded_bilibili_acquisition_is_deterministic",
+      "recorded_youtube_acquisition_is_deterministic",
+      "source_identity_and_content_version_are_distinct",
+      "english_subtitle_selection_and_whisper_fallback_are_bounded",
+      "provider_semantic_and_whisper_tasks_complete_through_admission",
+      "validated_source_package_is_script_materialized",
+      "verified_import_preserves_content_authority_without_agent_judgment",
+      "deterministic_locator_defers_provider_launch_until_run_admission",
+      "source_publication_authority_is_durable",
+      "youtube_translated_subtitle_outputs_bind_deterministically",
+      "public_verified_import_reaches_current_source_ready_without_semantic_task"
+    ],
+    "negative": [
+      "cookie_rejection_is_scoped_and_secret_free",
+      "recorded_provider_order_mismatch_fails_closed",
+      "provider_output_and_exit_evidence_are_secret_free",
+      "noncurrent_validated_source_package_is_rejected",
+      "provider_candidate_staging_drift_is_rejected",
+      "agent_mechanical_source_fields_are_rejected",
+      "cookie_rejection_opens_only_the_platform_breaker",
+      "public_verified_import_rejects_noncurrent_prior_package"
+    ],
+    "fencing": [
+      "download_and_whisper_launches_require_resource_admission",
+      "recorded_provider_commands_start_only_inside_admission",
+      "source_publication_owns_the_single_run_promotion_slot"
+    ],
+    "restart": [
+      "source_publication_retry_is_idempotent",
+      "source_reopen_resumes_from_every_persistent_boundary"
+    ],
+    "recovery": [
+      "source_publication_faults_recover",
+      "source_reopen_recovers_without_stale_generation"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "platform_adapters_share_one_neutral_interface",
+      "result_kind": "positive",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_production_adapters_share_one_runtime_checkable_interface"
+    },
+    {
+      "result_id": "recorded_bilibili_acquisition_is_deterministic",
+      "result_kind": "positive",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_recording_is_cookie_first_and_materializes_canonical_outputs"
+    },
+    {
+      "result_id": "recorded_youtube_acquisition_is_deterministic",
+      "result_kind": "positive",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_recording_puts_node_on_every_ytdlp_command"
+    },
+    {
+      "result_id": "source_identity_and_content_version_are_distinct",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_source_identity_and_content_version_are_distinct_authorities"
+    },
+    {
+      "result_id": "english_subtitle_selection_and_whisper_fallback_are_bounded",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_english_subtitle_policy_and_explicit_whisper_fallback_are_bounded"
+    },
+    {
+      "result_id": "provider_semantic_and_whisper_tasks_complete_through_admission",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_three_stage_source_tasks_complete_through_resource_admission"
+    },
+    {
+      "result_id": "validated_source_package_is_script_materialized",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_package.SourcePackageTests.test_fresh_materializer_binds_controls_and_canonicalizes_every_artifact"
+    },
+    {
+      "result_id": "verified_import_preserves_content_authority_without_agent_judgment",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_package.SourcePackageTests.test_verified_import_skips_agent_and_preserves_content_version"
+    },
+    {
+      "result_id": "deterministic_locator_defers_provider_launch_until_run_admission",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_deterministic_locator_bootstrap_never_calls_an_adapter_or_runner"
+    },
+    {
+      "result_id": "source_publication_authority_is_durable",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_publication_integration.SourcePublicationIntegrationTests.test_kernel_finalizer_and_reconciler_commit_real_v9_publication"
+    },
+    {
+      "result_id": "youtube_translated_subtitle_outputs_bind_deterministically",
+      "result_kind": "positive",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_translated_subtitle_filename_binds_requested_track"
+    },
+    {
+      "result_id": "public_verified_import_reaches_current_source_ready_without_semantic_task",
+      "result_kind": "positive",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_verified_source_import_cli.VerifiedSourceImportCliTests.test_public_source_import_creates_current_v2_package_without_semantic_task"
+    },
+    {
+      "result_id": "cookie_rejection_is_scoped_and_secret_free",
+      "result_kind": "negative",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_cookie_rejection_is_a_closed_user_input_classification_without_secret_leak"
+    },
+    {
+      "result_id": "recorded_provider_order_mismatch_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_runner_rejects_an_unconsumed_or_out_of_order_recording"
+    },
+    {
+      "result_id": "provider_output_and_exit_evidence_are_secret_free",
+      "result_kind": "negative",
+      "command_id": "slice4-platform-adapters",
+      "test_target": "tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_subprocess_runner_redacts_secret_arguments_cookie_lines_and_values"
+    },
+    {
+      "result_id": "noncurrent_validated_source_package_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_acquisition.ProductionSourceAcquisitionTests.test_downstream_reader_rejects_noncurrent_validated_source_package"
+    },
+    {
+      "result_id": "provider_candidate_staging_drift_is_rejected",
+      "result_kind": "negative",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_tasks.ProductionSourceTaskTests.test_provider_inventory_authenticates_the_exact_candidate_staging_set"
+    },
+    {
+      "result_id": "agent_mechanical_source_fields_are_rejected",
+      "result_kind": "negative",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_package.SourcePackageTests.test_materializer_rejects_binding_drift_and_agent_mechanical_fields"
+    },
+    {
+      "result_id": "cookie_rejection_opens_only_the_platform_breaker",
+      "result_kind": "negative",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_cookie_rejection_from_admitted_provider_persists_run_blocker"
+    },
+    {
+      "result_id": "public_verified_import_rejects_noncurrent_prior_package",
+      "result_kind": "negative",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_verified_source_import_cli.VerifiedSourceImportCliTests.test_public_source_import_rejects_a_noncurrent_prior_package"
+    },
+    {
+      "result_id": "download_and_whisper_launches_require_resource_admission",
+      "result_kind": "fencing",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_fresh_download_and_whisper_launch_only_through_resource_admission"
+    },
+    {
+      "result_id": "recorded_provider_commands_start_only_inside_admission",
+      "result_kind": "fencing",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_live_smoke.SourceLiveSmokeTests.test_recorded_live_provider_only_starts_inside_resource_admission"
+    },
+    {
+      "result_id": "source_publication_owns_the_single_run_promotion_slot",
+      "result_kind": "fencing",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_publication_control_store.SourcePublicationControlStoreTests.test_nonterminal_publication_owns_the_single_run_promotion_slot"
+    },
+    {
+      "result_id": "source_publication_retry_is_idempotent",
+      "result_kind": "restart",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_publication.SourcePublicationTests.test_publication_recovers_every_fault_and_commits_current_source"
+    },
+    {
+      "result_id": "source_reopen_resumes_from_every_persistent_boundary",
+      "result_kind": "restart",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_source_reopen_transitively_stales_dependents_and_recovers_fault_boundaries"
+    },
+    {
+      "result_id": "source_publication_faults_recover",
+      "result_kind": "recovery",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_publication.SourcePublicationTests.test_publication_recovers_every_fault_and_commits_current_source"
+    },
+    {
+      "result_id": "source_reopen_recovers_without_stale_generation",
+      "result_kind": "recovery",
+      "command_id": "slice4-production-source-acquisition",
+      "test_target": "tests.video_workflow.test_source_reopen_integration.SourceReopenIntegrationTests.test_reconcile_commits_reopened_v3_run_to_file_backed_authority"
+    }
+  ],
+  "fault_points": [
+    "after_source_publication_intent_prepared",
+    "after_source_publication_journal_written",
+    "after_source_publication_journal_bound",
+    "after_prior_source_preserved",
+    "after_source_tree_published",
+    "after_source_files_state_commit",
+    "after_source_run_record_commit_marker",
+    "after_source_record_state_commit",
+    "before_source_publication_intent_commit",
+    "after_source_publication_intent_commit",
+    "after_reopen_prepared",
+    "after_reopen_source_preserved",
+    "after_reopen_run_record_commit"
+  ],
+  "platform_smokes": [
+    {
+      "adapter_contract_version": "1.0.0",
+      "adapter_id": "bilibili",
+      "authentication_classification": "cookie_accepted",
+      "command_argv_redacted": [
+        "<PYTHON>",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-cache-dir",
+        "--no-part",
+        "--no-playlist",
+        "--no-progress",
+        "--socket-timeout",
+        "30",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
+        "--ffmpeg-location",
+        "<FFMPEG_DIR>",
+        "--cookies",
+        "<COOKIE_FILE>",
+        "--format",
+        "bestvideo[height<=360]+bestaudio/best[height<=360]/best",
+        "--merge-output-format",
+        "mp4",
+        "--paths",
+        "home:.",
+        "--output",
+        "video.%(ext)s",
+        "--",
+        "https://www.bilibili.com/video/BV1gCLq6YEW4/?p=1"
+      ],
+      "platform": "bilibili",
+      "provider_kind": "live",
+      "recorded_at": "2026-07-19T09:43:29.729314+08:00",
+      "run_id": "0e1d714c38b418797408f99ca2688164",
+      "runtime_policy_sha256": "683bb8ced986e6f355d1fe0122280342da3c63560fd39576d3fc50e5120c24e1",
+      "source_manifest": {
+        "path": "evidence/slice-04/smokes/bilibili.source-manifest.json",
+        "sha256": "fb00b8dbd59132c07ade69964ff08e77244030128362cbb002d789aca2275762",
+        "canonical_platform": "bilibili",
+        "canonical_item_id": "BV1gCLq6YEW4:p1",
+        "source_identity": "081d04471b76d2e1287b24ddbd164ef5ecfb503321b08f58b55fe931d191eef5",
+        "source_version": "27bf0564b4d9c4f6d0df226b9808ab38590f7a90021cad23a38ececedbe79960"
+      },
+      "target_checkpoint": {
+        "name": "source_ready",
+        "status": "current",
+        "evidence_sha256": "fb00b8dbd59132c07ade69964ff08e77244030128362cbb002d789aca2275762"
+      },
+      "tool_versions": {
+        "ffprobe": "N-123619-g44ad73031d-20260325",
+        "yt-dlp": "2026.5.5.233942.dev0"
+      },
+      "command_id": "slice4-bilibili-live-smoke",
+      "sanitized_log": {
+        "path": "evidence/slice-04/logs/slice4-bilibili-live-smoke.log",
+        "sha256": "d19e2419e2b582d63095bcccab08ccc98787278f086d2bb26b5df72f8145ad5b",
+        "no_secret_scan": "pass"
+      }
+    },
+    {
+      "adapter_contract_version": "1.0.0",
+      "adapter_id": "youtube",
+      "authentication_classification": "cookie_accepted",
+      "command_argv_redacted": [
+        "<PYTHON>",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-cache-dir",
+        "--no-part",
+        "--no-playlist",
+        "--no-progress",
+        "--socket-timeout",
+        "30",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
+        "--ffmpeg-location",
+        "<FFMPEG_DIR>",
+        "--cookies",
+        "<COOKIE_FILE>",
+        "--js-runtimes",
+        "node",
+        "--format",
+        "bestvideo[height<=144]+bestaudio/best[height<=144]/best",
+        "--merge-output-format",
+        "mp4",
+        "--paths",
+        "home:.",
+        "--output",
+        "video.%(ext)s",
+        "--",
+        "https://www.youtube.com/watch?v=Fboj9EC7aa4"
+      ],
+      "platform": "youtube",
+      "provider_kind": "live",
+      "recorded_at": "2026-07-19T09:44:29.821155+08:00",
+      "run_id": "f3d087cbdbf28d443a437082fb6c7ae9",
+      "runtime_policy_sha256": "26aa7a3cb9f98289488a4b7a3c037ddeadf5bb4144971c0a099a47e9ff89ba26",
+      "source_manifest": {
+        "path": "evidence/slice-04/smokes/youtube.source-manifest.json",
+        "sha256": "87c21822258abf1e570d7e429ea5107432a6814633d2ad7b98b343a091e750db",
+        "canonical_platform": "youtube",
+        "canonical_item_id": "Fboj9EC7aa4",
+        "source_identity": "1dd378fe226af149c0473d259f41c7478a29f12d0f785f17dd0234f1aee47c8b",
+        "source_version": "121b8a5f847144a4b2e46e4966d793d4f0d0da23f4bd5c54c1f4f627a7b6e1fc"
+      },
+      "target_checkpoint": {
+        "name": "source_ready",
+        "status": "current",
+        "evidence_sha256": "87c21822258abf1e570d7e429ea5107432a6814633d2ad7b98b343a091e750db"
+      },
+      "tool_versions": {
+        "ffprobe": "N-123619-g44ad73031d-20260325",
+        "node": "22.22.3",
+        "yt-dlp": "2026.5.5.233942.dev0"
+      },
+      "command_id": "slice4-youtube-live-smoke",
+      "sanitized_log": {
+        "path": "evidence/slice-04/logs/slice4-youtube-live-smoke.log",
+        "sha256": "df735cdf61e68d2b12b272bf9a6d1ff71061ecfac28f73fec7ac8c57a11f9173",
+        "no_secret_scan": "pass"
+      }
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": ".gitattributes",
+      "sha256": "c1eb50a1af383e33f85c6f4bf5d6eead8895ef0d6f58e798444250bac4425fd1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": ".gitignore",
+      "sha256": "9286307e11db7dc1d1ab7e3ff36dc489a0fb75a2f51b427db2586dc69ce6bfba"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "AGENTS.md",
+      "sha256": "306c193ecc12348e050ab91ba8c91576cb73880c4700275044f030375dbdab88"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/video-workflow/platforms/bilibili.v1.md",
+      "sha256": "f848c55e15be9bd3fd6698f95c6b3df2ad784dc1542280794891dd87dd166905"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/video-workflow/platforms/youtube.v1.md",
+      "sha256": "9812ae964ed23dee6a782ebfcd5074ebef17546e1377bdb8159a5745aa8f6f3b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/video-workflow/registry.v1.json",
+      "sha256": "31e15161675b4225ca322f6da30e81ca9ced78ebea06513c43802b9fa7134d65"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/video-workflow/roles/source-acquisition.v2.md",
+      "sha256": "df8df31463c0084d767875ce015163265f0b298311fd3352c533e9092d6082d3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "be59ea1d3216841dbcf7cfff205b35b8927ec77762d06c5a37df14a1a0678fc0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/registry.v1.json",
+      "sha256": "c3c1e0feb25de792b439c671a87fd7a0d8b497090a0cb45da336a69a0c522260"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",
+      "sha256": "f304c1b37418764d1b43895bd725ca264d299ffb6f38ddb6e3d1293f275a2cb1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-recovery-report.v1.schema.json",
+      "sha256": "1cf8a937f908ca2cac9b60e8e605d8d46735f39849af353dd3e5efe16644bdcc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/recorded-provider-package.v1.schema.json",
+      "sha256": "d109fb2d76ed959082a6c715e570d8bdbbab71daa91ef49dfbcf7553fd20c0f9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/scaffold.v1.json",
+      "sha256": "2c1958dbc6635dd89484db8a5342d0a99eab7fd493af2dfd492b071cc325c151"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-acquisition-decision-skeleton.v1.schema.json",
+      "sha256": "154411c5a0ed3efcf50465cc90c5d79f5cdb11daffb7e9be4935ddafd9dcc071"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-candidate-inventory.v1.schema.json",
+      "sha256": "d23a1e5bb832b92a5939e108be16acf93aef35289253693f15f9095696e31df1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-credential-resolution-evidence.v1.schema.json",
+      "sha256": "33bbcaaf0b8e00eb45cb0c9f5964fcdead9f9074473cc60ca890a5d330df99c5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-publication-journal.v1.schema.json",
+      "sha256": "8c78e7a1b62ed8bdfc48521b67a9c01bd43b9749187a3f535d7e41a8373e1169"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-reopen-journal.v1.schema.json",
+      "sha256": "b90e02dca6e367d8cdd77b642c79e0478650cbe494e69f56c8eccba41b2bb377"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v2/artifact-plan.v2.schema.json",
+      "sha256": "18df3e8109e6af142e653de13eb932464e52758013143390829d479fa3041317"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v2/bootstrap-record.v2.schema.json",
+      "sha256": "4278f3cec56c2a477d743678b9162c2c55856c6c46a408b4172c2ce5b31a1cf9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v2/source-acquisition-judgment-patch.v2.schema.json",
+      "sha256": "dc765643632667d6e8841f161102c9395ed4ce85681c47574b2aeaf0ff8e7fe1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v2/source-manifest.v2.schema.json",
+      "sha256": "41899661454e5e9aebfe5bcd8e8add5d435de902f1fc955c267f76bd1123822b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v3/run-record.v3.schema.json",
+      "sha256": "b563d907bbb5fc2e1afb7c9c3d479d6c2fed6ceeb606b6b29d51b20d0d6d5040"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v3/subagent-task-envelope.v3.schema.json",
+      "sha256": "e025440b22f44e969bb9066fcaf4360933eda88551b7fcd096a1346d365d45f0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice4_exit_evidence.py",
+      "sha256": "8e9fa1aaf9d2e2cefa2d0537525533ac2684e40bc77e209270f225c34d49c310"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/run_slice4_platform_smoke.py",
+      "sha256": "6659f659245e794f6a972a0be54d90f82cf02b18f43d3ac4964c85277e698712"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice4_exit_evidence_contract.py",
+      "sha256": "25d80d9125c0631e67875b7c52e03dddaa4f841907e1d3e44bb115c6f613ded4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "3209ad0fa638b1688ba7295ff148fc544ea1508034d46df24c0845f8ff81d1bf"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/__init__.py",
+      "sha256": "3e1347dd0e45317766756a4c0952997845bbc152dde42ea76a566b5ad0c55364"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/base.py",
+      "sha256": "c4e46838a2273f2a5aa8d96f61137e6585877e6f104978c2d0bd58a136f34a3e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/bilibili.py",
+      "sha256": "6f79d4874844fdf4aa682e29a06db712ba4e3bbefbd53e1059dc10e8ecaee662"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/recorded.py",
+      "sha256": "fbec098a7181745e0a555ed02783126446e4e691649b9b0465bdce36d3158acf"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/youtube.py",
+      "sha256": "048825645904ae96e26781fe6b5a458d70752ed98278eec9c0839ad6961dadf1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/yt_dlp.py",
+      "sha256": "edc335c028ff3a6d81e19099483f2a0e6f240d56e1a4e5b890107f7a09cc1a29"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "752702e2b5767d0ffb935a4686d6acc4fe85c35eeabfbc29aee974b87fffd5b1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/contracts.py",
+      "sha256": "a6fc72946ebd14b8928ab8dad281290c4aaa099fa587723af8aea2fe8015d5ef"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/control_store.py",
+      "sha256": "93c47fd290209bfe02b6fd3949bb545d10ea532fbb5b490510779ba1e852a1ca"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/evidence.py",
+      "sha256": "7639608e897f49a1058181116c38985af26dd1cfec55e8642e549d50e7969ff1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "227a0b84342625bea2f23702ba19191fdde2053421f75b542a8fdc5db32cce2b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/models.py",
+      "sha256": "9bf1db91accc04c2a831508bac5e99bde0eeac346d0ca3f66ba9ee7ec74d11c4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/prompts.py",
+      "sha256": "46d5735706cc49f607ed8196a5fc2e0b00271ee3afcf3ca035460b6759e6ef58"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/scaffold.py",
+      "sha256": "d424ac6e6bc473cb3434dcbcf4d62cce6a315d5ade2cebcb48158cdcc418873f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/source_acquisition.py",
+      "sha256": "cde9d5d17512a45d267368ee05aa2fa9a168fd42c4cebfc1945da4b21343e766"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/source_candidates.py",
+      "sha256": "95cdeb24782ba85c108c5f4f92405d6b9d8b8903adc70d01729975592005eb90"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/source_live_smoke.py",
+      "sha256": "3021e82e361ca5d0ff10bd3ad1b0fe0fb19c8017c4c3a214cfa4a9f3c78190f6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/source_package.py",
+      "sha256": "7a5c454175fdcf6e15423585da18cf0e68bdd37cac2dee83a855ad8419c75bab"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/source_publication.py",
+      "sha256": "9454e2ab57ccce6da5ee69074797c89eda29eb4b2de7a0717e50fa7d2ef76309"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/task_execution.py",
+      "sha256": "bb68455433ebd745f08b421b4baea6b2b23234fb6e4c8874d56250a091ede607"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/utils.py",
+      "sha256": "634a88e80a6a2b53c511cbee03162b379bcd8adc6f5695cb2eb07c36383feed6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/verified_import.py",
+      "sha256": "1932aa749510b3d74e0373faf30122b59e1840f8b3bb56d4c6e58b4c524cafd6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/artifact-plan.v2.invalid.json",
+      "sha256": "35fd6888a87e893b7e9dbfdc07d5af3713ae47296c083f66e3c50e61b74e2bb2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/artifact-plan.v2.valid.json",
+      "sha256": "8aa3daa847a8dde58cd2f808725e8856e27906b948983c1c741f2f1803f6e6c9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/bootstrap-record.v2.invalid.json",
+      "sha256": "b1dd02732318d574d958ff07b088e889c684ee3dadbd4f0683676a8b41a004c1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/bootstrap-record.v2.valid.json",
+      "sha256": "bbf87685b08151d7ebf4a1167533bc62e147e919b9414b238d9d3814ca7a37c3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.invalid.json",
+      "sha256": "56d453b534457baeb945c465f5edac93dda94821d23e4ce7ad7b3457620e7d40"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-backup-manifest.valid.json",
+      "sha256": "ca053d680388679582b071a952347fceef8a3d7ce520790634abc2adfce966dc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.invalid.json",
+      "sha256": "8c6f3fc71e38022985bf3204bf9a5e77b3695687f5dfd829f614b83d74e1ee32"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-recovery-report.valid.json",
+      "sha256": "aab36ba624a43f7399cf27d0f463d06780bfcc7fdb4595241381878545c96092"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-restore-state.valid.json",
+      "sha256": "3458ce549037176d4e8815e842a85f4406e60e3d6a4bb3653e26035d57d28109"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/recorded-provider-package.invalid.json",
+      "sha256": "1f11da7e0a6cd16bfb1f42e3b26a565780682d2cf6b89ca5132aafacdd3d39ea"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/recorded-provider-package.valid.json",
+      "sha256": "1e301e81b568eea3d500e4b96b0c77424e349d4157d05db62c5a7c6f3d51640c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/run-record.v3.invalid.json",
+      "sha256": "3e6263aa15d723cdb5ddbbf4784f4ed6fd3904578981caaf45d7ce58861f0cb4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json",
+      "sha256": "64ea9be6221285e5eecefc34d34c498ee96d2ce436ab744c8c8898789107e75e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-acquisition-decision-skeleton.invalid.json",
+      "sha256": "91aeb1c091c5242949ff3fb31e2a025f48d0465f7ea8a28a0a48cddc5d1cb673"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-acquisition-decision-skeleton.valid.json",
+      "sha256": "e35d6c7b6048e4838ec642c65dd20eaa2c4b435e4e710b2347d3c2356afac805"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-acquisition-judgment-patch.v2.invalid.json",
+      "sha256": "3157c40ab393f9f7498d0967fcb0eacb71584f44619ba0231b1172fb46be47e1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-acquisition-judgment-patch.v2.valid.json",
+      "sha256": "9439f1de9a4228833436b8768e51cf97c9e5e22aaef04e623753ed9caf017950"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-candidate-inventory.invalid.json",
+      "sha256": "acaf77eb808a6b29a0b5917db32af809b9a329cc035e96430f28d36b18c7e49f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-candidate-inventory.valid.json",
+      "sha256": "66cbd9159f28bfdde5b66491a293e2c20086227531bbb2a454e17fdc4c7d5275"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-credential-resolution-evidence.invalid.json",
+      "sha256": "ad18cd79de7ad6de18238383194bf3bc0597e2ae7d22933ee2954b66c947293a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-credential-resolution-evidence.valid.json",
+      "sha256": "ec6252074d8f8869e03d53da0e4d1652d98356cb5063788c0163d184f4e5bd0e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-manifest.v2.invalid.json",
+      "sha256": "7987762f0211e502c6aa311d9be4532ac0b18a2ae315ae317d4c4679a1cfd114"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-manifest.v2.valid.json",
+      "sha256": "7237deb409b005d08079728219697a920b3a3070520e8c30db385db1b76ed762"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-publication-journal.invalid.json",
+      "sha256": "006e136df0b09efe155a389c92830dc47b20cb9f01280ccefad0fd07019b0170"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-publication-journal.valid.json",
+      "sha256": "19f1b2831a7bfc73fb16910007e0ae4da670fef1005d0b31e7c7b56f29cb10a3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-reopen-journal.invalid.json",
+      "sha256": "98e103c9ad350c6841d784cd01dcdd0862df81d1634d0e45a79a5196071290de"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-reopen-journal.valid.json",
+      "sha256": "2b86a822a5f6f342b996514785afb1fe82661f3110f321ac8757c95bd0f82878"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v3.invalid.json",
+      "sha256": "e9e237dcc477d7d1a72d7ac78b087aa6b74b76ed268bf7004758abe9fae4ab4f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v3.provider.valid.json",
+      "sha256": "38cbe433e055aae3ab05b9d95959f81ff34cbf83e99237ac332b3120e7850542"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v3.valid.json",
+      "sha256": "2967faea588e42eade6ba260daac36afa75511dcdb4ed326164b7690b799c790"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/subagent-task-envelope.v3.whisper.valid.json",
+      "sha256": "ae2daa79ca6375c207e57a75481cf58a23498f62d268f9d6ca6188b1b492e53d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice4.missing-platform-smoke.invalid.json",
+      "sha256": "6775d187a1db630340c0427c74f5b16a3518beb7be5ad70f2ae5c7a0cc04d3ec"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice4.valid.json",
+      "sha256": "ed518e5359efce0dd76c3f34629a885a6b55f3f7e532fcf1654d96dc6b7b77bb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/cookie-rejected/recording.json",
+      "sha256": "2824031d51ffc286478462a0fa36efb6ab19da975e88c18e09b635d9889b7b4b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/cookie-rejected/stderr/auth.txt",
+      "sha256": "065685ba0c8618685252a6445e6cedf67556471ddfb67ca55a3fdcc323286790"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/cookie-rejected/stdout/empty.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/cover.jpg",
+      "sha256": "77f026d6f1421398031a2688bba36842f36dbe82390bd2d1e041868859a921f4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/subtitle.automatic.ai-zh.srt",
+      "sha256": "add6224fc31509c49a412ee265d76319236e494d833e1cb51ecd434b79416e2e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/subtitle.manual.en.srt",
+      "sha256": "94c4a4a496faca096dfb3063e596a25ae134c354bd87580fd3d70bad28985997"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/video.mp4",
+      "sha256": "17081fd4ffc9736a97512a38d091f89fb303e5c5330421e4a63cc502dce2e315"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/recording.json",
+      "sha256": "02945385c46151887fe486827ee9ddfb678504fb69771052d133efcca3ad712c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/stderr/empty.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/stdout/empty.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/stdout/media-probe.json",
+      "sha256": "23d56c192f5a93b46949efb38866ea1ab394e578bb3c737c13be10b88390cbf6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/stdout/metadata.json",
+      "sha256": "fef33f3c488e59a99527e93f2638e4e6a27b5a3c82d554baca72c432e056f987"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/fresh-download/stdout/subtitle-list.txt",
+      "sha256": "52b484e038ee977f1d93e2d2b519e2f843f016f1af46223dadc98881efce861c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/bilibili/live-smoke-case.json",
+      "sha256": "ef32e4a921de42108b4c36ce61d8cdb50a1fcbbadc1a68cf34fc7893880dcf35"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/cover.jpg",
+      "sha256": "0a04664a72d15383db0e22e3fe0854e6f94024769daa93b661370f08b3d0abab"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/subtitle.automatic.en-orig.srt",
+      "sha256": "c057be279a47278cc2a083a6bd23a21aa53c55af9937b3c28f8cbf800098a579"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/subtitle.manual.en.srt",
+      "sha256": "f48b675e6fd77f0e47b2521fa7601910aa3727c3d0fa92c4e4a04a0573010581"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/video.mp4",
+      "sha256": "2e1c10bc4dff22a8e6205a1104e0770bb60dc9efadbec994fb657bc9a2aca7f2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/recording.json",
+      "sha256": "e036cdea99cc4e2d4f5cfa5e68bd35d55151069782bae23cb3e1d45eed5a6e44"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/stderr/empty.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/stdout/empty.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/stdout/media-probe.json",
+      "sha256": "cb564fe777126aeb93e0e2f6a585d696d330727829b9920f4eb3f937c58e6d47"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/stdout/metadata.json",
+      "sha256": "0e4269ddc6cab08e31d22f1c46e2bcddd9f577d44e7c81abf8cf073194bd1bf1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/fresh-download/stdout/subtitle-list.txt",
+      "sha256": "ed29605aab32f431c549eebd10c5dc3de524ef07923e2253a6d3ebc6820169b4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/providers/youtube/live-smoke-case.json",
+      "sha256": "59164626c2aaa039dfaabb14f9a4c46c6200f069cb05dca68c289eed7bfab2b1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_control_store_recovery.py",
+      "sha256": "e46fd1cfb4f5510f9fb406c01bb65215349c3d8949a788019c6aa22e214f8fc6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_control_store_transaction_scope.py",
+      "sha256": "62f9a384be48cd339289d5b343d54540941c33379688f7be54aa8430e047e48c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate7.py",
+      "sha256": "291782a0f13de862cbae5e0f03b1c96110c43a50a19e51c646c6ef23f935d42a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue5_review_repairs.py",
+      "sha256": "1dc0f4b549159356c4a7334816de88b0867182e7d145f8f26bd63ef8ad073adf"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue7_exit_evidence.py",
+      "sha256": "582e281295e5998c450b97a851be3e253fdf3d039ad1ba0936ec38bf877caefe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_legacy_baseline.py",
+      "sha256": "29256faccd780c69b6c34ab62a20fdeab535a759179169e057c7f6082c771009"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_platform_adapters.py",
+      "sha256": "c83f880b76f43da6275b372b22010bb38a601232a8fb036833207c41df4c88b6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_artifact_plan_honesty.py",
+      "sha256": "95a6687ba8467383c671716ec606d2d92508c6ec592c89ecc000239ed0b9d5ce"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_source_acquisition.py",
+      "sha256": "79c6c6a38f25c870b5cdcc7e80817aab28cf8929e5709854430243758988ed88"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_source_acquisition_hardening.py",
+      "sha256": "b9c785e1c2b9b547987319378ec74a939a28e9e1439bd83fce0fd0c1d3c01c95"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_source_drift_recovery.py",
+      "sha256": "488650a42525fa3d7a966957286b1d185f94375bfbdef1f8fc31292e9b28b942"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_source_tasks.py",
+      "sha256": "53a8564e4286183c3460b6378f0e6157d389d07ac89e0dcd05f278f2e0b97b45"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_provider_candidate_promotion.py",
+      "sha256": "c7b59d8fc7e522262237c95a6485edb2da01b42479265b7ef32b00d4944ddd82"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_provider_secret_snapshot.py",
+      "sha256": "540e377869693de838a6b35e912916f1674a09c3a722718e6a2bac9c1882d8aa"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_resource_control_store_integrity.py",
+      "sha256": "f819649d4d15f5ad532b8559791e2c7ab0c9d3c34e9f9d26d06c9a9d82c60dca"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_candidates.py",
+      "sha256": "f6863378096e1a9896a956b2570122a9378c5c6895c9fd915a96bcbc6c714c29"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_live_smoke.py",
+      "sha256": "cf20792a66c5dc5bc01edcd579834e5f226309414150e52b247d0bc49dfad3ef"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_package.py",
+      "sha256": "31a9d7383ec4255a533492fc0830b8d38acd2bf6c55f60f4453e84fab2b6c48c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_publication.py",
+      "sha256": "1d34899a894980bfe23b3664a648347c771b28e39c95be8a5e8334ccdf657b42"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_publication_control_store.py",
+      "sha256": "797c789569bcafb7e8540fd39e2f87c72aa4138e333b78bc4481d1c71eb7bea3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_publication_integration.py",
+      "sha256": "f63b13318b87a5b802f41fdc788cdd0d64dd13149d50cb7fd6b60fc57330ac22"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_publication_preintent.py",
+      "sha256": "31e2402781b65a455a26d1598e71ae253deacaa2e483da6bdade6f290f5d1457"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_hardening.py",
+      "sha256": "4290afbafffcff002e0fa2976d8e2252f4cbe527d166607cca3daba78b2e7b5b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "0c6c008045d58217a14fc8f72622aa068d5b127eb3e305b0e02165fe0ed4830e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_reopen_contract.py",
+      "sha256": "6ff168250f6dbc871dd2e5a8529adb82c18491e7e43d965b16c50d7edac09966"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_reopen_integration.py",
+      "sha256": "3782ed2e535dd60aa8446c2c05ccd1f8f83205ea6e8acdc81d06cb814259cded"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_task_promotion_hardening.py",
+      "sha256": "769984058987ae089be9e3d42993861750ad8854ad22788c401dac72a95908c9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_validated_source_gate.py",
+      "sha256": "497d82ddc9a70395e2b733ed44973422c7e349db0524aa320eeb66162e4d7fea"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_verified_source_import_cli.py",
+      "sha256": "3541d4f4aeed109d105c8c734284f9adff7c1259b8ab208bd122e326fb3c5f3f"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

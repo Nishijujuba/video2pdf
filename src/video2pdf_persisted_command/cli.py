@@ -17,6 +17,7 @@ from typing import Any, BinaryIO
 
 COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
+HEARTBEAT_INTERVAL_SECONDS = 29.0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,6 +35,9 @@ def _parser() -> argparse.ArgumentParser:
     wait = commands.add_parser("wait")
     wait.add_argument("--run-dir", required=True, type=Path)
     wait.add_argument("--timeout-seconds", type=float)
+
+    reconcile = commands.add_parser("reconcile")
+    reconcile.add_argument("--run-dir", required=True, type=Path)
 
     commands.add_parser("_supervise").add_argument(
         "--run-dir", required=True, type=Path
@@ -83,6 +87,85 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
+def _windows_process_observation(pid: int) -> tuple[str, str | None]:
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    error_invalid_parameter = 87
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    open_process.restype = wintypes.HANDLE
+    get_process_times = kernel32.GetProcessTimes
+    get_process_times.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    get_process_times.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = open_process(process_query_limited_information, False, pid)
+    if not handle:
+        if ctypes.get_last_error() == error_invalid_parameter:
+            return "missing", None
+        return "unknown", None
+    try:
+        creation = wintypes.FILETIME()
+        exit_time = wintypes.FILETIME()
+        kernel_time = wintypes.FILETIME()
+        user_time = wintypes.FILETIME()
+        if not get_process_times(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel_time),
+            ctypes.byref(user_time),
+        ):
+            return "unknown", None
+        ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        return "present", f"windows-filetime:{ticks}"
+    finally:
+        close_handle(handle)
+
+
+def _process_observation(pid: int) -> tuple[str, str | None]:
+    if pid <= 0:
+        return "unknown", None
+    if os.name == "nt":
+        return _windows_process_observation(pid)
+    if sys.platform.startswith("linux"):
+        try:
+            stat_record = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        except FileNotFoundError:
+            return "missing", None
+        except (OSError, UnicodeError):
+            return "unknown", None
+        command_end = stat_record.rfind(")")
+        fields_after_command = stat_record[command_end + 2 :].split()
+        if command_end < 0 or len(fields_after_command) <= 19:
+            return "unknown", None
+        return "present", f"linux-starttime:{fields_after_command[19]}"
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "missing", None
+    except (PermissionError, OSError):
+        return "unknown", None
+    return "present", None
+
+
+def _process_identity(pid: int) -> str | None:
+    observation, creation_identity = _process_observation(pid)
+    return creation_identity if observation == "present" else None
+
+
 def _create_run_directory(project_root: Path, task_name: str) -> tuple[str, Path]:
     root = project_root / "待删除/long-running"
     root.mkdir(parents=True, exist_ok=True)
@@ -106,6 +189,55 @@ def _status(run_id: str, state: str, **fields: Any) -> dict[str, Any]:
         "updated_at": _now(),
         **fields,
     }
+
+
+def _log_sizes(run_dir: Path) -> dict[str, int]:
+    return {
+        "stdout": (run_dir / "stdout.log").stat().st_size,
+        "stderr": (run_dir / "stderr.log").stat().st_size,
+        "merged": (run_dir / "command.log").stat().st_size,
+    }
+
+
+def _execution_status(
+    run_id: str,
+    state: str,
+    run_dir: Path,
+    *,
+    started_at: str,
+    elapsed_seconds: float,
+    supervisor_pid: int,
+    supervisor_creation_identity: str | None,
+    target_pid: int,
+    target_creation_identity: str | None,
+    latest_output_at: str | None,
+    exit_code: int | None,
+    finished_at: str | None = None,
+) -> dict[str, Any]:
+    status = _status(
+        run_id,
+        state,
+        started_at=started_at,
+        elapsed_seconds=round(elapsed_seconds, 3),
+        heartbeat_at=None,
+        latest_output_at=latest_output_at,
+        log_sizes=_log_sizes(run_dir),
+        supervisor_pid=supervisor_pid,
+        child_pid=target_pid,
+        supervisor_identity={
+            "pid": supervisor_pid,
+            "process_creation_identity": supervisor_creation_identity,
+        },
+        target_identity={
+            "pid": target_pid,
+            "process_creation_identity": target_creation_identity,
+        },
+        exit_code=exit_code,
+    )
+    status["heartbeat_at"] = status["updated_at"]
+    if finished_at is not None:
+        status["finished_at"] = finished_at
+    return status
 
 
 def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
@@ -137,8 +269,20 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
             run_id,
             "running",
             started_at=created_at,
+            elapsed_seconds=0.0,
+            heartbeat_at=None,
+            latest_output_at=None,
+            log_sizes=_log_sizes(run_dir),
             supervisor_pid=None,
             child_pid=None,
+            supervisor_identity={
+                "pid": None,
+                "process_creation_identity": None,
+            },
+            target_identity={
+                "pid": None,
+                "process_creation_identity": None,
+            },
             exit_code=None,
         ),
     )
@@ -187,6 +331,7 @@ def _copy_stream(
 def _supervise(run_dir: Path) -> int:
     command_record = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     run_id = command_record["run_id"]
+    started_monotonic = time.monotonic()
     process = subprocess.Popen(
         command_record["argv"],
         cwd=command_record["cwd"],
@@ -194,14 +339,23 @@ def _supervise(run_dir: Path) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    supervisor_pid = os.getpid()
+    supervisor_creation_identity = _process_identity(supervisor_pid)
+    target_creation_identity = _process_identity(process.pid)
+    latest_output_at = None
     _write_json_atomic(
         run_dir / "status.json",
-        _status(
+        _execution_status(
             run_id,
             "running",
+            run_dir,
             started_at=command_record["created_at"],
-            supervisor_pid=os.getpid(),
-            child_pid=process.pid,
+            elapsed_seconds=time.monotonic() - started_monotonic,
+            supervisor_pid=supervisor_pid,
+            supervisor_creation_identity=supervisor_creation_identity,
+            target_pid=process.pid,
+            target_creation_identity=target_creation_identity,
+            latest_output_at=latest_output_at,
             exit_code=None,
         ),
     )
@@ -225,6 +379,7 @@ def _supervise(run_dir: Path) -> int:
         reader.start()
 
     finished_readers = 0
+    next_heartbeat = time.monotonic() + HEARTBEAT_INTERVAL_SECONDS
     with (run_dir / "stdout.log").open("ab", buffering=0) as stdout_log, (
         run_dir / "stderr.log"
     ).open("ab", buffering=0) as stderr_log, (run_dir / "command.log").open(
@@ -232,13 +387,42 @@ def _supervise(run_dir: Path) -> int:
     ) as merged_log:
         stream_logs = {"stdout": stdout_log, "stderr": stderr_log}
         while finished_readers < len(readers):
-            event = events.get()
-            if event is None:
-                finished_readers += 1
-                continue
-            stream_name, chunk = event
-            stream_logs[stream_name].write(chunk)
-            merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+            heartbeat_due = False
+            try:
+                event = events.get(
+                    timeout=max(0.0, next_heartbeat - time.monotonic())
+                )
+            except queue.Empty:
+                heartbeat_due = True
+            else:
+                if event is None:
+                    finished_readers += 1
+                else:
+                    stream_name, chunk = event
+                    stream_logs[stream_name].write(chunk)
+                    merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+                    latest_output_at = _now()
+
+            current_monotonic = time.monotonic()
+            if heartbeat_due or current_monotonic >= next_heartbeat:
+                _write_json_atomic(
+                    run_dir / "status.json",
+                    _execution_status(
+                        run_id,
+                        "running",
+                        run_dir,
+                        started_at=command_record["created_at"],
+                        elapsed_seconds=current_monotonic - started_monotonic,
+                        supervisor_pid=supervisor_pid,
+                        supervisor_creation_identity=supervisor_creation_identity,
+                        target_pid=process.pid,
+                        target_creation_identity=target_creation_identity,
+                        latest_output_at=latest_output_at,
+                        exit_code=None,
+                    ),
+                )
+                while next_heartbeat <= current_monotonic:
+                    next_heartbeat += HEARTBEAT_INTERVAL_SECONDS
 
     exit_code = process.wait()
     for reader in readers:
@@ -246,13 +430,18 @@ def _supervise(run_dir: Path) -> int:
     _write_text_atomic(run_dir / "exit-code.txt", f"{exit_code}\n")
     _write_json_atomic(
         run_dir / "status.json",
-        _status(
+        _execution_status(
             run_id,
             "succeeded" if exit_code == 0 else "failed",
+            run_dir,
             started_at=command_record["created_at"],
+            elapsed_seconds=time.monotonic() - started_monotonic,
             finished_at=_now(),
-            supervisor_pid=os.getpid(),
-            child_pid=process.pid,
+            supervisor_pid=supervisor_pid,
+            supervisor_creation_identity=supervisor_creation_identity,
+            target_pid=process.pid,
+            target_creation_identity=target_creation_identity,
+            latest_output_at=latest_output_at,
             exit_code=exit_code,
         ),
     )
@@ -283,6 +472,103 @@ def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
             else None
         ),
     }
+
+
+def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
+    snapshot = _inspect(run_dir, project_root)
+    status = snapshot["status"]
+
+    def persist_correction(
+        decision: str,
+        reason: str,
+        *,
+        observation: str,
+        observed_pid: int | None,
+        observed_creation_identity: str | None,
+    ) -> dict[str, Any]:
+        reconciliation = {
+            "decision": decision,
+            "reason": reason,
+            "observed_at": _now(),
+            "persisted_target_identity": status.get("target_identity"),
+            "observed_target_identity": {
+                "observation": observation,
+                "pid": observed_pid,
+                "process_creation_identity": observed_creation_identity,
+            },
+        }
+        corrected_status = {
+            **status,
+            "state": decision,
+            "updated_at": reconciliation["observed_at"],
+            "reconciliation": reconciliation,
+        }
+        _write_json_atomic(
+            Path(snapshot["run_dir"]) / "status.json",
+            corrected_status,
+        )
+        corrected_snapshot = _inspect(run_dir, project_root)
+        corrected_snapshot["reconciliation"] = reconciliation
+        return corrected_snapshot
+
+    target_identity = status.get("target_identity") or {}
+    target_pid = target_identity.get("pid")
+    persisted_creation_identity = target_identity.get("process_creation_identity")
+    if status.get("state") != "running":
+        raise ValueError("reconciliation requires a running status")
+    if not isinstance(target_pid, int):
+        return persist_correction(
+            "unknown",
+            "target_identity_incomplete",
+            observation="unknown",
+            observed_pid=None,
+            observed_creation_identity=None,
+        )
+
+    observation, observed_creation_identity = _process_observation(target_pid)
+    if observation == "missing":
+        return persist_correction(
+            "interrupted",
+            "target_process_missing",
+            observation=observation,
+            observed_pid=target_pid,
+            observed_creation_identity=None,
+        )
+    if not isinstance(persisted_creation_identity, str):
+        return persist_correction(
+            "unknown",
+            "target_identity_incomplete",
+            observation=observation,
+            observed_pid=target_pid,
+            observed_creation_identity=observed_creation_identity,
+        )
+    if observation != "present" or observed_creation_identity is None:
+        return persist_correction(
+            "unknown",
+            "target_identity_unavailable",
+            observation=observation,
+            observed_pid=target_pid,
+            observed_creation_identity=observed_creation_identity,
+        )
+    if observed_creation_identity != persisted_creation_identity:
+        return persist_correction(
+            "unknown",
+            "target_process_creation_mismatch",
+            observation=observation,
+            observed_pid=target_pid,
+            observed_creation_identity=observed_creation_identity,
+        )
+
+    snapshot["reconciliation"] = {
+        "decision": "running",
+        "reason": "target_identity_matches",
+        "observed_at": _now(),
+        "target_identity": {
+            "pid": target_pid,
+            "process_creation_identity": observed_creation_identity,
+        },
+    }
+    return snapshot
 
 
 def _wait(
@@ -320,6 +606,8 @@ def main(argv: list[str] | None = None) -> int:
         data = _start(args, project_root)
     elif args.operation == "show":
         data = _inspect(args.run_dir, project_root)
+    elif args.operation == "reconcile":
+        data = _reconcile(args.run_dir, project_root)
     else:
         data, timed_out = _wait(
             args.run_dir,

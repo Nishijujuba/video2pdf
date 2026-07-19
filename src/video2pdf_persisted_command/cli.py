@@ -296,9 +296,7 @@ def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
         "command": command,
         "status": status,
         "logs": {
-            "stdout": str(resolved / "stdout.log"),
-            "stderr": str(resolved / "stderr.log"),
-            "merged": str(resolved / "command.log"),
+            name: evidence_paths[name] for name in ("stdout", "stderr", "merged")
         },
         "exit_code_path": evidence_paths["exit_code"],
     }

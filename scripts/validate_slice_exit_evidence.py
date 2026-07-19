@@ -24,6 +24,7 @@ from video2pdf_workflow_kernel.evidence import (
     fingerprint_implementation_changes,
     git_output,
     sha256_file,
+    sha256_git_blob,
 )
 from video2pdf_workflow_kernel.source_acquisition import derive_source_identity
 from slice3_exit_evidence_contract import (
@@ -524,15 +525,28 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     bound.extend(
         smoke["source_manifest"] for smoke in manifest.get("platform_smokes", [])
     )
+    fixture_paths = {fixture["path"] for fixture in manifest["fixtures"]}
     for item in bound:
         path = resolve_project_path(item["path"])
         identity = str(path).casefold()
         if identity in seen:
             raise EvidenceError(f"fingerprinted path is duplicated: {item['path']}")
         seen.add(identity)
-        if not path.is_file():
-            raise EvidenceError(f"fingerprinted path does not exist: {item['path']}")
-        actual = sha256_file(path)
+        if item["path"] in fixture_paths:
+            try:
+                actual = sha256_git_blob(
+                    PROJECT_ROOT,
+                    manifest["implementation_commit"],
+                    item["path"],
+                )
+            except EvidenceSupportError as exc:
+                raise EvidenceError(str(exc)) from exc
+        else:
+            if not path.is_file():
+                raise EvidenceError(
+                    f"fingerprinted path does not exist: {item['path']}"
+                )
+            actual = sha256_file(path)
         if actual != item["sha256"]:
             raise EvidenceError(
                 f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"

@@ -44,6 +44,15 @@ def git_output(project_root: Path, *arguments: str) -> str:
         ) from exc
 
 
+def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:
+    canonical_path = _canonical_git_path(path)
+    raw = _run_git(
+        project_root,
+        ("cat-file", "blob", f"{commit}:{canonical_path}"),
+    )
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _canonical_git_path(value: str) -> str:
     relative = PurePosixPath(value)
     if (

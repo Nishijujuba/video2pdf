@@ -323,6 +323,31 @@ class Slice4ExitEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "differs"):
             collector.resolve_source_manifest(stale, expected_platform="bilibili")
 
+    def test_prior_slice_fixture_bindings_use_their_implementation_commit(self) -> None:
+        validator = self.validator()
+        manifest_path = (
+            PROJECT_ROOT / "evidence/slice-03/exit-evidence-manifest.json"
+        )
+        manifest = read_json(manifest_path)
+        changed_fixture = next(
+            item
+            for item in manifest["fixtures"]
+            if item["path"].endswith(
+                "control-store-backup-manifest.valid.json"
+            )
+        )
+        self.assertNotEqual(
+            changed_fixture["sha256"],
+            validator.sha256_file(PROJECT_ROOT / changed_fixture["path"]),
+        )
+
+        validator.validate_bindings(manifest, manifest_path)
+
+        stale_log = copy.deepcopy(manifest)
+        stale_log["commands"][0]["log"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(validator.EvidenceError, "fingerprint mismatch"):
+            validator.validate_bindings(stale_log, manifest_path)
+
     def test_slice4_smoke_runner_only_delegates_to_product_cli(self) -> None:
         runner = self.smoke_runner()
         command = runner.build_product_cli_command(

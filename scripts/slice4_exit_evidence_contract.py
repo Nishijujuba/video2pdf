@@ -122,6 +122,7 @@ EXIT_EVIDENCE_TEST_TARGETS = (
     "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_semantics_bind_closed_smokes_results_and_faults",
     "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_smoke_runner_only_delegates_to_product_cli",
     "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_closed_command_covers_independent_review_repairs",
+    "tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_prior_slice_fixture_bindings_use_their_implementation_commit",
 )
 
 PLATFORM_SMOKE_SPECS = (

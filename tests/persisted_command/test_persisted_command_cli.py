@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
+from typing import Any, Callable
 import unittest
 import uuid
 
@@ -490,6 +493,435 @@ class PersistedCommandCliTests(unittest.TestCase):
             self.assertTrue(Path(item["evidence_paths"]["stderr"]).is_file())
             self.assertTrue(Path(item["evidence_paths"]["merged"]).is_file())
             self.assertTrue(Path(item["evidence_paths"]["exit_code"]).is_file())
+
+    def test_reconcile_during_natural_exit_preserves_terminal_result(self) -> None:
+        child = "import time; time.sleep(1); print('complete', flush=True)"
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"reconcile completion race {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        completion_deadline = time.monotonic() + 10
+        terminal_data = None
+        while time.monotonic() < completion_deadline:
+            reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+            self.assertEqual(
+                reconciled.returncode,
+                0,
+                reconciled.stderr or reconciled.stdout,
+            )
+            candidate = json.loads(reconciled.stdout)["data"]
+            if candidate["status"]["state"] == "succeeded":
+                terminal_data = candidate
+                break
+            self.assertIn(
+                candidate["status"]["state"],
+                {"running", "interrupted", "unknown"},
+            )
+            time.sleep(0.02)
+        self.assertIsNotNone(terminal_data)
+
+        status_before = (run_dir / "status.json").read_bytes()
+        repeated = run_cli("reconcile", "--run-dir", str(run_dir))
+        self.assertEqual(repeated.returncode, 0, repeated.stderr or repeated.stdout)
+        self.assertEqual(
+            json.loads(repeated.stdout)["data"]["status"]["state"],
+            "succeeded",
+        )
+        self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+
+    def test_status_heartbeats_after_target_closes_output_pipes(self) -> None:
+        if os.name == "nt":
+            target_command = [
+                os.environ["COMSPEC"],
+                "/d",
+                "/s",
+                "/c",
+                "ping -n 39 127.0.0.1 >NUL 2>&1",
+            ]
+        else:
+            target_command = [
+                "/bin/sh",
+                "-c",
+                "exec >/dev/null 2>&1; sleep 38",
+            ]
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"closed pipes heartbeat {uuid.uuid4().hex}",
+            "--",
+            *target_command,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        initial_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(status.get("heartbeat_at")),
+        )
+
+        time.sleep(27)
+        refreshed_status = self._wait_for_status(
+            run_dir,
+            lambda status: status.get("heartbeat_at")
+            != initial_status["heartbeat_at"],
+            timeout_seconds=4,
+            poll_seconds=0.1,
+        )
+        self.assertEqual(refreshed_status["state"], "running")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "15",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+
+    def test_reconcile_marks_mismatch_and_insufficient_identity_unknown(self) -> None:
+        cases = (
+            (
+                "creation mismatch",
+                "synthetic-process-creation-identity",
+                "target_process_creation_mismatch",
+            ),
+            ("identity missing", None, "target_identity_incomplete"),
+        )
+        for label, persisted_creation_identity, expected_reason in cases:
+            with self.subTest(label=label):
+                child = (
+                    "import time; "
+                    "print('alive', flush=True); "
+                    "time.sleep(3); "
+                    "print('finished', flush=True)"
+                )
+                started = run_cli(
+                    "start",
+                    "--task-name",
+                    f"reconcile {label} {uuid.uuid4().hex}",
+                    "--",
+                    sys.executable,
+                    "-X",
+                    "utf8",
+                    "-c",
+                    child,
+                )
+                self.assertEqual(
+                    started.returncode,
+                    0,
+                    started.stderr or started.stdout,
+                )
+                run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+                running_status = self._wait_for_status(
+                    run_dir,
+                    lambda status: bool(
+                        (status.get("target_identity") or {}).get(
+                            "process_creation_identity"
+                        )
+                    ),
+                )
+
+                running_status["target_identity"][
+                    "process_creation_identity"
+                ] = persisted_creation_identity
+                (run_dir / "status.json").write_text(
+                    json.dumps(
+                        running_status,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+                self.assertEqual(
+                    reconciled.returncode,
+                    0,
+                    reconciled.stderr or reconciled.stdout,
+                )
+                reconciled_data = json.loads(reconciled.stdout)["data"]
+                self.assertEqual(reconciled_data["status"]["state"], "unknown")
+                self.assertEqual(
+                    reconciled_data["reconciliation"]["reason"],
+                    expected_reason,
+                )
+                self.assertEqual(
+                    reconciled_data["reconciliation"]["observed_target_identity"][
+                        "pid"
+                    ],
+                    running_status["target_identity"]["pid"],
+                )
+
+                self._wait_for_status(
+                    run_dir,
+                    lambda status: status["state"] == "succeeded",
+                )
+                self.assertEqual(
+                    (run_dir / "stdout.log").read_text(encoding="utf-8"),
+                    "alive\nfinished\n",
+                )
+
+    def test_reconcile_marks_proven_missing_target_interrupted(self) -> None:
+        stop_marker = (
+            PROJECT_ROOT
+            / "待删除/process-reconcile-markers"
+            / f"{uuid.uuid4().hex}.stop"
+        )
+        stop_marker.parent.mkdir(parents=True, exist_ok=True)
+        child = (
+            "import pathlib,sys,time\n"
+            "stop = pathlib.Path(sys.argv[1])\n"
+            "print('waiting', flush=True)\n"
+            "while not stop.exists():\n"
+            "    time.sleep(0.05)\n"
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"reconcile interrupted {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(stop_marker),
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            running_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(
+                    (status.get("target_identity") or {}).get(
+                        "process_creation_identity"
+                    )
+                ),
+            )
+
+            os.kill(running_status["supervisor_pid"], signal.SIGTERM)
+            stop_marker.write_text("stop\n", encoding="utf-8")
+
+            reconcile_deadline = time.monotonic() + 10
+            reconciled_data = None
+            while time.monotonic() < reconcile_deadline:
+                reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+                self.assertEqual(
+                    reconciled.returncode,
+                    0,
+                    reconciled.stderr or reconciled.stdout,
+                )
+                candidate = json.loads(reconciled.stdout)["data"]
+                if candidate["status"]["state"] == "interrupted":
+                    reconciled_data = candidate
+                    break
+                self.assertEqual(candidate["status"]["state"], "running")
+                time.sleep(0.05)
+            self.assertIsNotNone(reconciled_data)
+            assert reconciled_data is not None
+            self.assertEqual(
+                reconciled_data["reconciliation"]["reason"],
+                "target_process_missing",
+            )
+            persisted = json.loads(
+                (run_dir / "status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted["state"], "interrupted")
+            self.assertEqual(persisted["reconciliation"]["decision"], "interrupted")
+
+            status_before = (run_dir / "status.json").read_bytes()
+            repeated = run_cli("reconcile", "--run-dir", str(run_dir))
+            self.assertEqual(
+                repeated.returncode,
+                0,
+                repeated.stderr or repeated.stdout,
+            )
+            self.assertEqual(
+                json.loads(repeated.stdout)["data"]["status"]["state"],
+                "interrupted",
+            )
+            self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+        finally:
+            stop_marker.write_text("stop\n", encoding="utf-8")
+
+    def test_reconcile_preserves_matching_live_target_without_mutation(self) -> None:
+        child = (
+            "import time; "
+            "print('born', flush=True); "
+            "time.sleep(4); "
+            "print('finished', flush=True)"
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"reconcile live {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        running_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                (status.get("target_identity") or {}).get(
+                    "process_creation_identity"
+                )
+            ),
+        )
+        status_before = (run_dir / "status.json").read_bytes()
+
+        reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+        self.assertEqual(
+            reconciled.returncode,
+            0,
+            reconciled.stderr or reconciled.stdout,
+        )
+        reconciled_data = json.loads(reconciled.stdout)["data"]
+        self.assertEqual(reconciled_data["status"]["state"], "running")
+        self.assertEqual(
+            reconciled_data["status"]["target_identity"],
+            running_status["target_identity"],
+        )
+        self.assertEqual(reconciled_data["reconciliation"]["decision"], "running")
+        self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "10",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            "born\nfinished\n",
+        )
+
+    def test_status_heartbeats_during_output_silence_with_identity_telemetry(self) -> None:
+        child = (
+            "import sys,time; "
+            "print('heartbeat-out', flush=True); "
+            "print('heartbeat-error', file=sys.stderr, flush=True); "
+            "time.sleep(38)"
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"heartbeat identity {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        initial_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                status.get("heartbeat_at")
+                and (status.get("target_identity") or {}).get(
+                    "process_creation_identity"
+                )
+            ),
+        )
+
+        initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
+        time.sleep(27)
+        refreshed_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                status.get("heartbeat_at")
+                and status["heartbeat_at"] != initial_status["heartbeat_at"]
+            ),
+            timeout_seconds=4,
+            poll_seconds=0.1,
+        )
+
+        refreshed_heartbeat = datetime.fromisoformat(refreshed_status["heartbeat_at"])
+        self.assertLessEqual(
+            (refreshed_heartbeat - initial_heartbeat).total_seconds(),
+            30,
+        )
+        self.assertEqual(refreshed_status["state"], "running")
+        self.assertGreaterEqual(refreshed_status["elapsed_seconds"], 25)
+        self.assertIsNotNone(refreshed_status["latest_output_at"])
+        self.assertEqual(
+            refreshed_status["log_sizes"],
+            {
+                "stdout": (run_dir / "stdout.log").stat().st_size,
+                "stderr": (run_dir / "stderr.log").stat().st_size,
+                "merged": (run_dir / "command.log").stat().st_size,
+            },
+        )
+
+        self.assertEqual(
+            refreshed_status["supervisor_identity"]["pid"],
+            refreshed_status["supervisor_pid"],
+        )
+        self.assertIsNotNone(
+            refreshed_status["supervisor_identity"]["process_creation_identity"]
+        )
+        self.assertEqual(
+            refreshed_status["target_identity"]["pid"],
+            refreshed_status["child_pid"],
+        )
+        self.assertIsNotNone(
+            refreshed_status["target_identity"]["process_creation_identity"]
+        )
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "15",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        final_status = json.loads(waited.stdout)["data"]["status"]
+        self.assertEqual(final_status["state"], "succeeded")
+        self.assertGreaterEqual(final_status["elapsed_seconds"], 38)
+
+    def _wait_for_status(
+        self,
+        run_dir: Path,
+        predicate: Callable[[dict[str, Any]], bool],
+        *,
+        timeout_seconds: float = 10,
+        poll_seconds: float = 0.05,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_status = None
+        while time.monotonic() < deadline:
+            shown = run_cli("show", "--run-dir", str(run_dir))
+            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
+            last_status = json.loads(shown.stdout)["data"]["status"]
+            if predicate(last_status):
+                return last_status
+            time.sleep(poll_seconds)
+        self.fail(f"status predicate timed out; last status: {last_status}")
 
 if __name__ == "__main__":
     unittest.main()

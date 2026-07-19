@@ -37,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
     wait.add_argument("--run-dir", required=True, type=Path)
     wait.add_argument("--timeout-seconds", type=float)
 
+    commands.add_parser("list")
+
     commands.add_parser("_supervise").add_argument(
         "--run-dir", required=True, type=Path
     )
@@ -337,21 +339,54 @@ def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
     status = json.loads((resolved / "status.json").read_text(encoding="utf-8"))
     if command["run_id"] != status["run_id"]:
         raise ValueError("command and status records have different run IDs")
-    return {
-        "run_dir": str(resolved),
-        "command": command,
-        "status": status,
-        "logs": {
-            "stdout": str(resolved / "stdout.log"),
-            "stderr": str(resolved / "stderr.log"),
-            "merged": str(resolved / "command.log"),
-        },
-        "exit_code_path": (
+    evidence_paths = {
+        "command": str(resolved / "command.json"),
+        "status": str(resolved / "status.json"),
+        "stdout": str(resolved / "stdout.log"),
+        "stderr": str(resolved / "stderr.log"),
+        "merged": str(resolved / "command.log"),
+        "exit_code": (
             str(resolved / "exit-code.txt")
             if (resolved / "exit-code.txt").is_file()
             else None
         ),
     }
+    return {
+        "run_id": command["run_id"],
+        "task_name": command["task_name"],
+        "state": status["state"],
+        "process_identity": {
+            "supervisor_pid": status.get("supervisor_pid"),
+            "child_pid": status.get("child_pid"),
+        },
+        "evidence_paths": evidence_paths,
+        "exit_code": status.get("exit_code"),
+        "run_dir": str(resolved),
+        "command": command,
+        "status": status,
+        "logs": {
+            name: evidence_paths[name] for name in ("stdout", "stderr", "merged")
+        },
+        "exit_code_path": evidence_paths["exit_code"],
+    }
+
+
+def _list_runs(project_root: Path) -> dict[str, Any]:
+    durable_root = project_root / "待删除/long-running"
+    if not durable_root.is_dir():
+        return {"runs": []}
+    runs = [
+        _inspect(run_dir, project_root)
+        for run_dir in durable_root.iterdir()
+        if run_dir.is_dir()
+        and (run_dir / "command.json").is_file()
+        and (run_dir / "status.json").is_file()
+    ]
+    runs.sort(
+        key=lambda run: (run["command"]["created_at"], run["run_id"]),
+        reverse=True,
+    )
+    return {"runs": runs}
 
 
 def _wait(
@@ -389,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         data = _start(args, project_root)
     elif args.operation == "show":
         data = _inspect(args.run_dir, project_root)
+    elif args.operation == "list":
+        data = _list_runs(project_root)
     else:
         data, timed_out = _wait(
             args.run_dir,

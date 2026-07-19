@@ -1,0 +1,17 @@
+test_slice4_collector_binds_report_to_validated_source_manifest (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest) ... ok
+test_slice4_collector_scans_every_blob_before_first_write (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_scans_every_blob_before_first_write) ... ok
+test_slice4_contract_registers_closed_commands_and_platform_smokes (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_contract_registers_closed_commands_and_platform_smokes) ... ok
+test_slice4_exit_evidence_command_covers_closed_test_class (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_exit_evidence_command_covers_closed_test_class) ... ok
+test_slice4_fault_markers_use_generic_command_bindings (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings) ... ok
+test_slice4_schema_requires_exact_platform_smoke_set (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_schema_requires_exact_platform_smoke_set) ... ok
+test_slice4_semantics_bind_closed_smokes_results_and_faults (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_semantics_bind_closed_smokes_results_and_faults) ... ok
+test_slice4_smoke_runner_only_delegates_to_product_cli (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_smoke_runner_only_delegates_to_product_cli) ... ok
+test_slice4_closed_command_covers_independent_review_repairs (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_closed_command_covers_independent_review_repairs) ... ok
+test_prior_slice_fixture_bindings_use_their_implementation_commit (tests.video_workflow.test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_prior_slice_fixture_bindings_use_their_implementation_commit) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 2.855s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: be7739fed8e224ea5c7c8abd4cb7f33a2c706ff7

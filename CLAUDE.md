@@ -15,6 +15,33 @@ The goal is to produce a complete, accurate, figure-rich Chinese PDF from a vide
 
 Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections. Agents must not mix target-design mechanics with a Legacy Track run or synthesize `workflow/run.json` for an existing output directory. Each cutover updates the relevant instructions, skills, schemas, providers, guards, and tests atomically.
 
+## Persisted Command Contract
+
+Repository operations must use `scripts\persisted_command.py` when any qualification condition applies: the expected runtime exceeds five minutes; the active tool reports that the process is still running and requires a later wait; the process may continue beyond the initiating agent session; or re-execution is expensive or the result supports acceptance, review, or diagnosis. This repository-wide rule covers qualifying tests, downloads, transcription, rendering, compilation, migration, recovery, and batch commands.
+
+Start every qualifying non-interactive command through the runner and save the returned `data.run_dir`:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py start --task-name "<stable-task-name>" --cwd "<target-working-directory>" -- <command> <arguments>
+```
+
+The accepted exit-code set defaults to `{0}`. When a command needs another set, declare every accepted code before launch by repeating `--accepted-exit-code <code>` before `--`, including `0` when it must remain accepted; accepted exit codes are immutable after launch. Use the same Python entrypoint for observation:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>" --timeout-seconds 3600
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py list
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py show --run-dir "<data.run_dir>"
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py reconcile --run-dir "<data.run_dir>"
+```
+
+After session loss, a new session must run `list`, identify the immutable run directory, then use `show`, `reconcile`, or `wait`. `reconcile` only observes process identity and corrects persisted state; it never restarts, terminates, attaches to, or takes over a process. Terminal state `succeeded` or `failed` requires an actual exit code. `launch_failed` means no child was created, `interrupted` means the recorded live process is missing, and `unknown` means continuity cannot be proven. Accepted completion is proven by terminal `status.json` plus `exit-code.txt`, not by generated artifacts alone.
+
+Every run is retained under `待删除/long-running/` with complete `stdout.log`, `stderr.log`, `command.log`, `command.json`, and `status.json`. The runner never truncates, rotates, overwrites, or automatically deletes history. Cleanup is manual and follows the repository rule that material marked for deletion remains staged under `待删除`.
+
+Persisted metadata omits environment values and redacts recognized sensitive arguments. Target commands remain responsible for sanitized output. When detection sets `acceptance_evidence_eligible` to false with `security_failure`, the complete logs remain local diagnostic material and cannot support acceptance evidence. Secret values, raw cookies, tokens, authorization headers, and credential-bearing URLs must never appear in shared summaries or committed evidence.
+
+This runner does not activate Workflow Kernel 2.0 and does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records. Those authorities keep their existing validation and cutover rules. The complete operator walkthrough is in `docs/operations/persisted-command-runner.md`.
+
 ## Multi-Agent Orchestration
 
 When using `/bilibili-render-pdf` or `/youtube-render-pdf`, the master agent must spawn multiple subagents to isolate context and reduce master-agent context pressure.

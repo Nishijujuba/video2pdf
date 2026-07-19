@@ -29,16 +29,58 @@ def run_cli(
     )
 
 
+def run_with_supervisor_hook(
+    *,
+    task_name: str,
+    sitecustomize_source: str,
+) -> tuple[Path, dict[str, object]]:
+    hook_dir = (
+        PROJECT_ROOT
+        / "待删除/persisted-command-test-hooks"
+        / uuid.uuid4().hex
+    )
+    hook_dir.mkdir(parents=True)
+    (hook_dir / "sitecustomize.py").write_text(
+        sitecustomize_source,
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
+    )
+    started = run_cli(
+        "start",
+        "--task-name",
+        task_name,
+        "--",
+        sys.executable,
+        "-X",
+        "utf8",
+        "-c",
+        "print('child exited successfully', flush=True)",
+        env=env,
+    )
+    if started.returncode != 0:
+        raise AssertionError(started.stderr or started.stdout)
+    run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+    waited = run_cli(
+        "wait",
+        "--run-dir",
+        str(run_dir),
+        "--timeout-seconds",
+        "20",
+    )
+    if waited.returncode != 0:
+        raise AssertionError(waited.stderr or waited.stdout)
+    return run_dir, json.loads(waited.stdout)["data"]["status"]
+
+
 class PersistedCommandCliTests(unittest.TestCase):
     def test_log_close_failure_also_fails_closed(self) -> None:
         secret = f"sensitive-log-close-{uuid.uuid4().hex}"
-        hook_dir = (
-            PROJECT_ROOT
-            / "待删除/persisted-command-test-hooks"
-            / uuid.uuid4().hex
-        )
-        hook_dir.mkdir(parents=True)
-        (hook_dir / "sitecustomize.py").write_text(
+        _run_dir, status = run_with_supervisor_hook(
+            task_name=f"log close failure {uuid.uuid4().hex}",
+            sitecustomize_source=(
             "import io\n"
             "import sys\n"
             "original_open = io.open\n"
@@ -56,38 +98,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "    if '_supervise' in sys.argv and str(file).endswith('stdout.log') and 'ab' in mode:\n"
             "        return CloseFailure(opened)\n"
             "    return opened\n"
-            "io.open = injected_open\n",
-            encoding="utf-8",
+            "io.open = injected_open\n"
+            ),
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
-        )
-        started = run_cli(
-            "start",
-            "--task-name",
-            f"log close failure {uuid.uuid4().hex}",
-            "--",
-            sys.executable,
-            "-X",
-            "utf8",
-            "-c",
-            "print('child exited successfully', flush=True)",
-            env=env,
-        )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "20",
-        )
-
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        status = json.loads(waited.stdout)["data"]["status"]
         self.assertEqual(status["state"], "failed")
         self.assertEqual(status["exit_code"], 0)
         self.assertEqual(status["failure"]["kind"], "log_persistence_failed")
@@ -95,13 +108,9 @@ class PersistedCommandCliTests(unittest.TestCase):
 
     def test_log_persistence_failure_fails_closed_with_sanitized_information(self) -> None:
         secret = f"sensitive-log-error-{uuid.uuid4().hex}"
-        hook_dir = (
-            PROJECT_ROOT
-            / "待删除/persisted-command-test-hooks"
-            / uuid.uuid4().hex
-        )
-        hook_dir.mkdir(parents=True)
-        (hook_dir / "sitecustomize.py").write_text(
+        run_dir, status = run_with_supervisor_hook(
+            task_name=f"log persistence failure {uuid.uuid4().hex}",
+            sitecustomize_source=(
             "import io\n"
             "import sys\n"
             "original_open = io.open\n"
@@ -110,38 +119,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "    if '_supervise' in sys.argv and str(file).endswith('stdout.log') and 'ab' in mode:\n"
             f"        raise OSError({secret!r})\n"
             "    return original_open(file, *args, **kwargs)\n"
-            "io.open = injected_open\n",
-            encoding="utf-8",
+            "io.open = injected_open\n"
+            ),
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            part for part in (str(hook_dir), env.get("PYTHONPATH")) if part
-        )
-        started = run_cli(
-            "start",
-            "--task-name",
-            f"log persistence failure {uuid.uuid4().hex}",
-            "--",
-            sys.executable,
-            "-X",
-            "utf8",
-            "-c",
-            "print('child exited successfully', flush=True)",
-            env=env,
-        )
-        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
-        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
-
-        waited = run_cli(
-            "wait",
-            "--run-dir",
-            str(run_dir),
-            "--timeout-seconds",
-            "5",
-        )
-
-        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        status = json.loads(waited.stdout)["data"]["status"]
         self.assertEqual(status["state"], "failed")
         self.assertEqual(status["exit_code"], 0)
         self.assertEqual(

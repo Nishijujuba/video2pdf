@@ -1391,10 +1391,15 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                     check=False,
                 )
-                self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+                self.assertEqual(
+                    created.returncode,
+                    0,
+                    (created.stdout or "") + (created.stderr or ""),
+                )
                 if hasattr(junction_path, "is_junction"):
                     self.assertTrue(junction_path.is_junction())
                 self.assertTrue(

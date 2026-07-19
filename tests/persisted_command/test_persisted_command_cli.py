@@ -76,6 +76,323 @@ def run_with_supervisor_hook(
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_known_secrets_are_redacted_from_earlier_unlabelled_arguments(
+        self,
+    ) -> None:
+        secret_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-secrets"
+            / uuid.uuid4().hex
+        )
+        secret_root.mkdir(parents=True)
+        cookie_file = secret_root / "cookies.txt"
+        cookie_value = f"repeated-cookie-{uuid.uuid4().hex}"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\t{cookie_value}\n",
+            encoding="utf-8",
+        )
+        token = f"repeated-token-{uuid.uuid4().hex}"
+
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"repeated secrets {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "raise SystemExit(0)",
+            "--trace",
+            token,
+            cookie_value,
+            cookie_file.as_posix(),
+            "--token",
+            token,
+            "--cookies",
+            str(cookie_file),
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        shareable = "\n".join(
+            (
+                started.stdout,
+                waited.stdout,
+                (run_dir / "command.json").read_text(encoding="utf-8"),
+                (run_dir / "status.json").read_text(encoding="utf-8"),
+            )
+        )
+        for secret in (str(cookie_file), cookie_file.as_posix(), cookie_value, token):
+            self.assertNotIn(secret, shareable)
+
+    def test_sensitive_header_arguments_are_redacted_and_detected(self) -> None:
+        bearer_token = f"bearer-secret-{uuid.uuid4().hex}"
+        cookie_header = f"cookie-header-secret-{uuid.uuid4().hex}"
+        child = "import sys; print(sys.argv[2].split()[-1], flush=True)"
+
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"sensitive headers {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            "--header",
+            f"Authorization: Bearer {bearer_token}",
+            f"--add-header=Cookie: {cookie_header}",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(
+            data["command"]["argv"],
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-c",
+                child,
+                "--header",
+                "Authorization: <redacted>",
+                "--add-header=Cookie: <redacted>",
+            ],
+        )
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        shareable = "\n".join(
+            (
+                started.stdout,
+                waited.stdout,
+                (run_dir / "command.json").read_text(encoding="utf-8"),
+                (run_dir / "status.json").read_text(encoding="utf-8"),
+            )
+        )
+        self.assertNotIn(bearer_token, shareable)
+        self.assertNotIn(cookie_header, shareable)
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            f"{bearer_token}\n",
+        )
+
+    def test_sanitized_logs_are_security_eligible_for_acceptance(self) -> None:
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"sanitized log {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('sanitized output', flush=True)",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        status = json.loads(waited.stdout)["data"]["status"]
+        self.assertEqual(
+            status["security"],
+            {
+                "acceptance_evidence_eligible": True,
+                "classification": "no_secret_detected",
+            },
+        )
+
+    def test_detected_log_secrets_are_complete_but_ineligible_for_acceptance(
+        self,
+    ) -> None:
+        secret_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-secrets"
+            / uuid.uuid4().hex
+        )
+        secret_root.mkdir(parents=True)
+        cookie_file = secret_root / "cookies.txt"
+        cookie_value = f"cookie-output-{uuid.uuid4().hex}"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\t{cookie_value}\n",
+            encoding="utf-8",
+        )
+        token = f"token-output-{uuid.uuid4().hex}"
+        environment_secret = f"environment-output-{uuid.uuid4().hex}"
+        env = os.environ.copy()
+        env["ISSUE21_API_TOKEN"] = environment_secret
+        child = (
+            "import os,pathlib,sys; "
+            "print(sys.argv[2], flush=True); "
+            "print(os.environ['ISSUE21_API_TOKEN'], flush=True); "
+            "print(pathlib.Path(sys.argv[4]).read_text(encoding='utf-8'), "
+            "file=sys.stderr, flush=True)"
+        )
+
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"detected log secret {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            "--token",
+            token,
+            "--cookies",
+            str(cookie_file),
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["status"]["state"], "succeeded")
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            f"{token}\n{environment_secret}\n",
+        )
+        self.assertIn(
+            cookie_value,
+            (run_dir / "stderr.log").read_text(encoding="utf-8"),
+        )
+        shareable = "\n".join(
+            (
+                started.stdout,
+                waited.stdout,
+                (run_dir / "command.json").read_text(encoding="utf-8"),
+                (run_dir / "status.json").read_text(encoding="utf-8"),
+            )
+        )
+        for secret in (str(cookie_file), cookie_value, token, environment_secret):
+            self.assertNotIn(secret, shareable)
+
+    def test_shareable_metadata_redacts_sensitive_arguments_and_environment_values(
+        self,
+    ) -> None:
+        secret_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-secrets"
+            / uuid.uuid4().hex
+        )
+        secret_root.mkdir(parents=True)
+        cookie_file = secret_root / "cookies.txt"
+        cookie_value = f"cookie-secret-{uuid.uuid4().hex}"
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            f".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\t{cookie_value}\n",
+            encoding="utf-8",
+        )
+        token = f"token-secret-{uuid.uuid4().hex}"
+        api_key = f"api-key-secret-{uuid.uuid4().hex}"
+        query_secret = f"query-secret-{uuid.uuid4().hex}"
+        environment_secret = f"environment-secret-{uuid.uuid4().hex}"
+        env = os.environ.copy()
+        env["ISSUE21_API_TOKEN"] = environment_secret
+
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"secret-safe metadata {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "raise SystemExit(0)",
+            "--cookies",
+            str(cookie_file),
+            "--token",
+            token,
+            f"--api-key={api_key}",
+            f"https://example.test/resource?token={query_secret}",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "20",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        command = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
+        shareable = "\n".join(
+            (
+                started.stdout,
+                waited.stdout,
+                json.dumps(command, ensure_ascii=False),
+            )
+        )
+        for secret in (
+            str(cookie_file),
+            cookie_value,
+            token,
+            api_key,
+            query_secret,
+            environment_secret,
+        ):
+            self.assertNotIn(secret, shareable)
+        self.assertIn("<localized-cookie-file>", command["argv"])
+        self.assertIn("<redacted>", command["argv"])
+        self.assertIn("--api-key=<redacted>", command["argv"])
+        self.assertIn(
+            "https://example.test/resource?token=<redacted>",
+            command["argv"],
+        )
+
     def test_log_close_failure_also_fails_closed(self) -> None:
         secret = f"sensitive-log-close-{uuid.uuid4().hex}"
         _run_dir, status = run_with_supervisor_hook(

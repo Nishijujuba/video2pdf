@@ -13,11 +13,47 @@ import sys
 import threading
 import time
 import uuid
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Mapping, Sequence
 
 
 COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
+
+_COOKIE_FILE_ARGUMENTS = frozenset(
+    {
+        "--cookie-file",
+        "--cookies",
+    }
+)
+_SECRET_VALUE_ARGUMENTS = frozenset(
+    {
+        "--api-key",
+        "--apikey",
+        "--auth",
+        "--auth-token",
+        "--authorization",
+        "--bearer-token",
+        "--client-secret",
+        "--cookie",
+        "--credential",
+        "--password",
+        "--secret",
+        "--token",
+    }
+)
+_SENSITIVE_HEADER_ARGUMENTS = frozenset({"--add-header", "--header"})
+_SENSITIVE_ENVIRONMENT_NAME = re.compile(
+    r"(?i)(?:^|_)(?:api_?key|auth(?:orization|_token)?|client_secret|cookie|credentials?|password|passwd|secret|token)(?:_|$)"
+)
+_SENSITIVE_HEADER = re.compile(
+    r"(?i)^(\s*(?:cookie|set-cookie|authorization)\s*:).*$"
+)
+_QUERY_SECRET = re.compile(
+    r"(?i)([?&](?:auth|authorization|cookie|csrf|po_token|session|signature|token|visitor_data)=)[^&\s\"']+"
+)
+_QUERY_SECRET_VALUE = re.compile(
+    r"(?i)[?&](?:auth|authorization|cookie|csrf|po_token|session|signature|token|visitor_data)=([^&\s\"']+)"
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -85,6 +121,147 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
+def _environment_secret_values(environment: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                value
+                for name, value in environment.items()
+                if value and _SENSITIVE_ENVIRONMENT_NAME.search(name)
+            },
+            key=len,
+            reverse=True,
+        )
+    )
+
+
+def _redact_text(value: str, secret_values: Sequence[str]) -> str:
+    safe = value
+    for secret in secret_values:
+        safe = safe.replace(secret, "<redacted>")
+    safe = _SENSITIVE_HEADER.sub(r"\1 <redacted>", safe)
+    return _QUERY_SECRET.sub(r"\1<redacted>", safe)
+
+
+def _add_secret_value(values: set[str], value: str) -> None:
+    if not value:
+        return
+    values.update({value, value.replace("\\", "/"), value.replace("/", "\\")})
+
+
+def _add_cookie_file_secrets(values: set[str], value: str) -> None:
+    _add_secret_value(values, value)
+    cookie_file = Path(value)
+    if not cookie_file.is_file():
+        return
+    try:
+        cookie_text = cookie_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for line in cookie_text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) >= 7 and len(fields[-1]) >= 4:
+            _add_secret_value(values, fields[-1])
+
+
+def _add_header_secret(values: set[str], value: str) -> None:
+    payload = value.partition(":")[2].strip()
+    _add_secret_value(values, payload)
+    if payload.lower().startswith("bearer "):
+        _add_secret_value(values, payload[7:].strip())
+
+
+def _capture_command_secret_values(
+    argv: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+) -> tuple[str, ...]:
+    secret_values = set(_environment_secret_values(environment))
+    capture_next = False
+    next_value_is_cookie_file = False
+    for argument in argv:
+        if capture_next:
+            if next_value_is_cookie_file:
+                _add_cookie_file_secrets(secret_values, argument)
+            else:
+                _add_secret_value(secret_values, argument)
+            capture_next = False
+            next_value_is_cookie_file = False
+            continue
+
+        option, separator, value = argument.partition("=")
+        lowered = option.lower()
+        if lowered in _COOKIE_FILE_ARGUMENTS:
+            if separator:
+                _add_cookie_file_secrets(secret_values, value)
+            else:
+                capture_next = True
+                next_value_is_cookie_file = True
+            continue
+        if lowered in _SECRET_VALUE_ARGUMENTS:
+            if separator:
+                _add_secret_value(secret_values, value)
+            else:
+                capture_next = True
+            continue
+        if lowered in _SENSITIVE_HEADER_ARGUMENTS and separator:
+            if _SENSITIVE_HEADER.match(value):
+                _add_header_secret(secret_values, value)
+            continue
+        for matched in _QUERY_SECRET_VALUE.finditer(argument):
+            _add_secret_value(secret_values, matched.group(1))
+        if _SENSITIVE_HEADER.match(argument):
+            _add_header_secret(secret_values, argument)
+    return tuple(sorted(secret_values, key=len, reverse=True))
+
+
+def _prepare_command_security(
+    argv: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+) -> tuple[list[str], tuple[str, ...]]:
+    secret_values = _capture_command_secret_values(
+        argv,
+        environment=environment,
+    )
+    redacted: list[str] = []
+    redact_next_as: str | None = None
+    for argument in argv:
+        if redact_next_as is not None:
+            redacted.append(redact_next_as)
+            redact_next_as = None
+            continue
+
+        option, separator, value = argument.partition("=")
+        lowered = option.lower()
+        if lowered in _COOKIE_FILE_ARGUMENTS:
+            redacted.append(
+                f"{option}=<localized-cookie-file>"
+                if separator
+                else argument
+            )
+            if not separator:
+                redact_next_as = "<localized-cookie-file>"
+            continue
+        if lowered in _SECRET_VALUE_ARGUMENTS:
+            redacted.append(f"{option}=<redacted>" if separator else argument)
+            if not separator:
+                redact_next_as = "<redacted>"
+            continue
+        if lowered in _SENSITIVE_HEADER_ARGUMENTS and separator:
+            redacted.append(f"{option}={_redact_text(value, secret_values)}")
+            continue
+        redacted.append(_redact_text(argument, secret_values))
+    return redacted, secret_values
+
+
+def _contains_detected_secret(value: bytes, secret_values: Sequence[str]) -> bool:
+    text = value.decode("utf-8", errors="replace")
+    return _redact_text(text, secret_values) != text
+
+
 def _create_run_directory(project_root: Path, task_name: str) -> tuple[str, Path]:
     root = project_root / "待删除/long-running"
     root.mkdir(parents=True, exist_ok=True)
@@ -117,18 +294,25 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     if not target_command:
         raise ValueError("start requires a target command after --")
 
-    run_id, run_dir = _create_run_directory(project_root, args.task_name)
+    environment = os.environ.copy()
+    environment_secrets = _environment_secret_values(environment)
+    safe_task_name = _redact_text(args.task_name, environment_secrets)
+    redacted_argv, _secret_values = _prepare_command_security(
+        target_command,
+        environment=environment,
+    )
+    run_id, run_dir = _create_run_directory(project_root, safe_task_name)
     working_directory = (args.cwd or project_root).resolve()
     created_at = _now()
     command_record = {
         "schema_name": "persisted-command",
         "schema_version": COMMAND_SCHEMA_VERSION,
         "run_id": run_id,
-        "task_name": args.task_name,
-        "normalized_task_name": _normalized_task_name(args.task_name),
+        "task_name": safe_task_name,
+        "normalized_task_name": _normalized_task_name(safe_task_name),
         "created_at": created_at,
         "cwd": str(working_directory),
-        "argv": target_command,
+        "argv": redacted_argv,
         "accepted_exit_codes": sorted(set(args.accepted_exit_code or [0])),
     }
     _write_json_atomic(run_dir / "command.json", command_record)
@@ -159,7 +343,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     ]
     options: dict[str, Any] = {
         "cwd": project_root,
-        "stdin": subprocess.DEVNULL,
+        "stdin": subprocess.PIPE,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "close_fds": True,
@@ -170,7 +354,15 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         )
     else:
         options["start_new_session"] = True
-    subprocess.Popen(supervisor_command, **options)
+    supervisor = subprocess.Popen(supervisor_command, **options)
+    assert supervisor.stdin is not None
+    launch_request = json.dumps(
+        {"argv": target_command},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    supervisor.stdin.write(launch_request)
+    supervisor.stdin.close()
     return {"run_id": run_id, "run_dir": str(run_dir)}
 
 
@@ -187,12 +379,16 @@ def _copy_stream(
     events.put(None)
 
 
-def _supervise(run_dir: Path) -> int:
+def _supervise(run_dir: Path, target_command: Sequence[str]) -> int:
     command_record = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     run_id = command_record["run_id"]
+    _redacted_argv, secret_values = _prepare_command_security(
+        target_command,
+        environment=os.environ,
+    )
     try:
         process = subprocess.Popen(
-            command_record["argv"],
+            target_command,
             cwd=command_record["cwd"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -247,6 +443,7 @@ def _supervise(run_dir: Path) -> int:
         reader.start()
 
     log_persistence_failed = False
+    secret_detected = False
     try:
         with ExitStack() as logs:
             stream_logs: dict[str, BinaryIO] = {}
@@ -273,6 +470,8 @@ def _supervise(run_dir: Path) -> int:
                     finished_readers += 1
                     continue
                 stream_name, chunk = event
+                if _contains_detected_secret(chunk, secret_values):
+                    secret_detected = True
                 if log_persistence_failed:
                     continue
                 try:
@@ -312,6 +511,12 @@ def _supervise(run_dir: Path) -> int:
             "kind": "log_persistence_failed",
             "message": "one or more command logs could not be persisted",
         }
+    terminal_fields["security"] = {
+        "acceptance_evidence_eligible": not secret_detected,
+        "classification": (
+            "security_failure" if secret_detected else "no_secret_detected"
+        ),
+    }
     _write_json_atomic(
         run_dir / "status.json",
         _status(
@@ -382,7 +587,8 @@ def _result(operation: str, data: dict[str, Any]) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.operation == "_supervise":
-        return _supervise(args.run_dir.resolve())
+        launch_request = json.load(sys.stdin)
+        return _supervise(args.run_dir.resolve(), launch_request["argv"])
     project_root = _project_root()
     timed_out = False
     if args.operation == "start":

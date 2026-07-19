@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any, Callable
 import unittest
 import uuid
 
@@ -28,6 +29,119 @@ def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def _wait_for_status(
+        self,
+        run_dir: Path,
+        predicate: Callable[[dict[str, Any]], bool],
+        *,
+        timeout_seconds: float = 10,
+        poll_seconds: float = 0.05,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
+        last_status = None
+        while time.monotonic() < deadline:
+            shown = run_cli("show", "--run-dir", str(run_dir))
+            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
+            last_status = json.loads(shown.stdout)["data"]["status"]
+            if predicate(last_status):
+                return last_status
+            time.sleep(poll_seconds)
+        self.fail(f"status predicate timed out; last status: {last_status}")
+
+    def test_reconcile_during_natural_exit_preserves_terminal_result(self) -> None:
+        child = "import time; time.sleep(1); print('complete', flush=True)"
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"reconcile completion race {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        completion_deadline = time.monotonic() + 10
+        terminal_data = None
+        while time.monotonic() < completion_deadline:
+            reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+            self.assertEqual(
+                reconciled.returncode,
+                0,
+                reconciled.stderr or reconciled.stdout,
+            )
+            candidate = json.loads(reconciled.stdout)["data"]
+            if candidate["status"]["state"] == "succeeded":
+                terminal_data = candidate
+                break
+            self.assertIn(
+                candidate["status"]["state"],
+                {"running", "interrupted", "unknown"},
+            )
+            time.sleep(0.02)
+        self.assertIsNotNone(terminal_data)
+
+        status_before = (run_dir / "status.json").read_bytes()
+        repeated = run_cli("reconcile", "--run-dir", str(run_dir))
+        self.assertEqual(repeated.returncode, 0, repeated.stderr or repeated.stdout)
+        self.assertEqual(
+            json.loads(repeated.stdout)["data"]["status"]["state"],
+            "succeeded",
+        )
+        self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+
+    def test_status_heartbeats_after_target_closes_output_pipes(self) -> None:
+        if os.name == "nt":
+            target_command = [
+                os.environ["COMSPEC"],
+                "/d",
+                "/s",
+                "/c",
+                "ping -n 39 127.0.0.1 >NUL 2>&1",
+            ]
+        else:
+            target_command = [
+                "/bin/sh",
+                "-c",
+                "exec >/dev/null 2>&1; sleep 38",
+            ]
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"closed pipes heartbeat {uuid.uuid4().hex}",
+            "--",
+            *target_command,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        initial_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(status.get("heartbeat_at")),
+        )
+
+        time.sleep(27)
+        refreshed_status = self._wait_for_status(
+            run_dir,
+            lambda status: status.get("heartbeat_at")
+            != initial_status["heartbeat_at"],
+            timeout_seconds=4,
+            poll_seconds=0.1,
+        )
+        self.assertEqual(refreshed_status["state"], "running")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "15",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+
     def test_reconcile_marks_mismatch_and_insufficient_identity_unknown(self) -> None:
         cases = (
             (
@@ -63,24 +177,14 @@ class PersistedCommandCliTests(unittest.TestCase):
                 )
                 run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-                ready_deadline = time.monotonic() + 10
-                running_status = None
-                while time.monotonic() < ready_deadline:
-                    shown = run_cli("show", "--run-dir", str(run_dir))
-                    self.assertEqual(
-                        shown.returncode,
-                        0,
-                        shown.stderr or shown.stdout,
-                    )
-                    candidate = json.loads(shown.stdout)["data"]["status"]
-                    if (candidate.get("target_identity") or {}).get(
-                        "process_creation_identity"
-                    ):
-                        running_status = candidate
-                        break
-                    time.sleep(0.05)
-                self.assertIsNotNone(running_status)
-                assert running_status is not None
+                running_status = self._wait_for_status(
+                    run_dir,
+                    lambda status: bool(
+                        (status.get("target_identity") or {}).get(
+                            "process_creation_identity"
+                        )
+                    ),
+                )
 
                 running_status["target_identity"][
                     "process_creation_identity"
@@ -115,21 +219,10 @@ class PersistedCommandCliTests(unittest.TestCase):
                     running_status["target_identity"]["pid"],
                 )
 
-                completion_deadline = time.monotonic() + 10
-                completed_status = None
-                while time.monotonic() < completion_deadline:
-                    shown = run_cli("show", "--run-dir", str(run_dir))
-                    self.assertEqual(
-                        shown.returncode,
-                        0,
-                        shown.stderr or shown.stdout,
-                    )
-                    candidate = json.loads(shown.stdout)["data"]["status"]
-                    if candidate["state"] == "succeeded":
-                        completed_status = candidate
-                        break
-                    time.sleep(0.05)
-                self.assertIsNotNone(completed_status)
+                self._wait_for_status(
+                    run_dir,
+                    lambda status: status["state"] == "succeeded",
+                )
                 self.assertEqual(
                     (run_dir / "stdout.log").read_text(encoding="utf-8"),
                     "alive\nfinished\n",
@@ -165,20 +258,14 @@ class PersistedCommandCliTests(unittest.TestCase):
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
         try:
-            ready_deadline = time.monotonic() + 10
-            running_status = None
-            while time.monotonic() < ready_deadline:
-                shown = run_cli("show", "--run-dir", str(run_dir))
-                self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
-                candidate = json.loads(shown.stdout)["data"]["status"]
-                if (candidate.get("target_identity") or {}).get(
-                    "process_creation_identity"
-                ):
-                    running_status = candidate
-                    break
-                time.sleep(0.05)
-            self.assertIsNotNone(running_status)
-            assert running_status is not None
+            running_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(
+                    (status.get("target_identity") or {}).get(
+                        "process_creation_identity"
+                    )
+                ),
+            )
 
             os.kill(running_status["supervisor_pid"], signal.SIGTERM)
             stop_marker.write_text("stop\n", encoding="utf-8")
@@ -209,6 +296,19 @@ class PersistedCommandCliTests(unittest.TestCase):
             )
             self.assertEqual(persisted["state"], "interrupted")
             self.assertEqual(persisted["reconciliation"]["decision"], "interrupted")
+
+            status_before = (run_dir / "status.json").read_bytes()
+            repeated = run_cli("reconcile", "--run-dir", str(run_dir))
+            self.assertEqual(
+                repeated.returncode,
+                0,
+                repeated.stderr or repeated.stdout,
+            )
+            self.assertEqual(
+                json.loads(repeated.stdout)["data"]["status"]["state"],
+                "interrupted",
+            )
+            self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
         finally:
             stop_marker.write_text("stop\n", encoding="utf-8")
 
@@ -233,20 +333,14 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-        ready_deadline = time.monotonic() + 10
-        running_status = None
-        while time.monotonic() < ready_deadline:
-            shown = run_cli("show", "--run-dir", str(run_dir))
-            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
-            candidate = json.loads(shown.stdout)["data"]["status"]
-            if (candidate.get("target_identity") or {}).get(
-                "process_creation_identity"
-            ):
-                running_status = candidate
-                break
-            time.sleep(0.05)
-        self.assertIsNotNone(running_status)
-        assert running_status is not None
+        running_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                (status.get("target_identity") or {}).get(
+                    "process_creation_identity"
+                )
+            ),
+        )
         status_before = (run_dir / "status.json").read_bytes()
 
         reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
@@ -272,7 +366,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "10",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        self.assertEqual((run_dir / "stdout.log").read_text(encoding="utf-8"), "born\nfinished\n")
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            "born\nfinished\n",
+        )
 
     def test_status_heartbeats_during_output_silence_with_identity_telemetry(self) -> None:
         child = (
@@ -295,37 +392,27 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-        ready_deadline = time.monotonic() + 10
-        initial_status = None
-        while time.monotonic() < ready_deadline:
-            shown = run_cli("show", "--run-dir", str(run_dir))
-            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
-            candidate = json.loads(shown.stdout)["data"]["status"]
-            target_identity = candidate.get("target_identity") or {}
-            if candidate.get("heartbeat_at") and target_identity.get(
-                "process_creation_identity"
-            ):
-                initial_status = candidate
-                break
-            time.sleep(0.05)
-        self.assertIsNotNone(initial_status)
-        assert initial_status is not None
+        initial_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                status.get("heartbeat_at")
+                and (status.get("target_identity") or {}).get(
+                    "process_creation_identity"
+                )
+            ),
+        )
 
         initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
         time.sleep(27)
-        heartbeat_deadline = time.monotonic() + 4
-        refreshed_status = None
-        while time.monotonic() < heartbeat_deadline:
-            shown = run_cli("show", "--run-dir", str(run_dir))
-            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
-            candidate = json.loads(shown.stdout)["data"]["status"]
-            heartbeat_at = candidate.get("heartbeat_at")
-            if heartbeat_at and heartbeat_at != initial_status["heartbeat_at"]:
-                refreshed_status = candidate
-                break
-            time.sleep(0.1)
-        self.assertIsNotNone(refreshed_status)
-        assert refreshed_status is not None
+        refreshed_status = self._wait_for_status(
+            run_dir,
+            lambda status: bool(
+                status.get("heartbeat_at")
+                and status["heartbeat_at"] != initial_status["heartbeat_at"]
+            ),
+            timeout_seconds=4,
+            poll_seconds=0.1,
+        )
 
         refreshed_heartbeat = datetime.fromisoformat(refreshed_status["heartbeat_at"])
         self.assertLessEqual(

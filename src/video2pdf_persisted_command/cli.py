@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 import json
 import os
@@ -18,6 +20,7 @@ from typing import Any, BinaryIO
 COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
 HEARTBEAT_INTERVAL_SECONDS = 29.0
+STATUS_LOCK_FILENAME = ".status.lock"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -57,6 +60,43 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+
+
+@contextmanager
+def _status_lock(run_dir: Path) -> Iterator[None]:
+    lock_path = run_dir / STATUS_LOCK_FILENAME
+    with lock_path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+            os.fsync(handle.fileno())
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            flock = getattr(fcntl, "flock")
+            lock_exclusive = getattr(fcntl, "LOCK_EX")
+            lock_unlock = getattr(fcntl, "LOCK_UN")
+            flock(handle.fileno(), lock_exclusive)
+            try:
+                yield
+            finally:
+                flock(handle.fileno(), lock_unlock)
+
+
+def _write_status_atomic(run_dir: Path, status: dict[str, Any]) -> None:
+    with _status_lock(run_dir):
+        _write_json_atomic(run_dir / "status.json", status)
 
 
 def _write_text_atomic(path: Path, value: str) -> None:
@@ -263,8 +303,8 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     _write_json_atomic(run_dir / "command.json", command_record)
     for filename in ("stdout.log", "stderr.log", "command.log"):
         (run_dir / filename).touch(exist_ok=False)
-    _write_json_atomic(
-        run_dir / "status.json",
+    _write_status_atomic(
+        run_dir,
         _status(
             run_id,
             "running",
@@ -343,8 +383,8 @@ def _supervise(run_dir: Path) -> int:
     supervisor_creation_identity = _process_identity(supervisor_pid)
     target_creation_identity = _process_identity(process.pid)
     latest_output_at = None
-    _write_json_atomic(
-        run_dir / "status.json",
+    _write_status_atomic(
+        run_dir,
         _execution_status(
             run_id,
             "running",
@@ -386,14 +426,15 @@ def _supervise(run_dir: Path) -> int:
         "ab", buffering=0
     ) as merged_log:
         stream_logs = {"stdout": stdout_log, "stderr": stderr_log}
-        while finished_readers < len(readers):
+        while finished_readers < len(readers) or process.poll() is None:
             heartbeat_due = False
+            event_timeout = max(0.0, next_heartbeat - time.monotonic())
+            if finished_readers == len(readers):
+                event_timeout = min(event_timeout, 0.1)
             try:
-                event = events.get(
-                    timeout=max(0.0, next_heartbeat - time.monotonic())
-                )
+                event = events.get(timeout=event_timeout)
             except queue.Empty:
-                heartbeat_due = True
+                heartbeat_due = time.monotonic() >= next_heartbeat
             else:
                 if event is None:
                     finished_readers += 1
@@ -405,8 +446,8 @@ def _supervise(run_dir: Path) -> int:
 
             current_monotonic = time.monotonic()
             if heartbeat_due or current_monotonic >= next_heartbeat:
-                _write_json_atomic(
-                    run_dir / "status.json",
+                _write_status_atomic(
+                    run_dir,
                     _execution_status(
                         run_id,
                         "running",
@@ -428,8 +469,8 @@ def _supervise(run_dir: Path) -> int:
     for reader in readers:
         reader.join()
     _write_text_atomic(run_dir / "exit-code.txt", f"{exit_code}\n")
-    _write_json_atomic(
-        run_dir / "status.json",
+    _write_status_atomic(
+        run_dir,
         _execution_status(
             run_id,
             "succeeded" if exit_code == 0 else "failed",
@@ -476,6 +517,13 @@ def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
 
 def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
     snapshot = _inspect(run_dir, project_root)
+    resolved_run_dir = Path(snapshot["run_dir"])
+    with _status_lock(resolved_run_dir):
+        return _reconcile_locked(resolved_run_dir, project_root)
+
+
+def _reconcile_locked(run_dir: Path, project_root: Path) -> dict[str, Any]:
+    snapshot = _inspect(run_dir, project_root)
     status = snapshot["status"]
 
     def persist_correction(
@@ -514,8 +562,18 @@ def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
     target_identity = status.get("target_identity") or {}
     target_pid = target_identity.get("pid")
     persisted_creation_identity = target_identity.get("process_creation_identity")
-    if status.get("state") != "running":
-        raise ValueError("reconciliation requires a running status")
+    state = status.get("state")
+    if state != "running":
+        existing_reconciliation = status.get("reconciliation")
+        if isinstance(existing_reconciliation, dict):
+            snapshot["reconciliation"] = existing_reconciliation
+        else:
+            snapshot["reconciliation"] = {
+                "decision": state,
+                "reason": "status_already_terminal",
+                "observed_at": _now(),
+            }
+        return snapshot
     if not isinstance(target_pid, int):
         return persist_correction(
             "unknown",
@@ -608,12 +666,14 @@ def main(argv: list[str] | None = None) -> int:
         data = _inspect(args.run_dir, project_root)
     elif args.operation == "reconcile":
         data = _reconcile(args.run_dir, project_root)
-    else:
+    elif args.operation == "wait":
         data, timed_out = _wait(
             args.run_dir,
             project_root,
             args.timeout_seconds,
         )
+    else:
+        raise AssertionError(f"unsupported parsed operation: {args.operation}")
     sys.stdout.write(json.dumps(_result(args.operation, data), ensure_ascii=False, sort_keys=True) + "\n")
     return 124 if timed_out else 0
 

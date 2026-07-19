@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from datetime import datetime
 import json
 import os
@@ -26,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start")
     start.add_argument("--task-name", required=True)
     start.add_argument("--cwd", type=Path)
+    start.add_argument("--accepted-exit-code", action="append", type=int)
     start.add_argument("target_command", nargs=argparse.REMAINDER)
 
     show = commands.add_parser("show")
@@ -127,6 +129,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         "created_at": created_at,
         "cwd": str(working_directory),
         "argv": target_command,
+        "accepted_exit_codes": sorted(set(args.accepted_exit_code or [0])),
     }
     _write_json_atomic(run_dir / "command.json", command_record)
     for filename in ("stdout.log", "stderr.log", "command.log"):
@@ -187,13 +190,32 @@ def _copy_stream(
 def _supervise(run_dir: Path) -> int:
     command_record = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     run_id = command_record["run_id"]
-    process = subprocess.Popen(
-        command_record["argv"],
-        cwd=command_record["cwd"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        process = subprocess.Popen(
+            command_record["argv"],
+            cwd=command_record["cwd"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError:
+        _write_json_atomic(
+            run_dir / "status.json",
+            _status(
+                run_id,
+                "launch_failed",
+                started_at=command_record["created_at"],
+                finished_at=_now(),
+                supervisor_pid=os.getpid(),
+                child_pid=None,
+                exit_code=None,
+                failure={
+                    "kind": "child_launch_failed",
+                    "message": "target process could not be launched",
+                },
+            ),
+        )
+        return 1
     _write_json_atomic(
         run_dir / "status.json",
         _status(
@@ -224,36 +246,83 @@ def _supervise(run_dir: Path) -> int:
     for reader in readers:
         reader.start()
 
-    finished_readers = 0
-    with (run_dir / "stdout.log").open("ab", buffering=0) as stdout_log, (
-        run_dir / "stderr.log"
-    ).open("ab", buffering=0) as stderr_log, (run_dir / "command.log").open(
-        "ab", buffering=0
-    ) as merged_log:
-        stream_logs = {"stdout": stdout_log, "stderr": stderr_log}
-        while finished_readers < len(readers):
-            event = events.get()
-            if event is None:
-                finished_readers += 1
-                continue
-            stream_name, chunk = event
-            stream_logs[stream_name].write(chunk)
-            merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+    log_persistence_failed = False
+    try:
+        with ExitStack() as logs:
+            stream_logs: dict[str, BinaryIO] = {}
+            merged_log: BinaryIO | None = None
+            try:
+                stream_logs = {
+                    "stdout": logs.enter_context(
+                        (run_dir / "stdout.log").open("ab", buffering=0)
+                    ),
+                    "stderr": logs.enter_context(
+                        (run_dir / "stderr.log").open("ab", buffering=0)
+                    ),
+                }
+                merged_log = logs.enter_context(
+                    (run_dir / "command.log").open("ab", buffering=0)
+                )
+            except OSError:
+                log_persistence_failed = True
+
+            finished_readers = 0
+            while finished_readers < len(readers):
+                event = events.get()
+                if event is None:
+                    finished_readers += 1
+                    continue
+                stream_name, chunk = event
+                if log_persistence_failed:
+                    continue
+                try:
+                    stream_logs[stream_name].write(chunk)
+                    assert merged_log is not None
+                    merged_log.write(f"[{stream_name}] ".encode("ascii") + chunk)
+                except OSError:
+                    log_persistence_failed = True
+
+            if not log_persistence_failed:
+                try:
+                    for log in (*stream_logs.values(), merged_log):
+                        assert log is not None
+                        log.flush()
+                        os.fsync(log.fileno())
+                except OSError:
+                    log_persistence_failed = True
+    except OSError:
+        log_persistence_failed = True
 
     exit_code = process.wait()
     for reader in readers:
         reader.join()
     _write_text_atomic(run_dir / "exit-code.txt", f"{exit_code}\n")
+    terminal_state = (
+        "failed"
+        if log_persistence_failed
+        else (
+            "succeeded"
+            if exit_code in command_record["accepted_exit_codes"]
+            else "failed"
+        )
+    )
+    terminal_fields: dict[str, Any] = {}
+    if log_persistence_failed:
+        terminal_fields["failure"] = {
+            "kind": "log_persistence_failed",
+            "message": "one or more command logs could not be persisted",
+        }
     _write_json_atomic(
         run_dir / "status.json",
         _status(
             run_id,
-            "succeeded" if exit_code == 0 else "failed",
+            terminal_state,
             started_at=command_record["created_at"],
             finished_at=_now(),
             supervisor_pid=os.getpid(),
             child_pid=process.pid,
             exit_code=exit_code,
+            **terminal_fields,
         ),
     )
     return 0

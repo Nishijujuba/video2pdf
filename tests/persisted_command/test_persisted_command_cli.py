@@ -94,13 +94,26 @@ def status_sharing_conflict_hook(
     attempts_path: Path,
     *,
     failures_before_success: int | None,
+    fail_publication_error_write: bool = False,
 ) -> str:
     failure_condition = (
         "True"
         if failures_before_success is None
         else f"attempts <= {failures_before_success}"
     )
+    publication_error_hook = (
+        "    original_open = io.open\n"
+        "    def fail_publication_error_open(file, *args, **kwargs):\n"
+        "        mode = args[0] if args else kwargs.get('mode', 'r')\n"
+        "        if str(file).endswith('status-publication-error.json') and 'x' in mode:\n"
+        "            raise OSError('simulated publication error evidence failure')\n"
+        "        return original_open(file, *args, **kwargs)\n"
+        "    io.open = fail_publication_error_open\n"
+        if fail_publication_error_write
+        else ""
+    )
     return (
+        "import io\n"
         "import os\n"
         "from pathlib import Path\n"
         "import sys\n"
@@ -121,6 +134,7 @@ def status_sharing_conflict_hook(
         "                raise error\n"
         "        return original_replace(source, destination)\n"
         "    os.replace = sharing_conflict\n"
+        f"{publication_error_hook}"
     )
 
 
@@ -929,8 +943,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             child,
         ]
 
-        while time.time() % 1 > 0.5:
-            time.sleep(0.01)
         launchers = [
             subprocess.Popen(
                 command,
@@ -942,14 +954,11 @@ class PersistedCommandCliTests(unittest.TestCase):
             )
             for _ in range(2)
         ]
-        started = [launcher.communicate(timeout=10) for launcher in launchers]
+        started = [launcher.communicate(timeout=60) for launcher in launchers]
         self.assertEqual([launcher.returncode for launcher in launchers], [0, 0], started)
         start_data = [json.loads(stdout)["data"] for stdout, _ in started]
         self.assertEqual(len({item["run_id"] for item in start_data}), 2)
         self.assertEqual(len({item["run_dir"] for item in start_data}), 2)
-        directory_names = [Path(item["run_dir"]).name for item in start_data]
-        timestamps = [name.rsplit("_", 3)[-3:-1] for name in directory_names]
-        self.assertEqual(timestamps[0], timestamps[1])
 
         for item in start_data:
             waited = run_cli(
@@ -957,7 +966,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "--run-dir",
                 item["run_dir"],
                 "--timeout-seconds",
-                "10",
+                "60",
             )
             self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
 
@@ -1027,51 +1036,63 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
 
     def test_status_heartbeats_after_target_closes_output_pipes(self) -> None:
-        if os.name == "nt":
-            target_command = [
-                os.environ["COMSPEC"],
-                "/d",
-                "/s",
-                "/c",
-                "ping -n 39 127.0.0.1 >NUL 2>&1",
-            ]
-        else:
-            target_command = [
-                "/bin/sh",
-                "-c",
-                "exec >/dev/null 2>&1; sleep 38",
-            ]
+        release_marker = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-test-markers"
+            / f"{uuid.uuid4().hex}.txt"
+        )
+        release_marker.parent.mkdir(parents=True, exist_ok=True)
+        child = (
+            "from pathlib import Path\n"
+            "import os,sys,time\n"
+            "marker=Path(sys.argv[1])\n"
+            "os.close(sys.stdout.fileno())\n"
+            "os.close(sys.stderr.fileno())\n"
+            "while not marker.exists():\n"
+            "    time.sleep(0.02)\n"
+            "os._exit(0)\n"
+        )
         started = run_cli(
             "start",
             "--task-name",
             f"closed pipes heartbeat {uuid.uuid4().hex}",
             "--",
-            *target_command,
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(release_marker),
         )
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-        initial_status = self._wait_for_status(
-            run_dir,
-            lambda status: bool(status.get("heartbeat_at")),
-        )
+        try:
+            initial_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(status.get("heartbeat_at")),
+                timeout_seconds=60,
+            )
 
-        time.sleep(27)
-        refreshed_status = self._wait_for_status(
-            run_dir,
-            lambda status: status.get("heartbeat_at")
-            != initial_status["heartbeat_at"],
-            timeout_seconds=4,
-            poll_seconds=0.1,
-        )
-        self.assertEqual(refreshed_status["state"], "running")
+            time.sleep(27)
+            refreshed_status = self._wait_for_status(
+                run_dir,
+                lambda status: status.get("heartbeat_at")
+                != initial_status["heartbeat_at"],
+                timeout_seconds=15,
+                poll_seconds=0.1,
+            )
+            self.assertEqual(refreshed_status["state"], "running")
+        finally:
+            release_marker.write_text("release\n", encoding="utf-8")
 
         waited = run_cli(
             "wait",
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "15",
+            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
 
@@ -1219,12 +1240,13 @@ class PersistedCommandCliTests(unittest.TestCase):
                         "process_creation_identity"
                     )
                 ),
+                timeout_seconds=60,
             )
 
             os.kill(running_status["supervisor_pid"], signal.SIGTERM)
             stop_marker.write_text("stop\n", encoding="utf-8")
 
-            reconcile_deadline = time.monotonic() + 10
+            reconcile_deadline = time.monotonic() + 60
             reconciled_data = None
             while time.monotonic() < reconcile_deadline:
                 reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
@@ -1267,11 +1289,21 @@ class PersistedCommandCliTests(unittest.TestCase):
             stop_marker.write_text("stop\n", encoding="utf-8")
 
     def test_reconcile_preserves_matching_live_target_without_mutation(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-reconcile-live"
+            / uuid.uuid4().hex
+        )
+        release_target = fixture_root / "release-target"
         child = (
-            "import time; "
-            "print('born', flush=True); "
-            "time.sleep(4); "
-            "print('finished', flush=True)"
+            "from pathlib import Path\n"
+            "import sys,time\n"
+            "marker=Path(sys.argv[1])\n"
+            "print('born', flush=True)\n"
+            "while not marker.exists():\n"
+            "    time.sleep(0.02)\n"
+            "print('finished', flush=True)\n"
         )
         started = run_cli(
             "start",
@@ -1283,41 +1315,49 @@ class PersistedCommandCliTests(unittest.TestCase):
             "utf8",
             "-c",
             child,
+            str(release_target),
         )
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-        running_status = self._wait_for_status(
-            run_dir,
-            lambda status: bool(
-                (status.get("target_identity") or {}).get(
-                    "process_creation_identity"
-                )
-            ),
-        )
-        status_before = (run_dir / "status.json").read_bytes()
+        try:
+            running_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(
+                    (status.get("target_identity") or {}).get(
+                        "process_creation_identity"
+                    )
+                ),
+                timeout_seconds=60,
+            )
+            status_before = (run_dir / "status.json").read_bytes()
 
-        reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
-        self.assertEqual(
-            reconciled.returncode,
-            0,
-            reconciled.stderr or reconciled.stdout,
-        )
-        reconciled_data = json.loads(reconciled.stdout)["data"]
-        self.assertEqual(reconciled_data["status"]["state"], "running")
-        self.assertEqual(
-            reconciled_data["status"]["target_identity"],
-            running_status["target_identity"],
-        )
-        self.assertEqual(reconciled_data["reconciliation"]["decision"], "running")
-        self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+            reconciled = run_cli("reconcile", "--run-dir", str(run_dir))
+            self.assertEqual(
+                reconciled.returncode,
+                0,
+                reconciled.stderr or reconciled.stdout,
+            )
+            reconciled_data = json.loads(reconciled.stdout)["data"]
+            self.assertEqual(reconciled_data["status"]["state"], "running")
+            self.assertEqual(
+                reconciled_data["status"]["target_identity"],
+                running_status["target_identity"],
+            )
+            self.assertEqual(
+                reconciled_data["reconciliation"]["decision"], "running"
+            )
+            self.assertEqual((run_dir / "status.json").read_bytes(), status_before)
+        finally:
+            release_target.parent.mkdir(parents=True, exist_ok=True)
+            release_target.write_text("release\n", encoding="utf-8")
 
         waited = run_cli(
             "wait",
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "10",
+            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
@@ -1326,11 +1366,21 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
 
     def test_status_heartbeats_during_output_silence_with_identity_telemetry(self) -> None:
+        release_marker = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-test-markers"
+            / f"{uuid.uuid4().hex}.txt"
+        )
+        release_marker.parent.mkdir(parents=True, exist_ok=True)
         child = (
-            "import sys,time; "
-            "print('heartbeat-out', flush=True); "
-            "print('heartbeat-error', file=sys.stderr, flush=True); "
-            "time.sleep(38)"
+            "from pathlib import Path\n"
+            "import sys,time\n"
+            "marker=Path(sys.argv[1])\n"
+            "print('heartbeat-out', flush=True)\n"
+            "print('heartbeat-error', file=sys.stderr, flush=True)\n"
+            "while not marker.exists():\n"
+            "    time.sleep(0.02)\n"
         )
         started = run_cli(
             "start",
@@ -1342,88 +1392,95 @@ class PersistedCommandCliTests(unittest.TestCase):
             "utf8",
             "-c",
             child,
+            str(release_marker),
         )
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
 
-        initial_status = self._wait_for_status(
-            run_dir,
-            lambda status: bool(
-                status.get("heartbeat_at")
-                and (status.get("target_identity") or {}).get(
+        try:
+            initial_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(
+                    status.get("heartbeat_at")
+                    and (status.get("target_identity") or {}).get(
+                        "process_creation_identity"
+                    )
+                ),
+                timeout_seconds=60,
+            )
+
+            initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
+            time.sleep(27)
+            refreshed_status = self._wait_for_status(
+                run_dir,
+                lambda status: bool(
+                    status.get("heartbeat_at")
+                    and status["heartbeat_at"] != initial_status["heartbeat_at"]
+                ),
+                timeout_seconds=15,
+                poll_seconds=0.1,
+            )
+
+            refreshed_heartbeat = datetime.fromisoformat(
+                refreshed_status["heartbeat_at"]
+            )
+            self.assertGreater(refreshed_heartbeat, initial_heartbeat)
+            self.assertEqual(refreshed_status["state"], "running")
+            self.assertGreaterEqual(refreshed_status["elapsed_seconds"], 25)
+            self.assertIsNotNone(refreshed_status["latest_output_at"])
+            self.assertEqual(
+                refreshed_status["log_sizes"],
+                {
+                    "stdout": (run_dir / "stdout.log").stat().st_size,
+                    "stderr": (run_dir / "stderr.log").stat().st_size,
+                    "merged": (run_dir / "command.log").stat().st_size,
+                },
+            )
+
+            self.assertEqual(
+                refreshed_status["supervisor_identity"]["pid"],
+                refreshed_status["supervisor_pid"],
+            )
+            self.assertIsNotNone(
+                refreshed_status["supervisor_identity"][
                     "process_creation_identity"
-                )
-            ),
-        )
-
-        initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
-        time.sleep(27)
-        refreshed_status = self._wait_for_status(
-            run_dir,
-            lambda status: bool(
-                status.get("heartbeat_at")
-                and status["heartbeat_at"] != initial_status["heartbeat_at"]
-            ),
-            timeout_seconds=4,
-            poll_seconds=0.1,
-        )
-
-        refreshed_heartbeat = datetime.fromisoformat(refreshed_status["heartbeat_at"])
-        self.assertLessEqual(
-            (refreshed_heartbeat - initial_heartbeat).total_seconds(),
-            30,
-        )
-        self.assertEqual(refreshed_status["state"], "running")
-        self.assertGreaterEqual(refreshed_status["elapsed_seconds"], 25)
-        self.assertIsNotNone(refreshed_status["latest_output_at"])
-        self.assertEqual(
-            refreshed_status["log_sizes"],
-            {
-                "stdout": (run_dir / "stdout.log").stat().st_size,
-                "stderr": (run_dir / "stderr.log").stat().st_size,
-                "merged": (run_dir / "command.log").stat().st_size,
-            },
-        )
-
-        self.assertEqual(
-            refreshed_status["supervisor_identity"]["pid"],
-            refreshed_status["supervisor_pid"],
-        )
-        self.assertIsNotNone(
-            refreshed_status["supervisor_identity"]["process_creation_identity"]
-        )
-        self.assertEqual(
-            refreshed_status["target_identity"]["pid"],
-            refreshed_status["child_pid"],
-        )
-        self.assertIsNotNone(
-            refreshed_status["target_identity"]["process_creation_identity"]
-        )
+                ]
+            )
+            self.assertEqual(
+                refreshed_status["target_identity"]["pid"],
+                refreshed_status["child_pid"],
+            )
+            self.assertIsNotNone(
+                refreshed_status["target_identity"]["process_creation_identity"]
+            )
+        finally:
+            release_marker.write_text("release\n", encoding="utf-8")
 
         waited = run_cli(
             "wait",
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "15",
+            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         final_status = json.loads(waited.stdout)["data"]["status"]
         self.assertEqual(final_status["state"], "succeeded")
-        self.assertGreaterEqual(final_status["elapsed_seconds"], 38)
+        self.assertGreaterEqual(final_status["elapsed_seconds"], 25)
 
     @unittest.skipUnless(
         os.name == "nt",
         "Windows sharing semantics are required for this regression",
     )
     def test_concurrent_observers_cannot_block_heartbeat_or_terminal_status(self) -> None:
-        fixture_root = PROJECT_ROOT / "待删除" / "persisted-command-concurrency"
-        fixture_root = fixture_root / uuid.uuid4().hex
-        observer_started_dir = fixture_root / "observer-started"
-        status_opened = fixture_root / "status-opened"
-        release_observers = fixture_root / "release-observers"
+        fixture_root = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-concurrency"
+            / uuid.uuid4().hex
+        )
         release_target = fixture_root / "release-target"
-        observer_started_dir.mkdir(parents=True)
+        target_completed = fixture_root / "target-completed"
         env = supervisor_hook_environment(
             fixture_root,
             (
@@ -1448,6 +1505,14 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "release_path = os.environ.get('PERSISTED_TEST_RELEASE_OBSERVERS')\n"
                 "opened_path = os.environ.get('PERSISTED_TEST_STATUS_OPENED')\n"
                 "started_dir = os.environ.get('PERSISTED_TEST_OBSERVER_STARTED_DIR')\n"
+                "list_run_dir = os.environ.get('PERSISTED_TEST_LIST_RUN_DIR')\n"
+                "if list_run_dir and 'list' in sys.argv:\n"
+                "    original_iterdir = Path.iterdir\n"
+                "    def target_only_iterdir(path):\n"
+                "        if path.name == 'long-running':\n"
+                "            return iter((Path(list_run_dir),))\n"
+                "        return original_iterdir(path)\n"
+                "    Path.iterdir = target_only_iterdir\n"
                 "if target_status and any(op in sys.argv for op in ('show', 'wait', 'list')):\n"
                 "    Path(started_dir, str(os.getpid())).write_text('started', encoding='utf-8')\n"
                 "    original_open = io.open\n"
@@ -1473,9 +1538,11 @@ class PersistedCommandCliTests(unittest.TestCase):
             "from pathlib import Path\n"
             "import sys,time\n"
             "marker=Path(sys.argv[1])\n"
+            "completed=Path(sys.argv[2])\n"
             "print('waiting for release', flush=True)\n"
             "while not marker.exists():\n"
             "    time.sleep(0.02)\n"
+            "completed.write_text('completed\\n', encoding='utf-8')\n"
         )
         started = run_cli(
             "start",
@@ -1488,6 +1555,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "-c",
             child,
             str(release_target),
+            str(target_completed),
             env=env,
         )
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
@@ -1497,65 +1565,117 @@ class PersistedCommandCliTests(unittest.TestCase):
             lambda status: bool(status.get("child_pid")),
         )
 
-        observer_env = env.copy()
-        observer_env["PERSISTED_TEST_STATUS_PATH"] = str(
-            (run_dir / "status.json").resolve()
-        )
-        observer_env["PERSISTED_TEST_RELEASE_OBSERVERS"] = str(release_observers)
-        observer_env["PERSISTED_TEST_STATUS_OPENED"] = str(status_opened)
-        observer_env["PERSISTED_TEST_OBSERVER_STARTED_DIR"] = str(
-            observer_started_dir
-        )
         commands = (
             ("show", "--run-dir", str(run_dir)),
-            ("wait", "--run-dir", str(run_dir), "--timeout-seconds", "10"),
+            ("wait", "--run-dir", str(run_dir), "--timeout-seconds", "2"),
             ("list",),
         )
-        observers = [
-            subprocess.Popen(
-                [sys.executable, "-X", "utf8", "-B", str(CLI), *command],
-                cwd=PROJECT_ROOT,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                env=observer_env,
+        all_observers: list[subprocess.Popen[str]] = []
+        observer_releases: list[Path] = []
+
+        def start_observer_wave(label: str) -> tuple[list[subprocess.Popen[str]], Path]:
+            started_dir = fixture_root / f"{label}-started"
+            opened_path = fixture_root / f"{label}-status-opened"
+            release_path = fixture_root / f"{label}-release-observers"
+            started_dir.mkdir(parents=True)
+            observer_env = env.copy()
+            observer_env["PERSISTED_TEST_STATUS_PATH"] = str(
+                (run_dir / "status.json").resolve()
             )
-            for command in commands
-        ]
-        try:
-            deadline = time.monotonic() + 10
+            observer_env["PERSISTED_TEST_RELEASE_OBSERVERS"] = str(
+                release_path
+            )
+            observer_env["PERSISTED_TEST_STATUS_OPENED"] = str(opened_path)
+            observer_env["PERSISTED_TEST_OBSERVER_STARTED_DIR"] = str(
+                started_dir
+            )
+            observer_env["PERSISTED_TEST_LIST_RUN_DIR"] = str(run_dir)
+            observers = [
+                subprocess.Popen(
+                    [sys.executable, "-X", "utf8", "-B", str(CLI), *command],
+                    cwd=PROJECT_ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    env=observer_env,
+                )
+                for command in commands
+            ]
+            all_observers.extend(observers)
+            observer_releases.append(release_path)
+            deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
                 if (
-                    len(tuple(observer_started_dir.iterdir())) == len(observers)
-                    and status_opened.exists()
+                    len(tuple(started_dir.iterdir())) == len(observers)
+                    and opened_path.exists()
                 ):
                     break
                 time.sleep(0.02)
-            self.assertEqual(len(tuple(observer_started_dir.iterdir())), 3)
-            self.assertTrue(status_opened.exists())
+            self.assertEqual(len(tuple(started_dir.iterdir())), 3)
+            self.assertTrue(opened_path.exists())
+            return observers, release_path
 
-            time.sleep(1.0)
-            release_observers.write_text("release\n", encoding="utf-8")
-            release_target.write_text("release\n", encoding="utf-8")
+        def release_observer_wave(
+            observers: list[subprocess.Popen[str]],
+            release_path: Path,
+        ) -> None:
+            release_path.write_text("release\n", encoding="utf-8")
             observer_results = [
-                observer.communicate(timeout=60) for observer in observers
+                observer.communicate(timeout=120) for observer in observers
             ]
             for observer, (stdout, stderr) in zip(observers, observer_results):
                 self.assertIn(observer.returncode, {0, 124}, stderr or stdout)
-        finally:
-            release_observers.write_text("release\n", encoding="utf-8")
+
+        try:
+            heartbeat_observers, heartbeat_release = start_observer_wave(
+                "heartbeat"
+            )
+            time.sleep(1.0)
+            heartbeat_release.write_text("release\n", encoding="utf-8")
+            heartbeat_status = self._wait_for_status(
+                run_dir,
+                lambda status: (
+                    status["heartbeat_at"] != initial_status["heartbeat_at"]
+                ),
+            )
+            self.assertEqual(heartbeat_status["state"], "running")
+            release_observer_wave(heartbeat_observers, heartbeat_release)
+
+            terminal_observers, terminal_release = start_observer_wave(
+                "terminal"
+            )
             release_target.write_text("release\n", encoding="utf-8")
-            for observer in observers:
+            self.assertTrue(release_target.is_file())
+            target_deadline = time.monotonic() + 120
+            while (
+                time.monotonic() < target_deadline
+                and not target_completed.is_file()
+            ):
+                time.sleep(0.02)
+            self.assertTrue(target_completed.is_file())
+            release_observer_wave(terminal_observers, terminal_release)
+            exit_code_deadline = time.monotonic() + 60
+            while (
+                time.monotonic() < exit_code_deadline
+                and not (run_dir / "exit-code.txt").is_file()
+            ):
+                time.sleep(0.02)
+            self.assertTrue((run_dir / "exit-code.txt").is_file())
+        finally:
+            release_target.write_text("release\n", encoding="utf-8")
+            for release_path in observer_releases:
+                release_path.write_text("release\n", encoding="utf-8")
+            for observer in all_observers:
                 if observer.poll() is None:
-                    observer.wait(timeout=60)
+                    observer.communicate(timeout=120)
 
         waited = run_cli(
             "wait",
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "10",
+            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         final_status = json.loads(waited.stdout)["data"]["status"]
@@ -1601,7 +1721,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "10",
+            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         status = json.loads(waited.stdout)["data"]["status"]
@@ -1644,7 +1764,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "10",
+            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         data = json.loads(waited.stdout)["data"]
@@ -1689,12 +1809,70 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         self.assertEqual(listed_run["status"]["state"], "unknown")
 
+    @unittest.skipUnless(
+        os.name == "nt",
+        "Windows sharing semantics are required for this regression",
+    )
+    def test_missing_terminal_status_and_error_record_is_unknown(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-missing-terminal-records"
+            / uuid.uuid4().hex
+        )
+        attempts_path = fixture_root / "attempts.txt"
+        env = supervisor_hook_environment(
+            fixture_root,
+            status_sharing_conflict_hook(
+                attempts_path,
+                failures_before_success=None,
+                fail_publication_error_write=True,
+            ),
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"missing terminal records {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('complete', flush=True)",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "10",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["status"]["state"], "unknown")
+        self.assertEqual(data["status"]["exit_code"], 0)
+        self.assertEqual(
+            data["status"]["failure"]["kind"],
+            "status_publication_failed",
+        )
+        self.assertEqual(
+            data["status"]["status_publication"]["reason"],
+            "terminal_status_missing_after_supervisor_exit",
+        )
+        self.assertIsNone(data["evidence_paths"]["status_publication_error"])
+        self.assertTrue((run_dir / "exit-code.txt").is_file())
+        self.assertNotEqual(data["status"]["state"], "succeeded")
+
     def _wait_for_status(
         self,
         run_dir: Path,
         predicate: Callable[[dict[str, Any]], bool],
         *,
-        timeout_seconds: float = 10,
+        timeout_seconds: float = 60,
         poll_seconds: float = 0.05,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds

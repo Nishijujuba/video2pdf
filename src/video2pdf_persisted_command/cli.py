@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+import errno
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,8 @@ COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
 HEARTBEAT_INTERVAL_SECONDS = 29.0
 STATUS_LOCK_FILENAME = ".status.lock"
+STATUS_LOCK_RETRY_ATTEMPTS = 1500
+STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
 STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
 STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
@@ -148,7 +151,18 @@ def _status_lock(run_dir: Path) -> Iterator[None]:
         if os.name == "nt":
             import msvcrt
 
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            for attempt in range(STATUS_LOCK_RETRY_ATTEMPTS):
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if (
+                        error.errno
+                        not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
+                        or attempt == STATUS_LOCK_RETRY_ATTEMPTS - 1
+                    ):
+                        raise
+                    time.sleep(STATUS_LOCK_RETRY_DELAY_SECONDS)
             try:
                 yield
             finally:
@@ -183,25 +197,81 @@ def _write_status_locked(run_dir: Path, status: dict[str, Any]) -> None:
 def _read_status_locked(run_dir: Path) -> dict[str, Any]:
     status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
     publication_error_path = run_dir / STATUS_PUBLICATION_ERROR_FILENAME
-    if not publication_error_path.is_file():
+    if publication_error_path.is_file():
+        publication_error = json.loads(
+            publication_error_path.read_text(encoding="utf-8")
+        )
+        if publication_error["run_id"] != status["run_id"]:
+            raise ValueError(
+                "status and publication error records have different run IDs"
+            )
+        return _unverifiable_status_view(
+            status,
+            recorded_at=publication_error["recorded_at"],
+            exit_code=publication_error["exit_code"],
+            reason="publication_error_recorded",
+            evidence_path=str(publication_error_path),
+        )
+
+    exit_code_path = run_dir / "exit-code.txt"
+    if status.get("state") != "running" or not exit_code_path.is_file():
         return status
-    publication_error = json.loads(
-        publication_error_path.read_text(encoding="utf-8")
+    supervisor_pid = status.get("supervisor_pid")
+    if not isinstance(supervisor_pid, int):
+        return status
+    observation, observed_creation_identity = _process_observation(supervisor_pid)
+    persisted_identity = (
+        status.get("supervisor_identity") or {}
+    ).get("process_creation_identity")
+    supervisor_exited = observation == "missing" or (
+        observation == "present"
+        and isinstance(persisted_identity, str)
+        and observed_creation_identity != persisted_identity
     )
-    if publication_error["run_id"] != status["run_id"]:
-        raise ValueError("status and publication error records have different run IDs")
+    if not supervisor_exited:
+        return status
+    try:
+        exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        exit_code = None
+    recorded_at = datetime.fromtimestamp(
+        exit_code_path.stat().st_mtime
+    ).astimezone().isoformat(timespec="milliseconds")
+    return _unverifiable_status_view(
+        status,
+        recorded_at=recorded_at,
+        exit_code=exit_code,
+        reason="terminal_status_missing_after_supervisor_exit",
+        evidence_path=None,
+    )
+
+
+def _unverifiable_status_view(
+    status: dict[str, Any],
+    *,
+    recorded_at: str,
+    exit_code: int | None,
+    reason: str,
+    evidence_path: str | None,
+) -> dict[str, Any]:
+    publication = {
+        "state": "failed",
+        "reason": reason,
+        "recorded_at": recorded_at,
+    }
+    if evidence_path is not None:
+        publication["evidence_path"] = evidence_path
     return {
         **status,
         "state": "unknown",
-        "updated_at": publication_error["recorded_at"],
-        "finished_at": publication_error["recorded_at"],
-        "exit_code": publication_error["exit_code"],
-        "failure": publication_error["failure"],
-        "status_publication": {
-            "state": "failed",
-            "evidence_path": str(publication_error_path),
-            "recorded_at": publication_error["recorded_at"],
+        "updated_at": recorded_at,
+        "finished_at": recorded_at,
+        "exit_code": exit_code,
+        "failure": {
+            "kind": "status_publication_failed",
+            "message": "terminal status could not be atomically published",
         },
+        "status_publication": publication,
     }
 
 
@@ -228,6 +298,25 @@ def _record_terminal_status_publication_error(
             run_dir / STATUS_PUBLICATION_ERROR_FILENAME,
             record,
         )
+
+
+def _publish_terminal_status(
+    run_dir: Path,
+    status: dict[str, Any],
+) -> bool:
+    try:
+        _write_status_atomic(run_dir, status)
+        return True
+    except OSError:
+        try:
+            _record_terminal_status_publication_error(
+                run_dir,
+                status["run_id"],
+                exit_code=status.get("exit_code"),
+            )
+        except OSError:
+            return False
+        return False
 
 
 def _write_text_atomic(path: Path, value: str) -> None:
@@ -605,29 +694,22 @@ def _record_supervisor_handoff_failure(
     *,
     supervisor_pid: int,
 ) -> None:
-    try:
-        _write_status_atomic(
-            run_dir,
-            _status(
-                command_record["run_id"],
-                "launch_failed",
-                started_at=command_record["created_at"],
-                finished_at=_now(),
-                supervisor_pid=supervisor_pid,
-                child_pid=None,
-                exit_code=None,
-                failure={
-                    "kind": "supervisor_handoff_failed",
-                    "message": "target launch request could not be received",
-                },
-            ),
-        )
-    except OSError:
-        _record_terminal_status_publication_error(
-            run_dir,
+    _publish_terminal_status(
+        run_dir,
+        _status(
             command_record["run_id"],
+            "launch_failed",
+            started_at=command_record["created_at"],
+            finished_at=_now(),
+            supervisor_pid=supervisor_pid,
+            child_pid=None,
             exit_code=None,
-        )
+            failure={
+                "kind": "supervisor_handoff_failed",
+                "message": "target launch request could not be received",
+            },
+        ),
+    )
 
 
 def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
@@ -800,29 +882,22 @@ def _supervise(run_dir: Path) -> int:
             stderr=subprocess.PIPE,
         )
     except OSError:
-        try:
-            _write_status_atomic(
-                run_dir,
-                _status(
-                    run_id,
-                    "launch_failed",
-                    started_at=command_record["created_at"],
-                    finished_at=_now(),
-                    supervisor_pid=os.getpid(),
-                    child_pid=None,
-                    exit_code=None,
-                    failure={
-                        "kind": "child_launch_failed",
-                        "message": "target process could not be launched",
-                    },
-                ),
-            )
-        except OSError:
-            _record_terminal_status_publication_error(
-                run_dir,
+        _publish_terminal_status(
+            run_dir,
+            _status(
                 run_id,
+                "launch_failed",
+                started_at=command_record["created_at"],
+                finished_at=_now(),
+                supervisor_pid=os.getpid(),
+                child_pid=None,
                 exit_code=None,
-            )
+                failure={
+                    "kind": "child_launch_failed",
+                    "message": "target process could not be launched",
+                },
+            ),
+        )
         return 1
 
     supervisor_pid = os.getpid()
@@ -985,33 +1060,25 @@ def _supervise(run_dir: Path) -> int:
             "state": "recovered",
             "nonterminal_failures": nonterminal_status_publication_failures,
         }
-    try:
-        _write_status_atomic(
-            run_dir,
-            _execution_status(
-                run_id,
-                terminal_state,
-                run_dir,
-                started_at=command_record["created_at"],
-                elapsed_seconds=time.monotonic() - started_monotonic,
-                finished_at=_now(),
-                supervisor_pid=supervisor_pid,
-                supervisor_creation_identity=supervisor_creation_identity,
-                target_pid=process.pid,
-                target_creation_identity=target_creation_identity,
-                latest_output_at=latest_output_at,
-                exit_code=exit_code,
-                **terminal_fields,
-            ),
-        )
-    except OSError:
-        _record_terminal_status_publication_error(
-            run_dir,
+    terminal_published = _publish_terminal_status(
+        run_dir,
+        _execution_status(
             run_id,
+            terminal_state,
+            run_dir,
+            started_at=command_record["created_at"],
+            elapsed_seconds=time.monotonic() - started_monotonic,
+            finished_at=_now(),
+            supervisor_pid=supervisor_pid,
+            supervisor_creation_identity=supervisor_creation_identity,
+            target_pid=process.pid,
+            target_creation_identity=target_creation_identity,
+            latest_output_at=latest_output_at,
             exit_code=exit_code,
-        )
-        return 1
-    return 0
+            **terminal_fields,
+        ),
+    )
+    return 0 if terminal_published else 1
 
 def _resolve_run_directory(run_dir: Path, project_root: Path) -> Path:
     resolved = run_dir.resolve()

@@ -23,6 +23,8 @@ COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
 HEARTBEAT_INTERVAL_SECONDS = 29.0
 STATUS_LOCK_FILENAME = ".status.lock"
+STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
+STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 _COOKIE_FILE_ARGUMENTS = frozenset(
     {
@@ -96,18 +98,41 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+def _is_windows_sharing_conflict(error: OSError) -> bool:
+    return os.name == "nt" and getattr(error, "winerror", None) in {5, 32, 33}
 
 
-def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+def _write_json_atomic(
+    path: Path,
+    value: dict[str, Any],
+    *,
+    replace_retry_delays: Sequence[float] = (),
+) -> None:
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     with temporary.open("x", encoding="utf-8", newline="\n") as handle:
         json.dump(value, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    for attempt in range(len(replace_retry_delays) + 1):
+        try:
+            os.replace(temporary, path)
+            return
+        except OSError as error:
+            if (
+                not _is_windows_sharing_conflict(error)
+                or attempt == len(replace_retry_delays)
+            ):
+                raise
+            time.sleep(replace_retry_delays[attempt])
+
+
+def _write_json_new_locked(path: Path, value: dict[str, Any]) -> None:
+    with path.open("x", encoding="utf-8", newline="\n") as handle:
+        json.dump(value, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 @contextmanager
@@ -144,7 +169,65 @@ def _status_lock(run_dir: Path) -> Iterator[None]:
 
 def _write_status_atomic(run_dir: Path, status: dict[str, Any]) -> None:
     with _status_lock(run_dir):
-        _write_json_atomic(run_dir / "status.json", status)
+        _write_status_locked(run_dir, status)
+
+
+def _write_status_locked(run_dir: Path, status: dict[str, Any]) -> None:
+    _write_json_atomic(
+        run_dir / "status.json",
+        status,
+        replace_retry_delays=STATUS_REPLACE_RETRY_DELAYS_SECONDS,
+    )
+
+
+def _read_status_locked(run_dir: Path) -> dict[str, Any]:
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    publication_error_path = run_dir / STATUS_PUBLICATION_ERROR_FILENAME
+    if not publication_error_path.is_file():
+        return status
+    publication_error = json.loads(
+        publication_error_path.read_text(encoding="utf-8")
+    )
+    if publication_error["run_id"] != status["run_id"]:
+        raise ValueError("status and publication error records have different run IDs")
+    return {
+        **status,
+        "state": "unknown",
+        "updated_at": publication_error["recorded_at"],
+        "finished_at": publication_error["recorded_at"],
+        "exit_code": publication_error["exit_code"],
+        "failure": publication_error["failure"],
+        "status_publication": {
+            "state": "failed",
+            "evidence_path": str(publication_error_path),
+            "recorded_at": publication_error["recorded_at"],
+        },
+    }
+
+
+def _record_terminal_status_publication_error(
+    run_dir: Path,
+    run_id: str,
+    *,
+    exit_code: int | None,
+) -> None:
+    record = {
+        "schema_name": "persisted-command-status-publication-error",
+        "schema_version": "1.0.0",
+        "run_id": run_id,
+        "state": "unknown",
+        "recorded_at": _now(),
+        "exit_code": exit_code,
+        "failure": {
+            "kind": "status_publication_failed",
+            "message": "terminal status could not be atomically published",
+        },
+    }
+    with _status_lock(run_dir):
+        _write_json_new_locked(
+            run_dir / STATUS_PUBLICATION_ERROR_FILENAME,
+            record,
+        )
 
 
 def _write_text_atomic(path: Path, value: str) -> None:
@@ -522,22 +605,29 @@ def _record_supervisor_handoff_failure(
     *,
     supervisor_pid: int,
 ) -> None:
-    _write_json_atomic(
-        run_dir / "status.json",
-        _status(
+    try:
+        _write_status_atomic(
+            run_dir,
+            _status(
+                command_record["run_id"],
+                "launch_failed",
+                started_at=command_record["created_at"],
+                finished_at=_now(),
+                supervisor_pid=supervisor_pid,
+                child_pid=None,
+                exit_code=None,
+                failure={
+                    "kind": "supervisor_handoff_failed",
+                    "message": "target launch request could not be received",
+                },
+            ),
+        )
+    except OSError:
+        _record_terminal_status_publication_error(
+            run_dir,
             command_record["run_id"],
-            "launch_failed",
-            started_at=command_record["created_at"],
-            finished_at=_now(),
-            supervisor_pid=supervisor_pid,
-            child_pid=None,
             exit_code=None,
-            failure={
-                "kind": "supervisor_handoff_failed",
-                "message": "target launch request could not be received",
-            },
-        ),
-    )
+        )
 
 
 def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
@@ -710,44 +800,55 @@ def _supervise(run_dir: Path) -> int:
             stderr=subprocess.PIPE,
         )
     except OSError:
-        _write_json_atomic(
-            run_dir / "status.json",
-            _status(
+        try:
+            _write_status_atomic(
+                run_dir,
+                _status(
+                    run_id,
+                    "launch_failed",
+                    started_at=command_record["created_at"],
+                    finished_at=_now(),
+                    supervisor_pid=os.getpid(),
+                    child_pid=None,
+                    exit_code=None,
+                    failure={
+                        "kind": "child_launch_failed",
+                        "message": "target process could not be launched",
+                    },
+                ),
+            )
+        except OSError:
+            _record_terminal_status_publication_error(
+                run_dir,
                 run_id,
-                "launch_failed",
-                started_at=command_record["created_at"],
-                finished_at=_now(),
-                supervisor_pid=os.getpid(),
-                child_pid=None,
                 exit_code=None,
-                failure={
-                    "kind": "child_launch_failed",
-                    "message": "target process could not be launched",
-                },
-            ),
-        )
+            )
         return 1
 
     supervisor_pid = os.getpid()
     supervisor_creation_identity = _process_identity(supervisor_pid)
     target_creation_identity = _process_identity(process.pid)
     latest_output_at = None
-    _write_status_atomic(
-        run_dir,
-        _execution_status(
-            run_id,
-            "running",
+    nonterminal_status_publication_failures = 0
+    try:
+        _write_status_atomic(
             run_dir,
-            started_at=command_record["created_at"],
-            elapsed_seconds=time.monotonic() - started_monotonic,
-            supervisor_pid=supervisor_pid,
-            supervisor_creation_identity=supervisor_creation_identity,
-            target_pid=process.pid,
-            target_creation_identity=target_creation_identity,
-            latest_output_at=latest_output_at,
-            exit_code=None,
-        ),
-    )
+            _execution_status(
+                run_id,
+                "running",
+                run_dir,
+                started_at=command_record["created_at"],
+                elapsed_seconds=time.monotonic() - started_monotonic,
+                supervisor_pid=supervisor_pid,
+                supervisor_creation_identity=supervisor_creation_identity,
+                target_pid=process.pid,
+                target_creation_identity=target_creation_identity,
+                latest_output_at=latest_output_at,
+                exit_code=None,
+            ),
+        )
+    except OSError:
+        nonterminal_status_publication_failures += 1
 
     assert process.stdout is not None
     assert process.stderr is not None
@@ -821,22 +922,25 @@ def _supervise(run_dir: Path) -> int:
 
             current_monotonic = time.monotonic()
             if current_monotonic >= next_heartbeat:
-                _write_status_atomic(
-                    run_dir,
-                    _execution_status(
-                        run_id,
-                        "running",
+                try:
+                    _write_status_atomic(
                         run_dir,
-                        started_at=command_record["created_at"],
-                        elapsed_seconds=current_monotonic - started_monotonic,
-                        supervisor_pid=supervisor_pid,
-                        supervisor_creation_identity=supervisor_creation_identity,
-                        target_pid=process.pid,
-                        target_creation_identity=target_creation_identity,
-                        latest_output_at=latest_output_at,
-                        exit_code=None,
-                    ),
-                )
+                        _execution_status(
+                            run_id,
+                            "running",
+                            run_dir,
+                            started_at=command_record["created_at"],
+                            elapsed_seconds=current_monotonic - started_monotonic,
+                            supervisor_pid=supervisor_pid,
+                            supervisor_creation_identity=supervisor_creation_identity,
+                            target_pid=process.pid,
+                            target_creation_identity=target_creation_identity,
+                            latest_output_at=latest_output_at,
+                            exit_code=None,
+                        ),
+                    )
+                except OSError:
+                    nonterminal_status_publication_failures += 1
                 while next_heartbeat <= current_monotonic:
                     next_heartbeat += HEARTBEAT_INTERVAL_SECONDS
 
@@ -876,33 +980,56 @@ def _supervise(run_dir: Path) -> int:
             "kind": "log_persistence_failed",
             "message": "one or more command logs could not be persisted",
         }
-    _write_status_atomic(
-        run_dir,
-        _execution_status(
-            run_id,
-            terminal_state,
+    if nonterminal_status_publication_failures:
+        terminal_fields["status_publication"] = {
+            "state": "recovered",
+            "nonterminal_failures": nonterminal_status_publication_failures,
+        }
+    try:
+        _write_status_atomic(
             run_dir,
-            started_at=command_record["created_at"],
-            elapsed_seconds=time.monotonic() - started_monotonic,
-            finished_at=_now(),
-            supervisor_pid=supervisor_pid,
-            supervisor_creation_identity=supervisor_creation_identity,
-            target_pid=process.pid,
-            target_creation_identity=target_creation_identity,
-            latest_output_at=latest_output_at,
+            _execution_status(
+                run_id,
+                terminal_state,
+                run_dir,
+                started_at=command_record["created_at"],
+                elapsed_seconds=time.monotonic() - started_monotonic,
+                finished_at=_now(),
+                supervisor_pid=supervisor_pid,
+                supervisor_creation_identity=supervisor_creation_identity,
+                target_pid=process.pid,
+                target_creation_identity=target_creation_identity,
+                latest_output_at=latest_output_at,
+                exit_code=exit_code,
+                **terminal_fields,
+            ),
+        )
+    except OSError:
+        _record_terminal_status_publication_error(
+            run_dir,
+            run_id,
             exit_code=exit_code,
-            **terminal_fields,
-        ),
-    )
+        )
+        return 1
     return 0
 
-def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
+def _resolve_run_directory(run_dir: Path, project_root: Path) -> Path:
     resolved = run_dir.resolve()
     durable_root = (project_root / "待删除/long-running").resolve()
     if not resolved.is_relative_to(durable_root):
         raise ValueError(f"run directory is outside {durable_root}")
+    return resolved
+
+
+def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
+    resolved = _resolve_run_directory(run_dir, project_root)
+    with _status_lock(resolved):
+        return _inspect_locked(resolved)
+
+
+def _inspect_locked(resolved: Path) -> dict[str, Any]:
     command = json.loads((resolved / "command.json").read_text(encoding="utf-8"))
-    status = json.loads((resolved / "status.json").read_text(encoding="utf-8"))
+    status = _read_status_locked(resolved)
     if command["run_id"] != status["run_id"]:
         raise ValueError("command and status records have different run IDs")
     evidence_paths = {
@@ -914,6 +1041,11 @@ def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
         "exit_code": (
             str(resolved / "exit-code.txt")
             if (resolved / "exit-code.txt").is_file()
+            else None
+        ),
+        "status_publication_error": (
+            str(resolved / STATUS_PUBLICATION_ERROR_FILENAME)
+            if (resolved / STATUS_PUBLICATION_ERROR_FILENAME).is_file()
             else None
         ),
     }
@@ -956,14 +1088,12 @@ def _list_runs(project_root: Path) -> dict[str, Any]:
 
 
 def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
-    snapshot = _inspect(run_dir, project_root)
-    resolved_run_dir = Path(snapshot["run_dir"])
+    resolved_run_dir = _resolve_run_directory(run_dir, project_root)
     with _status_lock(resolved_run_dir):
-        return _reconcile_locked(resolved_run_dir, project_root)
+        return _reconcile_locked(_inspect_locked(resolved_run_dir))
 
 
-def _reconcile_locked(run_dir: Path, project_root: Path) -> dict[str, Any]:
-    snapshot = _inspect(run_dir, project_root)
+def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
     status = snapshot["status"]
 
     def persist_correction(
@@ -991,11 +1121,9 @@ def _reconcile_locked(run_dir: Path, project_root: Path) -> dict[str, Any]:
             "updated_at": reconciliation["observed_at"],
             "reconciliation": reconciliation,
         }
-        _write_json_atomic(
-            Path(snapshot["run_dir"]) / "status.json",
-            corrected_status,
-        )
-        corrected_snapshot = _inspect(run_dir, project_root)
+        resolved_run_dir = Path(snapshot["run_dir"])
+        _write_status_locked(resolved_run_dir, corrected_status)
+        corrected_snapshot = _inspect_locked(resolved_run_dir)
         corrected_snapshot["reconciliation"] = reconciliation
         return corrected_snapshot
 
@@ -1098,7 +1226,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.operation == "_supervise":
         return _supervise(args.run_dir.resolve())
-    project_root = _project_root()
+    project_root = Path(__file__).resolve().parents[2]
     timed_out = False
     if args.operation == "start":
         data = _start(args, project_root)

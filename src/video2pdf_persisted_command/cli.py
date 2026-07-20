@@ -26,6 +26,8 @@ HEARTBEAT_INTERVAL_SECONDS = 29.0
 STATUS_LOCK_FILENAME = ".status.lock"
 STATUS_LOCK_RETRY_ATTEMPTS = 1500
 STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
+STATUS_READER_LOCK_RETRY_ATTEMPTS = 15000
+SUPERVISOR_IDENTITY_FILENAME = "supervisor-identity.json"
 STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
 STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
@@ -139,7 +141,11 @@ def _write_json_new_locked(path: Path, value: dict[str, Any]) -> None:
 
 
 @contextmanager
-def _status_lock(run_dir: Path) -> Iterator[None]:
+def _status_lock(
+    run_dir: Path,
+    *,
+    retry_attempts: int = STATUS_LOCK_RETRY_ATTEMPTS,
+) -> Iterator[None]:
     lock_path = run_dir / STATUS_LOCK_FILENAME
     with lock_path.open("a+b") as handle:
         handle.seek(0, os.SEEK_END)
@@ -151,7 +157,7 @@ def _status_lock(run_dir: Path) -> Iterator[None]:
         if os.name == "nt":
             import msvcrt
 
-            for attempt in range(STATUS_LOCK_RETRY_ATTEMPTS):
+            for attempt in range(retry_attempts):
                 try:
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                     break
@@ -159,7 +165,7 @@ def _status_lock(run_dir: Path) -> Iterator[None]:
                     if (
                         error.errno
                         not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
-                        or attempt == STATUS_LOCK_RETRY_ATTEMPTS - 1
+                        or attempt == retry_attempts - 1
                     ):
                         raise
                     time.sleep(STATUS_LOCK_RETRY_DELAY_SECONDS)
@@ -194,7 +200,11 @@ def _write_status_locked(run_dir: Path, status: dict[str, Any]) -> None:
     )
 
 
-def _read_status_locked(run_dir: Path) -> dict[str, Any]:
+def _read_status_locked(
+    run_dir: Path,
+    *,
+    infer_missing_terminal: bool = True,
+) -> dict[str, Any]:
     status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
     publication_error_path = run_dir / STATUS_PUBLICATION_ERROR_FILENAME
     if publication_error_path.is_file():
@@ -213,36 +223,70 @@ def _read_status_locked(run_dir: Path) -> dict[str, Any]:
             evidence_path=str(publication_error_path),
         )
 
-    exit_code_path = run_dir / "exit-code.txt"
-    if status.get("state") != "running" or not exit_code_path.is_file():
+    if status.get("state") != "running" or not infer_missing_terminal:
         return status
     supervisor_pid = status.get("supervisor_pid")
-    if not isinstance(supervisor_pid, int):
-        return status
-    observation, observed_creation_identity = _process_observation(supervisor_pid)
     persisted_identity = (
         status.get("supervisor_identity") or {}
     ).get("process_creation_identity")
+    identity_evidence_path: Path | None = None
+    if not isinstance(supervisor_pid, int) or not isinstance(
+        persisted_identity, str
+    ):
+        supervisor_identity_path = run_dir / SUPERVISOR_IDENTITY_FILENAME
+        if supervisor_identity_path.is_file():
+            supervisor_record = json.loads(
+                supervisor_identity_path.read_text(encoding="utf-8")
+            )
+            if supervisor_record["run_id"] != status["run_id"]:
+                raise ValueError(
+                    "status and supervisor identity records have different run IDs"
+                )
+            supervisor_pid = supervisor_record["supervisor_pid"]
+            persisted_identity = supervisor_record["process_creation_identity"]
+            identity_evidence_path = supervisor_identity_path
+    if not isinstance(supervisor_pid, int) or not isinstance(
+        persisted_identity, str
+    ):
+        return status
+    observation, observed_creation_identity = _process_observation(supervisor_pid)
     supervisor_exited = observation == "missing" or (
         observation == "present"
-        and isinstance(persisted_identity, str)
         and observed_creation_identity != persisted_identity
     )
     if not supervisor_exited:
         return status
-    try:
-        exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        exit_code = None
-    recorded_at = datetime.fromtimestamp(
-        exit_code_path.stat().st_mtime
-    ).astimezone().isoformat(timespec="milliseconds")
+    status = {
+        **status,
+        "supervisor_pid": supervisor_pid,
+        "supervisor_identity": {
+            "pid": supervisor_pid,
+            "process_creation_identity": persisted_identity,
+        },
+    }
+    exit_code_path = run_dir / "exit-code.txt"
+    exit_code = None
+    recorded_at = _now()
+    evidence_path = (
+        str(identity_evidence_path)
+        if identity_evidence_path is not None
+        else None
+    )
+    if exit_code_path.is_file():
+        evidence_path = str(exit_code_path)
+        try:
+            exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            exit_code = None
+        recorded_at = datetime.fromtimestamp(
+            exit_code_path.stat().st_mtime
+        ).astimezone().isoformat(timespec="milliseconds")
     return _unverifiable_status_view(
         status,
         recorded_at=recorded_at,
         exit_code=exit_code,
         reason="terminal_status_missing_after_supervisor_exit",
-        evidence_path=None,
+        evidence_path=evidence_path,
     )
 
 
@@ -296,6 +340,26 @@ def _record_terminal_status_publication_error(
     with _status_lock(run_dir):
         _write_json_new_locked(
             run_dir / STATUS_PUBLICATION_ERROR_FILENAME,
+            record,
+        )
+
+
+def _record_supervisor_identity(
+    run_dir: Path,
+    run_id: str,
+    supervisor_pid: int,
+) -> None:
+    record = {
+        "schema_name": "persisted-command-supervisor-identity",
+        "schema_version": "1.0.0",
+        "run_id": run_id,
+        "recorded_at": _now(),
+        "supervisor_pid": supervisor_pid,
+        "process_creation_identity": _process_identity(supervisor_pid),
+    }
+    with _status_lock(run_dir):
+        _write_json_new_locked(
+            run_dir / SUPERVISOR_IDENTITY_FILENAME,
             record,
         )
 
@@ -797,6 +861,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         options["start_new_session"] = True
     supervisor = subprocess.Popen(supervisor_command, **options)
     assert supervisor.stdin is not None
+    _record_supervisor_identity(run_dir, run_id, supervisor.pid)
     launch_request = json.dumps(
         {
             "argv": target_command,
@@ -1090,13 +1155,23 @@ def _resolve_run_directory(run_dir: Path, project_root: Path) -> Path:
 
 def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
     resolved = _resolve_run_directory(run_dir, project_root)
-    with _status_lock(resolved):
+    with _status_lock(
+        resolved,
+        retry_attempts=STATUS_READER_LOCK_RETRY_ATTEMPTS,
+    ):
         return _inspect_locked(resolved)
 
 
-def _inspect_locked(resolved: Path) -> dict[str, Any]:
+def _inspect_locked(
+    resolved: Path,
+    *,
+    infer_missing_terminal: bool = True,
+) -> dict[str, Any]:
     command = json.loads((resolved / "command.json").read_text(encoding="utf-8"))
-    status = _read_status_locked(resolved)
+    status = _read_status_locked(
+        resolved,
+        infer_missing_terminal=infer_missing_terminal,
+    )
     if command["run_id"] != status["run_id"]:
         raise ValueError("command and status records have different run IDs")
     evidence_paths = {
@@ -1113,6 +1188,11 @@ def _inspect_locked(resolved: Path) -> dict[str, Any]:
         "status_publication_error": (
             str(resolved / STATUS_PUBLICATION_ERROR_FILENAME)
             if (resolved / STATUS_PUBLICATION_ERROR_FILENAME).is_file()
+            else None
+        ),
+        "supervisor_identity": (
+            str(resolved / SUPERVISOR_IDENTITY_FILENAME)
+            if (resolved / SUPERVISOR_IDENTITY_FILENAME).is_file()
             else None
         ),
     }
@@ -1157,7 +1237,12 @@ def _list_runs(project_root: Path) -> dict[str, Any]:
 def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
     resolved_run_dir = _resolve_run_directory(run_dir, project_root)
     with _status_lock(resolved_run_dir):
-        return _reconcile_locked(_inspect_locked(resolved_run_dir))
+        return _reconcile_locked(
+            _inspect_locked(
+                resolved_run_dir,
+                infer_missing_terminal=False,
+            )
+        )
 
 
 def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:

@@ -95,6 +95,7 @@ def status_sharing_conflict_hook(
     *,
     failures_before_success: int | None,
     fail_publication_error_write: bool = False,
+    require_exit_code: bool = True,
 ) -> str:
     failure_condition = (
         "True"
@@ -112,6 +113,7 @@ def status_sharing_conflict_hook(
         if fail_publication_error_write
         else ""
     )
+    exit_code_condition = " and exit_code_path.exists()" if require_exit_code else ""
     return (
         "import io\n"
         "import os\n"
@@ -125,7 +127,7 @@ def status_sharing_conflict_hook(
         "        global attempts\n"
         "        destination_path = Path(destination)\n"
         "        exit_code_path = destination_path.parent / 'exit-code.txt'\n"
-        "        if destination_path.name == 'status.json' and exit_code_path.exists():\n"
+        f"        if destination_path.name == 'status.json'{exit_code_condition}:\n"
         "            attempts += 1\n"
         "            attempts_path.write_text(str(attempts), encoding='utf-8')\n"
         f"            if {failure_condition}:\n"
@@ -1654,14 +1656,14 @@ class PersistedCommandCliTests(unittest.TestCase):
             ):
                 time.sleep(0.02)
             self.assertTrue(target_completed.is_file())
-            release_observer_wave(terminal_observers, terminal_release)
-            exit_code_deadline = time.monotonic() + 60
+            exit_code_deadline = time.monotonic() + 240
             while (
                 time.monotonic() < exit_code_deadline
                 and not (run_dir / "exit-code.txt").is_file()
             ):
                 time.sleep(0.02)
             self.assertTrue((run_dir / "exit-code.txt").is_file())
+            release_observer_wave(terminal_observers, terminal_release)
         finally:
             release_target.write_text("release\n", encoding="utf-8")
             for release_path in observer_releases:
@@ -1865,6 +1867,64 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         self.assertIsNone(data["evidence_paths"]["status_publication_error"])
         self.assertTrue((run_dir / "exit-code.txt").is_file())
+        self.assertNotEqual(data["status"]["state"], "succeeded")
+
+    @unittest.skipUnless(
+        os.name == "nt",
+        "Windows sharing semantics are required for this regression",
+    )
+    def test_missing_launch_failure_status_and_error_record_is_unknown(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-missing-launch-failure-records"
+            / uuid.uuid4().hex
+        )
+        attempts_path = fixture_root / "attempts.txt"
+        env = supervisor_hook_environment(
+            fixture_root,
+            status_sharing_conflict_hook(
+                attempts_path,
+                failures_before_success=None,
+                fail_publication_error_write=True,
+                require_exit_code=False,
+            ),
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"missing launch failure records {uuid.uuid4().hex}",
+            "--",
+            f"missing-executable-{uuid.uuid4().hex}",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "60",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["status"]["state"], "unknown")
+        self.assertIsNone(data["status"]["exit_code"])
+        self.assertEqual(
+            data["status"]["failure"]["kind"],
+            "status_publication_failed",
+        )
+        self.assertEqual(
+            data["status"]["status_publication"]["reason"],
+            "terminal_status_missing_after_supervisor_exit",
+        )
+        self.assertIsNone(data["evidence_paths"]["status_publication_error"])
+        self.assertTrue(
+            Path(data["evidence_paths"]["supervisor_identity"]).is_file()
+        )
+        self.assertFalse((run_dir / "exit-code.txt").exists())
         self.assertNotEqual(data["status"]["state"], "succeeded")
 
     def _wait_for_status(

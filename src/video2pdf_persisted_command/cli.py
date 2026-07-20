@@ -348,20 +348,22 @@ def _record_supervisor_identity(
     run_dir: Path,
     run_id: str,
     supervisor_pid: int,
-) -> None:
+) -> str | None:
+    process_creation_identity = _process_identity(supervisor_pid)
     record = {
         "schema_name": "persisted-command-supervisor-identity",
         "schema_version": "1.0.0",
         "run_id": run_id,
         "recorded_at": _now(),
         "supervisor_pid": supervisor_pid,
-        "process_creation_identity": _process_identity(supervisor_pid),
+        "process_creation_identity": process_creation_identity,
     }
     with _status_lock(run_dir):
         _write_json_new_locked(
             run_dir / SUPERVISOR_IDENTITY_FILENAME,
             record,
         )
+    return process_creation_identity
 
 
 def _publish_terminal_status(
@@ -720,7 +722,7 @@ def _execution_status(
     elapsed_seconds: float,
     supervisor_pid: int,
     supervisor_creation_identity: str | None,
-    target_pid: int,
+    target_pid: int | None,
     target_creation_identity: str | None,
     latest_output_at: str | None,
     exit_code: int | None,
@@ -752,31 +754,64 @@ def _execution_status(
     if finished_at is not None:
         status["finished_at"] = finished_at
     return status
+
+
+def _launch_failure_status(
+    run_id: str,
+    run_dir: Path,
+    *,
+    started_at: str,
+    started_monotonic: float,
+    supervisor_pid: int,
+    supervisor_creation_identity: str | None,
+    failure_kind: str,
+    failure_message: str,
+) -> dict[str, Any]:
+    return _execution_status(
+        run_id,
+        "launch_failed",
+        run_dir,
+        started_at=started_at,
+        elapsed_seconds=time.monotonic() - started_monotonic,
+        finished_at=_now(),
+        supervisor_pid=supervisor_pid,
+        supervisor_creation_identity=supervisor_creation_identity,
+        target_pid=None,
+        target_creation_identity=None,
+        latest_output_at=None,
+        exit_code=None,
+        failure={
+            "kind": failure_kind,
+            "message": failure_message,
+        },
+    )
+
+
 def _record_supervisor_handoff_failure(
     run_dir: Path,
     command_record: Mapping[str, Any],
     *,
+    started_monotonic: float,
     supervisor_pid: int,
+    supervisor_creation_identity: str | None,
 ) -> None:
     _publish_terminal_status(
         run_dir,
-        _status(
+        _launch_failure_status(
             command_record["run_id"],
-            "launch_failed",
+            run_dir,
             started_at=command_record["created_at"],
-            finished_at=_now(),
+            started_monotonic=started_monotonic,
             supervisor_pid=supervisor_pid,
-            child_pid=None,
-            exit_code=None,
-            failure={
-                "kind": "supervisor_handoff_failed",
-                "message": "target launch request could not be received",
-            },
+            supervisor_creation_identity=supervisor_creation_identity,
+            failure_kind="supervisor_handoff_failed",
+            failure_message="target launch request could not be received",
         ),
     )
 
 
 def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
+    started_monotonic = time.monotonic()
     target_command = list(args.target_command)
     if target_command[:1] == ["--"]:
         target_command = target_command[1:]
@@ -861,7 +896,11 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         options["start_new_session"] = True
     supervisor = subprocess.Popen(supervisor_command, **options)
     assert supervisor.stdin is not None
-    _record_supervisor_identity(run_dir, run_id, supervisor.pid)
+    supervisor_creation_identity = _record_supervisor_identity(
+        run_dir,
+        run_id,
+        supervisor.pid,
+    )
     launch_request = json.dumps(
         {
             "argv": target_command,
@@ -881,7 +920,9 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         _record_supervisor_handoff_failure(
             run_dir,
             command_record,
+            started_monotonic=started_monotonic,
             supervisor_pid=supervisor.pid,
+            supervisor_creation_identity=supervisor_creation_identity,
         )
     return {"run_id": run_id, "run_dir": str(run_dir)}
 
@@ -915,6 +956,9 @@ class _LogExitStack(ExitStack):
 def _supervise(run_dir: Path) -> int:
     command_record = json.loads((run_dir / "command.json").read_text(encoding="utf-8"))
     run_id = command_record["run_id"]
+    started_monotonic = time.monotonic()
+    supervisor_pid = os.getpid()
+    supervisor_creation_identity = _process_identity(supervisor_pid)
     try:
         launch_request = json.load(sys.stdin)
         target_command = launch_request["argv"]
@@ -928,7 +972,11 @@ def _supervise(run_dir: Path) -> int:
         working_directory = Path(raw_working_directory)
     except (KeyError, OSError, TypeError, ValueError):
         _record_supervisor_handoff_failure(
-            run_dir, command_record, supervisor_pid=os.getpid()
+            run_dir,
+            command_record,
+            started_monotonic=started_monotonic,
+            supervisor_pid=supervisor_pid,
+            supervisor_creation_identity=supervisor_creation_identity,
         )
         return 1
 
@@ -937,7 +985,6 @@ def _supervise(run_dir: Path) -> int:
         environment=os.environ,
         working_directory=working_directory,
     )
-    started_monotonic = time.monotonic()
     try:
         process = subprocess.Popen(
             target_command,
@@ -949,24 +996,19 @@ def _supervise(run_dir: Path) -> int:
     except OSError:
         _publish_terminal_status(
             run_dir,
-            _status(
+            _launch_failure_status(
                 run_id,
-                "launch_failed",
+                run_dir,
                 started_at=command_record["created_at"],
-                finished_at=_now(),
-                supervisor_pid=os.getpid(),
-                child_pid=None,
-                exit_code=None,
-                failure={
-                    "kind": "child_launch_failed",
-                    "message": "target process could not be launched",
-                },
+                started_monotonic=started_monotonic,
+                supervisor_pid=supervisor_pid,
+                supervisor_creation_identity=supervisor_creation_identity,
+                failure_kind="child_launch_failed",
+                failure_message="target process could not be launched",
             ),
         )
         return 1
 
-    supervisor_pid = os.getpid()
-    supervisor_creation_identity = _process_identity(supervisor_pid)
     target_creation_identity = _process_identity(process.pid)
     latest_output_at = None
     nonterminal_status_publication_failures = 0
@@ -1295,13 +1337,22 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
             }
         return snapshot
     if not isinstance(target_pid, int):
-        return persist_correction(
-            "unknown",
-            "target_identity_incomplete",
-            observation="unknown",
-            observed_pid=None,
-            observed_creation_identity=None,
-        )
+        inferred_snapshot = _inspect_locked(Path(snapshot["run_dir"]))
+        inferred_state = inferred_snapshot["status"].get("state")
+        if inferred_state != "running":
+            inferred_snapshot["reconciliation"] = {
+                "decision": inferred_state,
+                "reason": "launch_outcome_unverifiable",
+                "observed_at": _now(),
+            }
+            return inferred_snapshot
+        snapshot["reconciliation"] = {
+            "decision": "running",
+            "reason": "launch_outcome_pending",
+            "observed_at": _now(),
+            "persisted_target_identity": status.get("target_identity"),
+        }
+        return snapshot
 
     observation, observed_creation_identity = _process_observation(target_pid)
     if observation == "missing":

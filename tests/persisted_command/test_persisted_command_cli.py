@@ -267,6 +267,36 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertIsNone(data["status"]["exit_code"])
         self.assertIsNone(data["exit_code_path"])
         self.assertNotIn(secret, waited.stdout)
+        self.assertTrue(
+            {
+                "schema_name",
+                "schema_version",
+                "run_id",
+                "state",
+                "updated_at",
+                "started_at",
+                "elapsed_seconds",
+                "heartbeat_at",
+                "latest_output_at",
+                "log_sizes",
+                "supervisor_pid",
+                "child_pid",
+                "supervisor_identity",
+                "target_identity",
+                "exit_code",
+                "failure",
+                "finished_at",
+            }.issubset(data["status"]),
+        )
+        self.assertEqual(
+            data["status"]["target_identity"],
+            {"pid": None, "process_creation_identity": None},
+        )
+        self.assertIsInstance(
+            data["status"]["supervisor_identity"]["process_creation_identity"],
+            str,
+        )
+        self.assertFalse((run_dir / "exit-code.txt").exists())
 
     def test_relative_httponly_cookie_is_resolved_from_target_cwd_and_detected(
         self,
@@ -677,6 +707,211 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(data["status"]["failure"]))
         self.assertIsNone(data["exit_code_path"])
         self.assertFalse((run_dir / "exit-code.txt").exists())
+
+    def test_invalid_working_directory_is_launch_failed_without_exit_code(
+        self,
+    ) -> None:
+        missing_working_directory = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-invalid-cwd"
+            / uuid.uuid4().hex
+            / "missing"
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"invalid launch condition {uuid.uuid4().hex}",
+            "--cwd",
+            str(missing_working_directory),
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('must not launch')",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "60",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(data["status"]["state"], "launch_failed")
+        self.assertEqual(
+            data["status"]["failure"]["kind"],
+            "child_launch_failed",
+        )
+        self.assertIsNone(data["status"]["exit_code"])
+        self.assertEqual(
+            data["status"]["target_identity"],
+            {"pid": None, "process_creation_identity": None},
+        )
+        self.assertFalse((run_dir / "exit-code.txt").exists())
+
+    def test_concurrent_reconcile_preserves_pending_launch_failure_truth(
+        self,
+    ) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-launch-failure-reconciliation"
+            / uuid.uuid4().hex
+        )
+        launch_attempted = fixture_root / "launch-attempted"
+        release_launch = fixture_root / "release-launch"
+        env = supervisor_hook_environment(
+            fixture_root,
+            (
+                "from pathlib import Path\n"
+                "import subprocess\n"
+                "import sys\n"
+                "import time\n"
+                "if '_supervise' in sys.argv:\n"
+                f"    launch_attempted = Path({str(launch_attempted)!r})\n"
+                f"    release_launch = Path({str(release_launch)!r})\n"
+                "    def fail_target_launch(*args, **kwargs):\n"
+                "        launch_attempted.write_text('attempted\\n', encoding='utf-8')\n"
+                "        while not release_launch.exists():\n"
+                "            time.sleep(0.01)\n"
+                "        raise OSError('simulated target launch failure')\n"
+                "    subprocess.Popen = fail_target_launch\n"
+            ),
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"launch failure reconciliation {uuid.uuid4().hex}",
+            "--",
+            f"missing-executable-{uuid.uuid4().hex}",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+        launch_deadline = time.monotonic() + 60
+        while time.monotonic() < launch_deadline and not launch_attempted.is_file():
+            time.sleep(0.02)
+        self.assertTrue(launch_attempted.is_file())
+
+        reconcile_command = [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            str(CLI),
+            "reconcile",
+            "--run-dir",
+            str(run_dir),
+        ]
+        observers = [
+            subprocess.Popen(
+                reconcile_command,
+                cwd=PROJECT_ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                env=env,
+            )
+            for _ in range(4)
+        ]
+        try:
+            observer_results = [
+                observer.communicate(timeout=60) for observer in observers
+            ]
+            for observer, (stdout, stderr) in zip(observers, observer_results):
+                self.assertEqual(observer.returncode, 0, stderr or stdout)
+                data = json.loads(stdout)["data"]
+                self.assertEqual(data["status"]["state"], "running")
+                self.assertEqual(
+                    data["reconciliation"]["reason"],
+                    "launch_outcome_pending",
+                )
+            persisted_pending = json.loads(
+                (run_dir / "status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted_pending["state"], "running")
+            self.assertNotIn("reconciliation", persisted_pending)
+        finally:
+            release_launch.write_text("release\n", encoding="utf-8")
+            for observer in observers:
+                if observer.poll() is None:
+                    observer.communicate(timeout=60)
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "60",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        status = data["status"]
+        self.assertEqual(status["state"], "launch_failed")
+        self.assertIsNone(status["exit_code"])
+        self.assertFalse((run_dir / "exit-code.txt").exists())
+        self.assertEqual(status["schema_name"], "persisted-command-status")
+        self.assertEqual(status["schema_version"], "1.0.0")
+        self.assertIsInstance(status["started_at"], str)
+        self.assertIsInstance(status["updated_at"], str)
+        self.assertIsInstance(status["finished_at"], str)
+        self.assertGreaterEqual(status["elapsed_seconds"], 0)
+        self.assertEqual(status["heartbeat_at"], status["updated_at"])
+        self.assertIsNone(status["latest_output_at"])
+        self.assertEqual(
+            status["log_sizes"],
+            {"stdout": 0, "stderr": 0, "merged": 0},
+        )
+        self.assertIsInstance(status["supervisor_identity"]["pid"], int)
+        self.assertIsInstance(
+            status["supervisor_identity"]["process_creation_identity"],
+            str,
+        )
+        self.assertEqual(
+            status["target_identity"],
+            {"pid": None, "process_creation_identity": None},
+        )
+        self.assertEqual(
+            status["failure"],
+            {
+                "kind": "child_launch_failed",
+                "message": "target process could not be launched",
+            },
+        )
+
+        terminal_status_before = (run_dir / "status.json").read_bytes()
+        terminal_observers = [
+            subprocess.Popen(
+                reconcile_command,
+                cwd=PROJECT_ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                env=env,
+            )
+            for _ in range(4)
+        ]
+        for observer in terminal_observers:
+            stdout, stderr = observer.communicate(timeout=60)
+            self.assertEqual(observer.returncode, 0, stderr or stdout)
+            reconciled = json.loads(stdout)["data"]
+            self.assertEqual(reconciled["status"]["state"], "launch_failed")
+            self.assertEqual(
+                reconciled["reconciliation"]["reason"],
+                "status_already_terminal",
+            )
+        self.assertEqual(
+            (run_dir / "status.json").read_bytes(),
+            terminal_status_before,
+        )
 
     def test_declared_nonzero_exit_is_succeeded_and_persisted(self) -> None:
         started = run_cli(

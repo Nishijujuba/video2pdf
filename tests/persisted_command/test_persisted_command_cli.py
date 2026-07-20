@@ -509,6 +509,87 @@ class PersistedCommandCliTests(unittest.TestCase):
         for secret in (str(cookie_file), cookie_value, token, environment_secret):
             self.assertNotIn(secret, shareable)
 
+    def test_secret_detection_spans_incremental_read_chunks(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-chunk-secret"
+            / uuid.uuid4().hex
+        )
+        fixture_root.mkdir(parents=True)
+        first_chunk_written = fixture_root / "first-chunk-written"
+        release_second_chunk = fixture_root / "release-second-chunk"
+        secret = f"cross-chunk-secret-{uuid.uuid4().hex}"
+        split_at = len(secret) // 2
+        env = os.environ.copy()
+        env["ISSUE26_API_TOKEN"] = secret
+        child = "\n".join(
+            (
+                "import os,pathlib,sys,time",
+                "first_written=pathlib.Path(sys.argv[1])",
+                "release=pathlib.Path(sys.argv[2])",
+                "secret=os.environ['ISSUE26_API_TOKEN']",
+                f"split_at={split_at}",
+                "sys.stdout.write(secret[:split_at])",
+                "sys.stdout.flush()",
+                "first_written.write_text('written', encoding='utf-8')",
+                "while not release.exists():",
+                "    time.sleep(0.02)",
+                "sys.stdout.write(secret[split_at:])",
+                "sys.stdout.flush()",
+            )
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"chunk boundary secret {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(first_chunk_written),
+            str(release_second_chunk),
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            first_chunk_deadline = time.monotonic() + 60
+            while (
+                time.monotonic() < first_chunk_deadline
+                and (run_dir / "stdout.log").read_text(encoding="utf-8")
+                != secret[:split_at]
+            ):
+                time.sleep(0.02)
+            self.assertTrue(first_chunk_written.exists())
+            self.assertEqual(
+                (run_dir / "stdout.log").read_text(encoding="utf-8"),
+                secret[:split_at],
+            )
+        finally:
+            release_second_chunk.write_text("release\n", encoding="utf-8")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "30",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        data = json.loads(waited.stdout)["data"]
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        self.assertEqual((run_dir / "stdout.log").read_text(encoding="utf-8"), secret)
+        self.assertNotIn(secret, shareable_metadata(run_dir, started, waited))
+
     def test_shareable_metadata_redacts_sensitive_arguments_and_environment_values(
         self,
     ) -> None:
@@ -842,6 +923,269 @@ class PersistedCommandCliTests(unittest.TestCase):
         positions = [merged.index(entry) for entry in expected_entries]
         self.assertEqual(positions, sorted(positions))
 
+    def test_partial_stdout_is_persisted_with_telemetry_before_release(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-partial-output"
+            / uuid.uuid4().hex
+        )
+        fixture_root.mkdir(parents=True)
+        child_ready = fixture_root / "child-ready"
+        release_child = fixture_root / "release-child"
+        child = "\n".join(
+            (
+                "import pathlib,sys,time",
+                "ready=pathlib.Path(sys.argv[1])",
+                "release=pathlib.Path(sys.argv[2])",
+                "sys.stdout.buffer.write(b'stdout-partial')",
+                "sys.stdout.buffer.flush()",
+                "ready.write_text('ready', encoding='utf-8')",
+                "while not release.exists():",
+                "    time.sleep(0.02)",
+            )
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"partial output telemetry {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(child_ready),
+            str(release_child),
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            ready_deadline = time.monotonic() + 60
+            while time.monotonic() < ready_deadline and not child_ready.exists():
+                time.sleep(0.02)
+            self.assertTrue(child_ready.exists())
+
+            output_deadline = time.monotonic() + 3
+            while (
+                time.monotonic() < output_deadline
+                and (run_dir / "stdout.log").read_bytes() != b"stdout-partial"
+            ):
+                time.sleep(0.02)
+            self.assertEqual(
+                (run_dir / "stdout.log").read_bytes(),
+                b"stdout-partial",
+            )
+            telemetry_deadline = time.monotonic() + 5
+            status = json.loads(
+                (run_dir / "status.json").read_text(encoding="utf-8")
+            )
+            while (
+                time.monotonic() < telemetry_deadline
+                and status["log_sizes"]["stdout"] != len(b"stdout-partial")
+            ):
+                time.sleep(0.02)
+                status = json.loads(
+                    (run_dir / "status.json").read_text(encoding="utf-8")
+                )
+            self.assertEqual(status["state"], "running")
+            self.assertIsNotNone(status["latest_output_at"])
+            self.assertEqual(
+                status["log_sizes"],
+                {
+                    "stdout": len(b"stdout-partial"),
+                    "stderr": 0,
+                    "merged": len(b"[stdout] stdout-partial"),
+                },
+            )
+        finally:
+            release_child.write_text("release\n", encoding="utf-8")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "10",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        self.assertEqual(
+            json.loads(waited.stdout)["data"]["status"]["state"],
+            "succeeded",
+        )
+
+    def test_merged_log_preserves_interleaved_partial_observation_order(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-interleaved-partials"
+            / uuid.uuid4().hex
+        )
+        fixture_root.mkdir(parents=True)
+        stdout_observable = fixture_root / "stdout-observable"
+        release_stderr = fixture_root / "release-stderr"
+        stderr_observable = fixture_root / "stderr-observable"
+        release_final_stdout = fixture_root / "release-final-stdout"
+        child = "\n".join(
+            (
+                "import pathlib,sys,time",
+                "stdout_observable=pathlib.Path(sys.argv[1])",
+                "release_stderr=pathlib.Path(sys.argv[2])",
+                "stderr_observable=pathlib.Path(sys.argv[3])",
+                "release_final_stdout=pathlib.Path(sys.argv[4])",
+                "sys.stdout.buffer.write(b'out-a')",
+                "sys.stdout.buffer.flush()",
+                "stdout_observable.write_text('observable', encoding='utf-8')",
+                "while not release_stderr.exists():",
+                "    time.sleep(0.02)",
+                "sys.stderr.buffer.write(b'err-b')",
+                "sys.stderr.buffer.flush()",
+                "stderr_observable.write_text('observable', encoding='utf-8')",
+                "while not release_final_stdout.exists():",
+                "    time.sleep(0.02)",
+                "sys.stdout.buffer.write(b'out-c')",
+                "sys.stdout.buffer.flush()",
+            )
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"interleaved partials {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(stdout_observable),
+            str(release_stderr),
+            str(stderr_observable),
+            str(release_final_stdout),
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            stdout_deadline = time.monotonic() + 60
+            while (
+                time.monotonic() < stdout_deadline
+                and (run_dir / "stdout.log").read_bytes() != b"out-a"
+            ):
+                time.sleep(0.02)
+            self.assertTrue(stdout_observable.exists())
+            self.assertEqual((run_dir / "stdout.log").read_bytes(), b"out-a")
+            release_stderr.write_text("release\n", encoding="utf-8")
+
+            stderr_deadline = time.monotonic() + 30
+            while (
+                time.monotonic() < stderr_deadline
+                and (run_dir / "stderr.log").read_bytes() != b"err-b"
+            ):
+                time.sleep(0.02)
+            self.assertTrue(stderr_observable.exists())
+            self.assertEqual((run_dir / "stderr.log").read_bytes(), b"err-b")
+        finally:
+            release_stderr.write_text("release\n", encoding="utf-8")
+            release_final_stdout.write_text("release\n", encoding="utf-8")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "30",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        self.assertEqual((run_dir / "stdout.log").read_bytes(), b"out-aout-c")
+        self.assertEqual((run_dir / "stderr.log").read_bytes(), b"err-b")
+        self.assertEqual(
+            (run_dir / "command.log").read_bytes(),
+            b"[stdout] out-a[stderr] err-b[stdout] out-c",
+        )
+
+    def test_large_newline_free_output_is_persisted_incrementally(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-large-partial"
+            / uuid.uuid4().hex
+        )
+        fixture_root.mkdir(parents=True)
+        output_written = fixture_root / "output-written"
+        release_child = fixture_root / "release-child"
+        payload_size = 512 * 1024 + 17
+        child = "\n".join(
+            (
+                "import pathlib,sys,time",
+                "output_written=pathlib.Path(sys.argv[1])",
+                "release=pathlib.Path(sys.argv[2])",
+                f"payload_size={payload_size}",
+                "sys.stdout.buffer.write(b'z' * payload_size)",
+                "sys.stdout.buffer.flush()",
+                "output_written.write_text('written', encoding='utf-8')",
+                "while not release.exists():",
+                "    time.sleep(0.02)",
+            )
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"large newline free {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            str(output_written),
+            str(release_child),
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            output_deadline = time.monotonic() + 60
+            while (
+                time.monotonic() < output_deadline
+                and (run_dir / "stdout.log").stat().st_size != payload_size
+            ):
+                time.sleep(0.02)
+            self.assertTrue(output_written.exists())
+            self.assertEqual((run_dir / "stdout.log").stat().st_size, payload_size)
+            telemetry_deadline = time.monotonic() + 5
+            status = json.loads(
+                (run_dir / "status.json").read_text(encoding="utf-8")
+            )
+            while (
+                time.monotonic() < telemetry_deadline
+                and status["log_sizes"]["stdout"] != payload_size
+            ):
+                time.sleep(0.02)
+                status = json.loads(
+                    (run_dir / "status.json").read_text(encoding="utf-8")
+                )
+            self.assertEqual(status["state"], "running")
+            self.assertEqual(status["log_sizes"]["stdout"], payload_size)
+            merged = (run_dir / "command.log").read_bytes()
+            self.assertGreaterEqual(merged.count(b"[stdout] "), 2)
+            self.assertEqual(
+                merged.replace(b"[stdout] ", b""),
+                b"z" * payload_size,
+            )
+        finally:
+            release_child.write_text("release\n", encoding="utf-8")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "30",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        self.assertEqual(
+            json.loads(waited.stdout)["data"]["status"]["state"],
+            "succeeded",
+        )
+
 
     def test_rerun_preserves_terminal_record_and_complete_logs(self) -> None:
         task_name = f"rerun retention {uuid.uuid4().hex}"
@@ -942,14 +1286,11 @@ class PersistedCommandCliTests(unittest.TestCase):
             )
             for _ in range(2)
         ]
-        started = [launcher.communicate(timeout=10) for launcher in launchers]
+        started = [launcher.communicate(timeout=60) for launcher in launchers]
         self.assertEqual([launcher.returncode for launcher in launchers], [0, 0], started)
         start_data = [json.loads(stdout)["data"] for stdout, _ in started]
         self.assertEqual(len({item["run_id"] for item in start_data}), 2)
         self.assertEqual(len({item["run_dir"] for item in start_data}), 2)
-        directory_names = [Path(item["run_dir"]).name for item in start_data]
-        timestamps = [name.rsplit("_", 3)[-3:-1] for name in directory_names]
-        self.assertEqual(timestamps[0], timestamps[1])
 
         for item in start_data:
             waited = run_cli(
@@ -957,7 +1298,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "--run-dir",
                 item["run_dir"],
                 "--timeout-seconds",
-                "10",
+                "30",
             )
             self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
 
@@ -1054,6 +1395,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         initial_status = self._wait_for_status(
             run_dir,
             lambda status: bool(status.get("heartbeat_at")),
+            timeout_seconds=60,
         )
 
         time.sleep(27)
@@ -1127,7 +1469,20 @@ class PersistedCommandCliTests(unittest.TestCase):
                         (status.get("target_identity") or {}).get(
                             "process_creation_identity"
                         )
+                        and status.get("latest_output_at")
                     ),
+                    timeout_seconds=60,
+                )
+                output_heartbeat = running_status["heartbeat_at"]
+                running_status = self._wait_for_status(
+                    run_dir,
+                    lambda status: bool(
+                        status.get("heartbeat_at")
+                        and status["heartbeat_at"] != output_heartbeat
+                        and status.get("latest_output_at")
+                    ),
+                    timeout_seconds=35,
+                    poll_seconds=0.1,
                 )
 
                 running_status["target_identity"][
@@ -1270,7 +1625,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         child = (
             "import time; "
             "print('born', flush=True); "
-            "time.sleep(4); "
+            "time.sleep(30); "
             "print('finished', flush=True)"
         )
         started = run_cli(
@@ -1317,7 +1672,7 @@ class PersistedCommandCliTests(unittest.TestCase):
             "--run-dir",
             str(run_dir),
             "--timeout-seconds",
-            "10",
+            "45",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(

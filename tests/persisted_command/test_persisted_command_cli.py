@@ -336,6 +336,158 @@ class PersistedCommandCliTests(unittest.TestCase):
             (run_dir / "stdout.log").read_text(encoding="utf-8"),
         )
 
+    def test_credential_and_proxy_urls_are_redacted_without_changing_target_argv(
+        self,
+    ) -> None:
+        ordinary_password = f"ordinary-password-{uuid.uuid4().hex}"
+        proxy_password = f"proxy-password-{uuid.uuid4().hex}"
+        inline_proxy_password = f"inline-proxy-password-{uuid.uuid4().hex}"
+        ordinary_url = (
+            f"https://service-user:{ordinary_password}@example.test/resource"
+        )
+        proxy_url = f"http://proxy-user:{proxy_password}@proxy.test:8080"
+        inline_proxy_url = (
+            f"https://inline-user:{inline_proxy_password}@proxy.test:8443"
+        )
+        working_directory = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-credential-url-cwd"
+            / f"service-user_{ordinary_password}"
+        )
+        working_directory.mkdir(parents=True)
+        child = "import json,sys; print(json.dumps(sys.argv[1:]), flush=True)"
+        target_arguments = [
+            ordinary_url,
+            "--proxy",
+            proxy_url,
+            f"--https-proxy={inline_proxy_url}",
+        ]
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"credential URL proxy-user {proxy_password}",
+            "--cwd",
+            str(working_directory),
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            *target_arguments,
+        )
+
+        self.assertEqual(
+            data["command"]["argv"][-4:],
+            [
+                "https://<redacted>@example.test/resource",
+                "--proxy",
+                "http://<redacted>@proxy.test:8080",
+                "--https-proxy=https://<redacted>@proxy.test:8443",
+            ],
+        )
+        self.assertEqual(
+            json.loads((run_dir / "stdout.log").read_text(encoding="utf-8")),
+            target_arguments,
+        )
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        shareable = shareable_metadata(run_dir, started, waited)
+        for credential in (
+            "service-user",
+            ordinary_password,
+            "proxy-user",
+            proxy_password,
+            "inline-user",
+            inline_proxy_password,
+        ):
+            self.assertNotIn(credential, shareable)
+
+    def test_credential_query_parameter_vocabulary_is_redacted_end_to_end(
+        self,
+    ) -> None:
+        parameter_names = (
+            "api_key",
+            "apikey",
+            "api-key",
+            "access_token",
+            "access-token",
+            "client_secret",
+            "client-secret",
+            "password",
+            "passwd",
+            "auth",
+            "authorization",
+            "cookie",
+            "cookies",
+            "session",
+            "session_id",
+            "session-token",
+            "signature",
+            "sig",
+            "csrf",
+            "po_token",
+            "po-token",
+            "token",
+            "visitor_data",
+            "visitor-data",
+        )
+        secrets = {
+            name: f"{name}-secret-{uuid.uuid4().hex}"
+            for name in parameter_names
+        }
+        credential_url = "https://example.test/resource?" + "&".join(
+            f"{name}={secrets[name]}" for name in parameter_names
+        )
+        expected_url = "https://example.test/resource?" + "&".join(
+            f"{name}=<redacted>" for name in parameter_names
+        )
+        working_directory = (
+            PROJECT_ROOT
+            / "\u5f85\u5220\u9664"
+            / "persisted-command-query-secret-cwd"
+            / secrets["client_secret"]
+        )
+        working_directory.mkdir(parents=True)
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"query credentials {secrets['access_token']}",
+            "--cwd",
+            str(working_directory),
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "import sys; print(sys.argv[1], flush=True)",
+            credential_url,
+        )
+
+        self.assertEqual(data["command"]["argv"][-1], expected_url)
+        self.assertEqual(
+            (run_dir / "stdout.log").read_text(encoding="utf-8"),
+            f"{credential_url}\n",
+        )
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        shareable = shareable_metadata(run_dir, started, waited)
+        for secret in secrets.values():
+            self.assertNotIn(secret, shareable)
+
     def test_known_secrets_are_redacted_from_earlier_unlabelled_arguments(
         self,
     ) -> None:
@@ -423,6 +575,72 @@ class PersistedCommandCliTests(unittest.TestCase):
             (run_dir / "stdout.log").read_text(encoding="utf-8"),
             f"{bearer_token}\n",
         )
+
+    def test_sensitive_header_families_are_redacted_for_separate_and_inline_values(
+        self,
+    ) -> None:
+        secrets = {
+            "proxy_authorization": f"proxy-auth-{uuid.uuid4().hex}",
+            "api_key": f"header-api-key-{uuid.uuid4().hex}",
+            "auth_token": f"header-auth-token-{uuid.uuid4().hex}",
+            "authentication_token": f"authentication-token-{uuid.uuid4().hex}",
+            "cookie": f"cookie-value-{uuid.uuid4().hex}",
+            "set_cookie": f"set-cookie-value-{uuid.uuid4().hex}",
+        }
+        target_arguments = [
+            "--header",
+            f"Proxy-Authorization: Basic {secrets['proxy_authorization']}",
+            f"--add-header=X-API-Key: {secrets['api_key']}",
+            "--header",
+            f"X-Auth-Token: {secrets['auth_token']}",
+            f"--header=Authentication-Token: {secrets['authentication_token']}",
+            "--header",
+            f"Cookie: session={secrets['cookie']}",
+            f"--add-header=Set-Cookie: session={secrets['set_cookie']}; Path=/; HttpOnly",
+        ]
+        child = "import json,sys; print(json.dumps(sys.argv[1:]), flush=True)"
+
+        started, waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"header credentials {secrets['api_key']}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            child,
+            *target_arguments,
+        )
+
+        self.assertEqual(
+            data["command"]["argv"][-len(target_arguments):],
+            [
+                "--header",
+                "Proxy-Authorization: <redacted>",
+                "--add-header=X-API-Key: <redacted>",
+                "--header",
+                "X-Auth-Token: <redacted>",
+                "--header=Authentication-Token: <redacted>",
+                "--header",
+                "Cookie: <redacted>",
+                "--add-header=Set-Cookie: <redacted>",
+            ],
+        )
+        self.assertEqual(
+            json.loads((run_dir / "stdout.log").read_text(encoding="utf-8")),
+            target_arguments,
+        )
+        self.assertEqual(
+            data["status"]["security"],
+            {
+                "acceptance_evidence_eligible": False,
+                "classification": "security_failure",
+            },
+        )
+        shareable = shareable_metadata(run_dir, started, waited)
+        for secret in secrets.values():
+            self.assertNotIn(secret, shareable)
 
     def test_sanitized_logs_are_security_eligible_for_acceptance(self) -> None:
         _started, _waited, _run_dir, data = run_to_terminal(
@@ -552,6 +770,8 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         command = data["command"]
         shareable = shareable_metadata(run_dir, started, waited)
+        self.assertNotIn("environment", command)
+        self.assertNotIn("env", command)
         for secret in (
             str(cookie_file),
             cookie_value,
@@ -628,13 +848,16 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "0\n")
 
     def test_missing_executable_is_launch_failed_without_exit_code(self) -> None:
-        secret = f"must-not-leak-{uuid.uuid4().hex}"
+        launch_error_detail = f"must-not-leak-{uuid.uuid4().hex}"
+        recognized_secret = f"launch-client-secret-{uuid.uuid4().hex}"
         started = run_cli(
             "start",
             "--task-name",
-            f"launch failure {uuid.uuid4().hex}",
+            f"launch failure {recognized_secret}",
             "--",
-            f"missing-executable-{secret}",
+            f"missing-executable-{launch_error_detail}",
+            "--client-secret",
+            recognized_secret,
         )
         self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
         run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
@@ -658,7 +881,14 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "message": "target process could not be launched",
             },
         )
-        self.assertNotIn(secret, json.dumps(data["status"]["failure"]))
+        self.assertNotIn(
+            launch_error_detail,
+            json.dumps(data["status"]["failure"]),
+        )
+        self.assertNotIn(
+            recognized_secret,
+            shareable_metadata(run_dir, started, waited),
+        )
         self.assertIsNone(data["exit_code_path"])
         self.assertFalse((run_dir / "exit-code.txt").exists())
 

@@ -29,7 +29,6 @@ SECRET_SCAN_CONTEXT_BYTES = 4 * 1024
 STATUS_LOCK_FILENAME = ".status.lock"
 STATUS_LOCK_RETRY_ATTEMPTS = 1500
 STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
-STATUS_READER_LOCK_RETRY_ATTEMPTS = 15000
 SUPERVISOR_IDENTITY_FILENAME = "supervisor-identity.json"
 STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
 STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
@@ -151,11 +150,13 @@ def _write_json_atomic(
 
 
 def _write_json_new_locked(path: Path, value: dict[str, Any]) -> None:
-    with path.open("x", encoding="utf-8", newline="\n") as handle:
-        json.dump(value, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    if path.exists():
+        raise FileExistsError(path)
+    _write_json_atomic(
+        path,
+        value,
+        replace_retry_delays=STATUS_REPLACE_RETRY_DELAYS_SECONDS,
+    )
 
 
 @contextmanager
@@ -218,7 +219,7 @@ def _write_status_locked(run_dir: Path, status: dict[str, Any]) -> None:
     )
 
 
-def _read_status_locked(
+def _read_status_snapshot(
     run_dir: Path,
     *,
     infer_missing_terminal: bool = True,
@@ -1045,6 +1046,9 @@ def _supervise(run_dir: Path) -> int:
         environment=os.environ,
         working_directory=working_directory,
     )
+    target_process_options: dict[str, Any] = {}
+    if os.name == "nt":
+        target_process_options["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         process = subprocess.Popen(
             target_command,
@@ -1052,6 +1056,7 @@ def _supervise(run_dir: Path) -> int:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            **target_process_options,
         )
     except OSError:
         _publish_terminal_status(
@@ -1177,7 +1182,8 @@ def _supervise(run_dir: Path) -> int:
                             stream_logs[stream_name].write(chunk)
                             assert merged_log is not None
                             merged_log.write(
-                                f"[{stream_name}] ".encode("ascii") + chunk
+                                f"[{stream_name} {len(chunk)}]\n".encode("ascii")
+                                + chunk
                             )
                             latest_output_at = _now()
                             status_published = publish_running_status(
@@ -1286,20 +1292,16 @@ def _resolve_run_directory(run_dir: Path, project_root: Path) -> Path:
 
 def _inspect(run_dir: Path, project_root: Path) -> dict[str, Any]:
     resolved = _resolve_run_directory(run_dir, project_root)
-    with _status_lock(
-        resolved,
-        retry_attempts=STATUS_READER_LOCK_RETRY_ATTEMPTS,
-    ):
-        return _inspect_locked(resolved)
+    return _inspect_snapshot(resolved)
 
 
-def _inspect_locked(
+def _inspect_snapshot(
     resolved: Path,
     *,
     infer_missing_terminal: bool = True,
 ) -> dict[str, Any]:
     command = json.loads((resolved / "command.json").read_text(encoding="utf-8"))
-    status = _read_status_locked(
+    status = _read_status_snapshot(
         resolved,
         infer_missing_terminal=infer_missing_terminal,
     )
@@ -1369,7 +1371,7 @@ def _reconcile(run_dir: Path, project_root: Path) -> dict[str, Any]:
     resolved_run_dir = _resolve_run_directory(run_dir, project_root)
     with _status_lock(resolved_run_dir):
         return _reconcile_locked(
-            _inspect_locked(
+            _inspect_snapshot(
                 resolved_run_dir,
                 infer_missing_terminal=False,
             )
@@ -1406,7 +1408,7 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
         }
         resolved_run_dir = Path(snapshot["run_dir"])
         _write_status_locked(resolved_run_dir, corrected_status)
-        corrected_snapshot = _inspect_locked(resolved_run_dir)
+        corrected_snapshot = _inspect_snapshot(resolved_run_dir)
         corrected_snapshot["reconciliation"] = reconciliation
         return corrected_snapshot
 
@@ -1426,7 +1428,7 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
             }
         return snapshot
     if not isinstance(target_pid, int):
-        inferred_snapshot = _inspect_locked(Path(snapshot["run_dir"]))
+        inferred_snapshot = _inspect_snapshot(Path(snapshot["run_dir"]))
         inferred_state = inferred_snapshot["status"].get("state")
         if inferred_state != "running":
             inferred_snapshot["reconciliation"] = {

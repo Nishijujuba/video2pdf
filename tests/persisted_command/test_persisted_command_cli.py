@@ -71,6 +71,24 @@ def shareable_metadata(
     )
 
 
+def parse_merged_log_records(value: bytes) -> list[tuple[str, bytes]]:
+    records: list[tuple[str, bytes]] = []
+    offset = 0
+    while offset < len(value):
+        header_end = value.index(b"]\n", offset)
+        header = value[offset + 1 : header_end]
+        stream, payload_size_text = header.split(b" ", 1)
+        if stream not in {b"stdout", b"stderr"}:
+            raise AssertionError(f"unexpected merged-log stream: {stream!r}")
+        payload_start = header_end + 2
+        payload_end = payload_start + int(payload_size_text)
+        if payload_end > len(value):
+            raise AssertionError("merged-log record payload is truncated")
+        records.append((stream.decode("ascii"), value[payload_start:payload_end]))
+        offset = payload_end
+    return records
+
+
 def supervisor_hook_environment(
     fixture_root: Path,
     sitecustomize_source: str,
@@ -95,6 +113,7 @@ def status_sharing_conflict_hook(
     *,
     failures_before_success: int | None,
     fail_publication_error_write: bool = False,
+    pause_publication_error_write: tuple[Path, Path] | None = None,
     require_exit_code: bool = True,
 ) -> str:
     failure_condition = (
@@ -103,14 +122,36 @@ def status_sharing_conflict_hook(
         else f"attempts <= {failures_before_success}"
     )
     publication_error_hook = (
-        "    original_open = io.open\n"
-        "    def fail_publication_error_open(file, *args, **kwargs):\n"
-        "        mode = args[0] if args else kwargs.get('mode', 'r')\n"
-        "        if str(file).endswith('status-publication-error.json') and 'x' in mode:\n"
+        "        if destination_path.name == 'status-publication-error.json':\n"
         "            raise OSError('simulated publication error evidence failure')\n"
-        "        return original_open(file, *args, **kwargs)\n"
-        "    io.open = fail_publication_error_open\n"
         if fail_publication_error_write
+        else ""
+    )
+    publication_error_pause_hook = (
+        "    original_open = io.open\n"
+        "    class PausedPublicationErrorWrite:\n"
+        "        def __init__(self, wrapped):\n"
+        "            self.wrapped = wrapped\n"
+        "            self.paused = False\n"
+        "        def __enter__(self): return self\n"
+        "        def __exit__(self, *details): return self.wrapped.__exit__(*details)\n"
+        "        def write(self, value):\n"
+        "            result = self.wrapped.write(value)\n"
+        "            if not self.paused:\n"
+        "                self.paused = True\n"
+        f"                Path({str(pause_publication_error_write[0])!r}).write_text('paused', encoding='utf-8')\n"
+        f"                while not Path({str(pause_publication_error_write[1])!r}).exists():\n"
+        "                    time.sleep(0.01)\n"
+        "            return result\n"
+        "        def __getattr__(self, name): return getattr(self.wrapped, name)\n"
+        "    def pause_publication_error_open(file, *args, **kwargs):\n"
+        "        opened = original_open(file, *args, **kwargs)\n"
+        "        mode = args[0] if args else kwargs.get('mode', 'r')\n"
+        "        if 'status-publication-error.json' in str(file) and 'x' in mode:\n"
+        "            return PausedPublicationErrorWrite(opened)\n"
+        "        return opened\n"
+        "    io.open = pause_publication_error_open\n"
+        if pause_publication_error_write is not None
         else ""
     )
     exit_code_condition = " and exit_code_path.exists()" if require_exit_code else ""
@@ -119,6 +160,7 @@ def status_sharing_conflict_hook(
         "import os\n"
         "from pathlib import Path\n"
         "import sys\n"
+        "import time\n"
         "if '_supervise' in sys.argv:\n"
         "    original_replace = os.replace\n"
         f"    attempts_path = Path({str(attempts_path)!r})\n"
@@ -126,6 +168,7 @@ def status_sharing_conflict_hook(
         "    def sharing_conflict(source, destination):\n"
         "        global attempts\n"
         "        destination_path = Path(destination)\n"
+        f"{publication_error_hook}"
         "        exit_code_path = destination_path.parent / 'exit-code.txt'\n"
         f"        if destination_path.name == 'status.json'{exit_code_condition}:\n"
         "            attempts += 1\n"
@@ -136,7 +179,7 @@ def status_sharing_conflict_hook(
         "                raise error\n"
         "        return original_replace(source, destination)\n"
         "    os.replace = sharing_conflict\n"
-        f"{publication_error_hook}"
+        f"{publication_error_pause_hook}"
     )
 
 
@@ -1296,6 +1339,50 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertEqual(status["exit_code"], 7)
         self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "7\n")
 
+    @unittest.skipUnless(os.name == "nt", "Windows process creation contract")
+    def test_start_creates_target_without_a_console_window(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除/persisted-command-test-hooks"
+            / uuid.uuid4().hex
+        )
+        recorded_flags = fixture_root / "target-creationflags.txt"
+        env = supervisor_hook_environment(
+            fixture_root,
+            (
+                "import subprocess\n"
+                "import sys\n"
+                "from pathlib import Path\n"
+                "if '_supervise' in sys.argv:\n"
+                "    original_popen = subprocess.Popen\n"
+                "    def record_target_creationflags(*args, **kwargs):\n"
+                f"        Path({str(recorded_flags)!r}).write_text(str(kwargs.get('creationflags', 0)), encoding='utf-8')\n"
+                "        kwargs['creationflags'] = kwargs.get('creationflags', 0) | subprocess.CREATE_NO_WINDOW\n"
+                "        return original_popen(*args, **kwargs)\n"
+                "    subprocess.Popen = record_target_creationflags\n"
+            ),
+        )
+
+        _started, _waited, _run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"hidden target {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('hidden target completed', flush=True)",
+            env=env,
+        )
+
+        creationflags = int(recorded_flags.read_text(encoding="utf-8"))
+        self.assertEqual(data["status"]["state"], "succeeded")
+        self.assertEqual(
+            creationflags & subprocess.CREATE_NO_WINDOW,
+            subprocess.CREATE_NO_WINDOW,
+        )
+
     def test_start_returns_durable_identity_and_command_outlives_launcher(self) -> None:
         task_name = f"detached/success {uuid.uuid4().hex}"
         marker = PROJECT_ROOT / "待删除/long-running-test-markers" / f"{uuid.uuid4().hex}.txt"
@@ -1394,14 +1481,21 @@ class PersistedCommandCliTests(unittest.TestCase):
             (run_dir / "stderr.log").read_text(encoding="utf-8"),
             "stderr-one\nstderr-two\n",
         )
-        merged = (run_dir / "command.log").read_text(encoding="utf-8")
+        merged = parse_merged_log_records((run_dir / "command.log").read_bytes())
         expected_entries = [
-            "[stdout] stdout-one",
-            "[stderr] stderr-one",
-            "[stdout] stdout-two",
-            "[stderr] stderr-two",
+            ("stdout", b"stdout-one"),
+            ("stderr", b"stderr-one"),
+            ("stdout", b"stdout-two"),
+            ("stderr", b"stderr-two"),
         ]
-        positions = [merged.index(entry) for entry in expected_entries]
+        positions = [
+            next(
+                index
+                for index, (stream, payload) in enumerate(merged)
+                if stream == expected_stream and expected_payload in payload
+            )
+            for expected_stream, expected_payload in expected_entries
+        ]
         self.assertEqual(positions, sorted(positions))
 
     def test_partial_stdout_is_persisted_with_telemetry_before_release(self) -> None:
@@ -1476,7 +1570,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 {
                     "stdout": len(b"stdout-partial"),
                     "stderr": 0,
-                    "merged": len(b"[stdout] stdout-partial"),
+                    "merged": len(b"[stdout 14]\nstdout-partial"),
                 },
             )
         finally:
@@ -1513,7 +1607,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "release_stderr=pathlib.Path(sys.argv[2])",
                 "stderr_observable=pathlib.Path(sys.argv[3])",
                 "release_final_stdout=pathlib.Path(sys.argv[4])",
-                "sys.stdout.buffer.write(b'out-a')",
+                "sys.stdout.buffer.write(b'out-a[stderr 5]\\ntrap')",
                 "sys.stdout.buffer.flush()",
                 "stdout_observable.write_text('observable', encoding='utf-8')",
                 "while not release_stderr.exists():",
@@ -1523,7 +1617,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "stderr_observable.write_text('observable', encoding='utf-8')",
                 "while not release_final_stdout.exists():",
                 "    time.sleep(0.02)",
-                "sys.stdout.buffer.write(b'out-c')",
+                "sys.stdout.buffer.write(b'out-c[stdout 4]\\ntrap')",
                 "sys.stdout.buffer.flush()",
             )
         )
@@ -1549,11 +1643,15 @@ class PersistedCommandCliTests(unittest.TestCase):
             stdout_deadline = time.monotonic() + 60
             while (
                 time.monotonic() < stdout_deadline
-                and (run_dir / "stdout.log").read_bytes() != b"out-a"
+                and (run_dir / "stdout.log").read_bytes()
+                != b"out-a[stderr 5]\ntrap"
             ):
                 time.sleep(0.02)
             self.assertTrue(stdout_observable.exists())
-            self.assertEqual((run_dir / "stdout.log").read_bytes(), b"out-a")
+            self.assertEqual(
+                (run_dir / "stdout.log").read_bytes(),
+                b"out-a[stderr 5]\ntrap",
+            )
             release_stderr.write_text("release\n", encoding="utf-8")
 
             stderr_deadline = time.monotonic() + 30
@@ -1576,11 +1674,18 @@ class PersistedCommandCliTests(unittest.TestCase):
             "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        self.assertEqual((run_dir / "stdout.log").read_bytes(), b"out-aout-c")
+        self.assertEqual(
+            (run_dir / "stdout.log").read_bytes(),
+            b"out-a[stderr 5]\ntrapout-c[stdout 4]\ntrap",
+        )
         self.assertEqual((run_dir / "stderr.log").read_bytes(), b"err-b")
         self.assertEqual(
-            (run_dir / "command.log").read_bytes(),
-            b"[stdout] out-a[stderr] err-b[stdout] out-c",
+            parse_merged_log_records((run_dir / "command.log").read_bytes()),
+            [
+                ("stdout", b"out-a[stderr 5]\ntrap"),
+                ("stderr", b"err-b"),
+                ("stdout", b"out-c[stdout 4]\ntrap"),
+            ],
         )
 
     def test_large_newline_free_output_is_persisted_incrementally(self) -> None:
@@ -1645,10 +1750,13 @@ class PersistedCommandCliTests(unittest.TestCase):
                 )
             self.assertEqual(status["state"], "running")
             self.assertEqual(status["log_sizes"]["stdout"], payload_size)
-            merged = (run_dir / "command.log").read_bytes()
-            self.assertGreaterEqual(merged.count(b"[stdout] "), 2)
+            merged = parse_merged_log_records(
+                (run_dir / "command.log").read_bytes()
+            )
+            self.assertGreaterEqual(len(merged), 2)
+            self.assertTrue(all(stream == "stdout" for stream, _payload in merged))
             self.assertEqual(
-                merged.replace(b"[stdout] ", b""),
+                b"".join(payload for _stream, payload in merged),
                 b"z" * payload_size,
             )
         finally:
@@ -2308,7 +2416,7 @@ class PersistedCommandCliTests(unittest.TestCase):
         env = supervisor_hook_environment(
             fixture_root,
             (
-                "import io\n"
+                "import json\n"
                 "import os\n"
                 "from pathlib import Path\n"
                 "import queue\n"
@@ -2317,9 +2425,11 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "if '_supervise' in sys.argv:\n"
                 "    real_monotonic = time.monotonic\n"
                 "    real_queue_get = queue.Queue.get\n"
+                "    real_sleep = time.sleep\n"
                 "    origin = real_monotonic()\n"
                 "    scale = 50.0\n"
                 "    time.monotonic = lambda: origin + (real_monotonic() - origin) * scale\n"
+                "    time.sleep = lambda seconds: real_sleep(seconds / scale)\n"
                 "    def scaled_queue_get(self, block=True, timeout=None):\n"
                 "        if timeout is not None:\n"
                 "            timeout = timeout / scale\n"
@@ -2339,23 +2449,15 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "    Path.iterdir = target_only_iterdir\n"
                 "if target_status and any(op in sys.argv for op in ('show', 'wait', 'list')):\n"
                 "    Path(started_dir, str(os.getpid())).write_text('started', encoding='utf-8')\n"
-                "    original_open = io.open\n"
-                "    class HeldStatus:\n"
-                "        def __init__(self, wrapped): self.wrapped = wrapped\n"
-                "        def __enter__(self): return self\n"
-                "        def __exit__(self, *details):\n"
+                "    original_json_loads = json.loads\n"
+                "    def held_status_loads(value, *args, **kwargs):\n"
+                "        loaded = original_json_loads(value, *args, **kwargs)\n"
+                "        if isinstance(loaded, dict) and loaded.get('schema_name') == 'persisted-command-status':\n"
                 "            Path(opened_path).write_text('opened', encoding='utf-8')\n"
                 "            while not Path(release_path).exists():\n"
                 "                time.sleep(0.01)\n"
-                "            return self.wrapped.__exit__(*details)\n"
-                "        def __getattr__(self, name): return getattr(self.wrapped, name)\n"
-                "    def held_open(file, *args, **kwargs):\n"
-                "        opened = original_open(file, *args, **kwargs)\n"
-                "        mode = args[0] if args else kwargs.get('mode', 'r')\n"
-                "        if str(Path(file).resolve()) == target_status and 'r' in mode:\n"
-                "            return HeldStatus(opened)\n"
-                "        return opened\n"
-                "    io.open = held_open\n"
+                "        return loaded\n"
+                "    json.loads = held_status_loads\n"
             ),
         )
         child = (
@@ -2485,6 +2587,12 @@ class PersistedCommandCliTests(unittest.TestCase):
             ):
                 time.sleep(0.02)
             self.assertTrue((run_dir / "exit-code.txt").is_file())
+            terminal_status = self._wait_for_status(
+                run_dir,
+                lambda status: status["state"] == "succeeded",
+                timeout_seconds=5,
+            )
+            self.assertEqual(terminal_status["state"], "succeeded")
             release_observer_wave(terminal_observers, terminal_release)
         finally:
             release_target.write_text("release\n", encoding="utf-8")
@@ -2632,6 +2740,77 @@ class PersistedCommandCliTests(unittest.TestCase):
             if run["run_id"] == data["run_id"]
         )
         self.assertEqual(listed_run["status"]["state"], "unknown")
+
+    @unittest.skipUnless(
+        os.name == "nt",
+        "Windows sharing semantics are required for this regression",
+    )
+    def test_show_never_reads_a_partial_publication_error_record(self) -> None:
+        fixture_root = (
+            PROJECT_ROOT
+            / "待删除"
+            / "persisted-command-atomic-publication-error"
+            / uuid.uuid4().hex
+        )
+        attempts_path = fixture_root / "attempts.txt"
+        publication_paused = fixture_root / "publication-paused"
+        release_publication = fixture_root / "release-publication"
+        env = supervisor_hook_environment(
+            fixture_root,
+            status_sharing_conflict_hook(
+                attempts_path,
+                failures_before_success=None,
+                pause_publication_error_write=(
+                    publication_paused,
+                    release_publication,
+                ),
+            ),
+        )
+        started = run_cli(
+            "start",
+            "--task-name",
+            f"atomic publication error {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('complete', flush=True)",
+            env=env,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr or started.stdout)
+        run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+
+        try:
+            pause_deadline = time.monotonic() + 60
+            while (
+                time.monotonic() < pause_deadline
+                and not publication_paused.is_file()
+            ):
+                time.sleep(0.02)
+            self.assertTrue(publication_paused.is_file())
+
+            shown = run_cli("show", "--run-dir", str(run_dir))
+            self.assertEqual(shown.returncode, 0, shown.stderr or shown.stdout)
+            self.assertEqual(
+                json.loads(shown.stdout)["data"]["status"]["state"],
+                "running",
+            )
+        finally:
+            release_publication.write_text("release\n", encoding="utf-8")
+
+        waited = run_cli(
+            "wait",
+            "--run-dir",
+            str(run_dir),
+            "--timeout-seconds",
+            "60",
+        )
+        self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
+        self.assertEqual(
+            json.loads(waited.stdout)["data"]["status"]["state"],
+            "unknown",
+        )
 
     @unittest.skipUnless(
         os.name == "nt",

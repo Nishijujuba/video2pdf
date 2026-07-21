@@ -21,6 +21,10 @@ The runner uses a detached supervisor to separate command lifetime from agent-se
 
 Each run ID and directory form immutable history. Accepted exit codes are fixed before launch. Observation may reconcile persisted state against process identity, while it cannot restart, terminate, attach to, or take over the target. Every rerun creates a new identity and leaves earlier evidence unchanged.
 
+Persisted execution heartbeat and user-facing progress are separate projections. The heartbeat proves execution observability; it does not create a notification obligation. User-facing updates are event-driven and limited to terminal state, security eligibility changes, explicit target milestones, errors, blockers, and user decisions. Repeated `running` observations, log growth, heartbeat refreshes, and individual observation-window timeouts remain silent.
+
+When a result blocks delivery, the initiating task may continue silent observation. When it does not block delivery, the task returns the immutable run directory and allows a later session to recover observation. A `wait` timeout with a current `running` state changes no command authority or failure classification.
+
 Retention is manual retention. The runner never truncates, rotates, overwrites, expires, or deletes a run. Repository operators may later move obsolete material within the deletion-staging policy, and permanent deletion remains outside automated execution.
 
 Persisted metadata excludes environment values and redacts recognized credential-bearing arguments. Complete target output remains the target command's responsibility. Secret detection makes a run ineligible as acceptance evidence and preserves the failure classification without publishing the detected value.
@@ -31,6 +35,6 @@ Automatic restart, automatic cleanup, log rotation, process takeover, environmen
 
 ## Consequences
 
-`AGENTS.md` and `CLAUDE.md` carry the same mandatory qualification and command contract. Operators recover work through `list`, `show`, `reconcile`, and `wait`, using the run directory returned by `start` as the stable handle.
+`AGENTS.md` and `CLAUDE.md` carry the same mandatory qualification, observation, and notification contract. Operators recover work through `list`, `show`, `reconcile`, and `wait`, using the run directory returned by `start` as the stable handle. The CLI help points operators to the detailed operations guide.
 
 The runner remains repository execution infrastructure. It does not activate Workflow Kernel 2.0, and it does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, Workflow Kernel Run Records, or their authority boundaries.

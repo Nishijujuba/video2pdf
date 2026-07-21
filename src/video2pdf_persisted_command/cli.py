@@ -32,6 +32,7 @@ STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
 SUPERVISOR_IDENTITY_FILENAME = "supervisor-identity.json"
 STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
 STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
+OPERATOR_GUIDE = "docs/operations/persisted-command-runner.md"
 
 _COOKIE_FILE_ARGUMENTS = frozenset(
     {
@@ -94,24 +95,57 @@ class _ClassifiedArgument:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="persisted_command.py")
+    help_options = {
+        "formatter_class": argparse.RawDescriptionHelpFormatter,
+        "epilog": f"Operator guide: {OPERATOR_GUIDE}",
+    }
+    parser = argparse.ArgumentParser(
+        prog="persisted_command.py",
+        description="Run and observe durable non-interactive commands.",
+        **help_options,
+    )
     commands = parser.add_subparsers(dest="operation", required=True)
 
-    start = commands.add_parser("start")
+    start = commands.add_parser(
+        "start",
+        help="launch a detached persisted command",
+        description="Launch a detached persisted command and return its durable run directory.",
+        **help_options,
+    )
     start.add_argument("--task-name", required=True)
     start.add_argument("--cwd", type=Path)
     start.add_argument("--accepted-exit-code", action="append", type=int)
     start.add_argument("target_command", nargs=argparse.REMAINDER)
 
-    show = commands.add_parser("show")
+    show = commands.add_parser(
+        "show",
+        help="read one persisted run snapshot",
+        description="Read one persisted run snapshot without changing command execution.",
+        **help_options,
+    )
     show.add_argument("--run-dir", required=True, type=Path)
 
-    wait = commands.add_parser("wait")
+    wait = commands.add_parser(
+        "wait",
+        help="observe until terminal state or observation timeout",
+        description="Observe until terminal state or until the observation window ends.",
+        **help_options,
+    )
     wait.add_argument("--run-dir", required=True, type=Path)
     wait.add_argument("--timeout-seconds", type=float)
 
-    commands.add_parser("list")
-    reconcile = commands.add_parser("reconcile")
+    commands.add_parser(
+        "list",
+        help="list retained persisted runs",
+        description="List retained persisted runs for discovery and recovery.",
+        **help_options,
+    )
+    reconcile = commands.add_parser(
+        "reconcile",
+        help="reconcile persisted state with process identity",
+        description="Reconcile persisted state with process identity without restarting or taking over the command.",
+        **help_options,
+    )
     reconcile.add_argument("--run-dir", required=True, type=Path)
 
     commands.add_parser("_supervise").add_argument(

@@ -25,6 +25,19 @@ $python = 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe'
 
 On Windows, persisted execution must not leave a visible PowerShell window open. Let `start` return immediately after it launches the detached supervisor, then observe the run later with non-blocking `show` or `reconcile` calls. Use a blocking `wait` only when the calling tool guarantees hidden-window execution.
 
+## User-facing notification policy
+
+The supervisor heartbeat proves that execution remains observable. It is durable operation evidence and does not by itself justify a user-facing progress message. After `start`, report the stable task name and `data.run_dir` once.
+
+Use one of two observation modes:
+
+- When the result blocks the requested delivery, keep the task active and inspect it silently with `show`, `reconcile`, or a hidden-window `wait`.
+- When the result does not block the current delivery, return control with `data.run_dir`; a later session can recover it through `list`, `show`, or `reconcile`.
+
+Emit a user-facing update only for a terminal state, a changed security classification or `acceptance_evidence_eligible` value, an explicit machine-readable milestone from the target, or an error, blocker, or user decision. Raw log growth, a newer `heartbeat_at`, an unchanged `running` state, and expiration of one `wait` observation window remain silent observations.
+
+`wait` timeout means only that the observation window ended. When the returned state remains `running`, observe again without calling the command failed, stalled, or at risk. Report `interrupted` and `unknown` immediately because continuity can no longer be proven. If a higher-priority runtime requires a chat heartbeat, use the longest permitted interval and emit only its minimal required text.
+
 `stdout.log` and `stderr.log` preserve the target's original byte streams. `command.log` preserves supervisor observation order as length-prefixed binary records. Each record has the ASCII header `[<stream> <byte-length>]\n`, immediately followed by exactly `<byte-length>` payload bytes. `<stream>` is `stdout` or `stderr`. Consumers must use the declared byte length rather than newline or prefix scanning to locate the next record.
 
 The accepted exit-code set defaults to `{0}`. Repeating `--accepted-exit-code <code>` before `--` replaces that default with the declared set, so `0` must also be declared when it remains valid beside an intentional nonzero code. That declaration becomes immutable at launch. `succeeded` and `failed` require an actual child exit code; `launch_failed` has none. An absent matching process becomes `interrupted`, while uncertain identity becomes `unknown`.

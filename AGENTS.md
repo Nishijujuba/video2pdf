@@ -42,6 +42,10 @@ Every run is retained under `待删除/long-running/` with complete `stdout.log`
 
 Persisted metadata omits environment values and redacts recognized sensitive arguments. Target commands remain responsible for sanitized output. When detection sets `acceptance_evidence_eligible` to false with `security_failure`, the complete logs remain local diagnostic material and cannot support acceptance evidence. Secret values, raw cookies, tokens, authorization headers, and credential-bearing URLs must never appear in shared summaries or committed evidence.
 
+Persisted heartbeats are execution evidence, not user-facing progress events. After `start`, report the stable task name and returned `data.run_dir` once. If completion blocks the requested delivery, keep the task active and observe it silently; otherwise return control with the run directory so a later session can recover through `list`, `show`, or `reconcile`.
+
+User-facing updates are event-driven. Emit an update only when the persisted state becomes terminal, the security classification or `acceptance_evidence_eligible` changes, the target emits an explicit machine-readable milestone, or an error, blocker, or user decision appears. Log growth, `heartbeat_at` changes, an unchanged `running` state, and expiration of one `wait` observation window are not progress events. A `wait` timeout with state `running` must be observed again without describing the command as failed or at risk. Report `interrupted` or `unknown` immediately. When a higher-priority runtime rule mandates a heartbeat, use the longest permitted interval and emit only the required minimal heartbeat.
+
 This runner does not activate Workflow Kernel 2.0 and does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records. Those authorities keep their existing validation and cutover rules. The complete operator walkthrough is in `docs/operations/persisted-command-runner.md`.
 
 ## Multi-Agent Orchestration
@@ -62,19 +66,6 @@ Required subagent roles:
 For Acceptance Reviewer subagents, use `wait_agent` with `timeout_ms: 3600000` so the reviewer has a one-hour wait window.
 
 A `wait_agent` timeout means only that the current wait window expired. It does not mean the subagent failed, stalled, or produced an invalid review. Do not interrupt or close a normally running Acceptance Reviewer because of `wait_agent` timeout alone. Interrupt or close it only when the reviewer reports an explicit error, violates the allowed artifact boundary, exceeds the one-hour wait window without producing required output, or the user asks to stop.
-
-### Long-running Process Wait Policy
-
-- Use the maximum wait interval permitted by the active tool and runtime policy.
-- Treat an unchanged process state as expected.
-- Do not restate unchanged implementation, commit, review, or worktree facts.
-- Emit progress updates only when:
-  1. new output appears;
-  2. the phase changes;
-  3. an error, timeout risk, or user decision appears;
-  4. the process completes;
-  5. a higher-priority runtime instruction requires a heartbeat.
-- When a mandatory heartbeat is required, emit one short line: `Still running; no new output or status changes.`
 
 ### Visual Acceptance Input Policy
 

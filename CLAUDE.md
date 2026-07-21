@@ -42,6 +42,10 @@ Every run is retained under `待删除/long-running/` with complete `stdout.log`
 
 Persisted metadata omits environment values and redacts recognized sensitive arguments. Target commands remain responsible for sanitized output. When detection sets `acceptance_evidence_eligible` to false with `security_failure`, the complete logs remain local diagnostic material and cannot support acceptance evidence. Secret values, raw cookies, tokens, authorization headers, and credential-bearing URLs must never appear in shared summaries or committed evidence.
 
+Persisted heartbeats are execution evidence, not user-facing progress events. After `start`, report the stable task name and returned `data.run_dir` once. If completion blocks the requested delivery, keep the task active and observe it silently; otherwise return control with the run directory so a later session can recover through `list`, `show`, or `reconcile`.
+
+User-facing updates are event-driven. Emit an update only when the persisted state becomes terminal, the security classification or `acceptance_evidence_eligible` changes, the target emits an explicit machine-readable milestone, or an error, blocker, or user decision appears. Log growth, `heartbeat_at` changes, an unchanged `running` state, and expiration of one `wait` observation window are not progress events. A `wait` timeout with state `running` must be observed again without describing the command as failed or at risk. Report `interrupted` or `unknown` immediately. When a higher-priority runtime rule mandates a heartbeat, use the longest permitted interval and emit only the required minimal heartbeat.
+
 This runner does not activate Workflow Kernel 2.0 and does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records. Those authorities keep their existing validation and cutover rules. The complete operator walkthrough is in `docs/operations/persisted-command-runner.md`.
 
 ## Multi-Agent Orchestration

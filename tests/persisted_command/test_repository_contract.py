@@ -40,6 +40,8 @@ class RepositoryPersistedCommandContractTests(unittest.TestCase):
             "unknown",
             "acceptance_evidence_eligible",
             "待删除/long-running/",
+            "must not leave a visible PowerShell window open",
+            "blocking `wait` is allowed only when the calling tool guarantees hidden-window execution",
             "docs/operations/persisted-command-runner.md",
             "does not activate Workflow Kernel 2.0",
             "does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records",
@@ -71,6 +73,8 @@ class RepositoryPersistedCommandContractTests(unittest.TestCase):
             "scripts\\persisted_command.py reconcile",
             "exit-code.txt",
             "a separate process",
+            "must not leave a visible PowerShell window open",
+            "blocking `wait` only when the calling tool guarantees hidden-window execution",
         ):
             self.assertIn(example_step, example)
 

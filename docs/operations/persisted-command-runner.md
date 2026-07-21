@@ -23,6 +23,8 @@ $python = 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe'
 
 `start` returns JSON containing `data.run_id` and `data.run_dir`. `wait` observes until a terminal state or the requested observation timeout. `list` discovers all retained runs. `show` reads one record. `reconcile` checks persisted process identity and may correct a stale non-terminal status without restarting, terminating, attaching to, or taking over the target.
 
+On Windows, persisted execution must not leave a visible PowerShell window open. Let `start` return immediately after it launches the detached supervisor, then observe the run later with non-blocking `show` or `reconcile` calls. Use a blocking `wait` only when the calling tool guarantees hidden-window execution.
+
 `stdout.log` and `stderr.log` preserve the target's original byte streams. `command.log` preserves supervisor observation order as length-prefixed binary records. Each record has the ASCII header `[<stream> <byte-length>]\n`, immediately followed by exactly `<byte-length>` payload bytes. `<stream>` is `stdout` or `stderr`. Consumers must use the declared byte length rather than newline or prefix scanning to locate the next record.
 
 The accepted exit-code set defaults to `{0}`. Repeating `--accepted-exit-code <code>` before `--` replaces that default with the declared set, so `0` must also be declared when it remains valid beside an intentional nonzero code. That declaration becomes immutable at launch. `succeeded` and `failed` require an actual child exit code; `launch_failed` has none. An absent matching process becomes `interrupted`, while uncertain identity becomes `unknown`.

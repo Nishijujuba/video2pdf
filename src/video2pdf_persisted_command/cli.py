@@ -23,6 +23,9 @@ from typing import Any, BinaryIO, Literal, Mapping, Sequence
 COMMAND_SCHEMA_VERSION = "1.0.0"
 STATUS_SCHEMA_VERSION = "1.0.0"
 HEARTBEAT_INTERVAL_SECONDS = 29.0
+STATUS_PUBLICATION_RETRY_INTERVAL_SECONDS = 0.1
+STREAM_READ_SIZE = 64 * 1024
+SECRET_SCAN_CONTEXT_BYTES = 4 * 1024
 STATUS_LOCK_FILENAME = ".status.lock"
 STATUS_LOCK_RETRY_ATTEMPTS = 1500
 STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
@@ -78,7 +81,8 @@ _QUERY_SECRET_VALUE = re.compile(
     rf"(?i)[?&]{_QUERY_CREDENTIAL_NAME}=([^&\s\"']+)"
 )
 _URI_USERINFO = re.compile(
-    r"(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/?#\s]+)@"
+    r"(?i)(?<![a-z0-9+.-])"
+    r"(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/?#\s]+)@"
 )
 
 
@@ -716,6 +720,26 @@ def _contains_detected_secret(value: bytes, secret_values: Sequence[str]) -> boo
     return _redact_text(text, secret_values) != text
 
 
+class _StreamSecretDetector:
+    def __init__(self, secret_values: Sequence[str]) -> None:
+        self._secret_values = secret_values
+        longest_secret = max(
+            (len(secret.encode("utf-8")) for secret in secret_values),
+            default=0,
+        )
+        self._context_size = max(
+            SECRET_SCAN_CONTEXT_BYTES,
+            longest_secret - 1,
+        )
+        self._context = b""
+
+    def observe(self, chunk: bytes) -> bool:
+        scan_window = self._context + chunk
+        detected = _contains_detected_secret(scan_window, self._secret_values)
+        self._context = scan_window[-self._context_size :]
+        return detected
+
+
 def _create_run_directory(project_root: Path, task_name: str) -> tuple[str, Path]:
     root = project_root / "待删除/long-running"
     root.mkdir(parents=True, exist_ok=True)
@@ -969,7 +993,7 @@ def _copy_stream(
     events: queue.Queue[tuple[str, bytes] | None],
 ) -> None:
     while True:
-        chunk = source.readline()
+        chunk = source.read1(STREAM_READ_SIZE)
         if not chunk:
             break
         events.put((stream_name, chunk))
@@ -1048,25 +1072,32 @@ def _supervise(run_dir: Path) -> int:
     target_creation_identity = _process_identity(process.pid)
     latest_output_at = None
     nonterminal_status_publication_failures = 0
-    try:
-        _write_status_atomic(
-            run_dir,
-            _execution_status(
-                run_id,
-                "running",
+
+    def publish_running_status(current_monotonic: float) -> bool:
+        nonlocal nonterminal_status_publication_failures
+        try:
+            _write_status_atomic(
                 run_dir,
-                started_at=command_record["created_at"],
-                elapsed_seconds=time.monotonic() - started_monotonic,
-                supervisor_pid=supervisor_pid,
-                supervisor_creation_identity=supervisor_creation_identity,
-                target_pid=process.pid,
-                target_creation_identity=target_creation_identity,
-                latest_output_at=latest_output_at,
-                exit_code=None,
-            ),
-        )
-    except OSError:
-        nonterminal_status_publication_failures += 1
+                _execution_status(
+                    run_id,
+                    "running",
+                    run_dir,
+                    started_at=command_record["created_at"],
+                    elapsed_seconds=current_monotonic - started_monotonic,
+                    supervisor_pid=supervisor_pid,
+                    supervisor_creation_identity=supervisor_creation_identity,
+                    target_pid=process.pid,
+                    target_creation_identity=target_creation_identity,
+                    latest_output_at=latest_output_at,
+                    exit_code=None,
+                ),
+            )
+            return True
+        except OSError:
+            nonterminal_status_publication_failures += 1
+            return False
+
+    initial_status_published = publish_running_status(time.monotonic())
 
     assert process.stdout is not None
     assert process.stderr is not None
@@ -1088,6 +1119,10 @@ def _supervise(run_dir: Path) -> int:
 
     log_persistence_failed = False
     secret_detected = False
+    secret_detectors = {
+        stream_name: _StreamSecretDetector(secret_values)
+        for stream_name in ("stdout", "stderr")
+    }
     stream_logs: dict[str, BinaryIO] = {}
     merged_log: BinaryIO | None = None
     logs = _LogExitStack()
@@ -1109,9 +1144,19 @@ def _supervise(run_dir: Path) -> int:
 
         finished_readers = 0
         next_heartbeat = time.monotonic() + HEARTBEAT_INTERVAL_SECONDS
+        next_status_retry = (
+            None
+            if initial_status_published
+            else time.monotonic() + STATUS_PUBLICATION_RETRY_INTERVAL_SECONDS
+        )
         while finished_readers < len(readers) or process.poll() is None:
             current_monotonic = time.monotonic()
             event_timeout = max(0.0, next_heartbeat - current_monotonic)
+            if next_status_retry is not None:
+                event_timeout = min(
+                    event_timeout,
+                    max(0.0, next_status_retry - current_monotonic),
+                )
             if finished_readers == len(readers):
                 event_timeout = min(event_timeout, 0.1)
             try:
@@ -1125,7 +1170,7 @@ def _supervise(run_dir: Path) -> int:
                     finished_readers += 1
                 else:
                     stream_name, chunk = event
-                    if _contains_detected_secret(chunk, secret_values):
+                    if secret_detectors[stream_name].observe(chunk):
                         secret_detected = True
                     if not log_persistence_failed:
                         try:
@@ -1135,30 +1180,38 @@ def _supervise(run_dir: Path) -> int:
                                 f"[{stream_name}] ".encode("ascii") + chunk
                             )
                             latest_output_at = _now()
+                            status_published = publish_running_status(
+                                time.monotonic()
+                            )
+                            next_status_retry = (
+                                None
+                                if status_published
+                                else time.monotonic()
+                                + STATUS_PUBLICATION_RETRY_INTERVAL_SECONDS
+                            )
                         except OSError:
                             log_persistence_failed = True
 
             current_monotonic = time.monotonic()
+            if (
+                next_status_retry is not None
+                and current_monotonic >= next_status_retry
+            ):
+                status_published = publish_running_status(current_monotonic)
+                next_status_retry = (
+                    None
+                    if status_published
+                    else current_monotonic
+                    + STATUS_PUBLICATION_RETRY_INTERVAL_SECONDS
+                )
             if current_monotonic >= next_heartbeat:
-                try:
-                    _write_status_atomic(
-                        run_dir,
-                        _execution_status(
-                            run_id,
-                            "running",
-                            run_dir,
-                            started_at=command_record["created_at"],
-                            elapsed_seconds=current_monotonic - started_monotonic,
-                            supervisor_pid=supervisor_pid,
-                            supervisor_creation_identity=supervisor_creation_identity,
-                            target_pid=process.pid,
-                            target_creation_identity=target_creation_identity,
-                            latest_output_at=latest_output_at,
-                            exit_code=None,
-                        ),
-                    )
-                except OSError:
-                    nonterminal_status_publication_failures += 1
+                status_published = publish_running_status(current_monotonic)
+                next_status_retry = (
+                    None
+                    if status_published
+                    else current_monotonic
+                    + STATUS_PUBLICATION_RETRY_INTERVAL_SECONDS
+                )
                 while next_heartbeat <= current_monotonic:
                     next_heartbeat += HEARTBEAT_INTERVAL_SECONDS
 

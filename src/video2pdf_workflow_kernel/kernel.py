@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import time
 from typing import Any, Callable, Mapping
 from urllib.parse import parse_qsl, urlsplit
 
@@ -68,6 +69,37 @@ RUN_STATE_MUTATION_FAULT_POINTS = frozenset(
 )
 _BILIBILI_ITEM_ID = re.compile(r"^BV[0-9A-Za-z]{10}$")
 _YOUTUBE_ITEM_ID = re.compile(r"^[0-9A-Za-z_-]{11}$")
+_WINDOWS_INITIALIZATION_PUBLICATION_RETRY_SECONDS = 0.75
+_WINDOWS_INITIALIZATION_PUBLICATION_RETRY_DELAY_SECONDS = 0.05
+
+
+def _publish_initialization_candidate(candidate: Path, output: Path) -> None:
+    """Atomically publish a complete Run directory across transient Windows locks."""
+
+    deadline = (
+        time.monotonic() + _WINDOWS_INITIALIZATION_PUBLICATION_RETRY_SECONDS
+    )
+    while True:
+        try:
+            os.replace(candidate, output)
+            return
+        except PermissionError as exc:
+            if (
+                os.name != "nt"
+                or getattr(exc, "winerror", None) not in {5, 32}
+                or not candidate.exists()
+                or output.exists()
+            ):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(
+                min(
+                    _WINDOWS_INITIALIZATION_PUBLICATION_RETRY_DELAY_SECONDS,
+                    remaining,
+                )
+            )
 
 
 def _deterministic_production_locator(
@@ -635,7 +667,7 @@ class VideoWorkflowKernel:
         if output_path.exists():
             raise KernelConflict("production output path appeared during initialization")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staging_path, output_path)
+        _publish_initialization_candidate(staging_path, output_path)
         self._inject(fault_point, "after_output_dir_publish")
         store.transition_intent(
             intent_id, expected_state="PREPARED", new_state="PUBLISHED"
@@ -982,7 +1014,7 @@ class VideoWorkflowKernel:
         if output_path.exists():
             raise KernelConflict("output path appeared during initialization")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staging_path, output_path)
+        _publish_initialization_candidate(staging_path, output_path)
         self._inject(fault_point, "after_output_dir_publish")
         store.transition_intent(
             intent_id, expected_state="PREPARED", new_state="PUBLISHED"

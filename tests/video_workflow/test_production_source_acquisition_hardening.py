@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
 import uuid
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -358,6 +360,94 @@ class ProductionSourceAcquisitionHardeningTests(unittest.TestCase):
             kernel.control_store.current_run_record_sha(run["run_id"]),
             sha256_file(initialized.run_dir / "workflow/run.json"),
         )
+
+    @unittest.skipUnless(
+        os.name == "nt", "Windows directory publication semantics"
+    )
+    def test_production_initialization_retries_transient_windows_directory_publication(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.adapters import (
+            PlatformProbeRequest,
+            RecordedCommandRunner,
+            YouTubePlatformAdapter,
+            YtDlpRuntime,
+        )
+        from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+
+        root = (
+            PROJECT_ROOT
+            / "待删除"
+            / "kernel-test-runs"
+            / f"production-init-w5-{uuid.uuid4().hex[:8]}"
+        )
+        workspace = root / "workspace"
+        staging = root / "provider-staging"
+        cookie = root / "credentials/cookies.txt"
+        staging.mkdir(parents=True)
+        cookie.parent.mkdir(parents=True)
+        cookie.write_text(
+            "# Netscape HTTP Cookie File\n"
+            ".example.test\tTRUE\t/\tTRUE\t2147483647\tSID\trecorded\n",
+            encoding="utf-8",
+        )
+        adapter = YouTubePlatformAdapter(
+            YtDlpRuntime(
+                python_executable=Path("python"),
+                ffmpeg_dir=Path("ffmpeg-bin"),
+                ffprobe_executable=Path("ffprobe"),
+            )
+        )
+        kernel = VideoWorkflowKernel(workspace)
+        probe = kernel.bootstrap_production_source(
+            adapter=adapter,
+            request=PlatformProbeRequest(
+                source_url="https://www.youtube.com/watch?v=yt-test-001",
+                localized_cookie_file=cookie,
+                staging_root=staging,
+            ),
+            runner=RecordedCommandRunner(
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/providers/youtube/fresh-download"
+            ),
+            task_start="2026-07-18T12:00:00+08:00",
+            request_id="production-init-winerror-5",
+            provider_kind="recorded_fixture",
+        )
+        real_replace = os.replace
+        publication_attempts = 0
+
+        def transient_replace(source, destination):
+            nonlocal publication_attempts
+            if (
+                Path(source).name == "candidate"
+                and Path(destination).parent == workspace
+            ):
+                publication_attempts += 1
+                if publication_attempts == 1:
+                    error = PermissionError(13, "transient directory handle", source)
+                    error.winerror = 5
+                    raise error
+            return real_replace(source, destination)
+
+        with mock.patch(
+            "video2pdf_workflow_kernel.kernel.os.replace",
+            side_effect=transient_replace,
+        ):
+            initialized = kernel.initialize_production_source(probe)
+
+        self.assertEqual(publication_attempts, 2)
+        self.assertTrue((initialized.run_dir / "workflow/run.json").is_file())
+        self.assertFalse(
+            (kernel.initialization_root / probe.run_id / "candidate").exists()
+        )
+        self.assertEqual(
+            kernel.control_store.intent_for_run(probe.run_id)["state"],
+            "COMMITTED",
+        )
+        replayed = kernel.initialize_production_source(probe)
+        self.assertEqual(replayed.run_dir, initialized.run_dir)
+        self.assertEqual(replayed.classification, "source_acquisition_pending")
 
     def test_production_prompt_selects_versioned_role_and_platform_overlay(self) -> None:
         from video2pdf_workflow_kernel.prompts import (

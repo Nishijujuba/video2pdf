@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -200,6 +201,143 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
 
 
 class PersistenceHardeningTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.name == "nt", "Windows directory publication semantics"
+    )
+    def test_verified_import_initialization_retries_transient_windows_directory_publication(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel import VideoWorkflowKernel
+
+        root = new_test_root("vi-w32")
+        workspace = root / "workspace"
+        kernel = VideoWorkflowKernel(workspace)
+        probe = kernel.bootstrap_probe(
+            fixture=FIXTURE,
+            task_start="2026-07-15T01:02:03+08:00",
+            request_id="verified-import-winerror-32",
+        )
+        real_replace = os.replace
+        publication_attempts = 0
+
+        def transient_replace(source, destination):
+            nonlocal publication_attempts
+            if (
+                Path(source).name == "candidate"
+                and Path(destination).parent == workspace
+            ):
+                publication_attempts += 1
+                if publication_attempts == 1:
+                    error = PermissionError(13, "transient directory handle", source)
+                    error.winerror = 32
+                    raise error
+            return real_replace(source, destination)
+
+        with mock.patch(
+            "video2pdf_workflow_kernel.kernel.os.replace",
+            side_effect=transient_replace,
+        ):
+            initialized = kernel.initialize_verified_import(
+                probe=probe,
+                fixture=FIXTURE,
+            )
+
+        self.assertEqual(publication_attempts, 2)
+        self.assertEqual(initialized.classification, "source_ready")
+        self.assertTrue((initialized.run_dir / "workflow/run.json").is_file())
+        self.assertFalse(
+            (kernel.initialization_root / probe.run_id / "candidate").exists()
+        )
+        self.assertEqual(
+            kernel.control_store.intent_for_run(probe.run_id)["state"],
+            "COMMITTED",
+        )
+        replayed = kernel.initialize_verified_import(
+            probe=probe,
+            fixture=FIXTURE,
+        )
+        self.assertEqual(replayed.run_dir, initialized.run_dir)
+        self.assertEqual(replayed.classification, "already_source_ready")
+
+    @unittest.skipUnless(
+        os.name == "nt", "Windows directory publication semantics"
+    )
+    def test_windows_publication_retry_budget_exhaustion_reraises_last_error(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.kernel import (
+            _publish_initialization_candidate,
+        )
+
+        root = new_test_root("wpr-budget")
+        candidate = root / "candidate"
+        output = root / "output"
+        candidate.mkdir()
+        errors = [
+            PermissionError(13, f"persistent directory handle {index}", candidate)
+            for index in range(1, 4)
+        ]
+        for error in errors:
+            error.winerror = 5
+
+        with (
+            mock.patch(
+                "video2pdf_workflow_kernel.kernel.os.replace",
+                side_effect=errors,
+            ) as replace,
+            mock.patch(
+                "video2pdf_workflow_kernel.kernel.time.monotonic",
+                side_effect=[0.0, 0.10, 0.50, 0.76],
+            ),
+            mock.patch("video2pdf_workflow_kernel.kernel.time.sleep") as sleep,
+            self.assertRaises(PermissionError) as raised,
+        ):
+            _publish_initialization_candidate(candidate, output)
+
+        self.assertIs(raised.exception, errors[-1])
+        self.assertEqual(replace.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @unittest.skipUnless(
+        os.name == "nt", "Windows directory publication semantics"
+    )
+    def test_windows_publication_retry_rejects_ineligible_error_or_path_state(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.kernel import (
+            _publish_initialization_candidate,
+        )
+
+        for case in ("other-winerror", "candidate-missing", "output-present"):
+            with self.subTest(case=case):
+                root = new_test_root(f"wpr-{case}")
+                candidate = root / "candidate"
+                output = root / "output"
+                candidate.mkdir()
+                winerror = 87 if case == "other-winerror" else 32
+                if case == "candidate-missing":
+                    candidate.replace(root / "candidate-moved")
+                elif case == "output-present":
+                    output.mkdir()
+                error = PermissionError(13, case, candidate)
+                error.winerror = winerror
+
+                with (
+                    mock.patch(
+                        "video2pdf_workflow_kernel.kernel.os.replace",
+                        side_effect=error,
+                    ) as replace,
+                    mock.patch(
+                        "video2pdf_workflow_kernel.kernel.time.sleep"
+                    ) as sleep,
+                    self.assertRaises(PermissionError) as raised,
+                ):
+                    _publish_initialization_candidate(candidate, output)
+
+                self.assertIs(raised.exception, error)
+                self.assertEqual(replace.call_count, 1)
+                sleep.assert_not_called()
+
     def test_publication_expectations_are_bound_before_output_publish(self) -> None:
         from video2pdf_workflow_kernel import InitializationFault, VideoWorkflowKernel
 

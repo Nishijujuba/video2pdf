@@ -180,6 +180,7 @@ class SharedExitEvidenceTests(unittest.TestCase):
                 (2, "904f46409b87aca96aeecf5cb0be4855c2cfdafa"),
                 (3, "aaaaeac5747fddc0915a59df34de47e6e8cfec48"),
                 (4, "654362017fa974946fb252af5311868bb47efcf0"),
+                (5, "7b33a2dcf8b19608943f12efd814907a69c35e8f"),
             },
         )
 

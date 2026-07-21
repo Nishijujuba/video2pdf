@@ -145,6 +145,8 @@ class ContractsCliTests(unittest.TestCase):
             ("exit_evidence_manifest.v2.invalid.json", 1),
             ("exit_evidence_manifest.v2.slice2.valid.json", 0),
             ("exit_evidence_manifest.v2.slice2.missing-fencing.invalid.json", 1),
+            ("exit_evidence_manifest.v2.slice5.valid.json", 0),
+            ("exit_evidence_manifest.v2.slice5.missing-closure.invalid.json", 1),
         )
         for fixture_name, expected_returncode in cases:
             with self.subTest(fixture=fixture_name):

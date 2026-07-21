@@ -21,6 +21,8 @@ from .task_execution import (
     PROMOTION_FAULT_POINTS,
     RECLAIM_FAULT_POINTS,
 )
+from .content_production import PRODUCTION_FAULT_POINTS
+from .guarded_compile import GuardedCompileProvider
 from .utils import read_json
 
 
@@ -216,6 +218,25 @@ def _parser() -> argparse.ArgumentParser:
     source_live_smoke.add_argument("--spec", required=True, type=Path)
     source_live_smoke.add_argument("--credential-profile", required=True)
     source_live_smoke.add_argument("--work-root", required=True, type=Path)
+
+    production_plan = commands.add_parser("production-plan")
+    production_plan.add_argument("--run-dir", required=True, type=Path)
+    production_plan.add_argument("--supersede-task-id")
+    production_plan.add_argument("--expected-claim-generation", type=int)
+
+    production_advance = commands.add_parser("production-advance")
+    production_advance.add_argument("--run-dir", required=True, type=Path)
+    production_advance.add_argument("--task-id", required=True)
+    production_advance.add_argument("--attempt-id", required=True)
+    production_advance.add_argument("--compile-runtime-policy", type=Path)
+    production_advance.add_argument(
+        "--fault-point", choices=sorted(PRODUCTION_FAULT_POINTS)
+    )
+
+    guarded_compile = commands.add_parser("guarded-compile")
+    guarded_compile.add_argument("--run-dir", required=True, type=Path)
+    guarded_compile.add_argument("--manifest", required=True, type=Path)
+    guarded_compile.add_argument("--runtime-policy", required=True, type=Path)
     return parser
 
 
@@ -296,6 +317,57 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "guarded-compile":
+        run_dir = args.run_dir.resolve()
+        manifest_path = args.manifest.resolve()
+        policy = read_json(args.runtime_policy.resolve())
+        contracts = ContractRegistry(project_root)
+        contracts.validate("compile-runtime-policy", policy)
+        contracts.validate("compile-manifest", read_json(manifest_path))
+        VideoWorkflowKernel(run_dir.parent).require_current_validated_source_package(
+            run_dir
+        )
+        result = GuardedCompileProvider(run_dir).compile(manifest_path, policy)
+        return _ok(
+            command,
+            "diagnostic_compile_ready",
+            result["report"],
+            str(result["report_path"]),
+        )
+    if command == "production-plan":
+        run_dir = args.run_dir.resolve()
+        result = VideoWorkflowKernel(run_dir.parent).production_plan(
+            run_dir,
+            supersede_task_id=args.supersede_task_id,
+            expected_claim_generation=args.expected_claim_generation,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(run_dir / "workflow/production-state.json"),
+        )
+    if command == "production-advance":
+        run_dir = args.run_dir.resolve()
+        policy = (
+            None
+            if args.compile_runtime_policy is None
+            else read_json(args.compile_runtime_policy.resolve())
+        )
+        result = VideoWorkflowKernel(run_dir.parent).production_advance(
+            run_dir,
+            args.task_id,
+            args.attempt_id,
+            compile_runtime_policy=policy,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            result.get("compile_report_path")
+            or str(run_dir / "workflow/production-state.json"),
+        )
     if command == "control-store-restore":
         result = ControlStoreRecovery(
             args.workspace_root,

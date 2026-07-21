@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/pyramid-evaluation-binding.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "target", "evaluation_context", "status"],
+  "properties": {
+    "schema_name": {"const": "pyramid-evaluation-binding"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "target": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactTarget"},
+    "evaluation_context": {"type": "object", "additionalProperties": false, "required": ["pyramid_standard", "checkpoint", "audience"], "properties": {"pyramid_standard": {"const": "pyramid-principle-v1"}, "checkpoint": {"enum": ["pyramid_outline", "pyramid_section", "pyramid_main"]}, "audience": {"type": "string", "minLength": 1}}},
+    "status": {"enum": ["pass", "needs_revision", "blocked"]}
+  }
+}

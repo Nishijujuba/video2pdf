@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/figure-manifest.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "slot_id", "section_id", "asset_path", "asset_sha256", "caption", "source", "slot_contribution_path", "slot_contribution_sha256"],
+  "properties": {
+    "schema_name": {"const": "figure-manifest"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "slot_id": {"const": "figure_01"},
+    "section_id": {"const": "section_01"},
+    "asset_path": {"const": "figures/figure_01.png"},
+    "asset_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "caption": {"type": "string", "pattern": "^[^\\\\{}\\r\\n]+$"},
+    "source": {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"enum": ["source_timestamp", "generated_diagram"]}, "value": {"type": "string", "pattern": "^[^\\\\{}\\r\\n]+$"}}},
+    "slot_contribution_path": {"const": "work/figures/figure_01.tex"},
+    "slot_contribution_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+  }
+}

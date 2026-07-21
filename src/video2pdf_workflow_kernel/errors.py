@@ -45,6 +45,23 @@ class ArtifactDrift(KernelError):
     exit_code = 40
 
 
+class CompileDependencyGap(KernelError):
+    classification = "compile_dependency_gap"
+    exit_code = 40
+
+
+class ProductionFault(KernelError):
+    classification = "injected_production_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Content Production fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
 class ControlStoreUnavailable(KernelError):
     classification = "control_store_unavailable"
     exit_code = 50

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/production-state.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "run_id", "source_binding", "artifacts", "completed_roles", "claims", "receipts", "checkpoints"],
+  "properties": {
+    "schema_name": {"const": "production-state"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "source_binding": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactBinding"},
+    "artifacts": {"type": "object", "additionalProperties": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactGeneration"}},
+    "completed_roles": {"type": "array", "uniqueItems": true, "items": {"enum": ["outline", "pyramid_outline", "writer", "figure", "pyramid_section", "pyramid_main"]}},
+    "claims": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["task_id", "claim_generation", "claim_token", "status"],
+        "properties": {
+          "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+          "claim_generation": {"type": "integer", "minimum": 1},
+          "claim_token": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+          "status": {"enum": ["available", "active", "committed"]},
+          "active_attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"}
+        }
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["task_id", "attempt_id", "claim_generation", "result"],
+        "properties": {
+          "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+          "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+          "claim_generation": {"type": "integer", "minimum": 1},
+          "result": {"type": "object"}
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_ready", "draft_compile_ready"],
+      "properties": {
+        "source_ready": {"const": "current"},
+        "draft_compile_ready": {"enum": ["pending", "current"]}
+      }
+    }
+  }
+}

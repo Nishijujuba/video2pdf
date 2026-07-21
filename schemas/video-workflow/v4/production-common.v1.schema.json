@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json",
+  "$defs": {
+    "artifactBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logical_id", "generation", "sha256"],
+      "properties": {
+        "logical_id": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "artifactTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logical_id", "path", "generation", "sha256"],
+      "properties": {
+        "logical_id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "artifactGeneration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "generation", "sha256", "size", "producer"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 0},
+        "producer": {"type": "string", "minLength": 1}
+      }
+    },
+    "fingerprintedPath": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    }
+  }
+}

@@ -1,0 +1,561 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 5,
+    "name": "single-section-production"
+  },
+  "slice_base_commit": "7b33a2dcf8b19608943f12efd814907a69c35e8f",
+  "implementation_commit": "8368329e02fbb8ed064071d9c25f95fab06e5efd",
+  "evidence_paths": [
+    "evidence/slice-05/exit-evidence-manifest.json",
+    "evidence/slice-05/logs/slice5-contracts.log",
+    "evidence/slice-05/logs/slice5-production.log",
+    "evidence/slice-05/logs/slice5-full-video-workflow.log",
+    "evidence/slice-05/logs/slice4-exit-evidence.log",
+    "evidence/slice-05/logs/slice5-syntax.log",
+    "evidence/slice-05/logs/slice5-diff-check.log"
+  ],
+  "generated_at": "2026-07-21T09:54:37Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice5-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice5-contracts.log",
+        "sha256": "cf67842b71ebf2ab89efea2753ca7299813597a0ed30ae268c3c6ae860ed9d6a"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice5-production",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_plan_and_advance_reach_guarded_diagnostic_compile",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_cli_plan_is_idempotent_and_advance_fail_closed_machine_readable",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_compile_preflight_rejects_shell_escape_before_engine_launch",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_compile_manifest_rejects_undeclared_or_escaping_project_input",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_runtime_policy_and_recorder_evidence_fail_closed",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_multi_file_figure_promotion_recovers_after_partial_publication",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_writer_and_figure_promotions_are_serialized_across_processes",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_production_artifact_drift_blocks_the_next_gate",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_figure_manifest_rejects_a_mismatched_slot_contribution",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_promotion_journal_recovers_prepared_and_committed_boundaries"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice5-production.log",
+        "sha256": "7e29a8963f191ff21a9f2193599aaa6fcce21e33b5e267f3065c75ad96b60508"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice5-full-video-workflow",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/video_workflow",
+        "-p",
+        "test_*.py"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice5-full-video-workflow.log",
+        "sha256": "b714bd2d74c56a626c76b0d3dbb8f9df19eba2e77fbf8923864a41ec8e41f530"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice4-exit-evidence",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/validate_slice_exit_evidence.py",
+        "evidence/slice-04/exit-evidence-manifest.json"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice4-exit-evidence.log",
+        "sha256": "97f6c0ab88098f31bdbdf3843a721b89c353ac3c11e609021d40d63aa4c60267"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice5-syntax",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-c",
+        "import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+list(pathlib.Path('scripts').glob('*.py'))+list(pathlib.Path('tests/video_workflow').glob('test_*.py'));[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice5-syntax.log",
+        "sha256": "9a8eb61e6252dad75266ba94829a49a96aa56811c0ea7ee8972e6529780f23ae"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice5-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "7b33a2dcf8b19608943f12efd814907a69c35e8f...HEAD"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-05/logs/slice5-diff-check.log",
+        "sha256": "a950f3bd9a9eafbfee4a6ccd920a2a69f4eb9abc52e352bfb2a199faca3b586d"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "source_ready",
+      "status": "current"
+    },
+    {
+      "name": "draft_compile_ready",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "compile_provider_fixture",
+      "path": "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py",
+      "sha256": "a797c93311a18113e155e2f79ca138d9f397cf3608f5ca85b295d0ed7b22ded6"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice5.valid.json",
+      "sha256": "c06a1e0a716b72033f02a2923868a1c7662f3fbd9a4d97fd51c886c0e84a6c67"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice5.missing-closure.invalid.json",
+      "sha256": "7c18693432118845e4463bdaef7e85bcb854cf4d314b1b7b9347b22b7e368476"
+    }
+  ],
+  "results": {
+    "positive": [
+      "public_operations_reach_guarded_diagnostic_compile",
+      "writer_and_figure_attempts_have_disjoint_write_sets",
+      "recorder_proves_declared_compile_dependency_closure",
+      "writer_and_figure_promotions_are_serialized"
+    ],
+    "negative": [
+      "shell_escape_and_path_escape_fail_closed",
+      "undeclared_inputs_and_recursive_workspace_content_are_excluded",
+      "unsafe_runtime_policy_and_recorder_gap_fail_closed",
+      "artifact_drift_fails_closed",
+      "figure_contribution_mismatch_fails_closed"
+    ],
+    "recovery": [
+      "production_plan_is_idempotent_and_missing_attempt_is_rejected",
+      "multi_file_figure_promotion_recovers_after_partial_publication",
+      "committed_receipt_retry_is_idempotent",
+      "promotion_boundaries_recover"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "public_operations_reach_guarded_diagnostic_compile",
+      "result_kind": "positive",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_plan_and_advance_reach_guarded_diagnostic_compile"
+    },
+    {
+      "result_id": "writer_and_figure_attempts_have_disjoint_write_sets",
+      "result_kind": "positive",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_plan_and_advance_reach_guarded_diagnostic_compile"
+    },
+    {
+      "result_id": "recorder_proves_declared_compile_dependency_closure",
+      "result_kind": "positive",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_plan_and_advance_reach_guarded_diagnostic_compile"
+    },
+    {
+      "result_id": "writer_and_figure_promotions_are_serialized",
+      "result_kind": "positive",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_writer_and_figure_promotions_are_serialized_across_processes"
+    },
+    {
+      "result_id": "shell_escape_and_path_escape_fail_closed",
+      "result_kind": "negative",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_compile_preflight_rejects_shell_escape_before_engine_launch"
+    },
+    {
+      "result_id": "undeclared_inputs_and_recursive_workspace_content_are_excluded",
+      "result_kind": "negative",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_compile_manifest_rejects_undeclared_or_escaping_project_input"
+    },
+    {
+      "result_id": "unsafe_runtime_policy_and_recorder_gap_fail_closed",
+      "result_kind": "negative",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_runtime_policy_and_recorder_evidence_fail_closed"
+    },
+    {
+      "result_id": "artifact_drift_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_production_artifact_drift_blocks_the_next_gate"
+    },
+    {
+      "result_id": "figure_contribution_mismatch_fails_closed",
+      "result_kind": "negative",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_figure_manifest_rejects_a_mismatched_slot_contribution"
+    },
+    {
+      "result_id": "production_plan_is_idempotent_and_missing_attempt_is_rejected",
+      "result_kind": "recovery",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_cli_plan_is_idempotent_and_advance_fail_closed_machine_readable"
+    },
+    {
+      "result_id": "multi_file_figure_promotion_recovers_after_partial_publication",
+      "result_kind": "recovery",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_multi_file_figure_promotion_recovers_after_partial_publication"
+    },
+    {
+      "result_id": "committed_receipt_retry_is_idempotent",
+      "result_kind": "recovery",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt"
+    },
+    {
+      "result_id": "promotion_boundaries_recover",
+      "result_kind": "recovery",
+      "command_id": "slice5-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_promotion_journal_recovers_prepared_and_committed_boundaries"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "sha256": "0aed20da8ad03e6b1e1a975577c0a7e18ed4dddadcc1ae8809d7df76235a3415"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "bb1cc7ce740b897f6ef4c9268a6f7ce5aa1c5f5631246ec4e6d2adaa0a3d4994"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/registry.v1.json",
+      "sha256": "2f42185e112fd418c6c2bc7d9f21a0044ab4ad5374b8c924a62cab4a03f80f25"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/compile-manifest.v1.schema.json",
+      "sha256": "ba8ddb3ea606a5d0bf14d4317927f737bf2f5dbd07efeebcead149c6fb417e91"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/compile-runtime-policy.v1.schema.json",
+      "sha256": "8c403421fba883d4eb7ecc6a4a6e70f0ef694e2e7c0408b75dd580dd6e4e4b48"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/diagnostic-compile-report.v1.schema.json",
+      "sha256": "126919a80907a070626c1a685381279ccfc48f611d3af615c4caa2b0177bda83"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/figure-manifest.v1.schema.json",
+      "sha256": "22a48d3cb3669a567bd472738629f3bf65480f7872f6758daaeab74e20d89858"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/integration-manifest.v1.schema.json",
+      "sha256": "8b4769d02175357f651d9376fe809ba71ab951c05d481a0918f359ce1eba91b8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/outline-contract.v1.schema.json",
+      "sha256": "efaaf801677b11ab0fb3936f73d9aba684626d793bf601cc97f97cb3a5b42707"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-common.v1.schema.json",
+      "sha256": "9c9fdefe35609e7630f4deb1ed0deae9023f4b65db9eac374baca88252274db1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-promotion-journal.v1.schema.json",
+      "sha256": "94bc785c2b03f63160cbf353c7c848eea76029bc4c32acd85eb6e52e90ab18f9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-state.v1.schema.json",
+      "sha256": "1860a34feb0ce8cc8a84215c5dd3f322c03a1788856e0f4446a3bd770e9d0e10"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-task-attempt.v1.schema.json",
+      "sha256": "26659460d1a9903bf95d3cb06a2251b3ceb444074908a9208055a3645b596ffc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-task-envelope.v1.schema.json",
+      "sha256": "704bcdb9b624c7291e9b952480b4876790793631860502b82e85af7ab8522eba"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/pyramid-evaluation-binding.v1.schema.json",
+      "sha256": "c217721a85365662bd8c0d0c1c862c9d19bee70b305d7f51f0850dd4eb61e5a5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice5_exit_evidence.py",
+      "sha256": "4c215092f213f39f8b27e8ec5424f091d0aee0e0310d27bbe7af1d309f84ad1f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice5_exit_evidence_contract.py",
+      "sha256": "2f394e04879456aaa5568564575f53a7ca8fdd4ee4b2c12aa86439fe2d67ea1d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "0d713b801504bced6d8fea728ee98226e6555894b3577f1b5e9cf0158cdf54dc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "2fce524749ec0682e8eb454b56354e124dc7593967d566ac7f7225027e296d3d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/content_production.py",
+      "sha256": "a74dc341eda1f4118fce91e83b9e3d525be6b85a9336ab7b2af91c52fe8053ce"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "15aa6c49037ec9dde384bed3299816fbc676aaf72b74b84c1d1529f3e4ae73ab"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/guarded_compile.py",
+      "sha256": "3a9540a94689d13772e9a6351eeb4ff0dc04a662668cb882664a81a28ffc648c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "10081328b59561058de904c13c72942c8a68582501b34ad7e6be0fa93d7b0ceb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/compile-manifest.invalid.json",
+      "sha256": "b7a6bd5839399073a0be153ee6d530360b2e60c1e9677bb77364c5f47bd52d18"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/compile-manifest.valid.json",
+      "sha256": "733d7c2087eec4f3353ffd571e3c5d926f3758ee7a09f0e878115ca35dc951b4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/compile-runtime-policy.invalid.json",
+      "sha256": "008f94c7bd6cf01722355f389f5b898d997792881ecdc16dde5c1b13d7315145"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/compile-runtime-policy.valid.json",
+      "sha256": "f8f7f059fa58e2d963d746c0489aee42e73ab34f3961a5c4c8b1159f2ab52a7d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/diagnostic-compile-report.invalid.json",
+      "sha256": "36aea9f4a54335a5ac700c35f315afb7a72ad6f3cde8fcd401ffe8a85f206d50"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/diagnostic-compile-report.valid.json",
+      "sha256": "73795d2da7dff2748f05497c5180be5311bec45f082275742e6a80d6e550d0fd"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/figure-manifest.invalid.json",
+      "sha256": "68dab8ad599a7ab4915e6bc57abdc3cf01dc3d914e0338f9de40cd39633f4b18"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/figure-manifest.valid.json",
+      "sha256": "b1ebb722da8eddd81160ea66e6bdc75ba50ee6fcfe6dbb8dae0e1b61750c060d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/integration-manifest.invalid.json",
+      "sha256": "eb3b1c7f7f3d37a3e0a66ea7d0173f8bf4e5dcfec97da3e3650460e46dfaac7b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/integration-manifest.valid.json",
+      "sha256": "47af6a4a84c40a61636861ab395f73c2fbcdba7d5cb00727c4b2d995be2bfd5c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/outline-contract.invalid.json",
+      "sha256": "ba494b765489d863291a7dde78c87da9bf45ea2bc448a1f189342e3c8ccb00b4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/outline-contract.valid.json",
+      "sha256": "0aaa651cf4c033094740568654a01f82507978f129fcce89b3f0c7f62555352d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-promotion-journal.invalid.json",
+      "sha256": "f1fb54175d4c6b505b1295d607eccc1ecf41eb86871c25c79e9677cce5f02d4a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-promotion-journal.valid.json",
+      "sha256": "5ac9d7dfc794796f2174ccd2d5f8689781320d95d1a82e42f2431a48840d3ca8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-state.invalid.json",
+      "sha256": "9b585b7445c163a058e06ff20c923de7c4b02400cdee0d8eabae49762f268d48"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-state.valid.json",
+      "sha256": "0dc2bcb98d986d6e4d9864cf7e367e80a1d4a02c45409d5c120b4aaa93900605"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-attempt.invalid.json",
+      "sha256": "3dc68b29d9bf8f6114876c1b83dcba367e04d62c6d8f037583e2f6b556956825"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-attempt.valid.json",
+      "sha256": "bc15bfa343d5dd6495d1efa7b7f4f22e04d2985f13051bed099e2b679f99c265"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-envelope.invalid.json",
+      "sha256": "d22ed4bb0f2e56a2ff41c33794fbc6d633d4e89a547800b7114e476d80da2039"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-envelope.valid.json",
+      "sha256": "dc912cf3ecd668350981c4714602a15c96cc8cf1bbb94d393d6e6463f0863be4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/pyramid-evaluation-binding.invalid.json",
+      "sha256": "a80679a2c1bd49716ec4f4b4b2362159884cb8f03b22b105c211b9134f905a9b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/pyramid-evaluation-binding.valid.json",
+      "sha256": "8800ba4aa3055793d115212ea0dfbc911be9f3d333e4c02402f130d6a72b076f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice5.missing-closure.invalid.json",
+      "sha256": "7c18693432118845e4463bdaef7e85bcb854cf4d314b1b7b9347b22b7e368476"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice5.valid.json",
+      "sha256": "c06a1e0a716b72033f02a2923868a1c7662f3fbd9a4d97fd51c886c0e84a6c67"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py",
+      "sha256": "a797c93311a18113e155e2f79ca138d9f397cf3608f5ca85b295d0ed7b22ded6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/guarded-compile/package-inventory.json",
+      "sha256": "cc9d5c4da9a86edd403bfc4c39eaf0e338aa561ca070352a5afd758e2a823487"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate7.py",
+      "sha256": "24135d88e13e7b7d19f09c0585508dc36a9980744c313ec10870314afc7fe37a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue8_exit_evidence.py",
+      "sha256": "43aa7259915d64d9a98c42675cca215c2893188ca3462e265b9364c51d5e6bca"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_single_section_production.py",
+      "sha256": "80891f296699a64a05e2366e74aa14aa77370baa313889605885553af6c23143"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_hardening.py",
+      "sha256": "1a077cd9bbe78eea0161361cf41597986578a7721e82e84d566f3a440517c296"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "b5193f9f11ba1ac6b7d34c03482d74fb987a7fb0a26813cf7f592894429c6bb3"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

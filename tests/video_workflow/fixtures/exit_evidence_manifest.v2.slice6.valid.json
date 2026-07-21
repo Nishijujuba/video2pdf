@@ -1,0 +1,22 @@
+{
+  "$schema":"https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json","schema_version":2,"kind":"video-workflow-exit-evidence","fingerprint_algorithm":"sha256-raw-v1",
+  "slice":{"number":6,"name":"multi-section-production"},"slice_base_commit":"6f8241ddb4bd725d3b584dd1c403ed59dda32219","implementation_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence_paths":["evidence/slice-06/exit-evidence-manifest.json","evidence/slice-06/logs/contracts.log"],"generated_at":"2026-07-21T00:00:00Z",
+  "activation_scope":{"kind":"none","runtime_authority_change":false,"components_activated":[],"legacy_track_authority":"preserved"},
+  "commands":[
+    {"test_id":"slice6-contracts","command":["python","contracts"],"expected_exit_code":0,"actual_exit_code":0,"log":{"role":"command_log","path":"evidence/slice-06/logs/contracts.log","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"conforms":true},
+    {"test_id":"slice6-production","command":["python","production"],"expected_exit_code":0,"actual_exit_code":0,"log":{"role":"command_log","path":"evidence/slice-06/logs/production.log","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"conforms":true},
+    {"test_id":"slice6-full-video-workflow","command":["python","full"],"expected_exit_code":0,"actual_exit_code":0,"log":{"role":"command_log","path":"evidence/slice-06/logs/full.log","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"conforms":true}
+  ],
+  "expected_checkpoints":[{"name":"source_ready","status":"current"},{"name":"draft_compile_ready","status":"current"}],
+  "fixtures":[{"role":"multi_section_outline","path":"tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+  "results":{"positive":["deterministic_integration"],"negative":["overlap_rejected"],"fencing":["late_worker_rejected"],"restart":["receipt_retry_idempotent"],"recovery":["selective_invalidation"]},
+  "result_bindings":[
+    {"result_id":"deterministic_integration","result_kind":"positive","command_id":"slice6-production","test_target":"tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_identical_inputs_with_reversed_completion_order_produce_identical_manifest"},
+    {"result_id":"overlap_rejected","result_kind":"negative","command_id":"slice6-production","test_target":"tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_overlapping_write_sets_are_rejected_before_plan_or_promotion"},
+    {"result_id":"late_worker_rejected","result_kind":"fencing","command_id":"slice6-production","test_target":"tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_late_worker_cannot_overwrite_advanced_section_generation"},
+    {"result_id":"receipt_retry_idempotent","result_kind":"restart","command_id":"slice6-production","test_target":"tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt"},
+    {"result_id":"selective_invalidation","result_kind":"recovery","command_id":"slice6-production","test_target":"tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_branch_change_invalidates_only_transitive_dependants"}
+  ],
+  "artifact_fingerprints":[{"role":"implementation","path":"src/video2pdf_workflow_kernel/content_production.py","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"unresolved_exceptions":[],"overall_decision":"pass"
+}

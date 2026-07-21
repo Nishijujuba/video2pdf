@@ -5,6 +5,24 @@
   "json_schema_draft": "https://json-schema.org/draft/2020-12/schema",
   "contracts": [
     {
+      "schema_name": "production-state", "schema_version": "2.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/production-state.v2.schema.json", "schema_path": "schemas/video-workflow/v4/production-state.v2.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/production-state.v2.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/production-state.v2.invalid.json"
+    },
+    {
+      "schema_name": "production-task-envelope", "schema_version": "2.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/production-task-envelope.v2.schema.json", "schema_path": "schemas/video-workflow/v4/production-task-envelope.v2.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/production-task-envelope.v2.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/production-task-envelope.v2.invalid.json"
+    },
+    {
+      "schema_name": "outline-contract", "schema_version": "2.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/outline-contract.v2.schema.json", "schema_path": "schemas/video-workflow/v4/outline-contract.v2.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/outline-contract.v2.invalid.json"
+    },
+    {
+      "schema_name": "figure-manifest", "schema_version": "2.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/figure-manifest.v2.schema.json", "schema_path": "schemas/video-workflow/v4/figure-manifest.v2.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/figure-manifest.v2.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/figure-manifest.v2.invalid.json"
+    },
+    {
+      "schema_name": "integration-manifest", "schema_version": "2.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/integration-manifest.v2.schema.json", "schema_path": "schemas/video-workflow/v4/integration-manifest.v2.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/integration-manifest.v2.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/integration-manifest.v2.invalid.json"
+    },
+    {
+      "schema_name": "writer-result", "schema_version": "1.0.0", "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/writer-result.v1.schema.json", "schema_path": "schemas/video-workflow/v4/writer-result.v1.schema.json", "kind": "contract", "positive_example": "tests/video_workflow/fixtures/contracts/writer-result.valid.json", "negative_example": "tests/video_workflow/fixtures/contracts/writer-result.invalid.json"
+    },
+    {
       "schema_name": "common-definitions",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json",

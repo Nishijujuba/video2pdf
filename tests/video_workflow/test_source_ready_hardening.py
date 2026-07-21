@@ -593,6 +593,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "task-completion-record",
                 "task-promotion-journal",
                 "workflow-result",
+                "writer-result",
             },
         )
         self.assertIn(

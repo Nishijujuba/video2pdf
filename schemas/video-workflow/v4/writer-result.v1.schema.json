@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://video2pdf.local/schemas/video-workflow/v4/writer-result.v1.schema.json","type":"object","additionalProperties":false,
+  "required":["schema_name","schema_version","section_id","new_figure_candidates"],
+  "properties":{"schema_name":{"const":"writer-result"},"schema_version":{"const":"1.0.0"},"section_id":{"type":"string","pattern":"^section_[0-9]{2}$"},"new_figure_candidates":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["candidate_id","section_id","teaching_purpose","placement_marker","evidence","proposed_figure_type","prose_insufficiency_reason","priority"],"properties":{"candidate_id":{"type":"string","pattern":"^[a-z0-9][a-z0-9_-]{0,63}$"},"section_id":{"type":"string"},"teaching_purpose":{"type":"string","minLength":1},"placement_marker":{"type":"string","pattern":"^% FIGURE_SLOT:figure_[a-z0-9_-]+$"},"evidence":{"type":"object","minProperties":1},"proposed_figure_type":{"type":"string","minLength":1},"prose_insufficiency_reason":{"type":"string","minLength":1},"priority":{"enum":["required","optional"]}}}}}
+}

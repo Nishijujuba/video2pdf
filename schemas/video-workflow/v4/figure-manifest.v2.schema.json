@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://video2pdf.local/schemas/video-workflow/v4/figure-manifest.v2.schema.json","type":"object","additionalProperties":false,
+  "required":["schema_name","schema_version","kernel_version","slot_id","section_id","asset_path","asset_sha256","caption","source","slot_contribution_path","slot_contribution_sha256"],
+  "properties":{"schema_name":{"const":"figure-manifest"},"schema_version":{"const":"2.0.0"},"kernel_version":{"const":"2.0.0"},"slot_id":{"type":"string"},"section_id":{"type":"string"},"asset_path":{"type":"string"},"asset_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"caption":{"type":"string","minLength":1},"source":{"type":"object","additionalProperties":false,"required":["kind","value"],"properties":{"kind":{"enum":["source_timestamp","generated_diagram"]},"value":{"type":"string","minLength":1}}},"slot_contribution_path":{"type":"string"},"slot_contribution_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

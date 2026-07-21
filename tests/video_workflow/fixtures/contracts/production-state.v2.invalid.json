@@ -1,0 +1,15 @@
+{
+  "schema_name": "production-state",
+  "schema_version": "2.0.0",
+  "kernel_version": "2.0.0",
+  "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_binding": {"logical_id": "source_manifest", "generation": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "artifacts": {},
+  "completed_tasks": [],
+  "completed_roles": [],
+  "claims": {"writer-section-01": {"task_id": "cccccccccccccccccccccccccccccccc", "claim_generation": 0, "claim_token": "dddddddddddddddddddddddddddddddd", "status": "available"}},
+  "receipts": {},
+  "checkpoints": {"source_ready": "current", "draft_compile_ready": "pending"},
+  "sections": {},
+  "promotion_sequence": []
+}

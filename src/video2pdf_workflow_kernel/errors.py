@@ -30,6 +30,10 @@ class KernelConflict(KernelError):
     exit_code = 30
 
 
+class SupersededProductionAttempt(KernelConflict, ContractError):
+    """A stale Attempt is both contract-invalid and identity-conflicting."""
+
+
 class PathBudgetError(KernelError):
     classification = "path_budget_exceeded"
     exit_code = 30

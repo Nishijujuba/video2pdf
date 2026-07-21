@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 import shutil
 from typing import Any
 from contextlib import contextmanager
 
-from .errors import ArtifactDrift, ContractError, KernelConflict, ProductionFault
+from .errors import ArtifactDrift, ContractError, KernelConflict, ProductionFault, SupersededProductionAttempt
 from .guarded_compile import GuardedCompileProvider
 from .utils import read_json, require_contained_path, sha256_file, write_json_atomic
 
@@ -38,7 +39,7 @@ def _inject(selected: str | None, current: str) -> None:
 
 
 class ContentProduction:
-    """Deep Module implementing the single-section production graph."""
+    """Deep Module implementing the section-scoped production graph."""
 
     def __init__(self, kernel: Any) -> None:
         self.kernel = kernel
@@ -121,15 +122,18 @@ class ContentProduction:
             return state
         state = {
             "schema_name": "production-state",
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "kernel_version": "2.0.0",
             "run_id": record["run_id"],
             "source_binding": current_source_binding,
             "artifacts": {},
+            "completed_tasks": [],
             "completed_roles": [],
             "claims": {},
             "receipts": {},
             "checkpoints": {"source_ready": "current", "draft_compile_ready": "pending"},
+            "sections": {},
+            "promotion_sequence": [],
         }
         self.kernel.contracts.validate("production-state", state)
         write_json_atomic(path, state)
@@ -158,39 +162,41 @@ class ContentProduction:
         state["artifacts"][logical_id] = value
         return value
 
-    def _envelope(self, run_dir: Path, state: dict[str, Any], role: str) -> dict[str, Any]:
-        role_specs: dict[str, tuple[list[str], list[str]]] = {
-            "outline": (["work/outline/outline.json"], ["outline.json"]),
-            "pyramid_outline": (["review/pyramid/outline.json"], ["pyramid-report.json"]),
-            "writer": (
-                ["work/writers/section_01.tex", "work/writers/writer-result.json"],
-                ["section_01.tex", "writer-result.json"],
-            ),
-            "figure": (
-                [
-                    "figures/figure_01.png",
-                    "work/figures/figure-manifest.json",
-                    "work/figures/figure_01.tex",
-                ],
-                ["figure_01.png", "figure-manifest.json", "figure_01.tex"],
-            ),
-            "pyramid_section": (["review/pyramid/section_01.json"], ["pyramid-report.json"]),
-            "pyramid_main": (["review/pyramid/main.json"], ["pyramid-report.json"]),
-        }
-        write_set, outputs = role_specs[role]
+    def _envelope(
+        self, run_dir: Path, state: dict[str, Any], logical_key: str,
+        role: str, *, section_id: str | None = None, slot_id: str | None = None,
+    ) -> dict[str, Any]:
+        if role == "outline":
+            write_set, outputs = ["work/outline/outline.json"], ["outline.json"]
+        elif role == "pyramid_outline":
+            write_set, outputs = ["review/pyramid/outline.json"], ["pyramid-report.json"]
+        elif role == "writer":
+            assert section_id
+            write_set = [f"work/writers/{section_id}.tex", f"work/writers/{section_id}.result.json"]
+            outputs = [f"{section_id}.tex", "writer-result.json"]
+        elif role == "figure":
+            assert section_id and slot_id
+            manifest_path = "work/figures/figure-manifest.json" if slot_id == "figure_01" else f"work/figures/{slot_id}.manifest.json"
+            write_set = [f"figures/{slot_id}.png", manifest_path, f"work/figures/{slot_id}.tex"]
+            outputs = [f"{slot_id}.png", "figure-manifest.json", f"{slot_id}.tex"]
+        elif role == "pyramid_section":
+            assert section_id
+            write_set, outputs = [f"review/pyramid/{section_id}.json"], ["pyramid-report.json"]
+        else:
+            write_set, outputs = ["review/pyramid/main.json"], ["pyramid-report.json"]
         input_generations = [state["source_binding"]]
-        dependency_ids = {
+        dependency_ids: tuple[str, ...] = {
             "outline": (),
             "pyramid_outline": ("outline_contract",),
             "writer": ("outline_contract", "pyramid_outline_report"),
             "figure": ("outline_contract", "pyramid_outline_report"),
-            "pyramid_section": ("integrated_section",),
-            "pyramid_main": (
-                "integrated_main",
-                "integration_manifest",
-                "pyramid_section_report",
-            ),
+            "pyramid_section": (f"integrated_{section_id}",),
+            "pyramid_main": ("integrated_main", "integration_manifest"),
         }[role]
+        if role == "figure" and slot_id and "_incremental_" in slot_id:
+            dependency_ids += (f"writer_result_{section_id}",)
+        if role == "pyramid_main":
+            dependency_ids += tuple(f"pyramid_{item}_report" for item in state["sections"])
         for logical_id in dependency_ids:
             artifact = self._artifact(state, logical_id)
             input_generations.append(
@@ -200,33 +206,38 @@ class ContentProduction:
                     "sha256": artifact["sha256"],
                 }
             )
-        task_id = _digest(state["run_id"], role)
-        claim = state["claims"].get(role)
+        task_id = _digest(state["run_id"], logical_key)
+        claim = state["claims"].get(logical_key)
         if claim is None:
             claim = {
                 "task_id": task_id,
                 "claim_generation": 1,
-                "claim_token": _digest(state["run_id"], role, "1", "claim"),
+                "claim_token": _digest(state["run_id"], logical_key, "1", "claim"),
                 "status": "available",
             }
-            state["claims"][role] = claim
+            state["claims"][logical_key] = claim
         envelope: dict[str, Any] = {
             "schema_name": "production-task-envelope",
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "kernel_version": "2.0.0",
             "run_id": state["run_id"],
             "task_id": task_id,
-            "logical_task_key": role.replace("_", "-"),
+            "logical_task_key": logical_key,
             "role": role,
             "claim_generation": claim["claim_generation"],
             "claim_token": claim["claim_token"],
             "input_generations": input_generations,
             "write_set": write_set,
             "required_outputs": outputs,
+            "attempt_root": f"workflow/tasks/{task_id}/attempts",
         }
+        if section_id:
+            envelope["section_id"] = section_id
+        if slot_id:
+            envelope["slot_id"] = slot_id
         target_by_role = {
             "pyramid_outline": "outline_contract",
-            "pyramid_section": "integrated_section",
+            "pyramid_section": f"integrated_{section_id}",
             "pyramid_main": "integrated_main",
         }
         if role in target_by_role:
@@ -260,49 +271,164 @@ class ContentProduction:
         expected_claim_generation: int | None = None,
         persist: bool = True,
     ) -> dict[str, Any]:
-        completed = set(state["completed_roles"])
+        completed = set(state["completed_tasks"])
+        specs: list[tuple[str, str, str | None, str | None]] = []
         if "outline" not in completed:
-            roles = ["outline"]
-        elif "pyramid_outline" not in completed:
-            roles = ["pyramid_outline"]
-        elif not {"writer", "figure"}.issubset(completed):
-            roles = sorted({"writer", "figure"} - completed)
-        elif "pyramid_section" not in completed:
-            roles = ["pyramid_section"]
-        elif "pyramid_main" not in completed:
-            roles = ["pyramid_main"]
+            specs = [("outline", "outline", None, None)]
+        elif "pyramid-outline" not in completed:
+            specs = [("pyramid-outline", "pyramid_outline", None, None)]
         else:
-            roles = []
+            for section_id, section in state["sections"].items():
+                if section["status"] == "blocked":
+                    continue
+                writer_key = f"writer-{section_id.replace('_', '-')}"
+                if writer_key not in completed:
+                    specs.append((writer_key, "writer", section_id, None))
+                for slot in section["figure_slots"]:
+                    if slot["wave"] == "incremental" and writer_key not in completed:
+                        continue
+                    key = f"figure-{'incremental' if slot['wave'] == 'incremental' else 'required'}-{slot['slot_id'].replace('_', '-')}"
+                    if key not in completed:
+                        specs.append((key, "figure", section_id, slot["slot_id"]))
+                pyramid_key = f"pyramid-section-{section_id.replace('_', '-')}"
+                if f"integrated_{section_id}" in state["artifacts"] and pyramid_key not in completed:
+                    specs.append((pyramid_key, "pyramid_section", section_id, None))
+            pyramid_keys = {f"pyramid-section-{item.replace('_', '-')}" for item in state["sections"]}
+            if state["sections"] and pyramid_keys.issubset(completed) and "pyramid-main" not in completed:
+                specs = [("pyramid-main", "pyramid_main", None, None)]
+        specs.sort(key=lambda item: item[0])
         if supersede_task_id is not None:
-            role = next(
-                (candidate for candidate in roles if _digest(state["run_id"], candidate) == supersede_task_id),
-                None,
-            )
-            if role is None:
+            logical_key = next((key for key in state["claims"] if _digest(state["run_id"], key) == supersede_task_id), None)
+            if logical_key is None:
                 raise KernelConflict("Production task is not currently reclaimable")
-            claim = state["claims"].get(role)
-            if claim is None:
-                self._envelope(run_dir, state, role)
-                claim = state["claims"][role]
+            claim = state["claims"][logical_key]
             if expected_claim_generation != claim["claim_generation"]:
                 raise KernelConflict("Production claim generation changed before reclaim")
             generation = claim["claim_generation"] + 1
-            state["claims"][role] = {
+            state["claims"][logical_key] = {
                 "task_id": supersede_task_id,
                 "claim_generation": generation,
-                "claim_token": _digest(state["run_id"], role, str(generation), "claim"),
+                "claim_token": _digest(state["run_id"], logical_key, str(generation), "claim"),
                 "status": "available",
             }
-        tasks = [self._envelope(run_dir, state, role) for role in roles]
+            state["receipts"].pop(logical_key, None)
+            if logical_key in completed:
+                state["completed_tasks"].remove(logical_key)
+            self._invalidate_for_supersede(state, logical_key)
+            specs = []
+            if logical_key == "outline":
+                role = "outline"
+            elif logical_key == "pyramid-outline":
+                role = "pyramid_outline"
+            elif logical_key == "pyramid-main":
+                role = "pyramid_main"
+            elif logical_key.startswith("pyramid-section-"):
+                role = "pyramid_section"
+            elif logical_key.startswith("writer-"):
+                role = "writer"
+            else:
+                role = "figure"
+            section_id = logical_key.split("writer-", 1)[1].replace("-", "_", 1) if role == "writer" else None
+            if role == "pyramid_section":
+                section_id = "section_" + logical_key.rsplit("-", 1)[-1]
+            slot_id = None
+            if role == "figure":
+                for candidate, section in state["sections"].items():
+                    match = next((slot for slot in section["figure_slots"] if slot["slot_id"].replace("_", "-") in logical_key), None)
+                    if match:
+                        section_id, slot_id = candidate, match["slot_id"]
+                        break
+            specs.append((logical_key, role, section_id, slot_id))
+        tasks = [
+            self._envelope(run_dir, state, key, role, section_id=section, slot_id=slot)
+            for key, role, section, slot in specs
+        ]
+        self._assert_disjoint_write_sets(tasks)
         self.kernel.contracts.validate("production-state", state)
         if persist:
             write_json_atomic(self._state_path(run_dir), state)
+        blocked_sections = [
+            {
+                "section_id": section_id,
+                "blocked_evidence": section["blocked_evidence"],
+            }
+            for section_id, section in state["sections"].items()
+            if section["status"] == "blocked"
+        ]
+        classification = "production_tasks_runnable" if specs else "production_complete"
+        if blocked_sections and not specs:
+            classification = "production_blocked"
         return {
-            "classification": "production_tasks_runnable" if roles else "production_complete",
+            "classification": classification,
             "run_id": state["run_id"],
             "runnable_tasks": tasks,
             "checkpoints": state["checkpoints"],
+            "blocked_sections": blocked_sections,
         }
+
+    @staticmethod
+    def _invalidate_for_supersede(state: dict[str, Any], logical_key: str) -> None:
+        if not logical_key.startswith(("writer-section-", "figure-")):
+            return
+        section_id: str | None = None
+        if logical_key.startswith("writer-section-"):
+            section_id = "section_" + logical_key.rsplit("-", 1)[-1]
+        else:
+            for candidate, section in state["sections"].items():
+                if any(slot["slot_id"].replace("_", "-") in logical_key for slot in section["figure_slots"]):
+                    section_id = candidate
+                    break
+        if section_id is None:
+            return
+        dependent_tasks = {
+            f"pyramid-section-{section_id.replace('_', '-')}",
+            "pyramid-main",
+        }
+        incremental_slots = [
+            slot
+            for slot in state["sections"][section_id]["figure_slots"]
+            if slot["wave"] == "incremental"
+        ]
+        if logical_key.startswith("writer-section-"):
+            dependent_tasks.update(
+                f"figure-incremental-{slot['slot_id'].replace('_', '-')}"
+                for slot in incremental_slots
+            )
+        state["completed_tasks"] = [key for key in state["completed_tasks"] if key not in dependent_tasks]
+        for key in dependent_tasks:
+            state["receipts"].pop(key, None)
+            claim = state["claims"].get(key)
+            if claim is not None and key.startswith("figure-incremental-"):
+                generation = claim["claim_generation"] + 1
+                state["claims"][key] = {
+                    "task_id": claim["task_id"],
+                    "claim_generation": generation,
+                    "claim_token": _digest(state["run_id"], key, str(generation), "claim"),
+                    "status": "available",
+                }
+        state["sections"][section_id]["status"] = "active"
+        state["sections"][section_id]["blocked_evidence"] = []
+        if logical_key.startswith("writer-section-") and incremental_slots:
+            state["sections"][section_id]["incremental_wave_status"] = "admitted"
+        stale_artifacts = {
+            f"integrated_{section_id}", f"pyramid_{section_id}_report",
+            "integrated_main", "integration_manifest", "local_class", "local_style",
+            "bibliography", "pyramid_main_report", "compile_manifest",
+            "diagnostic_compile_report", "diagnostic_pdf",
+        }
+        if logical_key.startswith("writer-section-"):
+            stale_artifacts.update({f"writer_{section_id}", f"writer_result_{section_id}"})
+            for slot in incremental_slots:
+                stale_artifacts.update(
+                    {
+                        f"figure_asset_{slot['slot_id']}",
+                        f"figure_manifest_{slot['slot_id']}",
+                        f"figure_contribution_{slot['slot_id']}",
+                    }
+                )
+        for artifact in stale_artifacts:
+            state["artifacts"].pop(artifact, None)
+        state["checkpoints"]["draft_compile_ready"] = "pending"
 
     def plan(
         self,
@@ -321,28 +447,42 @@ class ContentProduction:
                 expected_claim_generation=expected_claim_generation,
             )
 
+    @staticmethod
+    def _normal_path(value: str) -> tuple[str, ...]:
+        if not isinstance(value, str) or not value or ".." in Path(value).parts:
+            raise ContractError("write set path is not canonical")
+        return tuple(part.casefold() for part in value.replace("\\", "/").split("/") if part)
+
+    @classmethod
+    def _assert_disjoint_write_sets(cls, tasks: list[dict[str, Any]]) -> None:
+        owned: list[tuple[tuple[str, ...], str]] = []
+        for task in tasks:
+            for raw in task["write_set"]:
+                path = cls._normal_path(raw)
+                for other, owner in owned:
+                    if path[:len(other)] == other or other[:len(path)] == path:
+                        raise ContractError(f"overlapping production write sets: {owner} and {task['logical_task_key']}")
+                owned.append((path, task["logical_task_key"]))
+
     def _validate_outline(self, value: dict[str, Any]) -> None:
         self.kernel.contracts.validate("outline-contract", value)
-        if value.get("schema_name") != "outline-contract" or value.get("schema_version") != "1.0.0":
+        if value.get("schema_name") != "outline-contract" or value.get("schema_version") not in {"1.0.0", "2.0.0"}:
             raise ContractError("Outline Contract identity is invalid")
         sections = value.get("sections")
-        if (
-            not isinstance(sections, list)
-            or len(sections) != 1
-            or not isinstance(sections[0], dict)
-            or sections[0].get("section_id") != "section_01"
-            or not sections[0].get("title")
-        ):
-            raise ContractError("single-section production requires exactly section_01")
+        if not isinstance(sections, list) or not sections:
+            raise ContractError("Outline Contract requires sections")
+        section_ids = [item.get("section_id") for item in sections]
+        if len(section_ids) != len(set(section_ids)):
+            raise ContractError("Outline Contract section identity must be unique")
         slots = value.get("required_figure_slots")
-        if (
-            not isinstance(slots, list)
-            or len(slots) != 1
-            or slots[0].get("slot_id") != "figure_01"
-            or slots[0].get("section_id") != "section_01"
-            or slots[0].get("placement_marker") != "% FIGURE_SLOT:figure_01"
-        ):
-            raise ContractError("Outline Contract must freeze figure_01")
+        slot_ids = [item.get("slot_id") for item in slots or []]
+        markers = [item.get("placement_marker") for item in slots or []]
+        if not slots or len(slot_ids) != len(set(slot_ids)) or len(markers) != len(set(markers)):
+            raise ContractError("Outline Contract figure identity must be unique")
+        if any(item.get("section_id") not in section_ids for item in slots):
+            raise ContractError("Outline Contract figure slot owns an unknown section")
+        if any(item.get("placement_marker") != f"% FIGURE_SLOT:{item.get('slot_id')}" for item in slots):
+            raise ContractError("Outline Contract figure marker identity is invalid")
         if not isinstance(value.get("terminology"), list) or not value["terminology"]:
             raise ContractError("Outline Contract must freeze terminology")
         support = value.get("compile_support")
@@ -371,7 +511,7 @@ class ContentProduction:
         return (
             "\\begin{figure}\n"
             "\\centering\n"
-            "\\includegraphics{figures/figure_01}\n"
+            f"\\includegraphics{{figures/{manifest['slot_id']}}}\n"
             f"\\caption{{{caption}}}\n"
             f"\\par\\small Source ({source['kind']}): {source['value']}\n"
             "\\end{figure}\n"
@@ -402,12 +542,12 @@ class ContentProduction:
         )
         record = read_json(record_path)
         self.kernel.contracts.validate("production-task-attempt", record)
+        if record.get("claim_generation") != envelope["claim_generation"] or record.get("claim_token") != envelope["claim_token"]:
+            raise SupersededProductionAttempt("Production Task Attempt binding is invalid because its claim was superseded")
         if (
             record.get("schema_name") != "production-task-attempt"
             or record.get("task_id") != envelope["task_id"]
             or record.get("attempt_id") != attempt_id
-            or record.get("claim_generation") != envelope["claim_generation"]
-            or record.get("claim_token") != envelope["claim_token"]
         ):
             raise ContractError("Production Task Attempt binding is invalid")
         if record.get("envelope_sha256") != sha256_file(task_dir / "envelope.json"):
@@ -506,21 +646,95 @@ class ContentProduction:
             write_json_atomic(journal_path, journal)
         _inject(fault_point, "after_promotion_committed")
 
-    def _integrate_section(self, run_dir: Path, state: dict[str, Any]) -> None:
-        if "integrated_section" in state["artifacts"]:
+    @staticmethod
+    def _section_ready(state: dict[str, Any], section_id: str) -> bool:
+        section = state["sections"][section_id]
+        writer_key = f"writer-{section_id.replace('_', '-')}"
+        if writer_key not in state["completed_tasks"]:
+            return False
+        for slot in section["figure_slots"]:
+            prefix = "incremental" if slot["wave"] == "incremental" else "required"
+            if f"figure-{prefix}-{slot['slot_id'].replace('_', '-')}" not in state["completed_tasks"]:
+                return False
+        return True
+
+    @staticmethod
+    def _admit_candidates(
+        state: dict[str, Any], section_id: str, candidates: list[dict[str, Any]]
+    ) -> None:
+        section = state["sections"][section_id]
+        if not candidates:
+            if section["incremental_wave_status"] == "not_requested":
+                section["incremental_wave_status"] = "no_candidates"
             return
-        writer = (run_dir / "work/writers/section_01.tex").read_text(encoding="utf-8")
-        snippet = (run_dir / "work/figures/figure_01.tex").read_text(encoding="utf-8")
-        marker = "% FIGURE_SLOT:figure_01"
-        if writer.count(marker) != 1:
-            raise ContractError("Writer section must contain exactly one figure_01 slot marker")
-        target = run_dir / "work/integration/section_01.tex"
+        if section["incremental_wave_status"] != "not_requested":
+            raise ContractError(f"incremental figure wave budget exhausted for {section_id}")
+        ordered = sorted(candidates, key=lambda item: item["candidate_id"])
+        seen: set[tuple[str, str]] = set()
+        for candidate in ordered:
+            if candidate["section_id"] != section_id:
+                raise ContractError("Writer Result candidate crosses section ownership")
+            identity = (candidate["candidate_id"], candidate["placement_marker"])
+            if identity in seen:
+                raise ContractError("Writer Result contains a duplicate figure candidate")
+            seen.add(identity)
+        required_overflow = [
+            candidate for candidate in ordered[1:] if candidate["priority"] == "required"
+        ]
+        if required_overflow:
+            section["status"] = "blocked"
+            section["blocked_evidence"] = [
+                {
+                    "candidate_id": candidate["candidate_id"],
+                    "priority": "required",
+                    "reason": "per-section incremental figure budget exhausted",
+                }
+                for candidate in required_overflow
+            ]
+            raise ContractError(f"required incremental figure budget exceeded for {section_id}")
+        admitted = ordered[0]
+        slot_id = f"figure_{section_id.split('_')[-1]}_incremental_01"
+        expected_marker = f"% FIGURE_SLOT:{slot_id}"
+        if admitted["placement_marker"] != expected_marker:
+            raise ContractError("Writer Result candidate placement marker is not kernel-stable")
+        section["figure_slots"].append(
+            {
+                "slot_id": slot_id,
+                "section_id": section_id,
+                "teaching_purpose": admitted["teaching_purpose"],
+                "placement_marker": expected_marker,
+                "wave": "incremental",
+                "candidate_id": admitted["candidate_id"],
+            }
+        )
+        section["incremental_wave_status"] = "admitted"
+        section["incremental_wave_count"] = 1
+        for candidate in ordered[1:]:
+            section["rejected_candidates"].append(
+                {"candidate_id": candidate["candidate_id"], "reason": "per-section budget exhausted"}
+            )
+
+    def _integrate_section(self, run_dir: Path, state: dict[str, Any], section_id: str) -> None:
+        logical_id = f"integrated_{section_id}"
+        if logical_id in state["artifacts"]:
+            return
+        section = state["sections"][section_id]
+        writer = (run_dir / f"work/writers/{section_id}.tex").read_text(encoding="utf-8")
+        for slot in section["figure_slots"]:
+            slot_id = slot["slot_id"]
+            snippet = (run_dir / f"work/figures/{slot_id}.tex").read_text(encoding="utf-8")
+            marker = slot["placement_marker"]
+            if writer.count(marker) != 1:
+                raise ContractError(f"Writer section must contain exactly one {slot_id} slot marker")
+            writer = writer.replace(marker, snippet.rstrip())
+        target = run_dir / f"work/integration/{section_id}.tex"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(writer.replace(marker, snippet.rstrip()), encoding="utf-8")
+        target.write_text(writer, encoding="utf-8")
         self._record_artifact(
-            state, "integrated_section", "work/integration/section_01.tex",
+            state, logical_id, f"work/integration/{section_id}.tex",
             target, "kernel:section-integration",
         )
+        state["sections"][section_id]["status"] = "integrated"
 
     def _integrate_main(self, run_dir: Path, state: dict[str, Any]) -> None:
         if "integrated_main" in state["artifacts"]:
@@ -550,8 +764,10 @@ class ContentProduction:
             f"\\documentclass{{{support['document_class']}}}\n"
             f"\\usepackage{{{support['style_name']}}}\n"
             "\\usepackage{graphicx}\n\\usepackage{fontspec}\n\\setmainfont{Arial}\n"
-            "\\begin{document}\n\\input{section_01.tex}\n"
-            f"\\bibliography{{{Path(support['bibliography_name']).stem}}}\n"
+            "\\begin{document}\n"
+            + "".join(f"\\input{{{section_id}.tex}}\n" for section_id in state["sections"])
+            + f"\\bibliography{{{Path(support['bibliography_name']).stem}}}\n"
+            +
             "\\end{document}\n",
             encoding="utf-8",
         )
@@ -561,16 +777,23 @@ class ContentProduction:
         )
         manifest = {
             "schema_name": "integration-manifest",
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "kernel_version": "2.0.0",
             "run_id": state["run_id"],
             "main": {"logical_id": "integrated_main", **main_generation},
             "sections": [
-                {"logical_id": "integrated_section", **self._artifact(state, "integrated_section")}
+                {"logical_id": f"integrated_{section_id}", **self._artifact(state, f"integrated_{section_id}")}
+                for section_id in state["sections"]
             ],
             "figures": [
                 {"logical_id": logical_id, **self._artifact(state, logical_id)}
-                for logical_id in ("figure_asset", "figure_manifest", "figure_contribution")
+                for section in state["sections"].values()
+                for slot in section["figure_slots"]
+                for logical_id in (
+                    f"figure_asset_{slot['slot_id']}",
+                    f"figure_manifest_{slot['slot_id']}",
+                    f"figure_contribution_{slot['slot_id']}",
+                )
             ],
             "terminology": outline["terminology"],
             "source_binding": state["source_binding"],
@@ -590,14 +813,14 @@ class ContentProduction:
         self.kernel.contracts.validate("compile-runtime-policy", runtime_policy)
         write_json_atomic(policy_path, runtime_policy)
         entries: list[dict[str, Any]] = []
-        specs = (
+        specs: list[tuple[str, str | None, str, str]] = [
             ("integrated_main", "main.tex", "entry_tex", "application/x-tex"),
-            ("integrated_section", "section_01.tex", "section_tex", "application/x-tex"),
-            ("figure_asset", "figures/figure_01.png", "figure", "image/png"),
+            *[(f"integrated_{section_id}", f"{section_id}.tex", "section_tex", "application/x-tex") for section_id in state["sections"]],
+            *[(f"figure_asset_{slot['slot_id']}", f"figures/{slot['slot_id']}.png", "figure", "image/png") for section in state["sections"].values() for slot in section["figure_slots"]],
             ("local_class", None, "local_class", "application/x-tex"),
             ("local_style", None, "local_style", "application/x-tex"),
             ("bibliography", None, "bibliography", "application/x-bibtex"),
-        )
+        ]
         for logical_id, staging_path, role, media_type in specs:
             artifact = self._artifact(state, logical_id)
             if staging_path is None:
@@ -702,10 +925,31 @@ class ContentProduction:
         if envelope is None:
             raise KernelConflict("Production task is not currently runnable")
         role = envelope["role"]
+        logical_key = envelope["logical_task_key"]
+        section_id = envelope.get("section_id")
+        slot_id = envelope.get("slot_id")
         if role == "pyramid_main" and compile_runtime_policy is None:
             raise ContractError("Main Pyramid completion requires a Compile Runtime Policy")
         outputs = self._validate_attempt(run_dir, envelope, attempt_id)
-        claim = state["claims"][role]
+        prepared_sections: dict[str, Any] | None = None
+        if role == "writer":
+            result = json.loads(outputs["writer-result.json"].read_text(encoding="utf-8"))
+            self.kernel.contracts.validate("writer-result", result)
+            if result.get("section_id") != section_id:
+                raise ContractError("Writer Result section binding is invalid")
+            candidate_state = deepcopy(state)
+            try:
+                self._admit_candidates(
+                    candidate_state, section_id, result.get("new_figure_candidates", [])
+                )
+            except ContractError:
+                if candidate_state["sections"][section_id]["status"] == "blocked":
+                    state["sections"] = candidate_state["sections"]
+                    self.kernel.contracts.validate("production-state", state)
+                    write_json_atomic(self._state_path(run_dir), state)
+                raise
+            prepared_sections = candidate_state["sections"]
+        claim = state["claims"][logical_key]
         if (
             claim["claim_generation"] != envelope["claim_generation"]
             or claim["claim_token"] != envelope["claim_token"]
@@ -732,6 +976,22 @@ class ContentProduction:
                 state, "outline_contract", "work/outline/outline.json",
                 target, f"task:{task_id}:{attempt_id}",
             )
+            state["sections"] = {
+                section["section_id"]: {
+                    "title": section["title"],
+                    "figure_slots": [
+                        {**slot, "wave": "required"}
+                        for slot in value["required_figure_slots"]
+                        if slot["section_id"] == section["section_id"]
+                    ],
+                    "incremental_wave_status": "not_requested",
+                    "incremental_wave_count": 0,
+                    "rejected_candidates": [],
+                    "blocked_evidence": [],
+                    "status": "active",
+                }
+                for section in value["sections"]
+            }
         elif role.startswith("pyramid_"):
             value = json.loads(outputs["pyramid-report.json"].read_text(encoding="utf-8"))
             self._validate_pyramid(envelope, value)
@@ -742,27 +1002,29 @@ class ContentProduction:
                 [(outputs["pyramid-report.json"], relative)],
                 fault_point=fault_point,
             )
+            pyramid_logical_id = (
+                f"pyramid_{section_id}_report" if role == "pyramid_section" else f"{role}_report"
+            )
             self._record_artifact(
-                state, f"{role}_report", relative, target,
+                state, pyramid_logical_id, relative, target,
                 f"provider:{task_id}:{attempt_id}",
             )
         elif role == "writer":
-            result = json.loads(outputs["writer-result.json"].read_text(encoding="utf-8"))
-            if result.get("section_id") != "section_01" or result.get("new_figure_candidates") != []:
-                raise ContractError("single-section tracer accepts no incremental figure candidates")
+            assert prepared_sections is not None
+            state["sections"] = prepared_sections
             writer_specs = (
-                ("section_01.tex", "writer_section"),
-                ("writer-result.json", "writer_result"),
+                (f"{section_id}.tex", f"writer_{section_id}"),
+                ("writer-result.json", f"writer_result_{section_id}"),
             )
             self._promote_outputs(
                 run_dir,
                 task_id,
                 attempt_id,
-                [(outputs[name], f"work/writers/{name}") for name, _ in writer_specs],
+                [(outputs[name], f"work/writers/{section_id}.result.json" if name == "writer-result.json" else f"work/writers/{name}") for name, _ in writer_specs],
                 fault_point=fault_point,
             )
             for name, logical_id in writer_specs:
-                relative = f"work/writers/{name}"
+                relative = f"work/writers/{section_id}.result.json" if name == "writer-result.json" else f"work/writers/{name}"
                 target = run_dir / relative
                 self._record_artifact(
                     state, logical_id, relative, target,
@@ -771,13 +1033,13 @@ class ContentProduction:
         elif role == "figure":
             manifest = json.loads(outputs["figure-manifest.json"].read_text(encoding="utf-8"))
             self.kernel.contracts.validate("figure-manifest", manifest)
-            if manifest.get("slot_id") != "figure_01" or manifest.get("section_id") != "section_01":
+            if manifest.get("slot_id") != slot_id or manifest.get("section_id") != section_id:
                 raise ContractError("Figure Manifest slot binding is invalid")
-            if manifest.get("asset_sha256") != sha256_file(outputs["figure_01.png"]):
+            if manifest.get("asset_sha256") != sha256_file(outputs[f"{slot_id}.png"]):
                 raise ContractError("Figure Manifest asset fingerprint is stale")
             if not manifest.get("caption") or not isinstance(manifest.get("source"), dict):
                 raise ContractError("Figure Manifest caption or source is missing")
-            contribution = outputs["figure_01.tex"].read_bytes()
+            contribution = outputs[f"{slot_id}.tex"].read_bytes()
             if manifest.get("slot_contribution_sha256") != hashlib.sha256(
                 contribution
             ).hexdigest():
@@ -785,12 +1047,12 @@ class ContentProduction:
             if contribution != self._figure_contribution(manifest):
                 raise ContractError("Figure contribution differs from its Manifest")
             mappings = (
-                ("figure_01.png", "figures/figure_01.png", "figure_asset"),
+                (f"{slot_id}.png", f"figures/{slot_id}.png", f"figure_asset_{slot_id}"),
                 (
-                    "figure-manifest.json", "work/figures/figure-manifest.json",
-                    "figure_manifest",
+                    "figure-manifest.json", envelope["write_set"][1],
+                    f"figure_manifest_{slot_id}",
                 ),
-                ("figure_01.tex", "work/figures/figure_01.tex", "figure_contribution"),
+                (f"{slot_id}.tex", f"work/figures/{slot_id}.tex", f"figure_contribution_{slot_id}"),
             )
             self._promote_outputs(
                 run_dir,
@@ -805,15 +1067,27 @@ class ContentProduction:
                     state, logical_id, relative, target,
                     f"task:{task_id}:{attempt_id}",
                 )
+            if any(
+                slot["slot_id"] == slot_id and slot["wave"] == "incremental"
+                for slot in state["sections"][section_id]["figure_slots"]
+            ):
+                state["sections"][section_id]["incremental_wave_status"] = "complete"
         else:
             raise ContractError(f"unsupported Production role: {role}")
 
-        state["completed_roles"].append(role)
-        if {"writer", "figure"}.issubset(state["completed_roles"]):
-            self._integrate_section(run_dir, state)
-        if role == "pyramid_section":
+        state["completed_tasks"].append(logical_key)
+        if role not in state["completed_roles"]:
+            state["completed_roles"].append(role)
+        state["promotion_sequence"].append(logical_key)
+        if section_id and role in {"writer", "figure"} and self._section_ready(state, section_id):
+            self._integrate_section(run_dir, state, section_id)
+        if role == "pyramid_section" and all(
+            f"pyramid-section-{item.replace('_', '-')}" in state["completed_tasks"] or item == section_id
+            for item in state["sections"]
+        ):
             self._integrate_main(run_dir, state)
         result = {"classification": "production_advanced", "completed_role": role}
+        result["promotion_sequence"] = len(state["promotion_sequence"])
         if role == "pyramid_main":
             assert compile_runtime_policy is not None
             result = self._compile(run_dir, state, compile_runtime_policy)
@@ -823,7 +1097,7 @@ class ContentProduction:
         result["runnable_tasks"] = next_plan["runnable_tasks"]
         result["checkpoints"] = next_plan["checkpoints"]
         _inject(fault_point, "before_receipt_committed")
-        state["receipts"][role] = {
+        state["receipts"][logical_key] = {
             "task_id": task_id,
             "attempt_id": attempt_id,
             "claim_generation": envelope["claim_generation"],

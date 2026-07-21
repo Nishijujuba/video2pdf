@@ -33,6 +33,12 @@ def new_root(label: str) -> Path:
 
 
 class SingleSectionProductionTests(unittest.TestCase):
+    def test_single_section_v1_fixture_remains_registry_valid(self) -> None:
+        from video2pdf_workflow_kernel.contracts import ContractRegistry
+        registry = ContractRegistry(PROJECT_ROOT)
+        fixture = json.loads((PROJECT_ROOT / "tests/video_workflow/fixtures/contracts/outline-contract.valid.json").read_text(encoding="utf-8"))
+        registry.validate("outline-contract", fixture)
+
     def setUp(self) -> None:
         self.root = new_root("single-section")
         from tests.video_workflow.test_source_publication_integration import (

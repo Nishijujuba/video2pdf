@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -221,6 +221,19 @@
           }
         },
         "slice_base_commit": {"const": "7b33a2dcf8b19608943f12efd814907a69c35e8f"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 6}, "name": {"const": "multi-section-production"}}},
+        "slice_base_commit": {"const": "6f8241ddb4bd725d3b584dd1c403ed59dda32219"},
+        "results": {
+          "required": ["fencing", "restart", "recovery"],
+          "properties": {"positive": {"contains": {"const": "deterministic_integration"}}}
+        },
         "fault_points": false,
         "platform_smokes": false
       }

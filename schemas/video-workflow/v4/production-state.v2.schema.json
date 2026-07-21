@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/production-state.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "run_id", "source_binding", "artifacts", "completed_tasks", "completed_roles", "claims", "receipts", "checkpoints", "sections", "promotion_sequence"],
+  "properties": {
+    "schema_name": {"const": "production-state"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "source_binding": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactBinding"},
+    "artifacts": {"type": "object", "additionalProperties": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactGeneration"}},
+    "completed_tasks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "completed_roles": {"type": "array", "uniqueItems": true, "items": {"enum": ["outline", "pyramid_outline", "writer", "figure", "pyramid_section", "pyramid_main"]}},
+    "claims": {"type": "object", "additionalProperties": {"$ref": "#/$defs/claim"}},
+    "receipts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/receipt"}},
+    "checkpoints": {"$ref": "#/$defs/checkpoints"},
+    "sections": {"type": "object", "propertyNames": {"pattern": "^section_[0-9]{2}$"}, "additionalProperties": {"$ref": "#/$defs/section"}},
+    "promotion_sequence": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "claim_generation", "claim_token", "status"],
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "claim_token": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "status": {"enum": ["available", "active", "committed"]},
+        "active_attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"}
+      }
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "attempt_id", "claim_generation", "result"],
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "result": {
+          "type": "object", "required": ["classification"],
+          "properties": {
+            "classification": {"type": "string", "minLength": 1},
+            "completed_role": {"type": "string", "minLength": 1},
+            "promotion_sequence": {"type": "integer", "minimum": 1},
+            "next_classification": {"type": "string", "minLength": 1},
+            "runnable_tasks": {"type": "array"},
+            "checkpoints": {"$ref": "#/$defs/checkpoints"}
+          }
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_ready", "draft_compile_ready"],
+      "properties": {
+        "source_ready": {"const": "current"},
+        "draft_compile_ready": {"enum": ["pending", "current"]}
+      }
+    },
+    "figureSlot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["slot_id", "section_id", "teaching_purpose", "placement_marker", "wave"],
+      "properties": {
+        "slot_id": {"type": "string", "pattern": "^figure_[a-z0-9_-]+$"},
+        "section_id": {"type": "string", "pattern": "^section_[0-9]{2}$"},
+        "teaching_purpose": {"type": "string", "minLength": 1},
+        "placement_marker": {"type": "string", "pattern": "^% FIGURE_SLOT:figure_[a-z0-9_-]+$"},
+        "wave": {"enum": ["required", "incremental"]},
+        "candidate_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "candidateEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "reason"],
+      "properties": {
+        "candidate_id": {"type": "string", "minLength": 1},
+        "priority": {"enum": ["required", "optional"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "section": {
+      "type": "object", "additionalProperties": false,
+      "required": ["title", "figure_slots", "incremental_wave_status", "incremental_wave_count", "rejected_candidates", "blocked_evidence", "status"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "figure_slots": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/figureSlot"}},
+        "incremental_wave_status": {"enum": ["not_requested", "no_candidates", "admitted", "complete"]},
+        "incremental_wave_count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "rejected_candidates": {"type": "array", "items": {"$ref": "#/$defs/candidateEvidence"}},
+        "blocked_evidence": {"type": "array", "items": {"$ref": "#/$defs/candidateEvidence"}},
+        "status": {"enum": ["active", "integrated", "blocked"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "blocked"}}}, "then": {"properties": {"blocked_evidence": {"minItems": 1}}}}
+      ]
+    }
+  }
+}

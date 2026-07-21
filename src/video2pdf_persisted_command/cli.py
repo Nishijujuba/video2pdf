@@ -57,14 +57,28 @@ _SENSITIVE_HEADER_ARGUMENTS = frozenset({"--add-header", "--header"})
 _SENSITIVE_ENVIRONMENT_NAME = re.compile(
     r"(?i)(?:^|_)(?:api_?key|auth(?:orization|_token)?|client_secret|cookie|credentials?|password|passwd|secret|token)(?:_|$)"
 )
+_SENSITIVE_HEADER_NAME = (
+    r"(?:authorization|proxy-authorization|cookie|set-cookie|"
+    r"(?:[a-z0-9]+-)*api-key|"
+    r"(?:[a-z0-9]+-)*(?:auth|authentication)-token)"
+)
 _SENSITIVE_HEADER = re.compile(
-    r"(?i)^(\s*(?:cookie|set-cookie|authorization)\s*:).*$"
+    rf"(?i)^(\s*{_SENSITIVE_HEADER_NAME}\s*:).*$"
+)
+_QUERY_CREDENTIAL_NAME = (
+    r"(?:api[-_]?key|access[-_]?token|client[-_]?secret|password|passwd|"
+    r"auth|authorization|cookies?|csrf|po[-_]?token|"
+    r"session(?:[-_]?(?:id|key|token))?|signature|sig|token|"
+    r"visitor[-_]?data)"
 )
 _QUERY_SECRET = re.compile(
-    r"(?i)([?&](?:auth|authorization|cookie|csrf|po_token|session|signature|token|visitor_data)=)[^&\s\"']+"
+    rf"(?i)([?&]{_QUERY_CREDENTIAL_NAME}=)[^&\s\"']+"
 )
 _QUERY_SECRET_VALUE = re.compile(
-    r"(?i)[?&](?:auth|authorization|cookie|csrf|po_token|session|signature|token|visitor_data)=([^&\s\"']+)"
+    rf"(?i)[?&]{_QUERY_CREDENTIAL_NAME}=([^&\s\"']+)"
+)
+_URI_USERINFO = re.compile(
+    r"(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/?#\s]+)@"
 )
 
 
@@ -508,6 +522,7 @@ def _redact_text(value: str, secret_values: Sequence[str]) -> str:
     safe = value
     for secret in secret_values:
         safe = safe.replace(secret, "<redacted>")
+    safe = _URI_USERINFO.sub(r"\g<scheme><redacted>@", safe)
     safe = _SENSITIVE_HEADER.sub(r"\1 <redacted>", safe)
     return _QUERY_SECRET.sub(r"\1<redacted>", safe)
 
@@ -545,10 +560,24 @@ def _add_cookie_file_secrets(
 
 
 def _add_header_secret(values: set[str], value: str) -> None:
-    payload = value.partition(":")[2].strip()
+    header_name, separator, payload = value.partition(":")
+    if not separator:
+        return
+    header_name = header_name.strip().lower()
+    payload = payload.strip()
     _add_secret_value(values, payload)
-    if payload.lower().startswith("bearer "):
-        _add_secret_value(values, payload[7:].strip())
+    if header_name in {"authorization", "proxy-authorization"}:
+        _scheme, credential_separator, credential = payload.partition(" ")
+        if credential_separator:
+            _add_secret_value(values, credential.strip())
+    if header_name in {"cookie", "set-cookie"}:
+        cookie_fields = payload.split(";")
+        if header_name == "set-cookie":
+            cookie_fields = cookie_fields[:1]
+        for field in cookie_fields:
+            _name, cookie_separator, cookie_value = field.partition("=")
+            if cookie_separator:
+                _add_secret_value(values, cookie_value.strip())
 
 
 def _classify_argument(argument: str) -> _ClassifiedArgument:
@@ -619,6 +648,13 @@ def _capture_command_secret_values(
             continue
         for matched in _QUERY_SECRET_VALUE.finditer(argument.original):
             _add_secret_value(secret_values, matched.group(1))
+        for matched in _URI_USERINFO.finditer(argument.original):
+            userinfo = matched.group("userinfo")
+            _add_secret_value(secret_values, userinfo)
+            username, separator, password = userinfo.partition(":")
+            if separator:
+                _add_secret_value(secret_values, username)
+                _add_secret_value(secret_values, password)
         if _SENSITIVE_HEADER.match(argument.original):
             _add_header_secret(secret_values, argument.original)
     return tuple(sorted(secret_values, key=len, reverse=True))

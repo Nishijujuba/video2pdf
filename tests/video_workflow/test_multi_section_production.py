@@ -138,6 +138,62 @@ class MultiSectionProductionTests(unittest.TestCase):
             [task["logical_task_key"] for task in tasks],
         )
 
+    def test_hyphen_and_underscore_figure_slots_keep_distinct_task_identity_and_reclaim_binding(self) -> None:
+        outline = self.kernel.production_plan(self.run_dir)["runnable_tasks"][0]
+        payload = json.loads(
+            (PROJECT_ROOT / "tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json")
+            .read_text(encoding="utf-8")
+        )
+        payload["required_figure_slots"] = [
+            {
+                "slot_id": slot_id,
+                "section_id": "section_01",
+                "teaching_purpose": f"Explain {slot_id}",
+                "placement_marker": f"% FIGURE_SLOT:{slot_id}",
+            }
+            for slot_id in ("figure_a-b", "figure_a_b")
+        ] + payload["required_figure_slots"][1:]
+        self.kernel.production_advance(
+            self.run_dir,
+            outline["task_id"],
+            self._attempt(outline, {"outline.json": json.dumps(payload).encode()}),
+        )
+        gate = self.kernel.production_plan(self.run_dir)["runnable_tasks"][0]
+        self.kernel.production_advance(
+            self.run_dir,
+            gate["task_id"],
+            self._attempt(gate, {"pyramid-report.json": self._pyramid_payload(gate)}),
+        )
+
+        figures = {
+            task["slot_id"]: task
+            for task in self.kernel.production_plan(self.run_dir)["runnable_tasks"]
+            if task["role"] == "figure"
+            and task["slot_id"] in {"figure_a-b", "figure_a_b"}
+        }
+        self.assertEqual({"figure_a-b", "figure_a_b"}, set(figures))
+        self.assertEqual(2, len({task["logical_task_key"] for task in figures.values()}))
+        self.assertEqual(2, len({task["task_id"] for task in figures.values()}))
+        self.assertEqual(
+            "figure-required-figure-a-b",
+            figures["figure_a_b"]["logical_task_key"],
+        )
+        self.assertEqual(
+            "figure-required-slot-figure-ua-hb",
+            figures["figure_a-b"]["logical_task_key"],
+        )
+
+        for slot_id in ("figure_a-b", "figure_a_b"):
+            original = figures[slot_id]
+            reclaimed = self.kernel.production_plan(
+                self.run_dir,
+                supersede_task_id=original["task_id"],
+                expected_claim_generation=original["claim_generation"],
+            )["runnable_tasks"][0]
+            self.assertEqual(slot_id, reclaimed["slot_id"])
+            self.assertEqual(original["logical_task_key"], reclaimed["logical_task_key"])
+            self.assertEqual(f"figures/{slot_id}.png", reclaimed["write_set"][0])
+
     def test_disjoint_section_attempts_execute_concurrently_and_promote_serially(self) -> None:
         tasks = [task for task in self._release_parallel_tasks() if task["role"] == "writer"][:2]
         attempts = [(task, self._attempt(task, self._writer_outputs(task["section_id"], [f"figure_{task['section_id'][-2:]}"]))) for task in tasks]

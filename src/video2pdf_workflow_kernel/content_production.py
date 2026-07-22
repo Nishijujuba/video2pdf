@@ -165,17 +165,31 @@ class ContentProduction:
     @staticmethod
     def _figure_logical_task_key(slot: dict[str, Any]) -> str:
         wave = "incremental" if slot["wave"] == "incremental" else "required"
-        return f"figure-{wave}-{slot['slot_id'].replace('_', '-')}"
+        slot_id = slot["slot_id"]
+        if "-" not in slot_id:
+            component = slot_id.replace("_", "-")
+        else:
+            encoded = "".join(
+                "-u" if character == "_" else "-h" if character == "-" else character
+                for character in slot_id
+            )
+            component = f"slot-{encoded}"
+        return f"figure-{wave}-{component}"
 
     @classmethod
     def _figure_task_bindings(
         cls, state: dict[str, Any]
     ) -> dict[str, tuple[str, dict[str, Any]]]:
-        return {
-            cls._figure_logical_task_key(slot): (section_id, slot)
-            for section_id, section in state["sections"].items()
-            for slot in section["figure_slots"]
-        }
+        bindings: dict[str, tuple[str, dict[str, Any]]] = {}
+        for section_id, section in state["sections"].items():
+            for slot in section["figure_slots"]:
+                logical_key = cls._figure_logical_task_key(slot)
+                if logical_key in bindings:
+                    raise ContractError(
+                        f"Production Figure logical Task key collision: {logical_key}"
+                    )
+                bindings[logical_key] = (section_id, slot)
+        return bindings
 
     def _envelope(
         self, run_dir: Path, state: dict[str, Any], logical_key: str,
@@ -406,7 +420,7 @@ class ContentProduction:
         ]
         if logical_key.startswith("writer-section-"):
             dependent_tasks.update(
-                f"figure-incremental-{slot['slot_id'].replace('_', '-')}"
+                cls._figure_logical_task_key(slot)
                 for slot in incremental_slots
             )
         state["completed_tasks"] = [key for key in state["completed_tasks"] if key not in dependent_tasks]
@@ -670,15 +684,14 @@ class ContentProduction:
             write_json_atomic(journal_path, journal)
         _inject(fault_point, "after_promotion_committed")
 
-    @staticmethod
-    def _section_ready(state: dict[str, Any], section_id: str) -> bool:
+    @classmethod
+    def _section_ready(cls, state: dict[str, Any], section_id: str) -> bool:
         section = state["sections"][section_id]
         writer_key = f"writer-{section_id.replace('_', '-')}"
         if writer_key not in state["completed_tasks"]:
             return False
         for slot in section["figure_slots"]:
-            prefix = "incremental" if slot["wave"] == "incremental" else "required"
-            if f"figure-{prefix}-{slot['slot_id'].replace('_', '-')}" not in state["completed_tasks"]:
+            if cls._figure_logical_task_key(slot) not in state["completed_tasks"]:
                 return False
         return True
 

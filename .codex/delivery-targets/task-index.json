@@ -190,6 +190,15 @@
       "last_session_id": "youtube-xHxfeWtkXrM-20260713",
       "stage": "delivered",
       "updated_at": "2026-07-13T09:19:10+08:00"
+    },
+    {
+      "video_output_dir": "workspace/LIVE_ The _wayfinder Demo_20260721_084102",
+      "target_file": "workspace/LIVE_ The _wayfinder Demo_20260721_084102/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f821c-0c0a-7371-a769-55379b93d958",
+      "owner_status": "delivered",
+      "last_session_id": "019f821c-0c0a-7371-a769-55379b93d958",
+      "stage": "delivered",
+      "updated_at": "2026-07-21T09:52:00+08:00"
     }
   ]
 }

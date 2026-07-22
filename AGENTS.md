@@ -52,6 +52,16 @@ This runner does not activate Workflow Kernel 2.0 and does not replace Acceptanc
 
 When using `/bilibili-render-pdf` or `/youtube-render-pdf`, the master agent must spawn multiple subagents to isolate context and reduce master-agent context pressure.
 
+### Codex Subagent Model Policy
+
+Every Codex `spawn_agent` call in this project must explicitly set:
+
+- `model: "gpt-5.6-sol"`
+- `reasoning_effort: "medium"`
+- `fork_turns: "none"` or a positive integer string such as `"3"`
+
+Do not omit these fields and do not use `fork_turns: "all"`, because full-history forks do not accept model or reasoning-effort overrides. This policy applies to every Codex subagent role, including Outline, Writer, Figure, Consistency, Independent Review, Acceptance Reviewer, and repair agents. It does not change the model or reasoning effort of the master agent.
+
 Required subagent roles:
 
 - **Outline agent**: define the global table of contents, terminology, symbol table, chapter boundaries, writing contract, and cross-section conventions before chapter writing begins.

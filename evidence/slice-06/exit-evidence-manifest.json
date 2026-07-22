@@ -1,0 +1,453 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 6,
+    "name": "multi-section-production"
+  },
+  "slice_base_commit": "6f8241ddb4bd725d3b584dd1c403ed59dda32219",
+  "implementation_commit": "aca97d8f689c1dd7e5e9c6ae741624b01ca07e87",
+  "evidence_paths": [
+    "evidence/slice-06/exit-evidence-manifest.json",
+    "evidence/slice-06/logs/slice6-contracts.log",
+    "evidence/slice-06/logs/slice6-production.log",
+    "evidence/slice-06/logs/slice6-full-video-workflow.log",
+    "evidence/slice-06/logs/slice5-exit-evidence.log",
+    "evidence/slice-06/logs/slice6-syntax.log",
+    "evidence/slice-06/logs/slice6-diff-check.log"
+  ],
+  "generated_at": "2026-07-22T04:15:00Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice6-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice6-contracts.log",
+        "sha256": "98c107816847d543709d39f942b8b8e749ba84b6de3c0da5d2e4165654abdd29"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice6-production",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_three_sections_release_isolated_writers_and_required_figures_after_outline_barrier",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_disjoint_section_attempts_execute_concurrently_and_promote_serially",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_overlapping_write_sets_are_rejected_before_plan_or_promotion",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_required_figure_wave_runs_while_other_writers_remain_active",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_writer_candidate_launches_one_deterministic_incremental_wave",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_cross_section_candidate_is_rejected_before_promotion",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_second_incremental_figure_wave_fails_closed_after_writer_supersede",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_identical_inputs_with_reversed_completion_order_produce_identical_manifest",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_branch_change_invalidates_only_transitive_dependants",
+        "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_late_worker_cannot_overwrite_advanced_section_generation",
+        "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice6-production.log",
+        "sha256": "3eca578c3564e386715e0877a90ea7a68f5766df3749c752b84f1122a935e912"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice6-full-video-workflow",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/video_workflow",
+        "-p",
+        "test_*.py"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice6-full-video-workflow.log",
+        "sha256": "0e9034e3fa3bc799006f555bfd8f0e3efe37b43530baba20b876200aca88362f"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice5-exit-evidence",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice5-exit-evidence.log",
+        "sha256": "38d6873efe3e78b5ea2feaca9adfc4953ad4f06a52a79f0982a01809e5fefb2a"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice6-syntax",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-c",
+        "import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+list(pathlib.Path('scripts').glob('*.py'))+list(pathlib.Path('tests/video_workflow').glob('test_*.py'));[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice6-syntax.log",
+        "sha256": "36b9c03616ade7b47e92da7ad1cbeb870410c7544eddc7829a4ffb9576f73d84"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice6-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "6f8241ddb4bd725d3b584dd1c403ed59dda32219...HEAD"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-06/logs/slice6-diff-check.log",
+        "sha256": "e1d883852af9277619ff42289ec72ae19f2d3bb81cdad6f71f950de5bcd3a11e"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "source_ready",
+      "status": "current"
+    },
+    {
+      "name": "draft_compile_ready",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "multi_section_outline",
+      "path": "tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json",
+      "sha256": "de10e000eacdb6650817d32225746bdf6c20352a28e2195b01d3d9d440828e86"
+    },
+    {
+      "role": "positive_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice6.valid.json",
+      "sha256": "d2a6cfe55636f171384c7a4a79c2a3b21e4708afda151e2551566a89acd680ad"
+    },
+    {
+      "role": "negative_schema_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice6.missing-determinism.invalid.json",
+      "sha256": "d38bbc5158450b07169d3bd68ae123bf0ce847249d3babecca3cf3b57c26c9ee"
+    }
+  ],
+  "results": {
+    "positive": [
+      "three_section_parallel_release",
+      "required_wave_concurrency",
+      "serial_promotion",
+      "deterministic_integration"
+    ],
+    "negative": [
+      "overlapping_write_sets_rejected",
+      "second_incremental_wave_rejected",
+      "cross_section_candidate_rejected"
+    ],
+    "fencing": [
+      "late_worker_rejected"
+    ],
+    "restart": [
+      "receipt_retry_idempotent"
+    ],
+    "recovery": [
+      "selective_branch_invalidation",
+      "slice5_evidence_remains_valid"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "three_section_parallel_release",
+      "result_kind": "positive",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_three_sections_release_isolated_writers_and_required_figures_after_outline_barrier"
+    },
+    {
+      "result_id": "required_wave_concurrency",
+      "result_kind": "positive",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_required_figure_wave_runs_while_other_writers_remain_active"
+    },
+    {
+      "result_id": "serial_promotion",
+      "result_kind": "positive",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_disjoint_section_attempts_execute_concurrently_and_promote_serially"
+    },
+    {
+      "result_id": "deterministic_integration",
+      "result_kind": "positive",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_identical_inputs_with_reversed_completion_order_produce_identical_manifest"
+    },
+    {
+      "result_id": "overlapping_write_sets_rejected",
+      "result_kind": "negative",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_overlapping_write_sets_are_rejected_before_plan_or_promotion"
+    },
+    {
+      "result_id": "second_incremental_wave_rejected",
+      "result_kind": "negative",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_second_incremental_figure_wave_fails_closed_after_writer_supersede"
+    },
+    {
+      "result_id": "cross_section_candidate_rejected",
+      "result_kind": "negative",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_cross_section_candidate_is_rejected_before_promotion"
+    },
+    {
+      "result_id": "late_worker_rejected",
+      "result_kind": "fencing",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_late_worker_cannot_overwrite_advanced_section_generation"
+    },
+    {
+      "result_id": "receipt_retry_idempotent",
+      "result_kind": "restart",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt"
+    },
+    {
+      "result_id": "selective_branch_invalidation",
+      "result_kind": "recovery",
+      "command_id": "slice6-production",
+      "test_target": "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_branch_change_invalidates_only_transitive_dependants"
+    },
+    {
+      "result_id": "slice5_evidence_remains_valid",
+      "result_kind": "recovery",
+      "command_id": "slice5-exit-evidence",
+      "test_target": "tests.video_workflow.test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "b1b0aede77139c40cdf1c2f9e663c7210e17250d5a327aca65e727395b2a8823"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/registry.v1.json",
+      "sha256": "d67ef6426576a7edf2fe945fdffd3cdabdadca773554a759505dd6626c953498"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/figure-manifest.v2.schema.json",
+      "sha256": "cd307b1fbe7accf4715278c02bfc5268a4e94d89945c209e14c2ec23d35e231a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/integration-manifest.v2.schema.json",
+      "sha256": "e2113b190c0223e4a94bfd7acd7adecb58eb0eda96cd186d74e20742c016dfc0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/outline-contract.v2.schema.json",
+      "sha256": "b7bb20ee54709fe27ab5eba89ea44d113ce0220f59e989705db177e15c86734f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-state.v2.schema.json",
+      "sha256": "74d2e88967f497252e121be67bb381a8a4cb06ede885c232a897bf809d4da1c7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/production-task-envelope.v2.schema.json",
+      "sha256": "8d19cd7af088a4bb2a84d1aa7a4d948c72992f6fcb842324e9a89ae2b829d1e2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v4/writer-result.v1.schema.json",
+      "sha256": "22368f652f70997944f3d106417f8f2f0e54dba00069ee833cfb70b33f6d3654"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice6_exit_evidence.py",
+      "sha256": "b40b8d37d47c077366752d77b87cada7832245748b3402cc806143292c8ea2b8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice6_exit_evidence_contract.py",
+      "sha256": "169dc55404fb4551f1149ad9572f2bf58049bca06f8b080bfd390732763becfe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "8056196b78533fda96d00699c5642c8916ef88648b7aefbd55bc8cbb11c7c1f1"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/content_production.py",
+      "sha256": "afb5e8147a71fcb1c1d99286dbcd421f6c9d0c77814f9de9fcc68d90b2d17064"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "40a56e9eceab0ddc913e864f3256a6137084672aaf66b8fb60f8a1ce01afdd1e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "4f29d07deba557a8801c3b894391a79e8f47b144793173b48ece093a6a7c16d6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/figure-manifest.v2.invalid.json",
+      "sha256": "d99544aa9db38a504b5db52a20302d98c8d8e63c3b5f12420fe984444060c5c7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/figure-manifest.v2.valid.json",
+      "sha256": "291a54fb95229eba1fcc89f619d631851c7dc1f8e9c91e1bae51ad4e11a761c7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/integration-manifest.v2.invalid.json",
+      "sha256": "f50729150a9aa01f86e91a2a318f2e4cce52b621939c8e8ad1a17c810c42b58f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/integration-manifest.v2.valid.json",
+      "sha256": "7fdc61c1fd90a78f357d85c76cec0cf5510492a557412c529d483f71e474000e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/outline-contract.v2.invalid.json",
+      "sha256": "f9bc1be72e883197e9f30dff676c0ae14969073da0a39dd412718318e4ec9049"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json",
+      "sha256": "de10e000eacdb6650817d32225746bdf6c20352a28e2195b01d3d9d440828e86"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-state.v2.invalid.json",
+      "sha256": "5e57f78e33bdb973518507b7f2bd08d8cabd582a5f64a6687f273a9737abbfb8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-state.v2.valid.json",
+      "sha256": "1280fde0ef82e7cc954a1a849622800c16db910769058dd2951ec315e9924f37"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-envelope.v2.invalid.json",
+      "sha256": "0e7f5c7d5a74288dbd5ece4b991b27ff8f47caf57513b24fc63f1064a2c03304"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/production-task-envelope.v2.valid.json",
+      "sha256": "90a6a7ed344b772866815c4462a8bcf69ddc6911288ca8d2d1099b9dbb4b77e0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/writer-result.invalid.json",
+      "sha256": "e795fc34dd36a3a5e62b81e85871dfe138067704a473b148ed432e8f987d93fe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/writer-result.valid.json",
+      "sha256": "7ceeeb3bc25bf496b47b8a81fc9088abc0df2933754dcd63be5912c01def42f9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice6.missing-determinism.invalid.json",
+      "sha256": "d38bbc5158450b07169d3bd68ae123bf0ce847249d3babecca3cf3b57c26c9ee"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice6.valid.json",
+      "sha256": "d2a6cfe55636f171384c7a4a79c2a3b21e4708afda151e2551566a89acd680ad"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate7.py",
+      "sha256": "5ff2bba4552639c1443c07b6b6fadb12f769199826d95491b4484804d8762438"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue9_exit_evidence.py",
+      "sha256": "de97ef76e942c6f8e67a59cfd1dead4bea7864386f2a8943eddd226100c72ff7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_multi_section_production.py",
+      "sha256": "23a8ad6420fc7221ce020b302d2017be486c75276b56909ecfe6fd27746d002a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_production_source_acquisition_hardening.py",
+      "sha256": "8581fcb10c51c365f4b3c3673b0a6e285eec6292523badb497064cc763c821db"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_single_section_production.py",
+      "sha256": "89e5a150efafa50300ca5f3f1177e8fda8de25039c6e3e0345e9b641cee185f8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_hardening.py",
+      "sha256": "5e89ad9493d3f672e757d4637c938cb3866ecdb05d95f01416f035da458c5821"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

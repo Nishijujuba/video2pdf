@@ -1,0 +1,9 @@
+VALID: D:\Project\video2pdf\newskill-kimi\v\evidence\slice-05\exit-evidence-manifest.json
+test_slice5_exit_evidence_remains_valid (tests.video_workflow.test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 5.826s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: aca97d8f689c1dd7e5e9c6ae741624b01ca07e87

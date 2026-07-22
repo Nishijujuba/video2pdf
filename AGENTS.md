@@ -64,6 +64,7 @@ Do not omit these fields and do not use `fork_turns: "all"`, because full-histor
 
 Required subagent roles:
 
+- **Data Preparation agent**: before outline work begins, download the original video and the usable subtitle tracks, collect metadata and cover/source assets, preserve subtitle timestamps, and record the source-material handoff and any acquisition limitations for downstream agents.
 - **Outline agent**: define the global table of contents, terminology, symbol table, chapter boundaries, writing contract, and cross-section conventions before chapter writing begins.
 - **Writer agents**: use one or more writer agents depending on the number of chapters. Each writer agent must write complete chapter drafts directly and save them as `section_*.tex`.
 - **Figure agents**: use one or more figure agents depending on the number of chapters. Figure agents are responsible for frame extraction, image selection, cropping, generating new explanatory diagrams or scripts, writing captions, and adding timestamp footnotes.

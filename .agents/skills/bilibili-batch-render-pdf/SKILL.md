@@ -32,6 +32,7 @@ Every child task must process only one selected part. If Bilibili metadata expos
 
 Every child task must use multiple subagents for the PDF workflow:
 
+- Data Preparation agent: download the assigned part's original video and usable subtitles, collect metadata and cover/source assets, preserve subtitle timestamps, and write the source-material handoff before outline work begins.
 - Outline agent: table of contents, terminology, symbol table, chapter boundaries, writing contract, cross-section conventions.
 - Writer agents: one or more writers, saving complete chapter drafts as `section_*.tex`.
 - Figure agents: frame extraction, selection, cropping, explanatory diagrams, captions, timestamp footnotes.

@@ -59,6 +59,16 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ## Source Acquisition
 
+Run source acquisition as a dedicated **Data Preparation agent** stage before the Outline agent starts. The Data Preparation agent must:
+
+- download the original video or the highest usable source required for frame extraction;
+- download and select usable subtitle tracks, preferring manual subtitles and preserving timestamps;
+- collect the video title, chapters, duration, cover, subtitle-language availability, and acquisition provenance;
+- place source artifacts and disposable acquisition material in the assigned video output directory, with disposable material under `待删除`;
+- write a concise source-material handoff that identifies the selected video, subtitle files, cover, source language, missing assets, and limitations for Outline, Writer, Figure, and review agents.
+
+The Outline agent may start only after this handoff establishes a usable source package or records an explicit acquisition blocker.
+
 ### Cookie-First Subtitle Probe
 
 1. Before inspecting metadata, first try cookie-assisted subtitle discovery with the required `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp --list-subs` launcher.

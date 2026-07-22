@@ -11,8 +11,8 @@ test_late_worker_cannot_overwrite_advanced_section_generation (tests.video_workf
 test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt (tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt) ... ok
 
 ----------------------------------------------------------------------
-Ran 11 tests in 73.294s
+Ran 11 tests in 72.618s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: aca97d8f689c1dd7e5e9c6ae741624b01ca07e87
+EVIDENCE_IMPLEMENTATION_COMMIT: 3bdb743f3b7b67c57da546e137fb3de4b3e91fa0

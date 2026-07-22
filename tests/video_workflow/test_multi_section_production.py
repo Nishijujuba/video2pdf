@@ -389,6 +389,118 @@ class MultiSectionProductionTests(unittest.TestCase):
             },
         )
 
+    def test_incremental_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation(self) -> None:
+        tasks = self._release_parallel_tasks()
+        writer = next(
+            task for task in tasks if task["logical_task_key"] == "writer-section-01"
+        )
+        candidate = {
+            "candidate_id": "diagram-a", "section_id": "section_01",
+            "teaching_purpose": "Explain A",
+            "placement_marker": "% FIGURE_SLOT:figure_01_incremental_01",
+            "evidence": {"source_timestamp": "00:02"},
+            "proposed_figure_type": "diagram",
+            "prose_insufficiency_reason": "spatial relation", "priority": "required",
+        }
+        advanced = self.kernel.production_advance(
+            self.run_dir,
+            writer["task_id"],
+            self._attempt(
+                writer,
+                self._writer_outputs(
+                    "section_01", ["figure_01", "figure_01_incremental_01"], [candidate]
+                ),
+            ),
+        )
+        incremental = next(
+            task
+            for task in advanced["runnable_tasks"]
+            if task["logical_task_key"] == "figure-incremental-figure-01-incremental-01"
+        )
+        self.kernel.production_advance(
+            self.run_dir,
+            incremental["task_id"],
+            self._attempt(
+                incremental,
+                self._figure_outputs("section_01", "figure_01_incremental_01"),
+            ),
+        )
+
+        plan = self.kernel.production_plan(
+            self.run_dir,
+            supersede_task_id=incremental["task_id"],
+            expected_claim_generation=incremental["claim_generation"],
+        )
+        replacement = plan["runnable_tasks"][0]
+        changed = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(encoding="utf-8")
+        )
+        after_completed = incremental["logical_task_key"] in changed["completed_tasks"]
+        after_has_asset = "figure_asset_figure_01_incremental_01" in changed["artifacts"]
+        self.assertEqual(
+            (False, False, "figure_01_incremental_01"),
+            (after_completed, after_has_asset, replacement["slot_id"]),
+        )
+        self.assertEqual(2, replacement["claim_generation"])
+        self.assertEqual(
+            [
+                "figures/figure_01_incremental_01.png",
+                "work/figures/figure_01_incremental_01.manifest.json",
+                "work/figures/figure_01_incremental_01.tex",
+            ],
+            replacement["write_set"],
+        )
+        self.assertNotIn(incremental["logical_task_key"], changed["receipts"])
+        for logical_id in (
+            "figure_asset_figure_01_incremental_01",
+            "figure_manifest_figure_01_incremental_01",
+            "figure_contribution_figure_01_incremental_01",
+        ):
+            self.assertNotIn(logical_id, changed["artifacts"])
+        self.assertIn("writer_section_01", changed["artifacts"])
+        self.assertIn("writer_result_section_01", changed["artifacts"])
+
+    def test_required_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation(self) -> None:
+        tasks = self._release_parallel_tasks()
+        required = next(
+            task
+            for task in tasks
+            if task["logical_task_key"] == "figure-required-figure-01"
+        )
+        self.kernel.production_advance(
+            self.run_dir,
+            required["task_id"],
+            self._attempt(required, self._figure_outputs("section_01", "figure_01")),
+        )
+
+        plan = self.kernel.production_plan(
+            self.run_dir,
+            supersede_task_id=required["task_id"],
+            expected_claim_generation=required["claim_generation"],
+        )
+        replacement = plan["runnable_tasks"][0]
+        changed = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("figure_01", replacement["slot_id"])
+        self.assertEqual(2, replacement["claim_generation"])
+        self.assertEqual(
+            [
+                "figures/figure_01.png",
+                "work/figures/figure-manifest.json",
+                "work/figures/figure_01.tex",
+            ],
+            replacement["write_set"],
+        )
+        self.assertNotIn(required["logical_task_key"], changed["completed_tasks"])
+        self.assertNotIn(required["logical_task_key"], changed["receipts"])
+        for logical_id in (
+            "figure_asset_figure_01",
+            "figure_manifest_figure_01",
+            "figure_contribution_figure_01",
+        ):
+            self.assertNotIn(logical_id, changed["artifacts"])
+
     def test_late_worker_cannot_overwrite_advanced_section_generation(self) -> None:
         from video2pdf_workflow_kernel.errors import KernelConflict
         tasks = self._release_parallel_tasks()

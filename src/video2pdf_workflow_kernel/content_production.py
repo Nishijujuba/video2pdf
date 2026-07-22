@@ -162,6 +162,21 @@ class ContentProduction:
         state["artifacts"][logical_id] = value
         return value
 
+    @staticmethod
+    def _figure_logical_task_key(slot: dict[str, Any]) -> str:
+        wave = "incremental" if slot["wave"] == "incremental" else "required"
+        return f"figure-{wave}-{slot['slot_id'].replace('_', '-')}"
+
+    @classmethod
+    def _figure_task_bindings(
+        cls, state: dict[str, Any]
+    ) -> dict[str, tuple[str, dict[str, Any]]]:
+        return {
+            cls._figure_logical_task_key(slot): (section_id, slot)
+            for section_id, section in state["sections"].items()
+            for slot in section["figure_slots"]
+        }
+
     def _envelope(
         self, run_dir: Path, state: dict[str, Any], logical_key: str,
         role: str, *, section_id: str | None = None, slot_id: str | None = None,
@@ -287,7 +302,7 @@ class ContentProduction:
                 for slot in section["figure_slots"]:
                     if slot["wave"] == "incremental" and writer_key not in completed:
                         continue
-                    key = f"figure-{'incremental' if slot['wave'] == 'incremental' else 'required'}-{slot['slot_id'].replace('_', '-')}"
+                    key = self._figure_logical_task_key(slot)
                     if key not in completed:
                         specs.append((key, "figure", section_id, slot["slot_id"]))
                 pyramid_key = f"pyramid-section-{section_id.replace('_', '-')}"
@@ -333,11 +348,11 @@ class ContentProduction:
                 section_id = "section_" + logical_key.rsplit("-", 1)[-1]
             slot_id = None
             if role == "figure":
-                for candidate, section in state["sections"].items():
-                    match = next((slot for slot in section["figure_slots"] if slot["slot_id"].replace("_", "-") in logical_key), None)
-                    if match:
-                        section_id, slot_id = candidate, match["slot_id"]
-                        break
+                binding = self._figure_task_bindings(state).get(logical_key)
+                if binding is None:
+                    raise KernelConflict("Production Figure task has no current Slot binding")
+                section_id, slot = binding
+                slot_id = slot["slot_id"]
             specs.append((logical_key, role, section_id, slot_id))
         tasks = [
             self._envelope(run_dir, state, key, role, section_id=section, slot_id=slot)
@@ -366,18 +381,18 @@ class ContentProduction:
             "blocked_sections": blocked_sections,
         }
 
-    @staticmethod
-    def _invalidate_for_supersede(state: dict[str, Any], logical_key: str) -> None:
+    @classmethod
+    def _invalidate_for_supersede(cls, state: dict[str, Any], logical_key: str) -> None:
         if not logical_key.startswith(("writer-section-", "figure-")):
             return
         section_id: str | None = None
+        superseded_figure_slot: dict[str, Any] | None = None
         if logical_key.startswith("writer-section-"):
             section_id = "section_" + logical_key.rsplit("-", 1)[-1]
         else:
-            for candidate, section in state["sections"].items():
-                if any(slot["slot_id"].replace("_", "-") in logical_key for slot in section["figure_slots"]):
-                    section_id = candidate
-                    break
+            binding = cls._figure_task_bindings(state).get(logical_key)
+            if binding is not None:
+                section_id, superseded_figure_slot = binding
         if section_id is None:
             return
         dependent_tasks = {
@@ -426,6 +441,15 @@ class ContentProduction:
                         f"figure_contribution_{slot['slot_id']}",
                     }
                 )
+        elif superseded_figure_slot is not None:
+            slot_id = superseded_figure_slot["slot_id"]
+            stale_artifacts.update(
+                {
+                    f"figure_asset_{slot_id}",
+                    f"figure_manifest_{slot_id}",
+                    f"figure_contribution_{slot_id}",
+                }
+            )
         for artifact in stale_artifacts:
             state["artifacts"].pop(artifact, None)
         state["checkpoints"]["draft_compile_ready"] = "pending"

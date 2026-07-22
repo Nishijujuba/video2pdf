@@ -19,11 +19,15 @@ PRODUCTION_TEST_TARGETS = (
     "tests.video_workflow.test_multi_section_production.MultiSectionProductionTests.test_late_worker_cannot_overwrite_advanced_section_generation",
     "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_state_commit_receipt_is_retry_idempotent_and_fences_late_attempt",
 )
+SLICE5_COMPATIBILITY_TEST_TARGET = (
+    "tests.video_workflow.test_issue9_exit_evidence."
+    "Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid"
+)
 COMMANDS = (
     ("slice6-contracts",(sys.executable,"-X","utf8","-B","scripts/video_workflow.py","contracts-check")),
     ("slice6-production",(sys.executable,"-X","utf8","-B","-m","unittest","-v",*PRODUCTION_TEST_TARGETS)),
     ("slice6-full-video-workflow",(sys.executable,"-X","utf8","-B","-m","unittest","discover","-s","tests/video_workflow","-p","test_*.py")),
-    ("slice5-exit-evidence",(sys.executable,"-X","utf8","-B","scripts/validate_slice_exit_evidence.py","evidence/slice-05/exit-evidence-manifest.json")),
+    ("slice5-exit-evidence",(sys.executable,"-X","utf8","-B","-m","unittest","-v",SLICE5_COMPATIBILITY_TEST_TARGET)),
     ("slice6-syntax",(sys.executable,"-X","utf8","-B","-c","import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+list(pathlib.Path('scripts').glob('*.py'))+list(pathlib.Path('tests/video_workflow').glob('test_*.py'));[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')")),
     ("slice6-diff-check",("git","diff","--check",f"{SLICE_BASE_COMMIT}...HEAD")),
 )
@@ -47,7 +51,7 @@ RESULT_BINDINGS = [
     _binding(RESULTS["fencing"][0],"fencing",PRODUCTION_TEST_TARGETS[9]),
     _binding(RESULTS["restart"][0],"restart",PRODUCTION_TEST_TARGETS[10]),
     _binding(RESULTS["recovery"][0],"recovery",PRODUCTION_TEST_TARGETS[8]),
-    _binding(RESULTS["recovery"][1],"recovery","evidence/slice-05/exit-evidence-manifest.json","slice5-exit-evidence"),
+    _binding(RESULTS["recovery"][1],"recovery",SLICE5_COMPATIBILITY_TEST_TARGET,"slice5-exit-evidence"),
 ]
 FIXTURE_SPECS = (
     ("multi_section_outline","tests/video_workflow/fixtures/contracts/outline-contract.v2.valid.json"),

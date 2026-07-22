@@ -7,6 +7,10 @@ import unittest
 from jsonschema import Draft202012Validator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SLICE5_COMPATIBILITY_TEST_TARGET = (
+    "tests.video_workflow.test_issue9_exit_evidence."
+    "Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid"
+)
 
 def load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -16,6 +20,51 @@ def load_module(name: str, path: Path):
     return module
 
 class Slice6ExitEvidenceTests(unittest.TestCase):
+    def test_slice5_exit_evidence_remains_valid(self) -> None:
+        for path in (PROJECT_ROOT / "scripts", PROJECT_ROOT / "src"):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        validator = load_module(
+            "slice5_compatibility_validator",
+            PROJECT_ROOT / "scripts/validate_slice_exit_evidence.py",
+        )
+
+        self.assertEqual(
+            0,
+            validator.main(
+                [str(PROJECT_ROOT / "evidence/slice-05/exit-evidence-manifest.json")]
+            ),
+        )
+
+    def test_slice6_contract_binds_slice5_compatibility_to_executed_unittest_target(self) -> None:
+        contract = load_module(
+            "slice6_compatibility_contract",
+            PROJECT_ROOT / "scripts/slice6_exit_evidence_contract.py",
+        )
+        command = dict(contract.COMMANDS)["slice5-exit-evidence"]
+        binding = next(
+            item
+            for item in contract.RESULT_BINDINGS
+            if item["result_id"] == "slice5_evidence_remains_valid"
+        )
+
+        self.assertEqual(
+            (
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                "-m",
+                "unittest",
+                "-v",
+                SLICE5_COMPATIBILITY_TEST_TARGET,
+            ),
+            command,
+        )
+        self.assertEqual("slice5-exit-evidence", binding["command_id"])
+        self.assertEqual(SLICE5_COMPATIBILITY_TEST_TARGET, binding["test_target"])
+        self.assertEqual(1, command.count(binding["test_target"]))
+
     def test_slice6_schema_accepts_closed_shape_and_rejects_missing_determinism(self) -> None:
         validator = Draft202012Validator(json.loads((PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text()))
         valid = json.loads((PROJECT_ROOT / "tests/video_workflow/fixtures/exit_evidence_manifest.v2.slice6.valid.json").read_text())

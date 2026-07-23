@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import unittest
 from unittest import mock
 
 from scripts.project_test_external_root import ensure_project_root
+from scripts.project_test_results import canonical_json_bytes
 from tests.project_test_runner._fixture_root import new_fixture_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -15,17 +18,95 @@ from tests.video_workflow import _test_run
 
 
 class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
-    def fixture_run_dir(self) -> Path:
+    MODULE_KEY = "0123456789ab"
+    TEST_IDS = ["synthetic_boundary.SyntheticBoundaryTests.test_identity"]
+
+    def fixture_run_dir(
+        self,
+        *,
+        run_suite_key: str = "video-workflow",
+        selected_suite_ids: list[str] | None = None,
+        module_suite_id: str = "video-workflow",
+        write_manifests: bool = True,
+    ) -> Path:
         external_root = new_fixture_dir("video-boundary")
         project_root = ensure_project_root(
             external_root,
             "https://github.com/Nishijujuba/video2pdf.git",
         )
-        suite_root = project_root / "video-workflow"
+        suite_root = project_root / run_suite_key
         suite_root.mkdir()
         run_dir = suite_root / "20260724_120000_01234567"
         run_dir.mkdir()
-        return run_dir.resolve()
+        run_dir = run_dir.resolve()
+        if write_manifests:
+            self.write_manifests(
+                run_dir,
+                selected_suite_ids=selected_suite_ids
+                or ["video-workflow"],
+                module_suite_id=module_suite_id,
+            )
+        return run_dir
+
+    def write_manifests(
+        self,
+        run_dir: Path,
+        *,
+        selected_suite_ids: list[str],
+        module_suite_id: str = "video-workflow",
+        module_key: str | None = None,
+        test_ids: list[str] | None = None,
+        manifest_run_dir: Path | None = None,
+    ) -> None:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        registry_path = PROJECT_ROOT / "config" / "test-suites.v1.json"
+        registry_sha256 = hashlib.sha256(registry_path.read_bytes()).hexdigest()
+        discovery = {
+            "schema_name": "video2pdf.project-test-discovery",
+            "schema_version": 1,
+            "project": {
+                "project_key": "video2pdf",
+                "repository": "Nishijujuba/video2pdf",
+            },
+            "commit": commit,
+            "registry_sha256": registry_sha256,
+            "discovery_arguments": {"suite_ids": selected_suite_ids},
+            "suite_ids": selected_suite_ids,
+            "modules": [
+                {
+                    "suite_id": module_suite_id,
+                    "module_key": module_key or self.MODULE_KEY,
+                    "test_ids": self.TEST_IDS if test_ids is None else test_ids,
+                }
+            ],
+        }
+        discovery_bytes = canonical_json_bytes(discovery)
+        (run_dir / "discovery.json").write_bytes(discovery_bytes)
+        test_run = {
+            "schema_name": "video2pdf.project-test-run",
+            "schema_version": 1,
+            "project": discovery["project"],
+            "commit": commit,
+            "registry_sha256": registry_sha256,
+            "discovery_sha256": hashlib.sha256(discovery_bytes).hexdigest(),
+            "suite_ids": selected_suite_ids,
+            "run_dir": str(manifest_run_dir or run_dir),
+        }
+        (run_dir / "test-run.json").write_bytes(canonical_json_bytes(test_run))
+
+    def environment(self, run_dir: Path) -> dict[str, str]:
+        return {
+            _test_run.RUN_DIR_ENV: str(run_dir),
+            _test_run.SUITE_ID_ENV: "video-workflow",
+            _test_run.MODULE_KEY_ENV: self.MODULE_KEY,
+        }
 
     def test_direct_execution_uses_the_project_local_compatibility_root(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -37,11 +118,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
     def test_runner_execution_uses_short_contained_module_path_and_manifest(self) -> None:
         run_dir = self.fixture_run_dir()
         try:
-            environment = {
-                _test_run.RUN_DIR_ENV: str(run_dir),
-                _test_run.SUITE_ID_ENV: "video-workflow",
-                _test_run.MODULE_KEY_ENV: "0123456789ab",
-            }
+            environment = self.environment(run_dir)
             with mock.patch.dict(os.environ, environment, clear=True):
                 module_root = _test_run.module_test_root(PROJECT_ROOT)
                 case_root = _test_run.new_case_dir(
@@ -72,6 +149,122 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
             )
         finally:
             pass
+
+    def test_all_suite_run_accepts_a_selected_video_workflow_worker(self) -> None:
+        run_dir = self.fixture_run_dir(
+            run_suite_key="all",
+            selected_suite_ids=["project-test-runner", "video-workflow"],
+        )
+
+        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+            self.assertEqual(
+                _test_run.module_test_root(PROJECT_ROOT),
+                run_dir / "generated" / self.MODULE_KEY,
+            )
+
+    def test_single_suite_run_rejects_worker_outside_its_selected_suite(self) -> None:
+        run_dir = self.fixture_run_dir(
+            selected_suite_ids=["project-test-runner"],
+            module_suite_id="video-workflow",
+        )
+
+        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+            with self.assertRaisesRegex(
+                _test_run.TestRunBoundaryError,
+                "selected suite|suite identity",
+            ):
+                _test_run.module_test_root(PROJECT_ROOT)
+
+    def test_owned_named_run_without_runner_manifests_fails_closed(self) -> None:
+        run_dir = self.fixture_run_dir(write_manifests=False)
+
+        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+            with self.assertRaisesRegex(
+                _test_run.TestRunBoundaryError,
+                "test-run.json|discovery.json",
+            ):
+                _test_run.module_test_root(PROJECT_ROOT)
+
+    def test_tampered_discovery_fingerprint_fails_closed(self) -> None:
+        run_dir = self.fixture_run_dir()
+        discovery_path = run_dir / "discovery.json"
+        discovery = json.loads(discovery_path.read_text(encoding="utf-8"))
+        discovery["modules"][0]["test_ids"].append("tampered.test_id")
+        discovery_path.write_bytes(canonical_json_bytes(discovery))
+
+        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+            with self.assertRaisesRegex(
+                _test_run.TestRunBoundaryError,
+                "fingerprint",
+            ):
+                _test_run.module_test_root(PROJECT_ROOT)
+
+    def test_manifest_run_directory_identity_mismatch_fails_closed(self) -> None:
+        run_dir = self.fixture_run_dir(write_manifests=False)
+        self.write_manifests(
+            run_dir,
+            selected_suite_ids=["video-workflow"],
+            manifest_run_dir=run_dir.parent / "20260724_120000_deadbeef",
+        )
+
+        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+            with self.assertRaisesRegex(
+                _test_run.TestRunBoundaryError,
+                "run directory identity",
+            ):
+                _test_run.module_test_root(PROJECT_ROOT)
+
+    def test_manifest_project_commit_and_registry_provenance_fail_closed(
+        self,
+    ) -> None:
+        variants = (
+            ("project", {"project_key": "video2pdf", "repository": "other/repo"}),
+            ("commit", "0" * 40),
+            ("registry_sha256", "0" * 64),
+        )
+        for field, replacement in variants:
+            with self.subTest(field=field):
+                run_dir = self.fixture_run_dir()
+                test_run_path = run_dir / "test-run.json"
+                test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+                test_run[field] = replacement
+                test_run_path.write_bytes(canonical_json_bytes(test_run))
+
+                with mock.patch.dict(
+                    os.environ,
+                    self.environment(run_dir),
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        _test_run.TestRunBoundaryError,
+                        "project|repository|commit|registry",
+                    ):
+                        _test_run.module_test_root(PROJECT_ROOT)
+
+    def test_discovery_must_bind_active_module_and_nonempty_test_ids(self) -> None:
+        variants = (
+            {"module_key": "fedcba987654", "test_ids": self.TEST_IDS},
+            {"module_key": self.MODULE_KEY, "test_ids": []},
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                run_dir = self.fixture_run_dir(write_manifests=False)
+                self.write_manifests(
+                    run_dir,
+                    selected_suite_ids=["video-workflow"],
+                    module_key=variant["module_key"],
+                    test_ids=variant["test_ids"],
+                )
+                with mock.patch.dict(
+                    os.environ,
+                    self.environment(run_dir),
+                    clear=True,
+                ):
+                    with self.assertRaisesRegex(
+                        _test_run.TestRunBoundaryError,
+                        "module|test IDs",
+                    ):
+                        _test_run.module_test_root(PROJECT_ROOT)
 
     def test_runner_environment_fails_closed_for_invalid_identity(self) -> None:
         forged_external = new_fixture_dir("forged-boundary")
@@ -115,11 +308,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
         marker["repository"] = "someone/else"
         marker_path.write_text(json.dumps(marker), encoding="utf-8")
-        environment = {
-            _test_run.RUN_DIR_ENV: str(valid_run),
-            _test_run.SUITE_ID_ENV: "video-workflow",
-            _test_run.MODULE_KEY_ENV: "0123456789ab",
-        }
+        environment = self.environment(valid_run)
         with mock.patch.dict(os.environ, environment, clear=True):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
@@ -132,7 +321,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
-                "suite key|identity|marker",
+                "suite key|identity|marker|project root",
             ):
                 _test_run.module_test_root(PROJECT_ROOT)
 
@@ -148,11 +337,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
 
     def test_runner_environment_rejects_reparse_owned_hierarchy(self) -> None:
         run_dir = self.fixture_run_dir()
-        environment = {
-            _test_run.RUN_DIR_ENV: str(run_dir),
-            _test_run.SUITE_ID_ENV: "video-workflow",
-            _test_run.MODULE_KEY_ENV: "0123456789ab",
-        }
+        environment = self.environment(run_dir)
         with (
             mock.patch.dict(os.environ, environment, clear=True),
             mock.patch(
@@ -169,12 +354,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
     def test_child_environment_preserves_parent_and_pins_temp_to_case(self) -> None:
         run_dir = self.fixture_run_dir()
         try:
-            environment = {
-                "PARENT_VALUE": "preserved",
-                _test_run.RUN_DIR_ENV: str(run_dir),
-                _test_run.SUITE_ID_ENV: "video-workflow",
-                _test_run.MODULE_KEY_ENV: "0123456789ab",
-            }
+            environment = {"PARENT_VALUE": "preserved", **self.environment(run_dir)}
             with mock.patch.dict(os.environ, environment, clear=True):
                 child = _test_run.child_environment(self.id())
 

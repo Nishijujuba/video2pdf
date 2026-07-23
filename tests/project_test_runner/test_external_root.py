@@ -429,6 +429,10 @@ class RunDirectoryTests(unittest.TestCase):
 
             datetime_mock.now.assert_called_once_with(timezone.utc)
             self.assertEqual(run_root.name, "20260723_040506_abcdef01")
+            self.assertEqual(
+                external_root.validate_owned_run_directory(run_root),
+                run_root,
+            )
 
     def test_rejects_suite_keys_that_escape_project_containment(self) -> None:
         with temporary_root() as temporary_directory:

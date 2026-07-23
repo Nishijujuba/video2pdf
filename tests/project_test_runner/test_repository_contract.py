@@ -14,8 +14,9 @@ EXCEPTIONS_PATH = PROJECT_ROOT / "config" / "test-local-write-exceptions.v1.json
 
 @dataclass(frozen=True)
 class PathFact:
-    rooted_in_project: bool
+    rooted_in_project: bool | None
     parts: tuple[str | None, ...]
+    unresolved_local: bool = False
 
     @property
     def relative(self) -> str | None:
@@ -98,12 +99,53 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
         self.test_id = ""
         self.helpers: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
         self.active_helpers: set[str] = set()
+        self.import_aliases: dict[str, str] = {}
+
+    def prepare(self, tree: ast.Module) -> None:
+        """Collect module symbols before analyzing any executable test body."""
+
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom):
+                module = statement.module or ""
+                for imported in statement.names:
+                    local_name = imported.asname or imported.name
+                    self.import_aliases[local_name] = f"{module}.{imported.name}"
+                    self.environment[local_name] = self._opaque()
+            elif isinstance(statement, ast.Import):
+                for imported in statement.names:
+                    local_name = imported.asname or imported.name.split(".", 1)[0]
+                    self.import_aliases[local_name] = imported.name
+                    self.environment[local_name] = self._opaque()
+            elif (
+                isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not statement.name.startswith("test_")
+            ):
+                self.helpers[statement.name] = statement
+
+    @staticmethod
+    def _unknown(*, local: bool = True) -> PathFact:
+        return PathFact(None, (), local)
+
+    @staticmethod
+    def _opaque() -> PathFact:
+        return PathFact(None, (), False)
 
     def _literal_parts(self, node: ast.AST) -> tuple[str | None, ...]:
         fact = self._fact(node)
-        if fact is not None and not fact.rooted_in_project:
+        if fact is not None and fact.rooted_in_project is False:
             return fact.parts
         return (None,)
+
+    def _aggregate_fact(self, nodes: list[ast.AST]) -> PathFact:
+        facts = [self._fact(node) or self._unknown() for node in nodes]
+        if any(
+            fact.rooted_in_project is True or fact.unresolved_local
+            for fact in facts
+        ):
+            return self._unknown()
+        if facts and all(fact.rooted_in_project is False for fact in facts):
+            return PathFact(False, (None,))
+        return self._opaque()
 
     def _fact(self, node: ast.AST) -> PathFact | None:
         key = _target_key(node)
@@ -158,10 +200,26 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 )
                 if node.slice.step is None:
                     return PathFact(False, (base.parts[0][lower:upper],))
+            if base is not None:
+                return base
+        if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+            return self._aggregate_fact(list(node.elts))
+        if isinstance(node, ast.Dict):
+            return self._aggregate_fact(
+                [
+                    value
+                    for key, value in zip(node.keys, node.values)
+                    if key is not None
+                ]
+            )
+        if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            return self._aggregate_fact(
+                [generator.iter for generator in node.generators]
+            )
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             left = self._fact(node.left)
             if left is None:
-                return None
+                return self._unknown()
             return PathFact(
                 left.rooted_in_project,
                 left.parts + self._literal_parts(node.right),
@@ -177,21 +235,138 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 return PathFact(base.rooted_in_project, base.parts + parts)
             if base is not None and node.func.attr in {"absolute", "resolve"}:
                 return base
+            if base is not None and base.rooted_in_project is not None:
+                return base
+            if (
+                base is not None
+                and base.rooted_in_project is None
+                and not base.unresolved_local
+            ):
+                return self._opaque()
+            return self._unknown()
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id in {"Path", "PurePath", "PurePosixPath", "PureWindowsPath"}
-            and node.args
         ):
-            return self._fact(node.args[0])
+            canonical = self.import_aliases.get(node.func.id, node.func.id)
+            if canonical.rsplit(".", 1)[-1] in {
+                "Path",
+                "PurePath",
+                "PurePosixPath",
+                "PureWindowsPath",
+            }:
+                return self._fact(node.args[0]) if node.args else self._unknown()
+            if canonical in {
+                "tests.video_workflow._test_run.module_test_root",
+                "tests.video_workflow._test_run.new_case_dir",
+            }:
+                return PathFact(False, (None,))
+            if node.func.id in {"list", "next", "set", "sorted", "tuple"} and node.args:
+                return self._fact(node.args[0]) or self._unknown()
+            if node.func.id in self.helpers:
+                return self._helper_return_fact(node.func.id, node)
+            if node.func.id in self.import_aliases:
+                return self._opaque()
+            return self._unknown()
         if isinstance(node, ast.Attribute):
             base = self._fact(node.value)
             if base is not None and node.attr == "parent":
                 return PathFact(base.rooted_in_project, base.parts[:-1])
+            if base is not None:
+                return base
+        if isinstance(node, ast.Name):
+            return self._unknown()
         return None
 
+    def _bind_helper(
+        self,
+        helper: ast.FunctionDef | ast.AsyncFunctionDef,
+        call: ast.Call,
+    ) -> dict[str, PathFact]:
+        bound: dict[str, PathFact] = {}
+        for parameter, argument in zip(helper.args.args, call.args):
+            bound[parameter.arg] = self._fact(argument) or self._unknown()
+        for keyword in call.keywords:
+            if keyword.arg is not None:
+                bound[keyword.arg] = self._fact(keyword.value) or self._unknown()
+        return bound
+
+    def _bind_assignment(self, target: ast.AST, fact: PathFact) -> None:
+        key = _target_key(target)
+        if key is not None:
+            if key != "PROJECT_ROOT":
+                self.environment[key] = fact
+            return
+        if isinstance(target, (ast.List, ast.Tuple)):
+            for element in target.elts:
+                self._bind_assignment(element, fact)
+
+    def _helper_return_fact(self, name: str, call: ast.Call) -> PathFact:
+        if name in self.active_helpers:
+            return self._unknown(local=True)
+        helper = self.helpers[name]
+        previous_environment = self.environment
+        previous_import_aliases = self.import_aliases
+        self.environment = {
+            **previous_environment,
+            **self._bind_helper(helper, call),
+        }
+        self.import_aliases = dict(previous_import_aliases)
+        self.active_helpers.add(name)
+        returned: list[PathFact] = []
+        try:
+            for statement in helper.body:
+                if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                    self.visit(statement)
+                elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    value = statement.value
+                    if value is not None:
+                        fact = self._fact(value) or self._unknown()
+                        targets = (
+                            statement.targets
+                            if isinstance(statement, ast.Assign)
+                            else (statement.target,)
+                        )
+                        for target in targets:
+                            key = _target_key(target)
+                            if key is not None:
+                                self.environment[key] = fact
+                elif isinstance(statement, ast.Return):
+                    returned.append(
+                        self._fact(statement.value)
+                        if statement.value is not None
+                        else self._unknown()
+                    )
+                elif isinstance(statement, (ast.If, ast.Try, ast.Match, ast.For, ast.While)):
+                    returned.append(self._unknown())
+        finally:
+            self.active_helpers.remove(name)
+            self.environment = previous_environment
+            self.import_aliases = previous_import_aliases
+        if not returned or any(fact is None for fact in returned):
+            return self._unknown(local=True)
+        first = returned[0]
+        if any(fact != first for fact in returned[1:]):
+            return self._unknown(local=True)
+        if first.rooted_in_project is None and first.unresolved_local:
+            return self._unknown(local=True)
+        return first
+
     def _record(self, node: ast.Call, fact: PathFact | None) -> None:
-        if fact is None or not fact.rooted_in_project:
+        if fact is not None and fact.rooted_in_project is False:
+            return
+        if (
+            fact is not None
+            and fact.rooted_in_project is None
+            and not fact.unresolved_local
+        ):
+            return
+        if fact is None or fact.rooted_in_project is None:
+            expression = ast.get_source_segment(self.source_text, node) or "<call>"
+            self.violations.append(
+                f"{self.source.as_posix()}:{node.lineno}:{self.test_id}:"
+                f"unresolved write target:{expression}"
+            )
             return
         relative = fact.relative
         known_prefix = fact.known_prefix
@@ -226,29 +401,41 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
         )
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        fact = self._fact(node.value)
-        if fact is not None:
-            for target in node.targets:
-                key = _target_key(target)
-                if key is not None:
-                    self.environment[key] = fact
+        fact = self._fact(node.value) or self._unknown()
+        for target in node.targets:
+            self._bind_assignment(target, fact)
         self.visit(node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
-            fact = self._fact(node.value)
+            fact = self._fact(node.value) or self._unknown()
             key = _target_key(node.target)
-            if fact is not None and key is not None:
+            if key is not None and key != "PROJECT_ROOT":
                 self.environment[key] = fact
             self.visit(node.value)
 
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ""
+        for imported in node.names:
+            local_name = imported.asname or imported.name
+            self.import_aliases[local_name] = f"{module}.{imported.name}"
+            self.environment[local_name] = self._opaque()
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for imported in node.names:
+            local_name = imported.asname or imported.name.split(".", 1)[0]
+            self.import_aliases[local_name] = imported.name
+            self.environment[local_name] = self._opaque()
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        if not node.name.startswith("test_") and not self.test_id:
+        if not node.name.startswith("test_"):
             self.helpers[node.name] = node
             return
         previous_environment = self.environment
+        previous_import_aliases = self.import_aliases
         previous_test_id = self.test_id
         self.environment = dict(previous_environment)
+        self.import_aliases = dict(previous_import_aliases)
         if node.name.startswith("test_"):
             class_name = getattr(node, "_contract_class_name", None)
             self.test_id = (
@@ -256,9 +443,16 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 if class_name is not None
                 else f"{self.source.stem}.{node.name}"
             )
+            for parameter in node.args.args:
+                self.environment[parameter.arg] = (
+                    self._opaque()
+                    if parameter.arg in {"self", "cls"}
+                    else self._unknown()
+                )
         for statement in node.body:
             self.visit(statement)
         self.environment = previous_environment
+        self.import_aliases = previous_import_aliases
         self.test_id = previous_test_id
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -297,10 +491,14 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 )
                 if mode is None or any(flag in mode for flag in "wax+"):
                     self._record(node, self._fact(node.func.value))
-            elif method in {"rename", "replace"} and node.args:
+            elif method in {"rename", "replace"} and len(node.args) == 1:
                 self._record(node, self._fact(node.func.value))
                 self._record(node, self._fact(node.args[0]))
-            elif method in _TWO_PATH_MUTATORS and len(node.args) >= 2:
+            elif (
+                method in _TWO_PATH_MUTATORS
+                and method not in {"rename", "replace"}
+                and len(node.args) >= 2
+            ):
                 self._record(node, self._fact(node.args[1]))
             elif method in _FUNCTION_PATH_MUTATORS and node.args:
                 self._record(node, self._fact(node.args[0]))
@@ -318,19 +516,27 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
             helper = self.helpers.get(node.func.id)
             if helper is not None and node.func.id not in self.active_helpers:
                 previous_environment = self.environment
-                self.environment = dict(previous_environment)
-                for parameter, argument in zip(helper.args.args, node.args):
-                    fact = self._fact(argument)
-                    if fact is not None:
-                        self.environment[parameter.arg] = fact
+                previous_import_aliases = self.import_aliases
+                self.environment = {
+                    **previous_environment,
+                    **self._bind_helper(helper, node),
+                }
+                self.import_aliases = dict(previous_import_aliases)
                 self.active_helpers.add(node.func.id)
-                for statement in helper.body:
-                    self.visit(statement)
-                self.active_helpers.remove(node.func.id)
-                self.environment = previous_environment
-            if node.func.id in _TWO_PATH_MUTATORS and len(node.args) >= 2:
+                try:
+                    for statement in helper.body:
+                        self.visit(statement)
+                finally:
+                    self.active_helpers.remove(node.func.id)
+                    self.environment = previous_environment
+                    self.import_aliases = previous_import_aliases
+            canonical = self.import_aliases.get(node.func.id, node.func.id)
+            operation = canonical.rsplit(".", 1)[-1]
+            if operation in _TWO_PATH_MUTATORS and len(node.args) >= 2:
                 self._record(node, self._fact(node.args[1]))
-            elif node.func.id == "open" and node.args:
+            elif operation in _FUNCTION_PATH_MUTATORS and node.args:
+                self._record(node, self._fact(node.args[0]))
+            elif operation == "open" and node.args:
                 mode_node = (
                     node.args[1]
                     if len(node.args) >= 2
@@ -353,7 +559,7 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 )
                 if mode is None or any(flag in mode for flag in "wax+"):
                     self._record(node, self._fact(node.args[0]))
-            elif node.func.id in _TEMPORARY_CREATORS:
+            elif operation in _TEMPORARY_CREATORS:
                 directory = next(
                     (
                         keyword.value
@@ -363,9 +569,12 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                     None,
                 )
                 self._record(node, self._fact(directory) if directory else None)
-            elif node.func.id.startswith(("write", "create", "copy", "move")):
-                for argument in node.args:
-                    self._record(node, self._fact(argument))
+            elif (
+                helper is None
+                and operation.startswith(("write", "create", "copy", "move"))
+                and node.args
+            ):
+                self._record(node, self._fact(node.args[0]))
         self.generic_visit(node)
 
 
@@ -376,12 +585,219 @@ def analyze_source(
 ) -> tuple[list[str], set[tuple[str, str]]]:
     tree = ast.parse(source_text, filename=str(source))
     analyzer = _LocalWriteAnalyzer(source_text, source, allowed)
+    analyzer.prepare(tree)
     for statement in tree.body:
         analyzer.visit(statement)
     return analyzer.violations, analyzer.used
 
 
 class RepositoryGeneratedPathContractTests(unittest.TestCase):
+    def test_analysis_collects_helpers_before_visiting_callers(self) -> None:
+        source = """
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def test_escape():
+    destination = repo_destination()
+    destination.write_text("{}")
+
+def repo_destination():
+    return PROJECT_ROOT / "scratch" / "result.json"
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_propagates_repo_paths_through_indirect_helpers(self) -> None:
+        source = """
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def destination():
+    return first()
+
+def first():
+    return second()
+
+def second():
+    return PROJECT_ROOT / "scratch" / "result.json"
+
+def test_escape():
+    destination().write_text("{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_propagates_writes_through_indirect_helper_calls(self) -> None:
+        source = """
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def first(destination):
+    second(destination)
+
+def second(destination):
+    destination.mkdir()
+
+def test_escape():
+    first(PROJECT_ROOT / "scratch")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_rejects_aliased_os_mutators_and_path_constructor(self) -> None:
+        source = """
+from os import mkdir as make_directory, remove as erase
+from pathlib import Path as ProjectPath
+PROJECT_ROOT = ProjectPath(__file__).resolve().parents[2]
+
+def test_escape():
+    directory = PROJECT_ROOT / "scratch"
+    make_directory(directory)
+    erase(directory / "result.json")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 2)
+
+    def test_analysis_fails_closed_for_unknown_paths_at_known_write_sinks(self) -> None:
+        source = """
+def unresolved():
+    return choose_at_runtime()
+
+def test_escape():
+    unresolved().write_text("{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_fails_closed_for_direct_unknown_assignment(self) -> None:
+        source = """
+def test_escape():
+    destination = choose_at_runtime()
+    destination.write_text("{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_propagates_unknown_arguments_and_attribute_assignments(
+        self,
+    ) -> None:
+        source = """
+def write_result(destination):
+    destination.write_text("{}")
+
+def test_escape(holder):
+    write_result(choose_at_runtime())
+    holder.destination = choose_at_runtime()
+    holder.destination.mkdir()
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 2)
+
+    def test_analysis_fails_closed_for_branch_dependent_helper_results(self) -> None:
+        source = """
+def destination(enabled):
+    if enabled:
+        return choose_at_runtime()
+    return other_runtime_choice()
+
+def test_escape():
+    destination(True).write_bytes(b"{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_allows_explicit_imported_opaque_write_receivers(self) -> None:
+        source = """
+from production.storage import artifact_store, make_artifact_store
+import production.runtime as runtime
+
+def test_production_objects_are_not_repo_paths():
+    artifact_store.write_text("{}")
+    make_artifact_store().mkdir()
+    runtime.destination().write_bytes(b"{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_production.py"),
+            {},
+        )
+        self.assertEqual(violations, [])
+
+    def test_analysis_allows_opaque_fixture_and_container_lineage(self) -> None:
+        source = """
+class ProductionFixtureTests:
+    def test_production_objects_are_not_repo_paths(self):
+        kernel, run_dir = self.ready_runtime()
+        kernel.control_store.path.open("r+b")
+        paths = list(run_dir.iterdir())
+        paths[0].write_bytes(b"{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_production.py"),
+            {},
+        )
+        self.assertEqual(violations, [])
+
+    def test_analysis_fails_closed_for_unknown_test_parameters(self) -> None:
+        source = """
+def test_escape(destination):
+    destination.write_text("{}")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
+    def test_analysis_fails_closed_for_recursive_helper_results(self) -> None:
+        source = """
+def recursive_destination():
+    return recursive_destination()
+
+def test_escape():
+    recursive_destination().mkdir()
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 1)
+
     def test_analysis_rejects_joinpath_aliases_and_dynamic_repo_writes(self) -> None:
         source = """
 from pathlib import Path

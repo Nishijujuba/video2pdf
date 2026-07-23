@@ -233,6 +233,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
         "registry_sha256": registry.fingerprint,
         "discovery_sha256": discovery_sha256,
         "suite_ids": selected_suite_ids,
+        "run_dir": str(run_dir),
         "requested_jobs": arguments.jobs
         if arguments.command == "run"
         else None,

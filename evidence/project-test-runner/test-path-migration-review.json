@@ -27,7 +27,7 @@
   "migration_review": {
     "from_commit": "5b4d767",
     "to_state": "working-tree",
-    "working_tree_base_head": "e8b7a0b670a37233836c34cc9514535fa050b1ce",
+    "working_tree_base_head": "2a09173d28b46aa9bd1dd22d661b4a6d465f72f1",
     "migrated_video_workflow_modules": 27,
     "shared_boundary": "tests/video_workflow/_test_run.py",
     "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
@@ -41,6 +41,8 @@
       "test_method_inventory_after": 475,
       "test_method_ids_added": [],
       "test_method_ids_removed": [],
+      "unittest_assertion_inventory_before": 2140,
+      "unittest_assertion_inventory_after": 2140,
       "unittest_assertion_lines_changed": 0,
       "committed_fixture_paths_changed": [],
       "production_input_paths_changed": [],
@@ -58,10 +60,14 @@
   },
   "repo_local_exceptions": {
     "registry": "config/test-local-write-exceptions.v1.json",
-    "count": 9,
+    "count": 2,
+    "categories": {
+      "issue7_path_boundary": 2,
+      "source_live_smoke_pending": 0
+    },
     "policy": "Each exception binds an exact unittest TestCase.id(), a narrow repository-relative prefix, and a review reason."
   },
-  "focused_validation": [
+  "earlier_migration_validation": [
     {
       "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_test_run_boundary",
       "tests": 4,
@@ -84,6 +90,77 @@
       "run_dir": "D:/tests/video2pdf-stage05-20260723-019f8f5c-b"
     }
   ],
+  "post_head_repair_review": {
+    "comparison": "git tree 2a09173d28b46aa9bd1dd22d661b4a6d465f72f1 versus the current working tree",
+    "changed_paths": [
+      "config/test-local-write-exceptions.v1.json",
+      "scripts/run_project_tests.py",
+      "tests/project_test_runner/test_external_root.py",
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/project_test_runner/test_test_run_boundary.py",
+      "tests/video_workflow/_test_run.py",
+      "tests/video_workflow/test_source_live_smoke.py"
+    ],
+    "run_identity_validation": {
+      "executed": [
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_test_run_boundary",
+          "tests": 12,
+          "result": "OK"
+        },
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_external_root tests.project_test_runner.test_cli tests.project_test_runner.test_test_run_boundary",
+          "tests": 39,
+          "result": "OK"
+        },
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_scheduler tests.project_test_runner.test_results tests.project_test_runner.test_external_root tests.project_test_runner.test_cli tests.project_test_runner.test_test_run_boundary",
+          "tests": 48,
+          "result": "OK",
+          "elapsed_seconds": 23.462
+        }
+      ],
+      "later_static_check": {
+        "scope": "The final absolute-path and parent-traversal identity adjustment made after the 48-test run.",
+        "result": "syntax review passed",
+        "executed_test_result": null
+      }
+    },
+    "all_project_test_runner_suite": {
+      "executed": false,
+      "result": "BLOCKED",
+      "reason": "The complete suite was not started because Windows ACL creation failed with WinError 5 and the required escalated execution was rejected after the approval usage limit was reached.",
+      "pass_claimed": false
+    },
+    "source_live_smoke_review": {
+      "test_method_inventory_at_head": 24,
+      "test_method_inventory_working_tree": 24,
+      "assertion_inventory_at_head": 118,
+      "assertion_inventory_working_tree": 118,
+      "generated_path_change": "Seven recorded source-adapter cases now allocate through new_case_dir(self.id(), label=...) and no longer require repository-local exceptions.",
+      "dynamic_tests_executed": 0,
+      "result": "STATIC_REVIEW_ONLY"
+    },
+    "ast_plumbing_validation": {
+      "executed": true,
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_repository_contract",
+      "tests": 17,
+      "result": "OK",
+      "elapsed_seconds": 0.326,
+      "coverage_note": "Regression coverage includes direct unknown assignments, unknown arguments, attribute propagation, branch-dependent helpers, recursive helpers, imported opaque receivers, and container lineage."
+    },
+    "persisted_validation": {
+      "executed": false,
+      "result": "BLOCKED",
+      "run_dir": null,
+      "status_json": null,
+      "exit_code_txt": null,
+      "initial_failure": "scripts/persisted_command.py start failed with WinError 5 while creating work/i9/待删除/long-running; no child process or persisted run identity was created.",
+      "escalation_result": "The require_escalated request was rejected because the approval usage limit was reached.",
+      "acceptance_evidence_eligible": false,
+      "pass_claimed": false
+    }
+  },
   "discovery_review": {
     "video_workflow_test_count": 475,
     "video_workflow_module_count": 38,
@@ -95,6 +172,14 @@
       "canonical_encoding": "UTF-8 JSON, sorted IDs, compact separators, one trailing newline",
       "sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
       "matches_discovery_manifest_algorithm": true
+    },
+    "project_test_runner_pre_promotion_validation_set": {
+      "test_count": 85,
+      "module_count": 9,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "ba925c607bbda456bb8c52578a02558309a49aabbd22a3ab4144b71337724de5",
+      "calculation": "Read-only dynamic unittest discovery against the current working tree.",
+      "authority": "This is a pre-Promotion validation set only; it is not the Video Workflow Promotion closed set and does not prove a complete persisted run."
     },
     "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. The final Issue #9 and Promotion closed set is discovered dynamically; the current working-tree inventory is 475, and 475 is evidence rather than a hard-coded protocol constraint."
   },

@@ -14,7 +14,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import module_test_root
+from tests.video_workflow._test_run import module_test_root, new_case_dir
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -56,7 +56,7 @@ def create_directory_link(link: Path, target: Path) -> None:
         raise unittest.SkipTest("directory junctions are unavailable")
 
 
-def recorded_youtube_smoke_inputs(label: str):
+def recorded_youtube_smoke_inputs(test_id: str, label: str):
     from video2pdf_workflow_kernel.adapters import (
         RecordedCommandRunner,
         YtDlpRuntime,
@@ -66,8 +66,7 @@ def recorded_youtube_smoke_inputs(label: str):
         SourceLiveSmokeCase,
     )
 
-    root = PROJECT_ROOT / "\u5f85\u5220\u9664" / label[:4] / uuid.uuid4().hex[:6]
-    root.mkdir(parents=True, exist_ok=False)
+    root = new_case_dir(test_id, label=label)
     work_root = root / "workspace"
     cookie = root / "cookie.txt"
     cookie.write_text(
@@ -751,7 +750,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("semantic-callback-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "semantic-callback-failure"
+            )
         )
         with (
             mock.patch.object(
@@ -815,7 +816,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("semantic-output-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "semantic-output-failure"
+            )
         )
         real_write = source_live_smoke._write_task_json_output
 
@@ -886,7 +889,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-provider-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-provider-failure"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 
@@ -964,7 +969,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-output-missing")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-output-missing"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 
@@ -1043,7 +1050,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json, sha256_file
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-output-drift")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-output-drift"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
         transcript_output: Path | None = None
@@ -1147,7 +1156,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-token-ambiguity")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-token-ambiguity"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
         real_launch = AdmittedSourceProviderLauncher.launch_whisper
@@ -1256,7 +1267,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-success")
+            recorded_youtube_smoke_inputs(self.id(), "whisper-success")
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 

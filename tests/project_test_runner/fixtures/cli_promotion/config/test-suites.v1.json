@@ -1,0 +1,31 @@
+{
+  "schema_name": "video2pdf.project-test-suites",
+  "schema_version": 1,
+  "project": {
+    "project_key": "video2pdf",
+    "repository": "Nishijujuba/video2pdf"
+  },
+  "suites": [
+    {
+      "suite_id": "alpha",
+      "suite_key": "alpha",
+      "roots": [
+        {
+          "path": "tests/alpha",
+          "pattern": "case_*.py"
+        }
+      ]
+    },
+    {
+      "suite_id": "beta",
+      "suite_key": "beta",
+      "roots": [
+        {
+          "path": "tests/beta",
+          "pattern": "case_*.py"
+        }
+      ]
+    }
+  ],
+  "mirrors": []
+}

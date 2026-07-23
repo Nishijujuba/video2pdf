@@ -10,11 +10,12 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-TEST_ROOT = PROJECT_ROOT / "workspace/待删除/kernel-test-runs/source-package"
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 
 from video2pdf_workflow_kernel.errors import ContractError
 from video2pdf_workflow_kernel.contracts import ContractRegistry
@@ -369,11 +370,7 @@ class SourcePackageTests(unittest.TestCase):
             root, inventory
         )
         candidate = root / inventory["candidates"][0]["staged_path"]
-        mirror_root = (
-            PROJECT_ROOT
-            / "待删除/source-package-hardlinks"
-            / uuid.uuid4().hex
-        )
+        mirror_root = TEST_ROOT / f"hl-{uuid.uuid4().hex[:8]}"
         mirror_root.mkdir(parents=True, exist_ok=False)
         os.link(candidate, mirror_root / candidate.name)
 

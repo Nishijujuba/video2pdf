@@ -13,6 +13,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -22,7 +23,7 @@ EXIT_V2_VALIDATOR = PROJECT_ROOT / "scripts" / "validate_slice_exit_evidence.py"
 FIXTURE = (
     PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "source-ready-tracer"
 )
-TEST_RUNS = PROJECT_ROOT / "待删除" / "kernel-test-runs"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 SCHEMA_ROOT = PROJECT_ROOT / "schemas" / "video-workflow"
 
 

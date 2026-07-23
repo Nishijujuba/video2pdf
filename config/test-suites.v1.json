@@ -1,0 +1,66 @@
+{
+  "schema_name": "video2pdf.project-test-suites",
+  "schema_version": 1,
+  "project": {
+    "project_key": "video2pdf",
+    "repository": "Nishijujuba/video2pdf"
+  },
+  "suites": [
+    {
+      "suite_id": "persisted-command",
+      "suite_key": "persisted-command",
+      "roots": [
+        {
+          "path": "tests/persisted_command",
+          "pattern": "test_*.py"
+        }
+      ]
+    },
+    {
+      "suite_id": "project-scripts",
+      "suite_key": "project-scripts",
+      "roots": [
+        {
+          "path": "scripts",
+          "pattern": "test_*.py"
+        }
+      ]
+    },
+    {
+      "suite_id": "project-test-runner",
+      "suite_key": "project-test-runner",
+      "roots": [
+        {
+          "path": "tests/project_test_runner",
+          "pattern": "test_*.py"
+        }
+      ]
+    },
+    {
+      "suite_id": "skill-tests",
+      "suite_key": "skill-tests",
+      "roots": [
+        {
+          "path": ".agents/skills",
+          "pattern": "**/test_*.py"
+        }
+      ]
+    },
+    {
+      "suite_id": "video-workflow",
+      "suite_key": "video-workflow",
+      "roots": [
+        {
+          "path": "tests/video_workflow",
+          "pattern": "test_*.py"
+        }
+      ]
+    }
+  ],
+  "mirrors": [
+    {
+      "authority_path": ".agents/skills",
+      "mirror_path": ".claude/skills"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -32,7 +33,7 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 TASK_START = "2026-07-15T01:02:03+08:00"
 RESOURCE_V8_TABLES = (
     "resource_lease_resources",

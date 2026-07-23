@@ -11,6 +11,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -50,7 +51,7 @@ class ScaffoldContainmentTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        root = PROJECT_ROOT / "待删除" / f"gate5-registry-{uuid.uuid4().hex}"
+        root = module_test_root(PROJECT_ROOT) / f"gate5-{uuid.uuid4().hex[:8]}"
         root.mkdir(parents=True, exist_ok=False)
         rogue_path = root / "rogue.json"
         rogue_path.write_text(json.dumps(rogue), encoding="utf-8")
@@ -79,7 +80,7 @@ class ScaffoldContainmentTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             registry.validate("scaffold-contract", scaffold)
 
-        parent = PROJECT_ROOT / "待删除" / f"gate4-scaffold-{uuid.uuid4().hex}"
+        parent = module_test_root(PROJECT_ROOT) / f"g4s-{uuid.uuid4().hex[:8]}"
         parent.mkdir(parents=True, exist_ok=False)
         with self.assertRaises(ContractError):
             create_scaffold(parent / "run", scaffold, "0" * 32)
@@ -112,7 +113,7 @@ class RegistryPreparationTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        root = PROJECT_ROOT / "待删除" / f"gate6-registry-{uuid.uuid4().hex}"
+        root = module_test_root(PROJECT_ROOT) / f"gate6-{uuid.uuid4().hex[:8]}"
         root.mkdir(parents=True, exist_ok=False)
         exact_path = root / "exact.json"
         exact_path.write_text(json.dumps(canonical), encoding="utf-8")
@@ -154,7 +155,7 @@ class RegistryPreparationTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        root = PROJECT_ROOT / "待删除" / f"gate4-registry-{uuid.uuid4().hex}"
+        root = module_test_root(PROJECT_ROOT) / f"gate4-{uuid.uuid4().hex[:8]}"
         root.mkdir(parents=True, exist_ok=False)
         bad_schema = json.loads(
             (PROJECT_ROOT / "schemas/video-workflow/v1/workflow-result.v1.schema.json").read_text(
@@ -177,7 +178,7 @@ class RunStateMutationSagaTests(unittest.TestCase):
     def _trace_and_drift(self, label: str):
         from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 
-        root = PROJECT_ROOT / "待删除" / f"gate4-{label}-{uuid.uuid4().hex}"
+        root = module_test_root(PROJECT_ROOT) / f"g4-{uuid.uuid4().hex[:8]}"
         root.mkdir(parents=True, exist_ok=False)
         kernel = VideoWorkflowKernel(root / "workspace")
         result = kernel.trace_source_ready(

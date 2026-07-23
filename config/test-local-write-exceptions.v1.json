@@ -1,0 +1,26 @@
+{
+  "schema_name": "video2pdf.test-local-write-exceptions",
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "test_id": "test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_registers_ten_closed_commands_and_correct_paths",
+      "path_prefix": "workspace/待删除/exit-evidence-refresh/slice-03",
+      "reason": "Asserts the frozen historical collector path and does not create data."
+    },
+    {
+      "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
+      "path_prefix": "workspace/待删除/slice4-fault-tests",
+      "reason": "Path-boundary fixture must remain repository-relative for manifest validation."
+    },
+    {
+      "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest",
+      "path_prefix": "workspace/待删除/slice4-source-manifest-tests",
+      "reason": "Collector contract requires a repository-relative source manifest path."
+    },
+    {
+      "test_id": "test_source_ready_hardening.ContractAndPathHardeningTests.test_run_record_output_path_must_be_canonical_absolute",
+      "path_prefix": "待删除/absolute-run",
+      "reason": "Validation-only canonical absolute path input; the test does not write there."
+    }
+  ]
+}

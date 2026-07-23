@@ -17,9 +17,10 @@ from jsonschema import Draft202012Validator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
 FIXTURE_ROOT = PROJECT_ROOT / "tests/video_workflow/fixtures"
-TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 SLICE_BASE_COMMIT = "aaaaeac5747fddc0915a59df34de47e6e8cfec48"
 
 

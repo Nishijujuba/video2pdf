@@ -13,12 +13,13 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 FIXTURES = PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "providers"
-TEST_RUNS = PROJECT_ROOT / "待删除" / "kernel-test-runs" / "source-candidates"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 
 
 from video2pdf_workflow_kernel.adapters import (

@@ -10,12 +10,13 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 CLI = PROJECT_ROOT / "scripts/video_workflow.py"
-TEST_ROOT = PROJECT_ROOT / "workspace/待删除/vi"
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 
 
 def create_directory_link(link: Path, target: Path) -> None:

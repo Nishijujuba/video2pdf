@@ -9,6 +9,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -35,10 +36,7 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 )
 
 
-TEST_ROOT = (
-    PROJECT_ROOT
-    / "workspace/待删除/kernel-test-runs/source-publication-integration"
-)
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 
 
 class _SourcePublicationFixtureBuilder:

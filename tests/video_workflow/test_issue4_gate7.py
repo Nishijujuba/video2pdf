@@ -12,12 +12,13 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "\u5f85\u5220\u9664/kernel-test-runs"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 SLICE_BASE_COMMIT = "96089b99c9ae63fff61107e1920fc3481ffc0802"
 
 

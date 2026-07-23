@@ -11,6 +11,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -31,7 +32,7 @@ from video2pdf_workflow_kernel.utils import canonical_json_bytes  # noqa: E402
 RUN_FIXTURE = (
     PROJECT_ROOT / "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json"
 )
-TEST_RUNS = PROJECT_ROOT / "待删除/source-publication-control-store-tests"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 
 
 class SourcePublicationControlStoreTests(unittest.TestCase):

@@ -14,11 +14,12 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-TEST_ROOT = PROJECT_ROOT / "待删除" / "kernel-test-runs" / "source-live-smoke"
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 RUN_ID = "1" * 32
@@ -401,7 +402,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 raise AssertionError("deterministic locator acquired media")
 
         kernel = VideoWorkflowKernel(
-            PROJECT_ROOT / "待删除" / "r" / uuid.uuid4().hex[:6] / "w"
+            TEST_ROOT / f"r-{uuid.uuid4().hex[:6]}" / "w"
         )
         bootstrap = kernel.bootstrap_production_source(
             adapter=NoCallAdapter(),
@@ -447,7 +448,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "s" / uuid.uuid4().hex[:6]
+        root = TEST_ROOT / f"s-{uuid.uuid4().hex[:6]}"
         work_root = root / "w"
         cookie = root / "c.txt"
         cookie.parent.mkdir(parents=True, exist_ok=False)
@@ -561,7 +562,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "cookie-blocker" / uuid.uuid4().hex[:6]
+        root = TEST_ROOT / f"cb-{uuid.uuid4().hex[:6]}"
         work_root = root / "workspace"
         cookie = root / "cookie.txt"
         cookie.parent.mkdir(parents=True, exist_ok=False)
@@ -655,7 +656,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "pmf" / uuid.uuid4().hex[:6]
+        root = TEST_ROOT / f"pmf-{uuid.uuid4().hex[:6]}"
         root.mkdir(parents=True, exist_ok=False)
         work_root = root / "workspace"
         cookie = root / "cookie.txt"
@@ -1347,7 +1348,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "stale-title" / uuid.uuid4().hex[:6]
+        root = TEST_ROOT / f"st-{uuid.uuid4().hex[:6]}"
         work_root = root / "workspace"
         cookie = root / "cookie.txt"
         cookie.parent.mkdir(parents=True, exist_ok=False)

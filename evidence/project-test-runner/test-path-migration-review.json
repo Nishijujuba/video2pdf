@@ -1,0 +1,78 @@
+{
+  "schema_name": "video2pdf.test-path-migration-review",
+  "schema_version": 1,
+  "issue": 27,
+  "baseline_review": {
+    "from_commit": "18f78fad0be5a66d2da6250dc268bc8de81fdbcc",
+    "to_commit": "5b4d767",
+    "test_method_changes": {
+      "added": 5,
+      "removed": 4,
+      "added_ids": [
+        "test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid",
+        "test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice6_contract_binds_slice5_compatibility_to_executed_unittest_target",
+        "test_multi_section_production.MultiSectionProductionTests.test_hyphen_and_underscore_figure_slots_keep_distinct_task_identity_and_reclaim_binding",
+        "test_multi_section_production.MultiSectionProductionTests.test_incremental_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation",
+        "test_multi_section_production.MultiSectionProductionTests.test_required_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation"
+      ],
+      "removed_ids": [
+        "test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_production_initialization_retries_transient_windows_directory_publication",
+        "test_source_ready_hardening.PersistenceHardeningTests.test_verified_import_initialization_retries_transient_windows_directory_publication",
+        "test_source_ready_hardening.BootstrapAndStoreHardeningTests.test_windows_publication_retry_budget_exhaustion_reraises_last_error",
+        "test_source_ready_hardening.BootstrapAndStoreHardeningTests.test_windows_publication_retry_rejects_ineligible_error_or_path_state"
+      ]
+    },
+    "finding": "The pre-migration Issue #9 history contains the reviewed five additions and four removals."
+  },
+  "migration_review": {
+    "from_commit": "5b4d767",
+    "to_state": "working-tree",
+    "migrated_video_workflow_modules": 27,
+    "shared_boundary": "tests/video_workflow/_test_run.py",
+    "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
+    "direct_execution_fallback": "待删除/kernel-test-runs",
+    "generated_path_manifest": "generated/<module-key>/generated-paths.jsonl",
+    "semantic_change_checks": {
+      "test_method_names_changed": 0,
+      "assertion_lines_changed": 0,
+      "committed_fixtures_changed_by_migration": 0,
+      "production_inputs_changed": 0,
+      "expected_behavior_changed": 0
+    },
+    "finding": "The current migration diff changes generated-data plumbing only."
+  },
+  "repo_local_exceptions": {
+    "registry": "config/test-local-write-exceptions.v1.json",
+    "count": 4,
+    "policy": "Each exception binds an exact unittest TestCase.id(), a narrow repository-relative prefix, and a review reason."
+  },
+  "focused_validation": [
+    {
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_test_run_boundary",
+      "tests": 4,
+      "result": "OK"
+    },
+    {
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_repository_contract",
+      "tests": 1,
+      "result": "OK"
+    },
+    {
+      "command": "python -X utf8 -B -m unittest tests.video_workflow.test_issue4_gate4 tests.video_workflow.test_source_package tests.video_workflow.test_source_publication",
+      "tests": 21,
+      "result": "OK"
+    },
+    {
+      "command": "external-run probe: tests.video_workflow.test_issue4_gate4",
+      "tests": 8,
+      "result": "OK",
+      "run_dir": "D:/tests/video2pdf-stage05-20260723-019f8f5c-b"
+    }
+  ],
+  "discovery_review": {
+    "video_workflow_test_count": 475,
+    "video_workflow_module_count": 38,
+    "duplicate_test_ids": 0,
+    "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. Promotion uses the dynamically discovered implementation-commit closed set; no count is hard-coded."
+  }
+}

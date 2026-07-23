@@ -73,14 +73,13 @@ class RegistryTests(unittest.TestCase):
             _fixture_root.SUITE_ID_ENV: "project-test-runner",
             _fixture_root.MODULE_KEY_ENV: "0123456789ab",
         }
-        generated = _fixture_root.fixture_root_from_environment(
-            environment, PROJECT_ROOT
-        )
-
-        self.assertEqual(
-            generated,
-            run_dir / "generated" / "0123456789ab",
-        )
+        with self.assertRaisesRegex(
+            _fixture_root.FixtureRootError,
+            "ownership",
+        ):
+            _fixture_root.fixture_root_from_environment(
+                environment, PROJECT_ROOT
+            )
         self.assertEqual(
             _fixture_root.committed_fixture_root(),
             PROJECT_ROOT / "tests" / "project_test_runner" / "fixtures",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import ExitStack
 from dataclasses import dataclass
 import hashlib
 import io
@@ -549,99 +550,99 @@ def _launch_module(
     assignment_sha256 = write_json_exclusive(assignment_path, assignment)
     stdout_path = logs_dir / f"{module['module_key']}.stdout.log"
     stderr_path = logs_dir / f"{module['module_key']}.stderr.log"
-    stdout_handle = stdout_path.open("xb")
-    stderr_handle = stderr_path.open("xb")
-    environment = os.environ.copy()
-    if child_environment is not None:
-        environment.update(child_environment)
-    environment.update(
-        {
-            "VIDEO2PDF_PROJECT_TEST_RUN_DIR": str(run_dir),
-            "VIDEO2PDF_PROJECT_TEST_SUITE_ID": module["suite_id"],
-            "VIDEO2PDF_PROJECT_TEST_MODULE_KEY": module["module_key"],
-            "TEMP": str(generated_dir),
-            "TMP": str(generated_dir),
-            "TMPDIR": str(generated_dir),
-            "PYTHONIOENCODING": "utf-8",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
-    )
-    command = [
-        sys.executable,
-        "-X",
-        "utf8",
-        "-B",
-        "-m",
-        "scripts.project_test_scheduler",
-        "_worker",
-        "--assignment",
-        str(assignment_path),
-        "--result",
-        str(result_path),
-    ]
-    creationflags = (
-        getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    )
     process: subprocess.Popen[bytes] | None = None
     drain_threads: list[threading.Thread] = []
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=repo_root,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creationflags,
+    with ExitStack() as log_handles:
+        stdout_handle = log_handles.enter_context(stdout_path.open("xb"))
+        stderr_handle = log_handles.enter_context(stderr_path.open("xb"))
+        environment = os.environ.copy()
+        if child_environment is not None:
+            environment.update(child_environment)
+        environment.update(
+            {
+                "VIDEO2PDF_PROJECT_TEST_RUN_DIR": str(run_dir),
+                "VIDEO2PDF_PROJECT_TEST_SUITE_ID": module["suite_id"],
+                "VIDEO2PDF_PROJECT_TEST_MODULE_KEY": module["module_key"],
+                "TEMP": str(generated_dir),
+                "TMP": str(generated_dir),
+                "TMPDIR": str(generated_dir),
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
         )
-        if process.stdout is None or process.stderr is None:
-            raise SchedulerError("worker pipes were not created")
-        drain_errors: list[str] = []
-        stdout_thread = threading.Thread(
-            target=_drain_pipe,
-            args=(
-                process.stdout,
-                stdout_handle,
-                stdout,
-                stdout_lock,
-                drain_errors,
-            ),
-            daemon=True,
+        command = [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            "-m",
+            "scripts.project_test_scheduler",
+            "_worker",
+            "--assignment",
+            str(assignment_path),
+            "--result",
+            str(result_path),
+        ]
+        creationflags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         )
-        stderr_thread = threading.Thread(
-            target=_drain_pipe,
-            args=(
-                process.stderr,
-                stderr_handle,
-                stderr,
-                stderr_lock,
-                drain_errors,
-            ),
-            daemon=True,
-        )
-        stdout_thread.start()
-        drain_threads.append(stdout_thread)
-        stderr_thread.start()
-        drain_threads.append(stderr_thread)
-    except BaseException:
-        if process is not None:
-            partial = _ActiveModule(
-                module=module,
-                process=process,
-                assignment_sha256=assignment_sha256,
-                result_path=result_path,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                stdout_handle=stdout_handle,
-                stderr_handle=stderr_handle,
-                drain_threads=tuple(drain_threads),
-                drain_errors=[],
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=repo_root,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=creationflags,
             )
-            _cleanup_direct_worker(partial)
-        else:
-            stdout_handle.close()
-            stderr_handle.close()
-        raise
+            if process.stdout is None or process.stderr is None:
+                raise SchedulerError("worker pipes were not created")
+            drain_errors: list[str] = []
+            stdout_thread = threading.Thread(
+                target=_drain_pipe,
+                args=(
+                    process.stdout,
+                    stdout_handle,
+                    stdout,
+                    stdout_lock,
+                    drain_errors,
+                ),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_drain_pipe,
+                args=(
+                    process.stderr,
+                    stderr_handle,
+                    stderr,
+                    stderr_lock,
+                    drain_errors,
+                ),
+                daemon=True,
+            )
+            stdout_thread.start()
+            drain_threads.append(stdout_thread)
+            stderr_thread.start()
+            drain_threads.append(stderr_thread)
+        except BaseException:
+            if process is not None:
+                log_handles.pop_all()
+                partial = _ActiveModule(
+                    module=module,
+                    process=process,
+                    assignment_sha256=assignment_sha256,
+                    result_path=result_path,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    stdout_handle=stdout_handle,
+                    stderr_handle=stderr_handle,
+                    drain_threads=tuple(drain_threads),
+                    drain_errors=[],
+                )
+                _cleanup_direct_worker(partial)
+            raise
+        log_handles.pop_all()
     return _ActiveModule(
         module=module,
         process=process,

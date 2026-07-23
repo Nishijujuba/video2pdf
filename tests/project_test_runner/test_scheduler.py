@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
 import io
 import json
@@ -105,6 +106,57 @@ def discovery(*names: str) -> dict:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_launch_setup_failures_close_every_opened_log_handle(self) -> None:
+        cases = ("second-open", "environment")
+        for case in cases:
+            with self.subTest(case=case):
+                run_dir = run_directory(f"handle-{case}")
+                opened_handles = []
+                real_open = Path.open
+
+                def tracked_open(path, *args, **kwargs):
+                    if (
+                        case == "second-open"
+                        and path.name.endswith(".stderr.log")
+                        and args
+                        and args[0] == "xb"
+                    ):
+                        raise OSError("simulated second log open failure")
+                    handle = real_open(path, *args, **kwargs)
+                    if (
+                        path.name.endswith((".stdout.log", ".stderr.log"))
+                        and args
+                        and args[0] == "xb"
+                    ):
+                        opened_handles.append(handle)
+                    return handle
+
+                environment_patch = (
+                    mock.patch.object(
+                        scheduler.os.environ,
+                        "copy",
+                        side_effect=RuntimeError(
+                            "simulated environment construction failure"
+                        ),
+                    )
+                    if case == "environment"
+                    else nullcontext()
+                )
+                with mock.patch.object(Path, "open", new=tracked_open):
+                    with environment_patch:
+                        summary = run_modules(
+                            repo_root=REPO_ROOT,
+                            run_dir=run_dir,
+                            discovery=discovery("worker_fast.py"),
+                            jobs=1,
+                            stdout=io.BytesIO(),
+                            stderr=io.BytesIO(),
+                        )
+
+                self.assertEqual(summary["failure_kind"], "launch_failure")
+                self.assertTrue(opened_handles)
+                self.assertTrue(all(handle.closed for handle in opened_handles))
+
     def test_jobs_are_bounded_to_one_through_four(self) -> None:
         self.assertEqual(validate_jobs(1), 1)
         self.assertEqual(validate_jobs(4), 4)

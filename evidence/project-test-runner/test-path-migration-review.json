@@ -27,11 +27,26 @@
   "migration_review": {
     "from_commit": "5b4d767",
     "to_state": "working-tree",
+    "working_tree_base_head": "e8b7a0b670a37233836c34cc9514535fa050b1ce",
     "migrated_video_workflow_modules": 27,
     "shared_boundary": "tests/video_workflow/_test_run.py",
     "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
     "direct_execution_fallback": "待删除/kernel-test-runs",
     "generated_path_manifest": "generated/<module-key>/generated-paths.jsonl",
+    "comparison_evidence": {
+      "comparison": "git tree 5b4d767 versus the current working tree",
+      "changed_existing_test_modules": 27,
+      "added_shared_boundary_modules": 1,
+      "test_method_inventory_before": 475,
+      "test_method_inventory_after": 475,
+      "test_method_ids_added": [],
+      "test_method_ids_removed": [],
+      "unittest_assertion_lines_changed": 0,
+      "committed_fixture_paths_changed": [],
+      "production_input_paths_changed": [],
+      "generated_data_path_plumbing_only": true,
+      "note": "The shared boundary adds one internal impossible-state assert after environment validation; it is infrastructure validation and does not alter a unittest assertion or a production input."
+    },
     "semantic_change_checks": {
       "test_method_names_changed": 0,
       "assertion_lines_changed": 0,
@@ -43,7 +58,7 @@
   },
   "repo_local_exceptions": {
     "registry": "config/test-local-write-exceptions.v1.json",
-    "count": 4,
+    "count": 9,
     "policy": "Each exception binds an exact unittest TestCase.id(), a narrow repository-relative prefix, and a review reason."
   },
   "focused_validation": [
@@ -73,6 +88,18 @@
     "video_workflow_test_count": 475,
     "video_workflow_module_count": 38,
     "duplicate_test_ids": 0,
-    "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. Promotion uses the dynamically discovered implementation-commit closed set; no count is hard-coded."
+    "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+    "independent_recalculation": {
+      "ordered_test_ids": 475,
+      "unique_test_ids": 475,
+      "canonical_encoding": "UTF-8 JSON, sorted IDs, compact separators, one trailing newline",
+      "sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "matches_discovery_manifest_algorithm": true
+    },
+    "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. The final Issue #9 and Promotion closed set is discovered dynamically; the current working-tree inventory is 475, and 475 is evidence rather than a hard-coded protocol constraint."
+  },
+  "historical_slice_evidence": {
+    "rewritten": false,
+    "policy": "Historical Slice evidence and its collectors remain unchanged; this review records the current migration and Promotion closed set separately."
   }
 }

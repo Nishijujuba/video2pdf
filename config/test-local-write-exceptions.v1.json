@@ -3,11 +3,6 @@
   "schema_version": 1,
   "exceptions": [
     {
-      "test_id": "test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_registers_ten_closed_commands_and_correct_paths",
-      "path_prefix": "workspace/待删除/exit-evidence-refresh/slice-03",
-      "reason": "Asserts the frozen historical collector path and does not create data."
-    },
-    {
       "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
       "path_prefix": "workspace/待删除/slice4-fault-tests",
       "reason": "Path-boundary fixture must remain repository-relative for manifest validation."
@@ -18,9 +13,39 @@
       "reason": "Collector contract requires a repository-relative source manifest path."
     },
     {
-      "test_id": "test_source_ready_hardening.ContractAndPathHardeningTests.test_run_record_output_path_must_be_canonical_absolute",
-      "path_prefix": "待删除/absolute-run",
-      "reason": "Validation-only canonical absolute path input; the test does not write there."
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_semantic_lease_is_released_when_judgment_callback_fails",
+      "path_prefix": "待删除/sema",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_semantic_lease_is_released_when_judgment_output_is_missing",
+      "path_prefix": "待删除/sema",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_provider_fails",
+      "path_prefix": "待删除/whis",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_transcript_output_is_missing",
+      "path_prefix": "待删除/whis",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_transcript_output_drifts",
+      "path_prefix": "待删除/whis",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_whisper_lease_is_released_when_launch_token_is_ambiguous",
+      "path_prefix": "待删除/whis",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
+    },
+    {
+      "test_id": "test_source_live_smoke.SourceLiveSmokeTests.test_whisper_success_releases_lease_and_completes_task",
+      "path_prefix": "待删除/whis",
+      "reason": "Legacy recorded source-adapter helper writes this exact compatibility path pending migration."
     }
   ]
 }

@@ -3,21 +3,20 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import locale
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
-import tempfile
 from types import SimpleNamespace
 from unittest import mock
 import unittest
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
-TEMP_PARENT = (
-    PROJECT_ROOT / "tests/project_test_runner/fixtures/external_root"
-).resolve()
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import project_test_external_root as external_root
@@ -28,7 +27,7 @@ EXPECTED_REMOTE = "github.com/Nishijujuba/video2pdf"
 
 @contextmanager
 def temporary_root():
-    yield tempfile.mkdtemp(dir=TEMP_PARENT)
+    yield str(new_fixture_dir("external-root"))
 
 
 class ExternalRootValidationTests(unittest.TestCase):
@@ -50,6 +49,47 @@ class ExternalRootValidationTests(unittest.TestCase):
             with self.subTest(candidate=str(candidate)):
                 with self.assertRaises(external_root.ExternalRootError):
                     external_root.validate_external_test_root(candidate)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path budget")
+    def test_rejects_external_root_before_workers_when_self_hosted_path_exceeds_budget(
+        self,
+    ) -> None:
+        root_text = "C:\\" + ("r" * 80)
+        self.assertEqual(external_root.utf16_path_units(Path(root_text)), 83)
+
+        with (
+            mock.patch.object(
+                external_root,
+                "validate_external_test_root",
+                return_value=Path(root_text),
+            ),
+            self.assertRaisesRegex(
+                external_root.ExternalRootPathBudgetError,
+                r"83.*40.*240.*199",
+            ),
+        ):
+            external_root.validate_external_test_root_path_budget(
+                Path(root_text),
+                suite_keys={"project-test-runner"},
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows path budget")
+    def test_accepts_standard_short_root_with_self_hosted_reserved_path(
+        self,
+    ) -> None:
+        root = Path(r"D:\tests")
+        with mock.patch.object(
+            external_root,
+            "validate_external_test_root",
+            return_value=root,
+        ):
+            self.assertEqual(
+                external_root.validate_external_test_root_path_budget(
+                    root,
+                    suite_keys={"project-test-runner"},
+                ),
+                root,
+            )
 
     def test_rejects_an_existing_non_directory(self) -> None:
         with temporary_root() as temporary_directory:
@@ -89,13 +129,22 @@ class ExternalRootValidationTests(unittest.TestCase):
             junction = fixture_root / "junction"
             created = subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 check=False,
             )
             if created.returncode != 0:
-                self.skipTest(f"junction unavailable: {created.stderr}")
+                diagnostic = created.stderr.decode(
+                    locale.getpreferredencoding(False),
+                    errors="replace",
+                )
+                self.skipTest(f"junction unavailable: {diagnostic}")
+
+            self.assertTrue(junction.is_dir())
+            self.assertEqual(
+                os.lstat(junction).st_reparse_tag,
+                stat.IO_REPARSE_TAG_MOUNT_POINT,
+            )
 
             with self.assertRaisesRegex(
                 external_root.ExternalRootError,
@@ -330,6 +379,36 @@ class RunDirectoryTests(unittest.TestCase):
                     timestamp="20260723_120000",
                     short_run_id="abc12345",
                 )
+
+    def test_owned_run_validation_preserves_lexical_path_and_rejects_traversal(
+        self,
+    ) -> None:
+        with temporary_root() as temporary_directory:
+            test_root = Path(temporary_directory).absolute()
+            project_root = self.create_project_root(test_root)
+            run_root = external_root.create_unique_run_directory(
+                project_root,
+                "video-workflow",
+                registered_suite_keys={"video-workflow"},
+                timestamp="20260723_120000",
+                short_run_id="abc12345",
+            )
+
+            self.assertEqual(
+                external_root.validate_owned_run_directory(run_root),
+                run_root,
+            )
+            traversing = (
+                run_root.parent
+                / ".."
+                / run_root.parent.name
+                / run_root.name
+            )
+            with self.assertRaisesRegex(
+                external_root.ExternalRootError,
+                "parent traversal",
+            ):
+                external_root.validate_owned_run_directory(traversing)
 
     def test_default_run_identity_uses_utc_and_an_eight_hex_id(self) -> None:
         with temporary_root() as temporary_directory:

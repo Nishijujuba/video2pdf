@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import unittest
-import uuid
 from pathlib import Path
 
 from scripts.project_test_registry import RegistryError, load_registry
+from tests.project_test_runner import _fixture_root
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def write(path: Path, text: str = "") -> None:
@@ -14,14 +17,7 @@ def write(path: Path, text: str = "") -> None:
 
 
 def fixture_run_dir(prefix: str) -> Path:
-    root = (
-        Path(__file__).parent
-        / "fixtures"
-        / "待删除"
-        / f"{prefix}-{uuid.uuid4().hex}"
-    )
-    root.mkdir(parents=True)
-    return root
+    return new_fixture_dir(prefix)
 
 
 def registry_document() -> dict:
@@ -61,6 +57,53 @@ def registry_document() -> dict:
 
 
 class RegistryTests(unittest.TestCase):
+    def test_generated_fixture_root_obeys_runner_identity_boundary(self) -> None:
+        fallback = _fixture_root.fixture_root_from_environment({}, PROJECT_ROOT)
+        self.assertEqual(
+            fallback,
+            PROJECT_ROOT
+            / "待删除"
+            / "kernel-test-runs"
+            / "project-test-runner",
+        )
+
+        run_dir = PROJECT_ROOT.resolve()
+        environment = {
+            _fixture_root.RUN_DIR_ENV: str(run_dir),
+            _fixture_root.SUITE_ID_ENV: "project-test-runner",
+            _fixture_root.MODULE_KEY_ENV: "0123456789ab",
+        }
+        generated = _fixture_root.fixture_root_from_environment(
+            environment, PROJECT_ROOT
+        )
+
+        self.assertEqual(
+            generated,
+            run_dir / "generated" / "0123456789ab",
+        )
+        self.assertEqual(
+            _fixture_root.committed_fixture_root(),
+            PROJECT_ROOT / "tests" / "project_test_runner" / "fixtures",
+        )
+        with self.assertRaises(TypeError):
+            _fixture_root.FROZEN_RUN_ENV[_fixture_root.RUN_DIR_ENV] = "changed"
+        for invalid_environment in (
+            {_fixture_root.RUN_DIR_ENV: str(run_dir)},
+            {
+                **environment,
+                _fixture_root.SUITE_ID_ENV: "video-workflow",
+            },
+            {
+                **environment,
+                _fixture_root.MODULE_KEY_ENV: "../escape",
+            },
+        ):
+            with self.subTest(invalid_environment=invalid_environment):
+                with self.assertRaises(_fixture_root.FixtureRootError):
+                    _fixture_root.fixture_root_from_environment(
+                        invalid_environment, PROJECT_ROOT
+                    )
+
     def make_repo(self) -> tuple[Path, Path, dict]:
         root = fixture_run_dir("registry")
         for directory in (

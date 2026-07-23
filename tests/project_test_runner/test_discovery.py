@@ -4,11 +4,13 @@ import json
 import unittest
 from pathlib import Path
 
+import scripts.project_test_discovery as discovery_module
 from scripts.project_test_discovery import (
     DiscoveryError,
     discover_tests,
     write_discovery_manifest,
 )
+from scripts.project_test_results import canonical_json_bytes
 from scripts.project_test_registry import load_registry
 
 from tests.project_test_runner.test_registry import (
@@ -31,6 +33,9 @@ class ExampleTests(unittest.TestCase):
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_discovery_reuses_the_canonical_result_encoder(self) -> None:
+        self.assertIs(discovery_module.canonical_json_bytes, canonical_json_bytes)
+
     def make_repo(self) -> tuple[Path, Path]:
         root = fixture_run_dir("discovery")
         (root / ".git").mkdir()

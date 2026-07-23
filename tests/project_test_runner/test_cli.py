@@ -7,12 +7,14 @@ import shutil
 import subprocess
 import sys
 import unittest
-import uuid
 
+from tests.project_test_runner._fixture_root import (
+    committed_fixture_root,
+    new_fixture_dir,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = PROJECT_ROOT / "tests/project_test_runner/fixtures/cli_promotion"
-SCRATCH = PROJECT_ROOT / "tests/project_test_runner/fixtures/external_root"
+FIXTURE = committed_fixture_root() / "cli_promotion"
 SCRIPT_NAMES = (
     "run_project_tests.py",
     "project_test_discovery.py",
@@ -25,9 +27,9 @@ SCRIPT_NAMES = (
 
 class ProjectTestRunnerCliTests(unittest.TestCase):
     def make_fixture_repo(self) -> tuple[Path, Path]:
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        repo = SCRATCH / f"repo-{uuid.uuid4().hex}"
-        external = SCRATCH / f"external-{uuid.uuid4().hex}"
+        fixture_root = new_fixture_dir("cli")
+        repo = fixture_root / "repo"
+        external = fixture_root / "external"
         repo.mkdir()
         external.mkdir()
         shutil.copytree(FIXTURE / "config", repo / "config")
@@ -36,6 +38,46 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         (repo / "scripts/__init__.py").write_text("", encoding="utf-8")
         for name in SCRIPT_NAMES:
             shutil.copy2(PROJECT_ROOT / "scripts" / name, repo / "scripts" / name)
+        subprocess.run(
+            ["git", "init", "--quiet"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/Nishijujuba/video2pdf.git",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
         return repo, external
 
     def invoke(
@@ -143,6 +185,39 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("{discover,run}", help_result.stdout)
         self.assertNotIn("_discover", help_result.stdout)
+
+    @unittest.skipUnless(os.name == "nt", "Windows path budget")
+    def test_self_hosted_over_budget_root_fails_before_creating_project_or_worker(
+        self,
+    ) -> None:
+        repo, external = self.make_fixture_repo()
+        registry_path = repo / "config/test-suites.v1.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["suites"][0]["suite_id"] = "project-test-runner"
+        registry["suites"][0]["suite_key"] = "project-test-runner"
+        registry_path.write_text(
+            json.dumps(registry),
+            encoding="utf-8",
+        )
+
+        completed = self.invoke(
+            repo,
+            "run",
+            "--suite",
+            "project-test-runner",
+            "--test-root",
+            str(external),
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        record = self.final_record(completed)
+        self.assertEqual(
+            record["failure_kind"],
+            "external_root_path_budget_failure",
+        )
+        self.assertIn("240", record["detail"])
+        self.assertIn("199", record["detail"])
+        self.assertFalse((external / "video2pdf").exists())
 
 
 if __name__ == "__main__":

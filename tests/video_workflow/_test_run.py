@@ -14,11 +14,19 @@ from pathlib import Path
 import re
 import uuid
 
+from scripts.project_test_external_root import (
+    ExternalRootError,
+    assert_safe_write_path,
+    ensure_project_root,
+)
+
 
 RUN_DIR_ENV = "VIDEO2PDF_PROJECT_TEST_RUN_DIR"
 SUITE_ID_ENV = "VIDEO2PDF_PROJECT_TEST_SUITE_ID"
 MODULE_KEY_ENV = "VIDEO2PDF_PROJECT_TEST_MODULE_KEY"
 _MODULE_KEY = re.compile(r"^[0-9a-f]{12}$")
+_RUN_DIRECTORY = re.compile(r"^\d{8}_\d{6}_[0-9a-f]{8}$")
+_PROJECT_REMOTE = "https://github.com/Nishijujuba/video2pdf.git"
 _REPARSE_ATTRIBUTE = 0x400
 _recorded_paths: set[tuple[str, str]] = set()
 
@@ -69,8 +77,45 @@ def _active_identity() -> tuple[Path, str] | None:
         raise TestRunBoundaryError(f"unexpected suite identity: {suite_id}")
     if _MODULE_KEY.fullmatch(module_key) is None:
         raise TestRunBoundaryError(f"invalid module key: {module_key}")
-    _assert_ordinary_ancestors(run_dir)
-    return run_dir, module_key
+    suite_root = run_dir.parent
+    project_root = suite_root.parent
+    external_root = project_root.parent
+    if project_root.name != "video2pdf" or not (
+        project_root / "project.json"
+    ).is_file():
+        raise TestRunBoundaryError(
+            "runner test directory lacks the owned video2pdf project marker"
+        )
+    if suite_root.name != suite_id:
+        raise TestRunBoundaryError(
+            "runner test directory suite key does not match suite identity"
+        )
+    if _RUN_DIRECTORY.fullmatch(run_dir.name) is None:
+        raise TestRunBoundaryError(
+            "runner test directory must use timestamp_short-run-id identity"
+        )
+    try:
+        owned_project_root = ensure_project_root(
+            external_root,
+            _PROJECT_REMOTE,
+        )
+        if os.path.normcase(str(owned_project_root)) != os.path.normcase(
+            str(project_root)
+        ):
+            raise TestRunBoundaryError(
+                "runner test directory is outside the owned video2pdf project"
+            )
+        safe_run_dir = assert_safe_write_path(owned_project_root, run_dir)
+    except ExternalRootError as error:
+        raise TestRunBoundaryError(
+            f"runner test directory ownership is invalid: {error}"
+        ) from error
+    if not suite_root.is_dir() or not safe_run_dir.is_dir():
+        raise TestRunBoundaryError(
+            "runner suite and run paths must be existing ordinary directories"
+        )
+    _assert_ordinary_ancestors(safe_run_dir)
+    return safe_run_dir, module_key
 
 
 def _contained(run_dir: Path, candidate: Path) -> Path:

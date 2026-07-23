@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import subprocess
 import sys
 import unittest
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from scripts.project_test_registry import Registry
+from scripts.project_test_results import canonical_json_bytes
 
 
 DISCOVERY_SCHEMA_NAME = "video2pdf.project-test-discovery"
@@ -20,18 +20,6 @@ DISCOVERY_SCHEMA_VERSION = 1
 
 class DiscoveryError(RuntimeError):
     """Dynamic discovery could not prove a complete, unique test set."""
-
-
-def _canonical_json_bytes(value: Any) -> bytes:
-    return (
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
-    ).encode("utf-8")
 
 
 def _flatten_suite(suite: unittest.TestSuite) -> Iterator[unittest.TestCase]:
@@ -196,7 +184,7 @@ def discover_tests(
         "duplicate_test_ids": [],
         "total_count": len(ordered_ids),
         "test_id_set_sha256": hashlib.sha256(
-            _canonical_json_bytes(ordered_ids)
+            canonical_json_bytes(ordered_ids)
         ).hexdigest(),
     }
 
@@ -209,7 +197,7 @@ def write_discovery_manifest(
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         with destination.open("x", encoding="utf-8", newline="\n") as handle:
-            handle.write(_canonical_json_bytes(manifest).decode("utf-8"))
+            handle.write(canonical_json_bytes(manifest).decode("utf-8"))
     except FileExistsError as error:
         raise DiscoveryError(
             f"discovery manifest already exists: {destination}"

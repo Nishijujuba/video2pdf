@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import unittest
-import uuid
 
 from scripts.project_test_results import (
     ResultIntegrityError,
@@ -11,16 +10,11 @@ from scripts.project_test_results import (
     verify_summary_artifacts,
     write_json_exclusive,
 )
-
-FIXTURES = (
-    Path(__file__).parent / "fixtures" / "scheduler_results" / "待删除"
-)
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 def run_directory(label: str) -> Path:
-    path = FIXTURES / f"{label}-{uuid.uuid4().hex}"
-    path.mkdir(parents=True)
-    return path
+    return new_fixture_dir(label)
 
 
 class ResultArtifactTests(unittest.TestCase):

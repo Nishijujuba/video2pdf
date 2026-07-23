@@ -5,32 +5,42 @@ import io
 import json
 from pathlib import Path
 import unittest
-import uuid
 from unittest import mock
 
 import scripts.project_test_scheduler as scheduler
 
+from scripts.project_test_external_root import (
+    create_unique_run_directory,
+    ensure_project_root,
+)
 from scripts.project_test_scheduler import (
     SchedulerError,
     run_modules,
     validate_jobs,
 )
+from tests.project_test_runner._fixture_root import (
+    committed_fixture_root,
+    new_fixture_dir,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = (
-    REPO_ROOT
-    / "tests"
-    / "project_test_runner"
-    / "fixtures"
-    / "scheduler_results"
+    committed_fixture_root() / "scheduler_results"
 )
 
 
 def run_directory(label: str) -> Path:
-    path = FIXTURES / "待删除" / f"{label}-{uuid.uuid4().hex}"
-    path.mkdir(parents=True)
-    return path
+    external_root = new_fixture_dir(label)
+    project_root = ensure_project_root(
+        external_root,
+        "https://github.com/Nishijujuba/video2pdf.git",
+    )
+    return create_unique_run_directory(
+        project_root,
+        "fixture",
+        registered_suite_keys={"fixture"},
+    )
 
 
 def _test_id(source: Path) -> str:
@@ -255,6 +265,21 @@ class SchedulerTests(unittest.TestCase):
             )
         self.assertEqual(launch_summary["failure_kind"], "launch_failure")
         self.assertEqual(launch_summary["coverage"]["terminal"], 2)
+        self.assertEqual(launch_summary["coverage"]["started"], 0)
+        launch_events = [
+            json.loads(line)
+            for line in (launch_run / "events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(
+            [
+                event["event"]
+                for event in launch_events
+                if event["event"] != "queued"
+            ],
+            ["launch_failed", "launch_failed"],
+        )
 
         import_run = run_directory("import-failure")
         manifest = discovery("worker_import_error.py", "worker_fast.py")
@@ -271,6 +296,50 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(import_summary["failure_kind"], "import_failure")
         self.assertEqual(import_summary["coverage"]["terminal"], 2)
         self.assertEqual(import_summary["coverage"]["executed_test_ids"], 1)
+
+    def test_coordinator_exception_terminates_active_workers_and_records_failure(
+        self,
+    ) -> None:
+        run_dir = run_directory("coordinator-exception")
+        launched = []
+        real_launch = scheduler._launch_module
+
+        def capture_launch(**kwargs):
+            active = real_launch(**kwargs)
+            launched.append(active)
+            return active
+
+        with mock.patch.object(
+            scheduler, "_launch_module", side_effect=capture_launch
+        ), mock.patch.object(
+            scheduler.time,
+            "sleep",
+            side_effect=KeyboardInterrupt("simulated coordinator interrupt"),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                run_modules(
+                    repo_root=REPO_ROOT,
+                    run_dir=run_dir,
+                    discovery=discovery("worker_slow.py", "worker_fast.py"),
+                    jobs=1,
+                    stdout=io.BytesIO(),
+                    stderr=io.BytesIO(),
+                )
+
+        self.assertEqual(len(launched), 1)
+        self.assertIsNotNone(launched[0].process.poll())
+        summary = json.loads(
+            (run_dir / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary["failure_kind"], "coordinator_failure")
+        self.assertEqual(summary["coverage"]["started"], 1)
+        self.assertEqual(summary["coverage"]["terminal"], 2)
+        self.assertEqual(
+            {
+                module["failure_kind"] for module in summary["modules"]
+            },
+            {"coordinator_failure"},
+        )
 
 
 if __name__ == "__main__":

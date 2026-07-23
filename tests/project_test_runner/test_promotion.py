@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import shutil
 import unittest
-import uuid
 
 from jsonschema import Draft202012Validator
 
@@ -14,11 +13,14 @@ from scripts.validate_project_test_promotion import (
     PromotionValidationError,
     validate_promotion_report,
 )
+from tests.project_test_runner._fixture_root import (
+    committed_fixture_root,
+    new_fixture_dir,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = PROJECT_ROOT / "tests/project_test_runner/fixtures/cli_promotion"
-SCRATCH = PROJECT_ROOT / "tests/project_test_runner/fixtures/external_root"
+FIXTURE = committed_fixture_root() / "cli_promotion"
 
 
 def write_json(path: Path, value: dict) -> str:
@@ -36,9 +38,7 @@ def write_bytes(path: Path, content: bytes) -> str:
 
 class PromotionReportTests(unittest.TestCase):
     def make_report(self) -> tuple[Path, dict]:
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        repo = SCRATCH / f"promotion-{uuid.uuid4().hex}"
-        repo.mkdir()
+        repo = new_fixture_dir("promotion")
         (repo / "scripts").mkdir()
         (repo / "scripts/run_project_tests.py").write_text(
             "# fixture entrypoint\n", encoding="utf-8"

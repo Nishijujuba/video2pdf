@@ -17,6 +17,14 @@ PROJECT_KEY = "video2pdf"
 PROJECT_REPOSITORY = "Nishijujuba/video2pdf"
 PROJECT_REMOTE_IDENTITY = "github.com/Nishijujuba/video2pdf"
 PROJECT_MARKER_NAME = "project.json"
+WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS = 240
+
+_RUN_ID_BUDGET_COMPONENT = "20260724_010203_01234567"
+_MODULE_KEY_BUDGET_COMPONENT = "0123456789ab"
+_MODULE_ASSIGNMENT_BUDGET_COMPONENT = (
+    f"{_MODULE_KEY_BUDGET_COMPONENT}.assignment.json"
+)
+_SELF_HOSTED_FIXTURE_BUDGET_COMPONENT = "cli-" + ("a" * 32)
 
 _MARKER_FIELDS = frozenset(
     {
@@ -30,6 +38,7 @@ _MARKER_FIELDS = frozenset(
 _SUITE_KEY_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _TIMESTAMP_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
 _SHORT_RUN_ID_PATTERN = re.compile(r"[0-9a-f]{8}\Z")
+_RUN_DIRECTORY_PATTERN = re.compile(r"\d{8}_\d{6}_[0-9a-f]{8}\Z")
 _SCP_GITHUB_REMOTE = re.compile(
     r"git@github\.com:(?P<owner>[^/:\s]+)/(?P<repository>[^/\s]+?)(?:\.git)?/?\Z",
     re.IGNORECASE,
@@ -39,6 +48,79 @@ _REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 class ExternalRootError(ValueError):
     """The configured external test boundary is unsafe or has invalid ownership."""
+
+
+class ExternalRootPathBudgetError(ExternalRootError):
+    """The root cannot contain the runner's longest reserved Windows path."""
+
+
+def utf16_path_units(path: str | os.PathLike[str]) -> int:
+    """Count Windows path units without depending on Python character width."""
+
+    return len(os.fspath(path).encode("utf-16-le")) // 2
+
+
+def _reserved_relative_path_units(suite_keys: Collection[str]) -> int:
+    if not suite_keys:
+        raise ExternalRootPathBudgetError(
+            "at least one suite key is required for path-budget validation"
+        )
+    reserved_paths = [
+        Path(
+            PROJECT_KEY,
+            suite_key,
+            _RUN_ID_BUDGET_COMPONENT,
+            "modules",
+            _MODULE_ASSIGNMENT_BUDGET_COMPONENT,
+        )
+        for suite_key in suite_keys
+    ]
+    if "project-test-runner" in suite_keys:
+        # This authoritative suite recursively exercises the public runner.
+        # Its generated CLI fixture therefore contains a second complete run.
+        reserved_paths.append(
+            Path(
+                PROJECT_KEY,
+                "project-test-runner",
+                _RUN_ID_BUDGET_COMPONENT,
+                "generated",
+                _MODULE_KEY_BUDGET_COMPONENT,
+                _SELF_HOSTED_FIXTURE_BUDGET_COMPONENT,
+                "external",
+                PROJECT_KEY,
+                "all",
+                _RUN_ID_BUDGET_COMPONENT,
+                "modules",
+                _MODULE_ASSIGNMENT_BUDGET_COMPONENT,
+            )
+        )
+    return max(utf16_path_units(path) for path in reserved_paths)
+
+
+def validate_external_test_root_path_budget(
+    test_root: str | os.PathLike[str],
+    *,
+    suite_keys: Collection[str],
+) -> Path:
+    """Reject a Windows root that cannot contain every reserved runner path."""
+
+    root = validate_external_test_root(test_root)
+    if os.name != "nt":
+        return root
+    reserved_units = _reserved_relative_path_units(suite_keys)
+    root_units = utf16_path_units(root)
+    maximum_root_units = (
+        WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS - 1 - reserved_units
+    )
+    if root_units > maximum_root_units:
+        raise ExternalRootPathBudgetError(
+            "External Test Root uses "
+            f"{root_units} UTF-16 path units; maximum is {maximum_root_units} "
+            "for the selected suites under the "
+            f"{WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS}-unit Windows budget, "
+            f"which reserves {reserved_units} units for the longest runner artifact"
+        )
+    return root
 
 
 def _is_disallowed_windows_namespace(value: str) -> bool:
@@ -58,6 +140,11 @@ def _absolute_lexical_path(value: str | os.PathLike[str]) -> Path:
     if not candidate.is_absolute():
         raise ExternalRootError("External Test Root must be an absolute path")
     return Path(os.path.abspath(candidate))
+
+
+def _reject_parent_traversal(value: str | os.PathLike[str]) -> None:
+    if ".." in Path(os.fspath(value)).parts:
+        raise ExternalRootError("path must not contain parent traversal")
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -130,6 +217,44 @@ def validate_external_test_root(
         )
     _assert_no_reparse_points(root)
     return root
+
+
+def validate_owned_run_directory(
+    run_dir: str | os.PathLike[str],
+) -> Path:
+    """Validate an existing owned run while preserving its lexical drive path."""
+
+    _reject_parent_traversal(run_dir)
+    candidate = _absolute_lexical_path(run_dir)
+    if not candidate.exists() or not candidate.is_dir():
+        raise ExternalRootError(
+            "owned run directory must be an existing ordinary directory"
+        )
+    suite_root = candidate.parent
+    project_root = suite_root.parent
+    external_root = project_root.parent
+    validate_external_test_root(external_root)
+    if project_root.name != PROJECT_KEY:
+        raise ExternalRootError(
+            "owned run directory must be below the video2pdf project root"
+        )
+    if (
+        not _SUITE_KEY_PATTERN.fullmatch(suite_root.name)
+        and suite_root.name != "all"
+    ):
+        raise ExternalRootError("owned run directory suite key is invalid")
+    if not _RUN_DIRECTORY_PATTERN.fullmatch(candidate.name):
+        raise ExternalRootError(
+            "owned run directory must use timestamp_short-run-id identity"
+        )
+    _validate_owned_project_root(project_root)
+    safe_candidate = assert_safe_write_path(project_root, candidate)
+    if not suite_root.is_dir() or not safe_candidate.is_dir():
+        raise ExternalRootError(
+            "owned suite and run paths must be existing ordinary directories"
+        )
+    _assert_no_reparse_points(safe_candidate)
+    return safe_candidate
 
 
 def normalize_github_remote_identity(remote: str) -> str:

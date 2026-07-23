@@ -26,6 +26,10 @@ from scripts.project_test_results import (
     write_bytes_exclusive,
     write_json_exclusive,
 )
+from scripts.project_test_external_root import (
+    ExternalRootError,
+    validate_owned_run_directory,
+)
 
 
 MODULE_RESULT_SCHEMA_NAME = "video2pdf.project-test-module-result"
@@ -438,6 +442,77 @@ class _ActiveModule:
     drain_errors: list[str]
 
 
+_DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS = 1.0
+
+
+def _fingerprint_if_present(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        return sha256_file(path)
+    except ResultIntegrityError:
+        return None
+
+
+def _cleanup_direct_worker(launched: _ActiveModule) -> str | None:
+    """Boundedly settle one direct worker after a coordinator exception.
+
+    This is coordinator lifecycle cleanup. It is deliberately separate from
+    test fail-fast behavior and does not attempt process-tree termination.
+    """
+
+    errors: list[str] = []
+    process = launched.process
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except Exception as error:
+            errors.append(
+                f"worker terminate failed: {type(error).__name__}: {error}"
+            )
+        try:
+            process.wait(timeout=_DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception as error:
+            errors.append(
+                f"worker wait failed: {type(error).__name__}: {error}"
+            )
+        if process.poll() is None:
+            try:
+                process.kill()
+            except Exception as error:
+                errors.append(
+                    f"worker kill failed: {type(error).__name__}: {error}"
+                )
+            try:
+                process.wait(timeout=_DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS)
+            except Exception as error:
+                errors.append(
+                    f"worker post-kill wait failed: "
+                    f"{type(error).__name__}: {error}"
+                )
+
+    for thread in launched.drain_threads:
+        try:
+            thread.join(timeout=_DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS)
+            if thread.is_alive():
+                errors.append("output drain thread did not settle")
+        except Exception as error:
+            errors.append(
+                f"output drain join failed: {type(error).__name__}: {error}"
+            )
+    for handle in (launched.stdout_handle, launched.stderr_handle):
+        try:
+            handle.close()
+        except Exception as error:
+            errors.append(
+                f"log close failed: {type(error).__name__}: {error}"
+            )
+    errors.extend(launched.drain_errors)
+    return " | ".join(errors) if errors else None
+
+
 def _binary_stream(stream: BinaryIO | None, fallback: Any) -> BinaryIO:
     if stream is not None:
         return stream
@@ -507,6 +582,8 @@ def _launch_module(
     creationflags = (
         getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     )
+    process: subprocess.Popen[bytes] | None = None
+    drain_threads: list[threading.Thread] = []
     try:
         process = subprocess.Popen(
             command,
@@ -517,37 +594,54 @@ def _launch_module(
             stderr=subprocess.PIPE,
             creationflags=creationflags,
         )
-    except Exception:
-        stdout_handle.close()
-        stderr_handle.close()
+        if process.stdout is None or process.stderr is None:
+            raise SchedulerError("worker pipes were not created")
+        drain_errors: list[str] = []
+        stdout_thread = threading.Thread(
+            target=_drain_pipe,
+            args=(
+                process.stdout,
+                stdout_handle,
+                stdout,
+                stdout_lock,
+                drain_errors,
+            ),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_drain_pipe,
+            args=(
+                process.stderr,
+                stderr_handle,
+                stderr,
+                stderr_lock,
+                drain_errors,
+            ),
+            daemon=True,
+        )
+        stdout_thread.start()
+        drain_threads.append(stdout_thread)
+        stderr_thread.start()
+        drain_threads.append(stderr_thread)
+    except BaseException:
+        if process is not None:
+            partial = _ActiveModule(
+                module=module,
+                process=process,
+                assignment_sha256=assignment_sha256,
+                result_path=result_path,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                stdout_handle=stdout_handle,
+                stderr_handle=stderr_handle,
+                drain_threads=tuple(drain_threads),
+                drain_errors=[],
+            )
+            _cleanup_direct_worker(partial)
+        else:
+            stdout_handle.close()
+            stderr_handle.close()
         raise
-    assert process.stdout is not None
-    assert process.stderr is not None
-    drain_errors: list[str] = []
-    stdout_thread = threading.Thread(
-        target=_drain_pipe,
-        args=(
-            process.stdout,
-            stdout_handle,
-            stdout,
-            stdout_lock,
-            drain_errors,
-        ),
-        daemon=True,
-    )
-    stderr_thread = threading.Thread(
-        target=_drain_pipe,
-        args=(
-            process.stderr,
-            stderr_handle,
-            stderr,
-            stderr_lock,
-            drain_errors,
-        ),
-        daemon=True,
-    )
-    stdout_thread.start()
-    stderr_thread.start()
     return _ActiveModule(
         module=module,
         process=process,
@@ -620,7 +714,13 @@ def run_modules(
 
     validated_jobs = validate_jobs(jobs)
     repo_root = repo_root.resolve(strict=True)
-    run_dir = run_dir.resolve(strict=True)
+    try:
+        run_dir = validate_owned_run_directory(run_dir)
+    except ExternalRootError as error:
+        raise SchedulerError(
+            f"run directory ownership is invalid: {error}",
+            failure_kind="coordinator_failure",
+        ) from error
     modules = _validate_discovery(discovery)
     durations = (
         _load_timing_durations(timings_from, discovery, modules)
@@ -642,144 +742,218 @@ def run_modules(
     stderr_lock = threading.Lock()
     active: dict[str, _ActiveModule] = {}
     terminal: dict[str, dict[str, Any]] = {}
+    started_module_keys: set[str] = set()
     peak = 0
+    scheduler_exception: BaseException | None = None
+    scheduler_traceback = None
 
-    while pending or active:
-        while pending and len(active) < validated_jobs:
-            module = pending.pop(0)
-            sequence += 1
-            try:
-                launched = _launch_module(
-                    repo_root=repo_root,
-                    run_dir=run_dir,
-                    module=module,
-                    stdout=out,
-                    stderr=err,
-                    stdout_lock=stdout_lock,
-                    stderr_lock=stderr_lock,
-                    child_environment=child_environment,
-                )
-            except Exception as error:
+    try:
+        while pending or active:
+            while pending and len(active) < validated_jobs:
+                module = pending.pop(0)
+                sequence += 1
+                try:
+                    launched = _launch_module(
+                        repo_root=repo_root,
+                        run_dir=run_dir,
+                        module=module,
+                        stdout=out,
+                        stderr=err,
+                        stdout_lock=stdout_lock,
+                        stderr_lock=stderr_lock,
+                        child_environment=child_environment,
+                    )
+                except Exception as error:
+                    assignment_path = (
+                        run_dir
+                        / "modules"
+                        / f"{module['module_key']}.assignment.json"
+                    )
+                    stdout_path = (
+                        run_dir / "logs" / f"{module['module_key']}.stdout.log"
+                    )
+                    stderr_path = (
+                        run_dir / "logs" / f"{module['module_key']}.stderr.log"
+                    )
+                    terminal[module["module_key"]] = {
+                        "module": module,
+                        "failure_kind": "launch_failure",
+                        "detail": f"{type(error).__name__}: {error}",
+                        "executions": [],
+                        "exit_code": None,
+                        "assignment_sha256": _fingerprint_if_present(
+                            assignment_path
+                        ),
+                        "result_sha256": None,
+                        "stdout_sha256": _fingerprint_if_present(stdout_path),
+                        "stderr_sha256": _fingerprint_if_present(stderr_path),
+                        "duration_seconds": 0.0,
+                    }
+                    _append_event(
+                        events,
+                        "launch_failed",
+                        module,
+                        sequence,
+                        failure_kind="launch_failure",
+                        exit_code=None,
+                    )
+                    continue
+                active[module["module_key"]] = launched
+                started_module_keys.add(module["module_key"])
                 _append_event(
                     events,
                     "started",
                     module,
                     sequence,
-                    pid=None,
+                    pid=launched.process.pid,
                 )
+                peak = max(peak, len(active))
+
+            finished_keys = [
+                key
+                for key, launched in active.items()
+                if launched.process.poll() is not None
+            ]
+            if not finished_keys:
+                time.sleep(0.005)
+                continue
+            for key in finished_keys:
+                launched = active[key]
+                for thread in launched.drain_threads:
+                    thread.join()
+                launched.stdout_handle.close()
+                launched.stderr_handle.close()
+                exit_code = launched.process.returncode
+                failure_kind: str | None = None
+                detail: str | None = None
+                executions: list[dict[str, Any]] = []
+                result_sha256: str | None = None
+                duration_seconds = 0.0
+                try:
+                    result_sha256 = sha256_file(launched.result_path)
+                    value = read_module_result(
+                        launched.result_path,
+                        result_sha256,
+                    )
+                    duration = value.get("duration_seconds")
+                    if type(duration) not in (int, float) or duration < 0:
+                        raise ResultIntegrityError(
+                            "module result duration is invalid"
+                        )
+                    duration_seconds = float(duration)
+                    executions, failure_kind = _validate_module_result(
+                        launched.module,
+                        value,
+                        exit_code,
+                    )
+                    if launched.drain_errors:
+                        raise ResultIntegrityError(
+                            " | ".join(launched.drain_errors)
+                        )
+                except ResultIntegrityError as error:
+                    failure_kind = "result_integrity_failure"
+                    detail = str(error)
                 sequence += 1
-                assignment_path = (
-                    run_dir
-                    / "modules"
-                    / f"{module['module_key']}.assignment.json"
+                terminal[key] = {
+                    "module": launched.module,
+                    "failure_kind": failure_kind,
+                    "detail": detail,
+                    "executions": executions,
+                    "exit_code": exit_code,
+                    "assignment_sha256": launched.assignment_sha256,
+                    "result_sha256": result_sha256,
+                    "stdout_sha256": sha256_file(launched.stdout_path),
+                    "stderr_sha256": sha256_file(launched.stderr_path),
+                    "duration_seconds": duration_seconds,
+                }
+                _append_event(
+                    events,
+                    "completed",
+                    launched.module,
+                    sequence,
+                    failure_kind=failure_kind,
+                    exit_code=exit_code,
                 )
-                stdout_path = (
-                    run_dir / "logs" / f"{module['module_key']}.stdout.log"
-                )
-                stderr_path = (
-                    run_dir / "logs" / f"{module['module_key']}.stderr.log"
-                )
-                terminal[module["module_key"]] = {
-                    "module": module,
-                    "failure_kind": "launch_failure",
-                    "detail": f"{type(error).__name__}: {error}",
+                active.pop(key)
+    except BaseException as error:
+        scheduler_exception = error
+        scheduler_traceback = error.__traceback__
+    finally:
+        if active:
+            cleanup_failure_kind = (
+                "result_integrity_failure"
+                if isinstance(scheduler_exception, ResultIntegrityError)
+                else "coordinator_failure"
+            )
+            exception_detail = (
+                f"{type(scheduler_exception).__name__}: {scheduler_exception}"
+                if scheduler_exception is not None
+                else "coordinator exited with active workers"
+            )
+            for key, launched in list(active.items()):
+                cleanup_detail = _cleanup_direct_worker(launched)
+                sequence += 1
+                terminal[key] = {
+                    "module": launched.module,
+                    "failure_kind": cleanup_failure_kind,
+                    "detail": "coordinator exception cleanup: "
+                    + exception_detail
+                    + (f" | {cleanup_detail}" if cleanup_detail else ""),
                     "executions": [],
-                    "exit_code": None,
-                    "assignment_sha256": sha256_file(assignment_path)
-                    if assignment_path.is_file()
-                    else None,
-                    "result_sha256": None,
-                    "stdout_sha256": sha256_file(stdout_path)
-                    if stdout_path.is_file()
-                    else None,
-                    "stderr_sha256": sha256_file(stderr_path)
-                    if stderr_path.is_file()
-                    else None,
+                    "exit_code": launched.process.returncode,
+                    "assignment_sha256": launched.assignment_sha256,
+                    "result_sha256": _fingerprint_if_present(
+                        launched.result_path
+                    ),
+                    "stdout_sha256": _fingerprint_if_present(
+                        launched.stdout_path
+                    ),
+                    "stderr_sha256": _fingerprint_if_present(
+                        launched.stderr_path
+                    ),
                     "duration_seconds": 0.0,
                 }
                 _append_event(
                     events,
                     "completed",
-                    module,
-                    sequence,
-                    failure_kind="launch_failure",
-                    exit_code=None,
-                )
-                continue
-            active[module["module_key"]] = launched
-            _append_event(
-                events,
-                "started",
-                module,
-                sequence,
-                pid=launched.process.pid,
-            )
-            peak = max(peak, len(active))
-
-        finished_keys = [
-            key
-            for key, launched in active.items()
-            if launched.process.poll() is not None
-        ]
-        if not finished_keys:
-            time.sleep(0.005)
-            continue
-        for key in finished_keys:
-            launched = active.pop(key)
-            for thread in launched.drain_threads:
-                thread.join()
-            launched.stdout_handle.close()
-            launched.stderr_handle.close()
-            exit_code = launched.process.returncode
-            failure_kind: str | None = None
-            detail: str | None = None
-            executions: list[dict[str, Any]] = []
-            result_sha256: str | None = None
-            duration_seconds = 0.0
-            try:
-                result_sha256 = sha256_file(launched.result_path)
-                value = read_module_result(
-                    launched.result_path,
-                    result_sha256,
-                )
-                duration = value.get("duration_seconds")
-                if type(duration) not in (int, float) or duration < 0:
-                    raise ResultIntegrityError(
-                        "module result duration is invalid"
-                    )
-                duration_seconds = float(duration)
-                executions, failure_kind = _validate_module_result(
                     launched.module,
-                    value,
-                    exit_code,
+                    sequence,
+                    failure_kind=cleanup_failure_kind,
+                    exit_code=launched.process.returncode,
+                    coordinator_cleanup=True,
                 )
-                if launched.drain_errors:
-                    raise ResultIntegrityError(
-                        " | ".join(launched.drain_errors)
-                    )
-            except ResultIntegrityError as error:
-                failure_kind = "result_integrity_failure"
-                detail = str(error)
+                active.pop(key)
+
+    if scheduler_exception is not None:
+        cleanup_failure_kind = (
+            "result_integrity_failure"
+            if isinstance(scheduler_exception, ResultIntegrityError)
+            else "coordinator_failure"
+        )
+        while pending:
+            module = pending.pop(0)
             sequence += 1
-            terminal[key] = {
-                "module": launched.module,
-                "failure_kind": failure_kind,
-                "detail": detail,
-                "executions": executions,
-                "exit_code": exit_code,
-                "assignment_sha256": launched.assignment_sha256,
-                "result_sha256": result_sha256,
-                "stdout_sha256": sha256_file(launched.stdout_path),
-                "stderr_sha256": sha256_file(launched.stderr_path),
-                "duration_seconds": duration_seconds,
+            terminal[module["module_key"]] = {
+                "module": module,
+                "failure_kind": cleanup_failure_kind,
+                "detail": "not launched after coordinator exception: "
+                f"{type(scheduler_exception).__name__}: {scheduler_exception}",
+                "executions": [],
+                "exit_code": None,
+                "assignment_sha256": None,
+                "result_sha256": None,
+                "stdout_sha256": None,
+                "stderr_sha256": None,
+                "duration_seconds": 0.0,
             }
             _append_event(
                 events,
                 "completed",
-                launched.module,
+                module,
                 sequence,
-                failure_kind=failure_kind,
-                exit_code=exit_code,
+                failure_kind=cleanup_failure_kind,
+                exit_code=None,
+                coordinator_cleanup=True,
             )
 
     expected_ids = [
@@ -807,7 +981,9 @@ def run_modules(
         for outcome in terminal.values()
         if outcome["failure_kind"] is not None
     }
-    if "result_integrity_failure" in failure_kinds:
+    if "coordinator_failure" in failure_kinds:
+        overall_failure = "coordinator_failure"
+    elif "result_integrity_failure" in failure_kinds:
         overall_failure = "result_integrity_failure"
     elif "launch_failure" in failure_kinds:
         overall_failure = "launch_failure"
@@ -853,7 +1029,11 @@ def run_modules(
     coverage = {
         "discovered": len(expected_ids),
         "assigned": len(expected_ids),
-        "started": len(expected_ids),
+        "started": sum(
+            len(module["test_ids"])
+            for module in modules
+            if module["module_key"] in started_module_keys
+        ),
         "terminal": len(expected_ids)
         if len(terminal) == len(modules)
         else sum(
@@ -899,6 +1079,8 @@ def run_modules(
     write_bytes_exclusive(run_dir / "events.jsonl", event_bytes)
     write_json_exclusive(run_dir / "timings.json", timing_manifest)
     write_json_exclusive(run_dir / "summary.json", summary)
+    if scheduler_exception is not None:
+        raise scheduler_exception.with_traceback(scheduler_traceback)
     return summary
 
 

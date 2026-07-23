@@ -21,8 +21,10 @@ from scripts.project_test_discovery import (  # noqa: E402
 )
 from scripts.project_test_external_root import (  # noqa: E402
     ExternalRootError,
+    ExternalRootPathBudgetError,
     create_unique_run_directory,
     ensure_project_root,
+    validate_external_test_root_path_budget,
 )
 from scripts.project_test_registry import (  # noqa: E402
     Registry,
@@ -92,6 +94,11 @@ def _prepare_run(
     test_root: Path,
 ) -> tuple[Path, list[str]]:
     selected = registry.select_suites(suite_ids)
+    suite_keys = {suite.suite_key for suite in selected}
+    validate_external_test_root_path_budget(
+        test_root,
+        suite_keys=suite_keys,
+    )
     project_root = ensure_project_root(
         test_root,
         _remote_identity(repo_root),
@@ -317,6 +324,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         detail = str(error)
     except RegistryError as error:
         failure_kind = "registry_failure"
+        detail = str(error)
+    except ExternalRootPathBudgetError as error:
+        failure_kind = "external_root_path_budget_failure"
         detail = str(error)
     except ExternalRootError as error:
         failure_kind = "external_root_failure"

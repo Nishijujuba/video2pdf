@@ -10,7 +10,7 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import subprocess
 import sys
@@ -276,7 +276,54 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
     return exit_code
 
 
-def _validate_discovery(discovery: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _canonical_discovery_path(
+    repo_root: Path,
+    value: Any,
+    label: str,
+    *,
+    directory: bool,
+) -> tuple[str, Path, PurePosixPath]:
+    if not isinstance(value, str) or not value:
+        raise SchedulerError(f"discovery {label} must be a non-empty path")
+    parts = value.split("/")
+    posix_path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
+    if (
+        "\\" in value
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or any(part in ("", ".", "..") for part in parts)
+        or posix_path.as_posix() != value
+    ):
+        raise SchedulerError(
+            f"discovery {label} must be a canonical repository-relative "
+            "POSIX path"
+        )
+    absolute = repo_root.joinpath(*posix_path.parts)
+    try:
+        resolved = absolute.resolve(strict=True)
+        resolved.relative_to(repo_root)
+    except (FileNotFoundError, ValueError) as error:
+        raise SchedulerError(
+            f"discovery {label} does not identify a repository path: {value}"
+        ) from error
+    if directory and not resolved.is_dir():
+        raise SchedulerError(
+            f"discovery {label} must identify a directory: {value}"
+        )
+    if not directory and not resolved.is_file():
+        raise SchedulerError(
+            f"discovery {label} must identify a file: {value}"
+        )
+    return value, resolved, posix_path
+
+
+def _validate_discovery(
+    repo_root: Path,
+    discovery: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    repo_root = repo_root.resolve(strict=True)
     modules = discovery.get("modules")
     if not isinstance(modules, list) or not modules:
         raise SchedulerError("discovery has no modules")
@@ -290,6 +337,7 @@ def _validate_discovery(discovery: Mapping[str, Any]) -> list[dict[str, Any]]:
         try:
             key = value["module_key"]
             suite_id = value["suite_id"]
+            root = value["root_path"]
             source = value["source_path"]
             test_ids = value["test_ids"]
             test_count = value["test_count"]
@@ -307,14 +355,40 @@ def _validate_discovery(discovery: Mapping[str, Any]) -> list[dict[str, Any]]:
         if (
             not isinstance(suite_id, str)
             or not suite_id
-            or not isinstance(source, str)
-            or not source
             or not isinstance(test_ids, list)
             or not all(isinstance(item, str) and item for item in test_ids)
             or type(test_count) is not int
             or test_count != len(test_ids)
         ):
             raise SchedulerError("discovery module fields are invalid")
+        root, resolved_root, root_posix = _canonical_discovery_path(
+            repo_root,
+            root,
+            "root_path",
+            directory=True,
+        )
+        source, resolved_source, source_posix = _canonical_discovery_path(
+            repo_root,
+            source,
+            "source_path",
+            directory=False,
+        )
+        try:
+            source_posix.relative_to(root_posix)
+            resolved_source.relative_to(resolved_root)
+        except ValueError as error:
+            raise SchedulerError(
+                "discovery source_path must be inside its root_path"
+            ) from error
+        module_name = source_posix.stem
+        if any(
+            test_id.partition(".")[0] != module_name
+            and test_id != f"unittest.loader._FailedTest.{module_name}"
+            for test_id in test_ids
+        ):
+            raise SchedulerError(
+                "discovery test ID does not match its module source"
+            )
         expected_key = hashlib.sha256(
             f"{suite_id}\0{source}".encode("utf-8")
         ).hexdigest()[:12]
@@ -782,7 +856,7 @@ def run_modules(
             f"run directory ownership is invalid: {error}",
             failure_kind="coordinator_failure",
         ) from error
-    modules = _validate_discovery(discovery)
+    modules = _validate_discovery(repo_root, discovery)
     durations = (
         _load_timing_durations(timings_from, discovery, modules)
         if timings_from is not None

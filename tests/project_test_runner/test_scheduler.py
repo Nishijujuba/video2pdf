@@ -113,6 +113,81 @@ def discovery(*names: str) -> dict:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_discovery_rejects_noncanonical_module_paths(self) -> None:
+        manifest = discovery("worker_fast.py")
+        module = manifest["modules"][0]
+        valid_root = module["root_path"]
+        valid_source = module["source_path"]
+        invalid_values = (
+            "",
+            f"/{valid_source}",
+            f"C:/{valid_source}",
+            f"C:\\{valid_source}",
+            rf"\\server\share\{valid_source}",
+            rf"\\?\C:\{valid_source}",
+            f"./{valid_source}",
+            f"{valid_root}/../{Path(valid_source).name}",
+            valid_source.replace("/", "//", 1),
+        )
+
+        for field in ("root_path", "source_path"):
+            for invalid in invalid_values:
+                with self.subTest(field=field, invalid=invalid):
+                    changed = {**module, field: invalid}
+                    if field == "source_path":
+                        changed["module_key"] = _module_key(
+                            changed["suite_id"], invalid
+                        )
+                    malformed = {**manifest, "modules": [changed]}
+                    with self.assertRaisesRegex(
+                        SchedulerError,
+                        field,
+                    ):
+                        scheduler._validate_discovery(REPO_ROOT, malformed)
+
+    def test_discovery_rejects_missing_or_inconsistent_module_sources(
+        self,
+    ) -> None:
+        manifest = discovery("worker_fast.py")
+        module = manifest["modules"][0]
+        cases = (
+            {
+                **module,
+                "root_path": "scripts",
+            },
+            {
+                **module,
+                "source_path": (
+                    f"{module['root_path']}/missing_scheduler_fixture.py"
+                ),
+                "module_key": _module_key(
+                    module["suite_id"],
+                    f"{module['root_path']}/missing_scheduler_fixture.py",
+                ),
+            },
+            {
+                **module,
+                "source_path": discovery("worker_slow.py")["modules"][0][
+                    "source_path"
+                ],
+                "module_key": _module_key(
+                    module["suite_id"],
+                    discovery("worker_slow.py")["modules"][0]["source_path"],
+                ),
+            },
+        )
+
+        for changed in cases:
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(
+                    SchedulerError,
+                    "root_path|source_path|module source",
+                ):
+                    scheduler._validate_discovery(
+                        REPO_ROOT,
+                        {**manifest, "modules": [changed]},
+                    )
+
     def test_discovery_rejects_noncanonical_or_mismatched_module_keys(self) -> None:
         manifest = discovery("worker_fast.py")
         invalid_keys = (
@@ -138,7 +213,7 @@ class SchedulerTests(unittest.TestCase):
                     SchedulerError,
                     "module_key",
                 ):
-                    scheduler._validate_discovery(malformed)
+                    scheduler._validate_discovery(REPO_ROOT, malformed)
 
     def test_discovery_rejects_duplicate_module_key_collision(self) -> None:
         manifest = discovery("worker_fast.py")
@@ -157,7 +232,7 @@ class SchedulerTests(unittest.TestCase):
             SchedulerError,
             "duplicate module keys",
         ):
-            scheduler._validate_discovery(manifest)
+            scheduler._validate_discovery(REPO_ROOT, manifest)
 
     def test_rechecks_every_scheduler_artifact_path_before_creation_or_open(
         self,

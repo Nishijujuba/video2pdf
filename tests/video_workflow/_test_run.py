@@ -127,6 +127,18 @@ def new_case_dir(test_id: str, *, label: str = "") -> Path:
     return case_dir
 
 
+def new_workflow_workspace(test_id: str, *, label: str) -> Path:
+    """Create a compact workspace while retaining semantic manifest identity."""
+
+    case_dir = new_case_dir(test_id, label=label)
+    workspace = case_dir / "w"
+    identity = _active_identity()
+    if identity is not None:
+        workspace = _contained(identity.run_dir, workspace)
+    workspace.mkdir(exist_ok=False)
+    return workspace
+
+
 def child_environment(test_id: str) -> dict[str, str]:
     """Inherit the current environment and pin child temporary data."""
 

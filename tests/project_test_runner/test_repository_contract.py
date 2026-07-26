@@ -94,6 +94,7 @@ _TRUSTED_EXTERNAL_BOUNDARY_PROVIDERS = {
     "tests.project_test_runner.test_registry.fixture_run_dir",
     "tests.video_workflow._test_run.module_test_root",
     "tests.video_workflow._test_run.new_case_dir",
+    "tests.video_workflow._test_run.new_workflow_workspace",
     "tests.video_workflow.test_source_publication_integration.build_decision_ready_authority",
 }
 _DATABASE_CONNECTORS = {"sqlite3.connect"}
@@ -1294,6 +1295,34 @@ def test_external_boundaries():
         untrusted_violations, _ = analyze_source(
             source,
             Path("tests/video_workflow/test_other.py"),
+            {},
+        )
+        self.assertEqual(trusted_violations, [])
+        self.assertEqual(len(untrusted_violations), 1)
+
+    def test_analysis_trusts_only_fully_qualified_workflow_workspace_provider(
+        self,
+    ) -> None:
+        trusted_source = """
+from tests.video_workflow._test_run import new_workflow_workspace
+
+def test_external_boundaries():
+    new_workflow_workspace("test.id", label="trusted").write_text("{}")
+"""
+        untrusted_source = """
+from tests.video_workflow.test_helpers import new_workflow_workspace
+
+def test_external_boundaries():
+    new_workflow_workspace("test.id", label="untrusted").write_text("{}")
+"""
+        trusted_violations, _ = analyze_source(
+            trusted_source,
+            Path("tests/video_workflow/test_external.py"),
+            {},
+        )
+        untrusted_violations, _ = analyze_source(
+            untrusted_source,
+            Path("tests/video_workflow/test_external.py"),
             {},
         )
         self.assertEqual(trusted_violations, [])

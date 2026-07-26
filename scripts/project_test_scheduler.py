@@ -50,6 +50,10 @@ class SchedulerError(RuntimeError):
         self.failure_kind = failure_kind
 
 
+class _WorkerImportPath(str):
+    """Identity-bearing sys.path entry owned by one worker import."""
+
+
 def validate_jobs(jobs: object) -> int:
     if type(jobs) is not int or not 1 <= jobs <= 4:
         raise SchedulerError("--jobs must be an integer in the range 1..4")
@@ -175,7 +179,8 @@ def _load_assigned_suite(
 
     loader = unittest.TestLoader()
     previous = sys.modules.pop(source.stem, None)
-    sys.path.insert(0, str(source.parent))
+    worker_import_path = _WorkerImportPath(str(source.parent))
+    sys.path.insert(0, worker_import_path)
     try:
         suite = loader.discover(
             start_dir=str(source.parent),
@@ -184,7 +189,10 @@ def _load_assigned_suite(
         )
         tests = tuple(_flatten_suite(suite))
     finally:
-        sys.path.pop(0)
+        for index, entry in enumerate(sys.path):
+            if entry is worker_import_path:
+                sys.path.pop(index)
+                break
         sys.modules.pop(source.stem, None)
         if previous is not None:
             sys.modules[source.stem] = previous

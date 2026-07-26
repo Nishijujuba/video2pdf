@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import sys
 import unittest
 from unittest import mock
 
@@ -113,6 +114,84 @@ def discovery(*names: str) -> dict:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_worker_preserves_import_paths_added_by_test_module(self) -> None:
+        fixture_repo = new_fixture_dir(
+            "worker-path-lifecycle",
+            expected_suite="project-test-runner",
+        )
+        tests_dir = fixture_repo / "tests"
+        source_dir = fixture_repo / "src"
+        tests_dir.mkdir()
+        source_dir.mkdir()
+        dependency_name = f"delayed_dependency_{fixture_repo.name[-8:]}"
+        module_name = f"worker_path_lifecycle_{fixture_repo.name[-8:]}"
+        (source_dir / f"{dependency_name}.py").write_text(
+            "VALUE = 'available after discovery'\n",
+            encoding="utf-8",
+        )
+        source = tests_dir / f"{module_name}.py"
+        source.write_text(
+            "\n".join(
+                (
+                    "import importlib",
+                    "from pathlib import Path",
+                    "import sys",
+                    "import unittest",
+                    "",
+                    "DEPENDENCY_ROOT = Path(__file__).parents[1] / 'src'",
+                    "sys.path.insert(0, str(DEPENDENCY_ROOT))",
+                    "class ModulePathEntry(str):",
+                    "    pass",
+                    "",
+                    "WORKER_PATH_ENTRY = ModulePathEntry(",
+                    "    str(Path(__file__).parent)",
+                    ")",
+                    "sys.path.insert(0, WORKER_PATH_ENTRY)",
+                    "",
+                    "class PathLifecycleTests(unittest.TestCase):",
+                    "    def test_delayed_import(self):",
+                    "        self.assertTrue(any(",
+                    "            entry is WORKER_PATH_ENTRY",
+                    "            for entry in sys.path",
+                    "        ))",
+                    f"        dependency = importlib.import_module({dependency_name!r})",
+                    "        self.assertEqual(",
+                    "            dependency.VALUE,",
+                    "            'available after discovery',",
+                    "        )",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+        dependency_path = str(source_dir)
+        worker_path = str(tests_dir)
+        test_id = (
+            f"{module_name}.PathLifecycleTests.test_delayed_import"
+        )
+
+        try:
+            suite = scheduler._load_assigned_suite(
+                fixture_repo,
+                source.relative_to(fixture_repo).as_posix(),
+                [test_id],
+            )
+            result = unittest.TestResult()
+            suite.run(result)
+
+            self.assertTrue(result.wasSuccessful(), result.errors)
+            self.assertIn(dependency_path, sys.path)
+            self.assertEqual(
+                [entry for entry in sys.path if entry == worker_path],
+                [worker_path],
+            )
+        finally:
+            while dependency_path in sys.path:
+                sys.path.remove(dependency_path)
+            while worker_path in sys.path:
+                sys.path.remove(worker_path)
+            sys.modules.pop(dependency_name, None)
+
     def test_discovery_rejects_noncanonical_module_paths(self) -> None:
         manifest = discovery("worker_fast.py")
         module = manifest["modules"][0]

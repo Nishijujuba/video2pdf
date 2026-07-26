@@ -26,15 +26,14 @@
   },
   "migration_review": {
     "from_commit": "5b4d767",
-    "to_state": "working-tree",
-    "working_tree_base_head": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
+    "to_commit": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
     "migrated_video_workflow_modules": 27,
     "shared_boundary": "tests/video_workflow/_test_run.py",
     "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
     "direct_execution_fallback": "待删除/kernel-test-runs",
     "generated_path_manifest": "generated/<module-key>/generated-paths.jsonl",
     "comparison_evidence": {
-      "comparison": "git tree 5b4d767 versus the current working tree",
+      "comparison": "git tree 5b4d767 versus git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
       "changed_existing_test_modules": 27,
       "added_shared_boundary_modules": 1,
       "test_method_inventory_before": 475,
@@ -56,10 +55,12 @@
       "production_inputs_changed": 0,
       "expected_behavior_changed": 0
     },
-    "finding": "The current migration diff changes generated-data plumbing only."
+    "finding": "The commit-to-commit migration changes generated-data plumbing only."
   },
   "stage_27_cross_suite_migration": {
-    "comparison": "git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec versus the current working tree",
+    "from_commit": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
+    "to_commit": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+    "comparison": "git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec versus git tree ae46acff82ab63fc7e6de9d05e4041c72753a57d",
     "migrated_files": 16,
     "suite_groups": {
       "persisted-command": {
@@ -332,6 +333,388 @@
       "pass_claimed": false
     },
     "finding": "Stage 34 establishes one production-owned worker identity contract, removes duplicate helper implementations, binds synthetic fixtures to that contract, and hardens scheduler module identity without claiming full-suite or Promotion success."
+  },
+  "stage_47_validation_and_commit_review": {
+    "validation_base_head": "1af96d455015736e0752f9a3d3777c83a75158a2",
+    "comparison": "git tree 1af96d455015736e0752f9a3d3777c83a75158a2 versus the Stage 44 and Stage 46 working tree",
+    "adr_source_audit": {
+      "supplied_source": "D:/Project/video2pdf/newskill-kimi/work/test-runner-docs/docs/adr/0059-run-project-tests-from-an-external-root-with-bounded-process-parallelism.md",
+      "supplied_source_commit": "d1c111240811fa62e7c04461a8f270e31379abc9",
+      "supplied_source_sha256": "11c41432c7b24fba1efbab69bc03b57ad02a0092c1fd82971fb9c07955983354",
+      "supplied_status": "proposed",
+      "checkout_record": "docs/adr/0059-run-project-tests-from-an-external-root-with-bounded-process-parallelism.md",
+      "source_requirements_preserved_except_closed_set_authority": [
+        "versioned suite registry and dynamic unittest discovery",
+        "explicit external test root",
+        "process-isolated scheduling with maximum concurrency four",
+        "immutable run identities and external generated-data boundary",
+        "one-time Promotion requiring two passing parallel runs"
+      ],
+      "contract_divergence": {
+        "supplied_source_requirement": "Both parallel runs cover the same 474 Video Workflow test IDs.",
+        "checkout_requirement": "Both parallel runs bind the same dynamically discovered immutable inventory; the current observation is 475 IDs.",
+        "resolution": "UNRESOLVED",
+        "authority_note": "The final Issue #9 inventory explains the 475-ID observation, but no authority artifact in this review resolves the supplied ADR's literal 474-ID requirement."
+      },
+      "checkout_clarifications": [
+        "474 is historical performance evidence while the current semantic closed set is discovered dynamically",
+        "the observed pre-Promotion closed set is 475 IDs with its exact fingerprint",
+        "the Windows absolute path budget is derived and enforced before worker creation",
+        "status remains proposed and runtime cutover requires a passing Promotion Report"
+      ],
+      "finding": "The checkout ADR preserves the proposed preflight and Promotion boundary, while changing the supplied source's literal 474-ID requirement to a dynamic closed set. That contract divergence remains unresolved and does not authorize cutover."
+    },
+    "focused_sandbox_preflight": {
+      "result": "ENVIRONMENT_FAILED",
+      "scope": [
+        "tests.project_test_runner.test_scheduler",
+        "tests.project_test_runner.test_test_run_boundary",
+        "tests.video_workflow.test_issue6_exit_evidence",
+        "tests.project_test_runner.test_repository_contract"
+      ],
+      "observed_counts": {
+        "scheduler": {
+          "tests": 14,
+          "passed_before_environment_errors": 4,
+          "errors": 10
+        },
+        "test_run_boundary": {
+          "tests": 14,
+          "passed_before_environment_errors": 2,
+          "errors": 12
+        },
+        "issue6_exit_evidence": {
+          "tests": 10,
+          "passed_before_environment_errors": 8,
+          "errors": 2
+        },
+        "repository_contract": {
+          "tests": 32,
+          "passed": 32,
+          "errors": 0
+        }
+      },
+      "root_cause": "The sandbox identity inherited an explicit deny ACL on the direct-execution compatibility root at repository 待删除/kernel-test-runs. Every dynamic error was PermissionError WinError 5 during fixture-directory creation before the affected test body ran.",
+      "code_failure_claimed": false
+    },
+    "promotion_attempt_1": {
+      "persisted_run_dir": "待删除/long-running/issue27_video_workflow_promotion_1_20260727_012721_aa179291",
+      "external_runner_run_dir": "D:\\tests\\video2pdf\\video-workflow\\20260726_172733_6a1a54f1",
+      "state": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 1520.828,
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "requested_jobs": 4,
+      "observed_peak_concurrency": 4,
+      "closed_set_coverage": {
+        "discovered": 475,
+        "assigned": 475,
+        "started": 475,
+        "terminal": 475,
+        "executed_test_ids": 475,
+        "module_count": 38,
+        "duplicate_test_ids": 0,
+        "missing_test_ids": 0,
+        "multiply_executed_test_ids": 0,
+        "unassigned_test_ids": 0
+      },
+      "outcomes": {
+        "passed": 330,
+        "failed": 14,
+        "errors": 131
+      },
+      "root_cause_classification": {
+        "scheduler_import_path_lifecycle_errors": 82,
+        "windows_path_budget_errors": 48,
+        "issue6_project_relative_path_errors": 2,
+        "path_budget_cascade_failures": {
+          "source_ready_tracer": 11,
+          "resource_intent": 1
+        }
+      },
+      "authority": "This is terminal persisted failure evidence for the complete Promotion closed set. It supports diagnosis and the repair scope; it does not authorize Promotion."
+    },
+    "root_cause_repairs": [
+      {
+        "root_cause": "The scheduler removed sys.path[0] after discovery even when the imported test module inserted another path at index zero.",
+        "repair": "Remove only the exact scheduler-owned worker import path and preserve paths added by the imported test module.",
+        "regression_seam": "tests.project_test_runner.test_scheduler.SchedulerTests.test_worker_preserves_import_paths_added_by_test_module"
+      },
+      {
+        "root_cause": "Several Video Workflow tests embedded long semantic labels in workspace directory names, so valid short external roots could still exceed the reserved Windows absolute-path budget.",
+        "repair": "Create compact collision-safe c-<test-hash>-<nonce>/w workspaces while retaining the full semantic label in generated-paths.jsonl; trust only the fully qualified shared provider in the repository-write contract.",
+        "regression_seam": "tests.project_test_runner.test_test_run_boundary.VideoWorkflowTestRunBoundaryTests.test_workflow_workspace_preflight_is_canonical_collision_safe_and_budgeted"
+      },
+      {
+        "root_cause": "Two Issue 6 provenance tests bound generated command logs to the live repository PROJECT_ROOT, preventing their data from moving to a synthetic external project boundary.",
+        "repair": "Build each provenance case under the suite test root and patch the validator's PROJECT_ROOT to that synthetic project while preserving the original validation assertions.",
+        "regression_seam": "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests"
+      }
+    ],
+    "short_gate_validation": {
+      "execution_boundary": "The identical command was rerun outside the sandbox so the existing direct-execution compatibility root was writable.",
+      "tests": 70,
+      "result": "OK",
+      "modules": [
+        {
+          "module": "tests.project_test_runner.test_scheduler",
+          "tests": 14
+        },
+        {
+          "module": "tests.project_test_runner.test_test_run_boundary",
+          "tests": 14
+        },
+        {
+          "module": "tests.video_workflow.test_issue6_exit_evidence",
+          "tests": 10
+        },
+        {
+          "module": "tests.project_test_runner.test_repository_contract",
+          "tests": 32
+        }
+      ],
+      "repository_contract_scan": {
+        "registered_contract_sources": 68,
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2,
+        "used_exceptions": 2,
+        "unused_exceptions": 0
+      }
+    },
+    "video_workflow_discovery": {
+      "command": "scripts/run_project_tests.py discover --suite video-workflow --test-root D:\\tests",
+      "run_dir": "D:\\tests\\video2pdf\\video-workflow\\20260726_192836_39a47fde",
+      "test_count": 475,
+      "module_count": 38,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "result": "OK"
+    },
+    "full_video_workflow_semantic_inventory": {
+      "test_methods_at_head": 475,
+      "test_methods_working_tree": 475,
+      "test_method_count_changed": 0,
+      "self_assert_occurrences_at_head": 2153,
+      "self_assert_occurrences_working_tree": 2153,
+      "self_assert_occurrence_count_changed": 0,
+      "finding": "The Stage 44 and Stage 46 working tree preserves the full Video Workflow test-method and self.assert occurrence inventories."
+    },
+    "five_module_diagnostic": {
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "direct_execution_result_from_prior_stage": "OK",
+      "direct_execution_tests": 113,
+      "rerun_in_stage_47": false,
+      "authority": "Diagnostic only. Direct module execution does not exercise the external-root scheduler, does not create persisted terminal runner evidence, and cannot support Promotion.",
+      "semantic_inventory": {
+        "test_methods_at_head": 113,
+        "test_methods_working_tree": 113,
+        "test_method_names_changed": 0,
+        "unittest_assertion_calls_at_head": 566,
+        "unittest_assertion_calls_working_tree": 566,
+        "unittest_assertion_call_inventory_changed": 0
+      }
+    },
+    "independent_review_gate": {
+      "status": "BLOCKED",
+      "standards_findings": [
+        "sys.path.remove(worker_import_path) removes the first equal value rather than proving removal of the scheduler-owned insertion; an imported module can insert the same value and leave the scheduler entry behind.",
+        "new_test_root and new_workspace are thin test helpers whose names or ownership do not make their side effects and boundary behavior explicit."
+      ],
+      "spec_findings": [
+        "The scheduler repair lacks a same-value duplicate-path regression and does not yet satisfy the requirement to remove only its own sys.path entry.",
+        "Promotion remains pending because the required two successful complete persisted parallel runs do not exist.",
+        "The migration narrowed one assertRaises(Exception) expectation to InitializationFault and left one unused identity variable outside the requested generated-path repair scope."
+      ],
+      "commit_created": false,
+      "next_action": "Run a separate repair stage, repeat the focused gates and both review axes, then commit only when the review gate passes."
+    },
+    "final_static_checks": {
+      "git_diff_check": "PASS",
+      "json_parse": "PASS",
+      "secret_scan": "PASS",
+      "unexpected_generated_files": 0
+    },
+    "promotion": {
+      "status": "PENDING",
+      "reason": "No two successful bounded-parallel runs with immutable persisted-command terminal status and exit-code evidence have been completed for the Promotion closed set.",
+      "pass_claimed": false
+    },
+    "finding": "The Stage 44 and Stage 46 repairs pass the focused short gates and preserve the five-module test-method and assertion-call inventory. Independent review found a scheduler ownership defect and unrelated test-diff cleanup, so commit, the persisted acceptance rerun, and Promotion remain pending."
+  },
+  "stage_48_review_repairs": {
+    "review_findings_addressed": [
+      {
+        "finding": "The scheduler removed the first sys.path entry equal to the worker import path instead of the exact entry it inserted.",
+        "repair": "The worker now inserts an identity-bearing str subclass and the finally block locates and pops only that object with is.",
+        "tdd_regression": "A synthetic imported module inserts its own str-subclass path entry with the same string value. The regression failed before the ownership repair and passes after it while preserving the module-owned entry."
+      },
+      {
+        "finding": "source-ready new_test_root pre-created w and returned its parent through a thin wrapper.",
+        "repair": "The wrapper was removed. Callers use new_case_dir directly and create or pass the w workspace at the test's natural ownership site."
+      },
+      {
+        "finding": "control-store transaction scope added a thin new_workspace wrapper.",
+        "repair": "The wrapper was removed and new_workflow_workspace is called directly at each workspace ownership site."
+      },
+      {
+        "finding": "The migration narrowed assertRaises(Exception) and retained an unnecessary task-promotion identity local.",
+        "repair": "The original broad exception assertion is restored. The task-promotion request identity is generated directly where consumed."
+      }
+    ],
+    "short_gate": {
+      "scope": [
+        "tests.project_test_runner.test_scheduler",
+        "tests.project_test_runner.test_test_run_boundary",
+        "tests.video_workflow.test_issue6_exit_evidence",
+        "tests.project_test_runner.test_repository_contract"
+      ],
+      "tests": 70,
+      "elapsed_seconds": 57.403,
+      "result": "OK",
+      "repository_contract": {
+        "registered_contract_sources": 68,
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2,
+        "used_exceptions": 2,
+        "unused_exceptions": 0,
+        "final_tree_zero_violation_test": {
+          "tests": 1,
+          "elapsed_seconds": 10.696,
+          "result": "OK"
+        }
+      }
+    },
+    "targeted_validation": {
+      "passing_checks": [
+        "scheduler same-value sys.path identity regression",
+        "control-store transaction workspace boundary",
+        "resource-admission workspace boundary",
+        "resource-control-store workspace boundary",
+        "source-ready original exception contract and case-root boundary",
+        "task-promotion workspace boundary and direct request identity"
+      ],
+      "diagnostic_terminal_run": {
+        "run_dir": "待删除/long-running/issue27_stage48_targeted_final_20260727_035830_635e2fd4",
+        "state": "failed",
+        "exit_code": 1,
+        "elapsed_seconds": 57.266,
+        "acceptance_evidence_eligible": true,
+        "security_classification": "no_secret_detected",
+        "tests_passed": 5,
+        "tests_errored": 1,
+        "failure_kind": "invalid unittest selector named a nonexistent class; the corrected TaskFailClosedTests selector passed separately",
+        "code_failure_claimed": false
+      }
+    },
+    "five_module_diagnostic": {
+      "run_dir": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8",
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "tests": 113,
+      "state": "succeeded",
+      "exit_code": 0,
+      "elapsed_seconds": 3002.657,
+      "started_at": "2026-07-27T03:46:25.557+08:00",
+      "finished_at": "2026-07-27T04:36:31.782+08:00",
+      "status_json": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/status.json",
+      "exit_code_txt": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/exit-code.txt",
+      "command_json": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/command.json",
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "current_tree_bound": false,
+      "modified_after_run_start": [
+        "tests/video_workflow/test_control_store_transaction_scope.py",
+        "tests/video_workflow/test_resource_admission.py",
+        "tests/video_workflow/test_resource_control_store_integrity.py",
+        "tests/video_workflow/test_source_ready_hardening.py"
+      ],
+      "authority": "Historical persisted diagnostic only. Four tested files changed after launch, so this run cannot prove the Stage 49 working tree and cannot authorize Promotion."
+    },
+    "review_gate": {
+      "status": "READY_FOR_INDEPENDENT_REREVIEW",
+      "prior_findings_claimed_resolved": true,
+      "independent_pass_claimed": false,
+      "commit_created": false,
+      "next_action": "A separate Standards reviewer and Spec reviewer must inspect the repaired diff and terminal validation evidence before commit."
+    },
+    "promotion": {
+      "status": "PENDING",
+      "reason": "Stage 48 did not run the two required complete 475-test Promotion trials.",
+      "pass_claimed": false
+    },
+    "finding": "Stage 48 resolves every Stage 47 code and test-diff finding and records a 70-test diagnostic short gate with zero repository-contract violations. Its 113-test persisted run is terminal but stale for the final working tree. Promotion remains pending."
+  },
+  "stage_49_independent_review_and_fresh_validation": {
+    "fresh_five_module_persisted_run": {
+      "run_dir": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44",
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "tests": 113,
+      "state": "succeeded",
+      "exit_code": 0,
+      "elapsed_seconds": 2903.25,
+      "unittest_elapsed_seconds": 2900.045,
+      "started_at": "2026-07-27T04:46:53.305+08:00",
+      "finished_at": "2026-07-27T05:35:20.362+08:00",
+      "status_json": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/status.json",
+      "exit_code_txt": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/exit-code.txt",
+      "command_json": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/command.json",
+      "stderr_log": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/stderr.log",
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "current_tested_code_binding": {
+        "validation_base_head": "1af96d455015736e0752f9a3d3777c83a75158a2",
+        "basis": "Each tested module's final write time predates started_at; the evidence document was refreshed only after finished_at.",
+        "tested_module_sha256": {
+          "tests/video_workflow/test_control_store_transaction_scope.py": "8d869e5e011bfcbcf73332b7ad1152b375c4e26cbeceb5256ed8ff5b1122fdf3",
+          "tests/video_workflow/test_resource_admission.py": "ca171c08243131db62320c6557318e1ea3112768cfe5f4d9f47a168e089ec2c2",
+          "tests/video_workflow/test_resource_control_store_integrity.py": "aa0b2a05c083a146a3bc289c4298936db5d35e81de0b2fe6364e004444ab4bde",
+          "tests/video_workflow/test_source_ready_hardening.py": "07de3c5d6d2d6febe6fcd57e6dc6f95c796e49f2e73060a1bc3f1d9884f3430c",
+          "tests/video_workflow/test_task_promotion_hardening.py": "6f0a42f34125ed958bb5222d8969abd92b47df45bd565e3303d374751c2e6cfb"
+        }
+      },
+      "authority": "Fresh persisted diagnostic evidence for the repaired five-module working tree. It supports the independent commit review and cannot authorize Promotion."
+    },
+    "independent_review_gate": {
+      "status": "PASS",
+      "standards_axis": {
+        "status": "PASS",
+        "findings_p0_p2": 0,
+        "finding": "The scheduler removes only its identity-owned sys.path entry; thin test wrappers and unrelated diff changes identified in Stage 47 are resolved."
+      },
+      "spec_and_evidence_axis": {
+        "status": "PASS",
+        "initial_blockers_repaired": [
+          "The stale Stage 48 113-test run is classified as historical and not current-tree-bound.",
+          "A fresh eligible 113-test persisted run proves the final tested code.",
+          "Migration comparisons are fixed to immutable commit intervals.",
+          "The supplied ADR source is hash-bound and the 474-versus-dynamic-closed-set divergence is explicit and unresolved."
+        ],
+        "promotion_authorized": false
+      },
+      "commit_authorized": true,
+      "promotion_status": "PENDING"
+    },
+    "finding": "Independent code and evidence review pass the Stage 47 repair scope after fresh 113-test persisted validation. The unresolved ADR closed-set divergence and the missing two complete passing Promotion trials remain explicit non-cutover limitations."
   },
   "discovery_review": {
     "video_workflow_test_count": 475,

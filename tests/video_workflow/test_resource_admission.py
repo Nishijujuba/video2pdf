@@ -12,7 +12,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import module_test_root
+from tests.video_workflow._test_run import new_workflow_workspace
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -33,7 +33,6 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = module_test_root(PROJECT_ROOT)
 TASK_START = "2026-07-17T10:00:00+08:00"
 CLI = PROJECT_ROOT / "scripts/video_workflow.py"
 
@@ -174,8 +173,10 @@ class OneShotProcessInspector:
 
 class ResourceAdmissionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.workspace = TEST_RUNS / f"slice3-{uuid.uuid4().hex}" / "workspace"
-        self.workspace.mkdir(parents=True)
+        self.workspace = new_workflow_workspace(
+            self.id(),
+            label="resource-admission",
+        )
         self.kernel = VideoWorkflowKernel(self.workspace)
 
     def prepare_and_claim(
@@ -831,10 +832,10 @@ class ResourceAdmissionTests(unittest.TestCase):
             resource_class,
         ) in enumerate(cases):
             with self.subTest(label=label):
-                self.workspace = (
-                    TEST_RUNS / f"lu-{index}-{uuid.uuid4().hex[:8]}" / "workspace"
+                self.workspace = new_workflow_workspace(
+                    self.id(),
+                    label=f"launch-unavailable-{index}-{label}",
                 )
-                self.workspace.mkdir(parents=True)
                 self.kernel = VideoWorkflowKernel(self.workspace)
                 _, claimed = self.prepare_and_claim(
                     f"lu-{index}", (resource_class,)
@@ -1180,12 +1181,10 @@ class ResourceAdmissionTests(unittest.TestCase):
         )
         for index, fault_point in enumerate(fault_points):
             with self.subTest(fault_point=fault_point):
-                self.workspace = (
-                    TEST_RUNS
-                    / f"cf-{index}-{uuid.uuid4().hex[:8]}"
-                    / "workspace"
+                self.workspace = new_workflow_workspace(
+                    self.id(),
+                    label=f"claim-fault-{index}-{fault_point}",
                 )
-                self.workspace.mkdir(parents=True)
                 self.kernel = VideoWorkflowKernel(self.workspace)
                 prepared = self.prepare_only(f"cf-{index}", ("whisper",))
                 baseline_scheduler = self.kernel.resource_scheduler_status()
@@ -1230,12 +1229,10 @@ class ResourceAdmissionTests(unittest.TestCase):
         )
         for index, fault_point in enumerate(fault_points):
             with self.subTest(fault_point=fault_point):
-                self.workspace = (
-                    TEST_RUNS
-                    / f"rf-{index}-{uuid.uuid4().hex[:8]}"
-                    / "workspace"
+                self.workspace = new_workflow_workspace(
+                    self.id(),
+                    label=f"reclaim-fault-{index}-{fault_point}",
                 )
-                self.workspace.mkdir(parents=True)
                 self.kernel = VideoWorkflowKernel(self.workspace)
                 _, holder = self.prepare_and_claim(
                     f"rf-{index}-h", ("whisper",)
@@ -1814,10 +1811,10 @@ class ResourceAdmissionTests(unittest.TestCase):
     ) -> None:
         for mode in ("breaker", "zero-capacity"):
             with self.subTest(mode=mode):
-                self.workspace = (
-                    TEST_RUNS / f"ru-{mode[0]}-{uuid.uuid4().hex[:8]}" / "workspace"
+                self.workspace = new_workflow_workspace(
+                    self.id(),
+                    label=f"reservation-unschedulable-{mode}",
                 )
-                self.workspace.mkdir(parents=True)
                 self.kernel = VideoWorkflowKernel(self.workspace)
                 self.kernel.trace_source_ready(
                     fixture=FIXTURE,

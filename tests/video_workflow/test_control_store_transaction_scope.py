@@ -11,7 +11,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import module_test_root
+from tests.video_workflow._test_run import new_workflow_workspace
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -33,7 +33,6 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = module_test_root(PROJECT_ROOT)
 TASK_START = "2026-07-15T01:02:03+08:00"
 RESOURCE_V8_TABLES = (
     "resource_lease_resources",
@@ -52,15 +51,12 @@ def trusted_transaction_provider_verifier(**identity: object) -> str:
 
 
 class ControlStoreTransactionScopeTests(unittest.TestCase):
-    def new_workspace(self, label: str) -> Path:
-        root = TEST_RUNS / f"transaction-scope-{label}-{uuid.uuid4().hex[:8]}"
-        workspace = root / "workspace"
-        workspace.mkdir(parents=True, exist_ok=False)
-        return workspace
-
     def new_store(self, label: str) -> ControlStore:
         return ControlStore.initialize(
-            self.new_workspace(label),
+            new_workflow_workspace(
+                self.id(),
+                label=f"transaction-scope-{label}",
+            ),
             ContractRegistry(PROJECT_ROOT),
         )
 
@@ -216,7 +212,10 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
         self.assertNotIn("SCAN TASK_CLAIMS", detail)
 
     def test_claim_overlap_scan_runs_in_read_snapshot_before_writer_lock(self) -> None:
-        workspace = self.new_workspace("claim-overlap-phase")
+        workspace = new_workflow_workspace(
+            self.id(),
+            label="transaction-scope-claim-overlap-phase",
+        )
         kernel = VideoWorkflowKernel(
             workspace,
             resource_provider_verifiers={
@@ -287,7 +286,10 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
         self.assertEqual(writer_phase_violations, 0)
 
     def test_promotion_and_run_state_authority_work_precedes_writer_lock(self) -> None:
-        workspace = self.new_workspace("promotion-writer-phase")
+        workspace = new_workflow_workspace(
+            self.id(),
+            label="transaction-scope-promotion-writer-phase",
+        )
         kernel = VideoWorkflowKernel(
             workspace,
             resource_provider_verifiers={
@@ -552,7 +554,10 @@ class ControlStoreTransactionScopeTests(unittest.TestCase):
             )
 
     def test_v6_migration_artifact_reads_and_hashes_precede_writer_phase(self) -> None:
-        workspace = self.new_workspace("migration-artifact-phase")
+        workspace = new_workflow_workspace(
+            self.id(),
+            label="transaction-scope-migration-artifact-phase",
+        )
         kernel = VideoWorkflowKernel(workspace)
         run_dir = kernel.trace_source_ready(
             fixture=FIXTURE,

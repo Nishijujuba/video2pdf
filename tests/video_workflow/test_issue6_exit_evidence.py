@@ -403,44 +403,53 @@ class Slice3ExitEvidenceTests(unittest.TestCase):
 
     def test_slice3_validator_rejects_missing_or_wrong_log_commit_marker(self) -> None:
         validator = self.validator()
-        root = TEST_RUNS / f"slice3-log-provenance-{uuid.uuid4().hex}"
-        root.mkdir(parents=True, exist_ok=False)
-        log_path = root / "command.log"
-        relative = log_path.relative_to(PROJECT_ROOT).as_posix()
+        synthetic_project_root = (
+            TEST_RUNS / f"slice3-log-provenance-{uuid.uuid4().hex}"
+        )
+        synthetic_project_root.mkdir(parents=True, exist_ok=False)
+        log_path = synthetic_project_root / "command.log"
+        relative = log_path.relative_to(synthetic_project_root).as_posix()
         implementation_commit = "a" * 40
         manifest = {
             "implementation_commit": implementation_commit,
             "commands": [{"test_id": "command", "log": {"path": relative}}],
         }
 
-        log_path.write_text(
-            f"OK\nEVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n",
-            encoding="utf-8",
-        )
-        validator.validate_command_log_provenance(manifest)
-
-        for content in (
-            "OK\n",
-            f"OK\nEVIDENCE_IMPLEMENTATION_COMMIT: {'b' * 40}\n",
-            (
-                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
-                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
-            ),
+        with mock.patch.object(
+            validator,
+            "PROJECT_ROOT",
+            synthetic_project_root,
         ):
-            with self.subTest(content=content):
-                log_path.write_text(content, encoding="utf-8")
-                with self.assertRaisesRegex(
-                    validator.EvidenceError, "implementation commit marker"
-                ):
-                    validator.validate_command_log_provenance(manifest)
+            log_path.write_text(
+                f"OK\nEVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n",
+                encoding="utf-8",
+            )
+            validator.validate_command_log_provenance(manifest)
+
+            for content in (
+                "OK\n",
+                f"OK\nEVIDENCE_IMPLEMENTATION_COMMIT: {'b' * 40}\n",
+                (
+                    f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+                    f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+                ),
+            ):
+                with self.subTest(content=content):
+                    log_path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        validator.EvidenceError, "implementation commit marker"
+                    ):
+                        validator.validate_command_log_provenance(manifest)
 
     def test_slice3_validator_binds_six_fault_points_to_admission_log(self) -> None:
         validator = self.validator()
         contract = self.contract()
-        root = TEST_RUNS / f"slice3-fault-provenance-{uuid.uuid4().hex}"
-        root.mkdir(parents=True, exist_ok=False)
-        log_path = root / "resource-admission.log"
-        relative = log_path.relative_to(PROJECT_ROOT).as_posix()
+        synthetic_project_root = (
+            TEST_RUNS / f"slice3-fault-provenance-{uuid.uuid4().hex}"
+        )
+        synthetic_project_root.mkdir(parents=True, exist_ok=False)
+        log_path = synthetic_project_root / "resource-admission.log"
+        relative = log_path.relative_to(synthetic_project_root).as_posix()
         implementation_commit = "a" * 40
         manifest = {
             "implementation_commit": implementation_commit,
@@ -458,21 +467,26 @@ class Slice3ExitEvidenceTests(unittest.TestCase):
             for fault_point in contract.FAULT_POINTS
         ]
 
-        log_path.write_text(marker + "".join(fault_lines), encoding="utf-8")
-        validator.validate_command_log_provenance(manifest)
-
-        for content in (
-            marker + "".join(fault_lines[:-1]),
-            marker + "".join([*fault_lines, fault_lines[0]]),
-            marker + "".join([*fault_lines, "EVIDENCE_FAULT_POINT: stale\n"]),
-            marker + "".join(reversed(fault_lines)),
+        with mock.patch.object(
+            validator,
+            "PROJECT_ROOT",
+            synthetic_project_root,
         ):
-            with self.subTest(content=content):
-                log_path.write_text(content, encoding="utf-8")
-                with self.assertRaisesRegex(
-                    validator.EvidenceError, "fault point provenance"
-                ):
-                    validator.validate_command_log_provenance(manifest)
+            log_path.write_text(marker + "".join(fault_lines), encoding="utf-8")
+            validator.validate_command_log_provenance(manifest)
+
+            for content in (
+                marker + "".join(fault_lines[:-1]),
+                marker + "".join([*fault_lines, fault_lines[0]]),
+                marker + "".join([*fault_lines, "EVIDENCE_FAULT_POINT: stale\n"]),
+                marker + "".join(reversed(fault_lines)),
+            ):
+                with self.subTest(content=content):
+                    log_path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        validator.EvidenceError, "fault point provenance"
+                    ):
+                        validator.validate_command_log_provenance(manifest)
 
     def test_slice3_closed_test_targets_and_fixtures_resolve(self) -> None:
         contract = self.contract()

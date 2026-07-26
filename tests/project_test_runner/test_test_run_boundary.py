@@ -3,13 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import unittest
 from unittest import mock
 
 from scripts.project_test_run_identity import (
     create_synthetic_project_test_run,
     freeze_worker_environment,
+)
+from scripts.project_test_external_root import (
+    WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS,
+    utf16_path_units,
 )
 from scripts.project_test_results import canonical_json_bytes
 from tests.project_test_runner._fixture_root import new_fixture_dir
@@ -133,6 +137,91 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
             )
         finally:
             pass
+
+    def test_workflow_workspace_preflight_is_canonical_collision_safe_and_budgeted(
+        self,
+    ) -> None:
+        run_dir = self.fixture_run_dir()
+        test_id = self.id()
+        label = "semantic scenario " + ("with a deliberately long title " * 8)
+        with self.frozen_worker(self.environment(run_dir)):
+            first = _test_run.new_workflow_workspace(test_id, label=label)
+            second = _test_run.new_workflow_workspace(test_id, label=label)
+
+        expected_hash = hashlib.sha256(test_id.encode("utf-8")).hexdigest()[:10]
+        self.assertEqual(first.name, "w")
+        self.assertEqual(second.name, "w")
+        self.assertRegex(
+            first.parent.name,
+            rf"^c-{expected_hash}-[0-9a-f]{{8}}$",
+        )
+        self.assertNotEqual(first.parent, second.parent)
+        records = [
+            json.loads(line)
+            for line in (first.parent.parent / "generated-paths.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        case_records = [
+            record
+            for record in records
+            if record["kind"] == "case_dir"
+            and record["path"] in {str(first.parent), str(second.parent)}
+        ]
+        self.assertEqual(len(case_records), 2)
+        self.assertTrue(
+            all(
+                record["test_id"] == test_id and record["label"] == label
+                for record in case_records
+            )
+        )
+
+        short_external_root = Path(r"D:\external-test-root")
+        reserved_workspace = (
+            short_external_root
+            / "video2pdf"
+            / "all"
+            / "20260724_010203_01234567"
+            / "generated"
+            / "0123456789ab"
+            / f"c-{expected_hash}-01234567"
+            / "w"
+        )
+        scaffold = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas"
+                / "video-workflow"
+                / "v1"
+                / "scaffold.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        reserved_without_output = max(
+            utf16_path_units(
+                reserved_workspace.joinpath(
+                    *PurePosixPath(relative).parts
+                )
+            )
+            for relative in scaffold["reserved_descendant_paths"]
+        )
+        component_budget = (
+            WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS
+            - reserved_without_output
+            - 1
+        )
+        self.assertGreater(component_budget, 0)
+        long_title_output = reserved_workspace / ("L" * component_budget)
+        self.assertLessEqual(
+            max(
+                utf16_path_units(
+                    long_title_output.joinpath(
+                        *PurePosixPath(relative).parts
+                    )
+                )
+                for relative in scaffold["reserved_descendant_paths"]
+            ),
+            WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS,
+        )
 
     def test_all_suite_run_accepts_a_selected_video_workflow_worker(self) -> None:
         run_dir = self.fixture_run_dir(

@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -29,6 +30,7 @@ from scripts.project_test_results import (
 )
 from scripts.project_test_external_root import (
     ExternalRootError,
+    assert_safe_write_path,
     validate_owned_run_directory,
 )
 
@@ -37,6 +39,7 @@ MODULE_RESULT_SCHEMA_NAME = "video2pdf.project-test-module-result"
 SUMMARY_SCHEMA_NAME = "video2pdf.project-test-summary"
 TIMINGS_SCHEMA_NAME = "video2pdf.project-test-timings"
 SCHEMA_VERSION = 1
+MODULE_KEY_PATTERN = re.compile(r"[0-9a-f]{12}\Z")
 
 
 class SchedulerError(RuntimeError):
@@ -51,6 +54,18 @@ def validate_jobs(jobs: object) -> int:
     if type(jobs) is not int or not 1 <= jobs <= 4:
         raise SchedulerError("--jobs must be an integer in the range 1..4")
     return jobs
+
+
+def _safe_artifact_path(run_dir: Path, candidate: Path) -> Path:
+    """Apply the owned-run containment and reparse policy at an I/O boundary."""
+
+    try:
+        return assert_safe_write_path(run_dir, candidate)
+    except ExternalRootError as error:
+        raise SchedulerError(
+            f"scheduler artifact path is unsafe: {error}",
+            failure_kind="coordinator_failure",
+        ) from error
 
 
 def _flatten_suite(suite: unittest.TestSuite) -> Iterator[unittest.TestCase]:
@@ -195,7 +210,19 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
 
     started = time.monotonic()
     assignment: dict[str, Any] = {}
+    run_dir_text = os.environ.get("VIDEO2PDF_PROJECT_TEST_RUN_DIR")
+    if not run_dir_text:
+        print("worker run directory identity is missing", file=sys.stderr)
+        return 1
     try:
+        run_dir = validate_owned_run_directory(Path(run_dir_text))
+        assignment_path = _safe_artifact_path(run_dir, assignment_path)
+        result_path = _safe_artifact_path(run_dir, result_path)
+    except (ExternalRootError, SchedulerError) as error:
+        print(f"worker artifact path is invalid: {error}", file=sys.stderr)
+        return 1
+    try:
+        assignment_path = _safe_artifact_path(run_dir, assignment_path)
         assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
         repo_root = Path(assignment["repo_root"])
         suite = _load_assigned_suite(
@@ -241,8 +268,9 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
     if detail is not None:
         result["detail"] = detail
     try:
+        result_path = _safe_artifact_path(run_dir, result_path)
         write_json_exclusive(result_path, result)
-    except ResultIntegrityError:
+    except (ResultIntegrityError, SchedulerError):
         traceback.print_exc(file=sys.stderr)
         return 1
     return exit_code
@@ -271,8 +299,13 @@ def _validate_discovery(discovery: Mapping[str, Any]) -> list[dict[str, Any]]:
             ) from error
         if (
             not isinstance(key, str)
-            or not key
-            or not isinstance(suite_id, str)
+            or MODULE_KEY_PATTERN.fullmatch(key) is None
+        ):
+            raise SchedulerError(
+                "discovery module_key must be exactly 12 lowercase hex characters"
+            )
+        if (
+            not isinstance(suite_id, str)
             or not suite_id
             or not isinstance(source, str)
             or not source
@@ -282,6 +315,13 @@ def _validate_discovery(discovery: Mapping[str, Any]) -> list[dict[str, Any]]:
             or test_count != len(test_ids)
         ):
             raise SchedulerError("discovery module fields are invalid")
+        expected_key = hashlib.sha256(
+            f"{suite_id}\0{source}".encode("utf-8")
+        ).hexdigest()[:12]
+        if key != expected_key:
+            raise SchedulerError(
+                "discovery module_key does not match suite/source identity"
+            )
         keys.append(key)
         sources.append(source)
         all_ids.extend(test_ids)
@@ -446,12 +486,13 @@ class _ActiveModule:
 _DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS = 1.0
 
 
-def _fingerprint_if_present(path: Path) -> str | None:
+def _fingerprint_if_present(run_dir: Path, path: Path) -> str | None:
     if not path.is_file():
         return None
     try:
+        path = _safe_artifact_path(run_dir, path)
         return sha256_file(path)
-    except ResultIntegrityError:
+    except (ResultIntegrityError, SchedulerError):
         return None
 
 
@@ -532,12 +573,22 @@ def _launch_module(
     stderr_lock: threading.Lock,
     child_environment: Mapping[str, str] | None,
 ) -> _ActiveModule:
-    module_dir = run_dir / "modules"
-    logs_dir = run_dir / "logs"
-    generated_dir = run_dir / "generated" / module["module_key"]
+    module_dir = _safe_artifact_path(run_dir, run_dir / "modules")
+    logs_dir = _safe_artifact_path(run_dir, run_dir / "logs")
+    generated_dir = _safe_artifact_path(
+        run_dir,
+        run_dir / "generated" / module["module_key"],
+    )
+    generated_dir = _safe_artifact_path(run_dir, generated_dir)
     generated_dir.mkdir(parents=True, exist_ok=False)
-    assignment_path = module_dir / f"{module['module_key']}.assignment.json"
-    result_path = module_dir / f"{module['module_key']}.result.json"
+    assignment_path = _safe_artifact_path(
+        run_dir,
+        module_dir / f"{module['module_key']}.assignment.json",
+    )
+    result_path = _safe_artifact_path(
+        run_dir,
+        module_dir / f"{module['module_key']}.result.json",
+    )
     assignment = {
         "schema_name": "video2pdf.project-test-module-assignment",
         "schema_version": SCHEMA_VERSION,
@@ -547,13 +598,22 @@ def _launch_module(
         "source_path": module["source_path"],
         "test_ids": module["test_ids"],
     }
+    assignment_path = _safe_artifact_path(run_dir, assignment_path)
     assignment_sha256 = write_json_exclusive(assignment_path, assignment)
-    stdout_path = logs_dir / f"{module['module_key']}.stdout.log"
-    stderr_path = logs_dir / f"{module['module_key']}.stderr.log"
+    stdout_path = _safe_artifact_path(
+        run_dir,
+        logs_dir / f"{module['module_key']}.stdout.log",
+    )
+    stderr_path = _safe_artifact_path(
+        run_dir,
+        logs_dir / f"{module['module_key']}.stderr.log",
+    )
     process: subprocess.Popen[bytes] | None = None
     drain_threads: list[threading.Thread] = []
     with ExitStack() as log_handles:
+        stdout_path = _safe_artifact_path(run_dir, stdout_path)
         stdout_handle = log_handles.enter_context(stdout_path.open("xb"))
+        stderr_path = _safe_artifact_path(run_dir, stderr_path)
         stderr_handle = log_handles.enter_context(stderr_path.open("xb"))
         environment = os.environ.copy()
         if child_environment is not None:
@@ -729,7 +789,12 @@ def run_modules(
         else None
     )
     for directory in ("modules", "logs", "generated"):
-        (run_dir / directory).mkdir(exist_ok=False)
+        artifact_directory = _safe_artifact_path(
+            run_dir,
+            run_dir / directory,
+        )
+        artifact_directory = _safe_artifact_path(run_dir, artifact_directory)
+        artifact_directory.mkdir(exist_ok=False)
     pending = _ordered_modules(modules, durations)
     events: list[dict[str, Any]] = []
     sequence = 0
@@ -783,11 +848,18 @@ def run_modules(
                         "executions": [],
                         "exit_code": None,
                         "assignment_sha256": _fingerprint_if_present(
+                            run_dir,
                             assignment_path
                         ),
                         "result_sha256": None,
-                        "stdout_sha256": _fingerprint_if_present(stdout_path),
-                        "stderr_sha256": _fingerprint_if_present(stderr_path),
+                        "stdout_sha256": _fingerprint_if_present(
+                            run_dir,
+                            stdout_path,
+                        ),
+                        "stderr_sha256": _fingerprint_if_present(
+                            run_dir,
+                            stderr_path,
+                        ),
                         "duration_seconds": 0.0,
                     }
                     _append_event(
@@ -831,7 +903,15 @@ def run_modules(
                 result_sha256: str | None = None
                 duration_seconds = 0.0
                 try:
+                    launched.result_path = _safe_artifact_path(
+                        run_dir,
+                        launched.result_path,
+                    )
                     result_sha256 = sha256_file(launched.result_path)
+                    launched.result_path = _safe_artifact_path(
+                        run_dir,
+                        launched.result_path,
+                    )
                     value = read_module_result(
                         launched.result_path,
                         result_sha256,
@@ -863,8 +943,12 @@ def run_modules(
                     "exit_code": exit_code,
                     "assignment_sha256": launched.assignment_sha256,
                     "result_sha256": result_sha256,
-                    "stdout_sha256": sha256_file(launched.stdout_path),
-                    "stderr_sha256": sha256_file(launched.stderr_path),
+                    "stdout_sha256": sha256_file(
+                        _safe_artifact_path(run_dir, launched.stdout_path)
+                    ),
+                    "stderr_sha256": sha256_file(
+                        _safe_artifact_path(run_dir, launched.stderr_path)
+                    ),
                     "duration_seconds": duration_seconds,
                 }
                 _append_event(
@@ -904,12 +988,15 @@ def run_modules(
                     "exit_code": launched.process.returncode,
                     "assignment_sha256": launched.assignment_sha256,
                     "result_sha256": _fingerprint_if_present(
+                        run_dir,
                         launched.result_path
                     ),
                     "stdout_sha256": _fingerprint_if_present(
+                        run_dir,
                         launched.stdout_path
                     ),
                     "stderr_sha256": _fingerprint_if_present(
+                        run_dir,
                         launched.stderr_path
                     ),
                     "duration_seconds": 0.0,
@@ -1077,9 +1164,12 @@ def run_modules(
     }
     # events.jsonl intentionally remains line-oriented JSON, one event per line.
     event_bytes = b"".join(canonical_json_bytes(event) for event in events)
-    write_bytes_exclusive(run_dir / "events.jsonl", event_bytes)
-    write_json_exclusive(run_dir / "timings.json", timing_manifest)
-    write_json_exclusive(run_dir / "summary.json", summary)
+    events_path = _safe_artifact_path(run_dir, run_dir / "events.jsonl")
+    write_bytes_exclusive(events_path, event_bytes)
+    timings_path = _safe_artifact_path(run_dir, run_dir / "timings.json")
+    write_json_exclusive(timings_path, timing_manifest)
+    summary_path = _safe_artifact_path(run_dir, run_dir / "summary.json")
+    write_json_exclusive(summary_path, summary)
     if scheduler_exception is not None:
         raise scheduler_exception.with_traceback(scheduler_traceback)
     return summary

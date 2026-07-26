@@ -4,11 +4,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import unittest
 from unittest import mock
 
-from scripts.project_test_external_root import ensure_project_root
+from scripts.project_test_run_identity import (
+    create_synthetic_project_test_run,
+    freeze_worker_environment,
+)
 from scripts.project_test_results import canonical_json_bytes
 from tests.project_test_runner._fixture_root import new_fixture_dir
 
@@ -30,76 +32,43 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         write_manifests: bool = True,
     ) -> Path:
         external_root = new_fixture_dir("video-boundary")
-        project_root = ensure_project_root(
-            external_root,
-            "https://github.com/Nishijujuba/video2pdf.git",
+        requested = selected_suite_ids or ["video-workflow"]
+        baseline_selected = (
+            requested if "video-workflow" in requested else ["video-workflow"]
         )
-        suite_root = project_root / run_suite_key
-        suite_root.mkdir()
-        run_dir = suite_root / "20260724_120000_01234567"
-        run_dir.mkdir()
-        run_dir = run_dir.resolve()
-        if write_manifests:
-            self.write_manifests(
-                run_dir,
-                selected_suite_ids=selected_suite_ids
-                or ["video-workflow"],
-                module_suite_id=module_suite_id,
+        run_dir = create_synthetic_project_test_run(
+            external_root=external_root,
+            project_root=PROJECT_ROOT,
+            suite_id="video-workflow",
+            module_key=self.MODULE_KEY,
+            test_ids=self.TEST_IDS,
+            selected_suite_ids=baseline_selected,
+            run_suite_key=(
+                run_suite_key
+                if baseline_selected == requested
+                else "video-workflow"
+            ),
+        )
+        if requested != baseline_selected or module_suite_id != "video-workflow":
+            discovery_path = run_dir / "discovery.json"
+            discovery = json.loads(discovery_path.read_text(encoding="utf-8"))
+            discovery["suite_ids"] = requested
+            discovery["discovery_arguments"] = {"suite_ids": requested}
+            discovery["modules"][0]["suite_id"] = module_suite_id
+            discovery_bytes = canonical_json_bytes(discovery)
+            discovery_path.write_bytes(discovery_bytes)
+            test_run_path = run_dir / "test-run.json"
+            test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+            test_run["suite_ids"] = requested
+            test_run["discovery_sha256"] = hashlib.sha256(
+                discovery_bytes
+            ).hexdigest()
+            test_run_path.write_bytes(canonical_json_bytes(test_run))
+        if not write_manifests:
+            (run_dir / "discovery.json").rename(
+                run_dir / "discovery.json.tampered"
             )
         return run_dir
-
-    def write_manifests(
-        self,
-        run_dir: Path,
-        *,
-        selected_suite_ids: list[str],
-        module_suite_id: str = "video-workflow",
-        module_key: str | None = None,
-        test_ids: list[str] | None = None,
-        manifest_run_dir: Path | None = None,
-    ) -> None:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout.strip()
-        registry_path = PROJECT_ROOT / "config" / "test-suites.v1.json"
-        registry_sha256 = hashlib.sha256(registry_path.read_bytes()).hexdigest()
-        discovery = {
-            "schema_name": "video2pdf.project-test-discovery",
-            "schema_version": 1,
-            "project": {
-                "project_key": "video2pdf",
-                "repository": "Nishijujuba/video2pdf",
-            },
-            "commit": commit,
-            "registry_sha256": registry_sha256,
-            "discovery_arguments": {"suite_ids": selected_suite_ids},
-            "suite_ids": selected_suite_ids,
-            "modules": [
-                {
-                    "suite_id": module_suite_id,
-                    "module_key": module_key or self.MODULE_KEY,
-                    "test_ids": self.TEST_IDS if test_ids is None else test_ids,
-                }
-            ],
-        }
-        discovery_bytes = canonical_json_bytes(discovery)
-        (run_dir / "discovery.json").write_bytes(discovery_bytes)
-        test_run = {
-            "schema_name": "video2pdf.project-test-run",
-            "schema_version": 1,
-            "project": discovery["project"],
-            "commit": commit,
-            "registry_sha256": registry_sha256,
-            "discovery_sha256": hashlib.sha256(discovery_bytes).hexdigest(),
-            "suite_ids": selected_suite_ids,
-            "run_dir": str(manifest_run_dir or run_dir),
-        }
-        (run_dir / "test-run.json").write_bytes(canonical_json_bytes(test_run))
 
     def environment(self, run_dir: Path) -> dict[str, str]:
         return {
@@ -108,8 +77,23 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
             _test_run.MODULE_KEY_ENV: self.MODULE_KEY,
         }
 
+    def frozen_worker(self, environment: dict[str, str]):
+        return mock.patch.object(
+            _test_run,
+            "FROZEN_RUN_ENV",
+            freeze_worker_environment(environment),
+        )
+
     def test_direct_execution_uses_the_project_local_compatibility_root(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True):
+        residual_environment = {
+            _test_run.RUN_DIR_ENV: "later-process-mutation",
+            _test_run.SUITE_ID_ENV: "video-workflow",
+            _test_run.MODULE_KEY_ENV: self.MODULE_KEY,
+        }
+        with (
+            mock.patch.dict(os.environ, residual_environment, clear=True),
+            self.frozen_worker({}),
+        ):
             self.assertEqual(
                 _test_run.module_test_root(PROJECT_ROOT),
                 PROJECT_ROOT / "待删除" / "kernel-test-runs",
@@ -119,7 +103,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         run_dir = self.fixture_run_dir()
         try:
             environment = self.environment(run_dir)
-            with mock.patch.dict(os.environ, environment, clear=True):
+            with self.frozen_worker(environment):
                 module_root = _test_run.module_test_root(PROJECT_ROOT)
                 case_root = _test_run.new_case_dir(
                     self.id(), label="long scenario name ignored"
@@ -156,7 +140,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
             selected_suite_ids=["project-test-runner", "video-workflow"],
         )
 
-        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+        with self.frozen_worker(self.environment(run_dir)):
             self.assertEqual(
                 _test_run.module_test_root(PROJECT_ROOT),
                 run_dir / "generated" / self.MODULE_KEY,
@@ -168,7 +152,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
             module_suite_id="video-workflow",
         )
 
-        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+        with self.frozen_worker(self.environment(run_dir)):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "selected suite|suite identity",
@@ -178,7 +162,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
     def test_owned_named_run_without_runner_manifests_fails_closed(self) -> None:
         run_dir = self.fixture_run_dir(write_manifests=False)
 
-        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+        with self.frozen_worker(self.environment(run_dir)):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "test-run.json|discovery.json",
@@ -192,7 +176,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         discovery["modules"][0]["test_ids"].append("tampered.test_id")
         discovery_path.write_bytes(canonical_json_bytes(discovery))
 
-        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+        with self.frozen_worker(self.environment(run_dir)):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "fingerprint",
@@ -200,14 +184,15 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
                 _test_run.module_test_root(PROJECT_ROOT)
 
     def test_manifest_run_directory_identity_mismatch_fails_closed(self) -> None:
-        run_dir = self.fixture_run_dir(write_manifests=False)
-        self.write_manifests(
-            run_dir,
-            selected_suite_ids=["video-workflow"],
-            manifest_run_dir=run_dir.parent / "20260724_120000_deadbeef",
+        run_dir = self.fixture_run_dir()
+        test_run_path = run_dir / "test-run.json"
+        test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+        test_run["run_dir"] = str(
+            run_dir.parent / "20260724_120000_deadbeef"
         )
+        test_run_path.write_bytes(canonical_json_bytes(test_run))
 
-        with mock.patch.dict(os.environ, self.environment(run_dir), clear=True):
+        with self.frozen_worker(self.environment(run_dir)):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "run directory identity",
@@ -230,11 +215,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
                 test_run[field] = replacement
                 test_run_path.write_bytes(canonical_json_bytes(test_run))
 
-                with mock.patch.dict(
-                    os.environ,
-                    self.environment(run_dir),
-                    clear=True,
-                ):
+                with self.frozen_worker(self.environment(run_dir)):
                     with self.assertRaisesRegex(
                         _test_run.TestRunBoundaryError,
                         "project|repository|commit|registry",
@@ -248,18 +229,24 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         )
         for variant in variants:
             with self.subTest(variant=variant):
-                run_dir = self.fixture_run_dir(write_manifests=False)
-                self.write_manifests(
-                    run_dir,
-                    selected_suite_ids=["video-workflow"],
-                    module_key=variant["module_key"],
-                    test_ids=variant["test_ids"],
+                run_dir = self.fixture_run_dir()
+                discovery_path = run_dir / "discovery.json"
+                discovery = json.loads(
+                    discovery_path.read_text(encoding="utf-8")
                 )
-                with mock.patch.dict(
-                    os.environ,
-                    self.environment(run_dir),
-                    clear=True,
-                ):
+                discovery["modules"][0]["module_key"] = variant["module_key"]
+                discovery["modules"][0]["test_ids"] = variant["test_ids"]
+                discovery_bytes = canonical_json_bytes(discovery)
+                discovery_path.write_bytes(discovery_bytes)
+                test_run_path = run_dir / "test-run.json"
+                test_run = json.loads(
+                    test_run_path.read_text(encoding="utf-8")
+                )
+                test_run["discovery_sha256"] = hashlib.sha256(
+                    discovery_bytes
+                ).hexdigest()
+                test_run_path.write_bytes(canonical_json_bytes(test_run))
+                with self.frozen_worker(self.environment(run_dir)):
                     with self.assertRaisesRegex(
                         _test_run.TestRunBoundaryError,
                         "module|test IDs",
@@ -268,13 +255,15 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
 
     def test_runner_environment_fails_closed_for_invalid_identity(self) -> None:
         forged_external = new_fixture_dir("forged-boundary")
-        forged_run = (
-            forged_external
-            / "video2pdf"
-            / "video-workflow"
-            / "20260724_120000_01234567"
+        forged_run = create_synthetic_project_test_run(
+            external_root=forged_external,
+            project_root=PROJECT_ROOT,
+            suite_id="video-workflow",
+            module_key=self.MODULE_KEY,
+            test_ids=self.TEST_IDS,
         )
-        forged_run.mkdir(parents=True)
+        marker = forged_run.parent.parent / "project.json"
+        marker.rename(marker.with_suffix(".tampered"))
         cases = (
             {_test_run.RUN_DIR_ENV: "relative"},
             {
@@ -295,7 +284,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         )
         for environment in cases:
             with self.subTest(environment=environment):
-                with mock.patch.dict(os.environ, environment, clear=True):
+                with self.frozen_worker(environment):
                     with self.assertRaises(_test_run.TestRunBoundaryError):
                         _test_run.module_test_root(PROJECT_ROOT)
         self.assertFalse((forged_external / "video2pdf" / "project.json").exists())
@@ -309,7 +298,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         marker["repository"] = "someone/else"
         marker_path.write_text(json.dumps(marker), encoding="utf-8")
         environment = self.environment(valid_run)
-        with mock.patch.dict(os.environ, environment, clear=True):
+        with self.frozen_worker(environment):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "ownership",
@@ -318,17 +307,18 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
 
         wrong_level = self.fixture_run_dir().parent
         environment[_test_run.RUN_DIR_ENV] = str(wrong_level)
-        with mock.patch.dict(os.environ, environment, clear=True):
+        with self.frozen_worker(environment):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "suite key|identity|marker|project root",
             ):
                 _test_run.module_test_root(PROJECT_ROOT)
 
-        invalid_run = valid_run.parent / "caller-chosen-output"
-        invalid_run.mkdir()
+        invalid_source = self.fixture_run_dir()
+        invalid_run = invalid_source.parent / "caller-chosen-output"
+        invalid_source.rename(invalid_run)
         environment[_test_run.RUN_DIR_ENV] = str(invalid_run)
-        with mock.patch.dict(os.environ, environment, clear=True):
+        with self.frozen_worker(environment):
             with self.assertRaisesRegex(
                 _test_run.TestRunBoundaryError,
                 "timestamp_short-run-id",
@@ -339,7 +329,7 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         run_dir = self.fixture_run_dir()
         environment = self.environment(run_dir)
         with (
-            mock.patch.dict(os.environ, environment, clear=True),
+            self.frozen_worker(environment),
             mock.patch(
                 "scripts.project_test_external_root._is_reparse_point",
                 side_effect=lambda path: path == run_dir.parent,
@@ -355,7 +345,10 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         run_dir = self.fixture_run_dir()
         try:
             environment = {"PARENT_VALUE": "preserved", **self.environment(run_dir)}
-            with mock.patch.dict(os.environ, environment, clear=True):
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                self.frozen_worker(environment),
+            ):
                 child = _test_run.child_environment(self.id())
 
             self.assertEqual(child["PARENT_VALUE"], "preserved")

@@ -59,19 +59,26 @@ def _test_id(source: Path) -> str:
     return names[source.name]
 
 
+def _module_key(suite_id: str, source_path: str) -> str:
+    return hashlib.sha256(
+        f"{suite_id}\0{source_path}".encode("utf-8")
+    ).hexdigest()[:12]
+
+
 def discovery(*names: str) -> dict:
     modules = []
     all_ids = []
     for index, name in enumerate(names):
         source = FIXTURES / name
         test_id = _test_id(source)
+        source_path = source.relative_to(REPO_ROOT).as_posix()
         all_ids.append(test_id)
         modules.append(
             {
                 "suite_id": "fixture",
                 "root_path": FIXTURES.relative_to(REPO_ROOT).as_posix(),
-                "source_path": source.relative_to(REPO_ROOT).as_posix(),
-                "module_key": f"module{index:02d}",
+                "source_path": source_path,
+                "module_key": _module_key("fixture", source_path),
                 "test_count": 1,
                 "test_ids": [test_id],
             }
@@ -106,6 +113,123 @@ def discovery(*names: str) -> dict:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_discovery_rejects_noncanonical_or_mismatched_module_keys(self) -> None:
+        manifest = discovery("worker_fast.py")
+        invalid_keys = (
+            "../escape000",
+            "abc/def01234",
+            r"abc\def01234",
+            "ABCDEF012345",
+            "abcdef01234",
+            "abcdef0123456",
+            "abcdef01234g",
+            "000000000000",
+        )
+
+        for invalid_key in invalid_keys:
+            with self.subTest(module_key=invalid_key):
+                malformed = {
+                    **manifest,
+                    "modules": [
+                        {**manifest["modules"][0], "module_key": invalid_key}
+                    ],
+                }
+                with self.assertRaisesRegex(
+                    SchedulerError,
+                    "module_key",
+                ):
+                    scheduler._validate_discovery(malformed)
+
+    def test_discovery_rejects_duplicate_module_key_collision(self) -> None:
+        manifest = discovery("worker_fast.py")
+        manifest["modules"].append(dict(manifest["modules"][0]))
+        manifest["total_count"] = 2
+        manifest["test_id_set_sha256"] = hashlib.sha256(
+            scheduler.canonical_json_bytes(
+                sorted(
+                    manifest["modules"][0]["test_ids"]
+                    + manifest["modules"][1]["test_ids"]
+                )
+            )
+        ).hexdigest()
+
+        with self.assertRaisesRegex(
+            SchedulerError,
+            "duplicate module keys",
+        ):
+            scheduler._validate_discovery(manifest)
+
+    def test_rechecks_every_scheduler_artifact_path_before_creation_or_open(
+        self,
+    ) -> None:
+        run_dir = run_directory("safe-artifact-paths")
+        manifest = discovery("worker_fast.py")
+        checked: list[Path] = []
+        real_check = scheduler.assert_safe_write_path
+
+        def record_check(base: Path, candidate: Path) -> Path:
+            checked.append(Path(candidate))
+            return real_check(base, candidate)
+
+        with mock.patch.object(
+            scheduler,
+            "assert_safe_write_path",
+            side_effect=record_check,
+        ):
+            summary = run_modules(
+                repo_root=REPO_ROOT,
+                run_dir=run_dir,
+                discovery=manifest,
+                jobs=1,
+                stdout=io.BytesIO(),
+                stderr=io.BytesIO(),
+            )
+
+        module_key = manifest["modules"][0]["module_key"]
+        expected = {
+            run_dir / "modules",
+            run_dir / "logs",
+            run_dir / "generated",
+            run_dir / "generated" / module_key,
+            run_dir / "modules" / f"{module_key}.assignment.json",
+            run_dir / "modules" / f"{module_key}.result.json",
+            run_dir / "logs" / f"{module_key}.stdout.log",
+            run_dir / "logs" / f"{module_key}.stderr.log",
+        }
+        self.assertTrue(summary["success"])
+        self.assertTrue(expected.issubset(set(checked)))
+
+    def test_artifact_reparse_race_fails_before_assignment_write(self) -> None:
+        run_dir = run_directory("assignment-reparse-race")
+        manifest = discovery("worker_fast.py")
+        module_key = manifest["modules"][0]["module_key"]
+        assignment_path = (
+            run_dir / "modules" / f"{module_key}.assignment.json"
+        )
+        real_check = scheduler.assert_safe_write_path
+
+        def reject_assignment(base: Path, candidate: Path) -> Path:
+            if Path(candidate) == assignment_path:
+                raise scheduler.ExternalRootError("simulated reparse race")
+            return real_check(base, candidate)
+
+        with mock.patch.object(
+            scheduler,
+            "assert_safe_write_path",
+            side_effect=reject_assignment,
+        ):
+            summary = run_modules(
+                repo_root=REPO_ROOT,
+                run_dir=run_dir,
+                discovery=manifest,
+                jobs=1,
+                stdout=io.BytesIO(),
+                stderr=io.BytesIO(),
+            )
+
+        self.assertEqual(summary["failure_kind"], "launch_failure")
+        self.assertFalse(assignment_path.exists())
+
     def test_launch_setup_failures_close_every_opened_log_handle(self) -> None:
         cases = ("second-open", "environment")
         for case in cases:
@@ -226,10 +350,14 @@ class SchedulerTests(unittest.TestCase):
             for event in events
             if event["event"] == "completed"
         ]
-        self.assertEqual(completions, ["module00", "module01"])
+        expected_keys = [
+            module["module_key"]
+            for module in manifest["modules"]
+        ]
+        self.assertEqual(completions, list(reversed(expected_keys)))
         self.assertEqual(
             [item["module_key"] for item in summary["modules"]],
-            ["module00", "module01"],
+            sorted(expected_keys),
         )
         self.assertEqual(summary["failure_kind"], None)
 
@@ -245,12 +373,12 @@ class SchedulerTests(unittest.TestCase):
                 "suite_ids": manifest["suite_ids"],
                 "modules": [
                     {
-                        "module_key": "module00",
+                        "module_key": manifest["modules"][0]["module_key"],
                         "source_path": manifest["modules"][0]["source_path"],
                         "duration_seconds": 99.0,
                     },
                     {
-                        "module_key": "module01",
+                        "module_key": manifest["modules"][1]["module_key"],
                         "source_path": manifest["modules"][1]["source_path"],
                         "duration_seconds": 1.0,
                     },
@@ -278,7 +406,13 @@ class SchedulerTests(unittest.TestCase):
                 for event in events
                 if event["event"] == "started"
         ]
-        self.assertEqual(starts, ["module00", "module01"])
+        self.assertEqual(
+            starts,
+            [
+                manifest["modules"][0]["module_key"],
+                manifest["modules"][1]["module_key"],
+            ],
+        )
 
         bad_run = run_directory("bad-timings")
         timings["project"] = {

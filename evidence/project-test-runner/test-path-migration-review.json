@@ -253,6 +253,86 @@
       "pass_claimed": false
     }
   },
+  "stage_34_shared_identity_review": {
+    "comparison": "git tree ae46acff82ab63fc7e6de9d05e4041c72753a57d versus the current working tree",
+    "working_tree_base_head": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+    "changed_paths": [
+      "scripts/project_test_run_identity.py",
+      "scripts/project_test_scheduler.py",
+      "tests/project_test_runner/_fixture_root.py",
+      "tests/project_test_runner/test_fixture_root.py",
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/project_test_runner/test_scheduler.py",
+      "tests/project_test_runner/test_test_run_boundary.py",
+      "tests/video_workflow/_test_run.py"
+    ],
+    "implementation_contract": {
+      "shared_production_identity_api": "scripts/project_test_run_identity.py",
+      "resolver": "resolve_active_worker_identity(...) validates the frozen worker environment, owned run directory, canonical test-run and discovery manifests, live commit and Registry fingerprints, selected suite identity, complete closed-set test IDs, and active module identity.",
+      "delegating_helpers": [
+        "tests/project_test_runner/_fixture_root.py",
+        "tests/video_workflow/_test_run.py"
+      ],
+      "duplicated_identity_helpers_removed": true,
+      "synthetic_identity_factory": "create_synthetic_project_test_run(...) creates complete synthetic project, discovery, and test-run identity fixtures through the production identity contract.",
+      "scheduler_module_identity_validation": "scripts/project_test_scheduler.py validates each discovery module key against its suite ID and source-path identity before scheduling.",
+      "relative_path_contract": "Discovery source paths remain normalized repository-relative paths; absolute paths, parent traversal, and paths that resolve outside the repository fail closed before worker import.",
+      "behavior_scope": "The refactor centralizes identity validation and fixture construction without changing generated-data behavior or Video Workflow test semantics."
+    },
+    "focused_validation": {
+      "executed": [
+        {
+          "scope": "fixture-root and test-run-boundary identity contract",
+          "modules": [
+            "tests.project_test_runner.test_fixture_root",
+            "tests.project_test_runner.test_test_run_boundary"
+          ],
+          "tests_expected": 19,
+          "tests_executed": 19,
+          "result": "OK"
+        },
+        {
+          "scope": "scheduler module identity and path validation",
+          "modules": [
+            "tests.project_test_runner.test_scheduler"
+          ],
+          "tests_expected": 11,
+          "tests_executed": 11,
+          "result": "OK"
+        },
+        {
+          "scope": "Registry and repository-local write contract",
+          "modules": [
+            "tests.project_test_runner.test_registry",
+            "tests.project_test_runner.test_repository_contract"
+          ],
+          "tests_expected": 40,
+          "tests_executed": 40,
+          "result": "OK"
+        }
+      ],
+      "repository_contract": {
+        "registered_contract_sources": 68,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2
+      }
+    },
+    "video_workflow_semantic_inventory": {
+      "test_method_inventory_at_head": 475,
+      "test_method_inventory_working_tree": 475,
+      "test_method_ids_changed": 0,
+      "unittest_assertion_inventory_at_head": 2140,
+      "unittest_assertion_inventory_working_tree": 2140,
+      "unittest_assertion_lines_changed": 0,
+      "finding": "Video Workflow test methods and unittest assertions are unchanged by the shared identity refactor."
+    },
+    "dynamic_suite_execution": {
+      "executed": false,
+      "result": "NOT_RUN",
+      "pass_claimed": false
+    },
+    "finding": "Stage 34 establishes one production-owned worker identity contract, removes duplicate helper implementations, binds synthetic fixtures to that contract, and hardens scheduler module identity without claiming full-suite or Promotion success."
+  },
   "discovery_review": {
     "video_workflow_test_count": 475,
     "video_workflow_module_count": 38,
@@ -266,22 +346,24 @@
       "matches_discovery_manifest_algorithm": true
     },
     "project_test_runner_pre_promotion_validation_set": {
-      "test_count": 103,
+      "test_count": 110,
       "module_count": 10,
       "duplicate_test_ids": 0,
-      "test_id_set_sha256": "43e875f9a5dd4e40d013b1c8ad85fe695f33275ad5f179a0f0f9d00d5ff1ebc8",
+      "test_id_set_sha256": "844d6cd30911486351a859f0f869aa261b35bcbf70a318de75f12589bd8cb115",
       "calculation": "Read-only dynamic unittest discovery against the current working tree.",
       "authority": "This is a pre-Promotion validation set only; it is not the Video Workflow Promotion closed set and does not prove a complete persisted run."
     },
     "full_registry_dynamic_discovery": {
       "calculation": "Independent read-only dynamic unittest discovery against the current working tree using the versioned Registry and unittest.TestLoader.",
+      "working_tree_base_head": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+      "execution_scope": "Discovery only; no registered test suite or scheduler worker was executed.",
       "registry_sha256": "dac757de961bd39db0f6a57487d33e191cbfb98c552ce2d1c772bdb68d873d57",
       "suite_count": 5,
       "registered_file_count": 69,
       "module_count": 69,
-      "test_count": 856,
+      "test_count": 863,
       "duplicate_test_ids": 0,
-      "test_id_set_sha256": "02007b859ab77f3c6523972ba3584eeab0b3987ff62fa85a7c9411cbafdcfca0",
+      "test_id_set_sha256": "d20345ef07289cfe474da74e10778916946fbdace5f536000997d0c7ee6a514c",
       "suites": [
         {
           "suite_id": "persisted-command",
@@ -301,8 +383,8 @@
           "suite_id": "project-test-runner",
           "registered_files": 10,
           "modules": 10,
-          "test_ids": 103,
-          "test_id_set_sha256": "43e875f9a5dd4e40d013b1c8ad85fe695f33275ad5f179a0f0f9d00d5ff1ebc8"
+          "test_ids": 110,
+          "test_id_set_sha256": "844d6cd30911486351a859f0f869aa261b35bcbf70a318de75f12589bd8cb115"
         },
         {
           "suite_id": "skill-tests",
@@ -329,8 +411,8 @@
       },
       "dynamic_suite_execution": {
         "executed": false,
-        "result": "BLOCKED",
-        "reason": "The dynamic registered suites were not executed because External Test Root and persisted-run directory creation remain blocked by Windows ACL restrictions and the escalation approval usage limit.",
+        "result": "NOT_RUN",
+        "reason": "Stage 35 refreshed discovery evidence only. The five dynamic registered suites and both Promotion runs remain unexecuted.",
         "pass_claimed": false
       }
     },

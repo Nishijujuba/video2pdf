@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import subprocess
 import unittest
 
-from scripts.project_test_external_root import ensure_project_root
+from scripts.project_test_run_identity import (
+    create_synthetic_project_test_run,
+    resolve_active_worker_identity,
+)
 from scripts.project_test_results import canonical_json_bytes
 from tests.project_test_runner import _fixture_root
 
@@ -18,6 +19,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class FixtureRootBoundaryTests(unittest.TestCase):
     MODULE_KEY = "0123456789ab"
     TEST_IDS = ["synthetic.SyntheticTests.test_identity"]
+
+    def test_production_identity_api_accepts_factory_baseline(self) -> None:
+        external_root = _fixture_root.new_fixture_dir("identity-api")
+        run_dir = create_synthetic_project_test_run(
+            external_root=external_root,
+            project_root=PROJECT_ROOT,
+            suite_id="project-test-runner",
+            module_key=self.MODULE_KEY,
+            test_ids=self.TEST_IDS,
+        )
+
+        identity = resolve_active_worker_identity(
+            self.environment(run_dir, "project-test-runner"),
+            project_root=PROJECT_ROOT,
+            expected_suite="project-test-runner",
+        )
+
+        self.assertIsNotNone(identity)
+        assert identity is not None
+        self.assertEqual(identity.run_dir, run_dir)
+        self.assertEqual(identity.suite_id, "project-test-runner")
+        self.assertEqual(identity.module_key, self.MODULE_KEY)
+        self.assertEqual(identity.test_ids, tuple(self.TEST_IDS))
 
     def make_run(
         self,
@@ -30,60 +54,36 @@ class FixtureRootBoundaryTests(unittest.TestCase):
         test_ids: list[str] | None = None,
     ) -> Path:
         external_root = _fixture_root.new_fixture_dir("fixture-boundary")
-        project_root = ensure_project_root(
-            external_root,
-            "https://github.com/Nishijujuba/video2pdf.git",
-        )
         selected = selected_suite_ids or [suite_id]
-        suite_root = project_root / (run_suite_key or suite_id)
-        suite_root.mkdir()
-        run_dir = suite_root / "20260724_120000_01234567"
-        run_dir.mkdir()
-
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout.strip()
-        registry_sha256 = hashlib.sha256(
-            (PROJECT_ROOT / "config" / "test-suites.v1.json").read_bytes()
-        ).hexdigest()
-        discovery = {
-            "schema_name": "video2pdf.project-test-discovery",
-            "schema_version": 1,
-            "project": {
-                "project_key": "video2pdf",
-                "repository": "Nishijujuba/video2pdf",
-            },
-            "commit": commit,
-            "registry_sha256": registry_sha256,
-            "discovery_arguments": {"suite_ids": selected},
-            "suite_ids": selected,
-            "modules": [
-                {
-                    "suite_id": module_suite_id or suite_id,
-                    "module_key": module_key or self.MODULE_KEY,
-                    "test_ids": self.TEST_IDS if test_ids is None else test_ids,
-                }
-            ],
-        }
-        discovery_bytes = canonical_json_bytes(discovery)
-        (run_dir / "discovery.json").write_bytes(discovery_bytes)
-        test_run = {
-            "schema_name": "video2pdf.project-test-run",
-            "schema_version": 1,
-            "project": discovery["project"],
-            "commit": commit,
-            "registry_sha256": registry_sha256,
-            "discovery_sha256": hashlib.sha256(discovery_bytes).hexdigest(),
-            "suite_ids": selected,
-            "run_dir": str(run_dir.resolve()),
-        }
-        (run_dir / "test-run.json").write_bytes(canonical_json_bytes(test_run))
-        return run_dir.resolve()
+        run_dir = create_synthetic_project_test_run(
+            external_root=external_root,
+            project_root=PROJECT_ROOT,
+            suite_id=suite_id,
+            module_key=self.MODULE_KEY,
+            test_ids=self.TEST_IDS,
+            selected_suite_ids=selected,
+            run_suite_key=run_suite_key,
+        )
+        if (
+            module_suite_id is not None
+            or module_key is not None
+            or test_ids is not None
+        ):
+            discovery_path = run_dir / "discovery.json"
+            discovery = json.loads(discovery_path.read_text(encoding="utf-8"))
+            module = discovery["modules"][0]
+            module["suite_id"] = module_suite_id or suite_id
+            module["module_key"] = module_key or self.MODULE_KEY
+            module["test_ids"] = self.TEST_IDS if test_ids is None else test_ids
+            discovery_bytes = canonical_json_bytes(discovery)
+            discovery_path.write_bytes(discovery_bytes)
+            test_run_path = run_dir / "test-run.json"
+            test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+            test_run["discovery_sha256"] = hashlib.sha256(
+                discovery_bytes
+            ).hexdigest()
+            test_run_path.write_bytes(canonical_json_bytes(test_run))
+        return run_dir
 
     def environment(self, run_dir: Path, suite_id: str) -> dict[str, str]:
         return {
@@ -107,12 +107,16 @@ class FixtureRootBoundaryTests(unittest.TestCase):
 
     def test_runner_identity_accepts_single_and_all_suite_runs(self) -> None:
         single = self.make_run(suite_id="project-test-runner")
+        keyed_single = self.make_run(
+            suite_id="project-test-runner",
+            run_suite_key="runner-short-key",
+        )
         all_run = self.make_run(
             suite_id="project-test-runner",
             selected_suite_ids=["project-test-runner", "video-workflow"],
             run_suite_key="all",
         )
-        for run_dir in (single, all_run):
+        for run_dir in (single, keyed_single, all_run):
             with self.subTest(run_dir=run_dir):
                 self.assertEqual(
                     _fixture_root.fixture_root_from_environment(

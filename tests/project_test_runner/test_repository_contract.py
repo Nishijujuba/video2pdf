@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import unittest
 
@@ -63,6 +63,11 @@ _TWO_PATH_MUTATORS = {
     "replace",
     "symlink",
 }
+_TWO_PATH_MUTATOR_CALLS = {
+    f"{module}.{operation}"
+    for module in ("os", "shutil")
+    for operation in _TWO_PATH_MUTATORS
+}
 _FUNCTION_PATH_MUTATORS = {
     "chmod",
     "makedirs",
@@ -74,6 +79,9 @@ _FUNCTION_PATH_MUTATORS = {
     "unlink",
     "utime",
 }
+_FUNCTION_PATH_MUTATOR_CALLS = {
+    f"os.{operation}" for operation in _FUNCTION_PATH_MUTATORS
+} | {"shutil.rmtree"}
 _TEMPORARY_CREATORS = {
     "mkdtemp",
     "mkstemp",
@@ -81,6 +89,7 @@ _TEMPORARY_CREATORS = {
     "TemporaryDirectory",
 }
 _TRUSTED_EXTERNAL_BOUNDARY_PROVIDERS = {
+    "scripts.project_test_run_identity.create_synthetic_project_test_run",
     "tests.project_test_runner._fixture_root.new_fixture_dir",
     "tests.project_test_runner.test_registry.fixture_run_dir",
     "tests.video_workflow._test_run.module_test_root",
@@ -175,6 +184,18 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
     def _opaque() -> PathFact:
         return PathFact(None, (), False)
 
+    @staticmethod
+    def _as_path_fact(fact: PathFact | None) -> PathFact | None:
+        if fact is None or fact.value_kind != "relative_string":
+            return fact
+        return PathFact(
+            True,
+            fact.parts,
+            fact.unresolved_local,
+            fact.trusted_external,
+            fact.value_kind,
+        )
+
     def _canonical_name(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Name):
             return self.import_aliases.get(node.id, node.id)
@@ -228,12 +249,19 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
         if key is not None and key in self.environment:
             return self.environment[key]
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            is_absolute = (
+                PureWindowsPath(node.value).is_absolute()
+                or PurePosixPath(node.value).is_absolute()
+            )
             return PathFact(
                 False,
                 tuple(
                     part
                     for part in node.value.replace("\\", "/").split("/")
                     if part and part != "."
+                ),
+                value_kind=(
+                    "absolute_string" if is_absolute else "relative_string"
                 ),
             )
         if isinstance(node, ast.Constant) and isinstance(node.value, bytes):
@@ -381,14 +409,38 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
         ):
             canonical = self.import_aliases.get(node.func.id, node.func.id)
             if canonical in {"str", "os.fspath"} and len(node.args) == 1:
-                return self._fact(node.args[0]) or self._unknown()
+                fact = self._fact(node.args[0]) or self._unknown()
+                return PathFact(
+                    fact.rooted_in_project,
+                    fact.parts,
+                    fact.unresolved_local,
+                    fact.trusted_external,
+                    (
+                        fact.value_kind
+                        if fact.value_kind
+                        in {"absolute_string", "relative_string"}
+                        else "path_string"
+                    ),
+                )
             if canonical.rsplit(".", 1)[-1] in {
                 "Path",
                 "PurePath",
                 "PurePosixPath",
                 "PureWindowsPath",
             }:
-                return self._fact(node.args[0]) if node.args else self._unknown()
+                fact = (
+                    self._as_path_fact(self._fact(node.args[0]))
+                    if node.args
+                    else self._unknown()
+                )
+                assert fact is not None
+                return PathFact(
+                    fact.rooted_in_project,
+                    fact.parts,
+                    fact.unresolved_local,
+                    fact.trusted_external,
+                    "path",
+                )
             if self._is_trusted_provider(node, canonical):
                 return PathFact(False, (None,), trusted_external=True)
             if node.func.id in {"list", "next", "set", "sorted", "tuple"} and node.args:
@@ -578,6 +630,7 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
         return first
 
     def _record(self, node: ast.Call, fact: PathFact | None) -> None:
+        fact = self._as_path_fact(fact)
         if fact is not None and fact.rooted_in_project is False:
             return
         if (
@@ -795,7 +848,12 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                 receiver = self._fact(node.func.value)
                 if (
                     receiver is not None
-                    and receiver.value_kind == "bytes"
+                    and receiver.value_kind in {
+                        "absolute_string",
+                        "bytes",
+                        "path_string",
+                        "relative_string",
+                    }
                 ):
                     pass
                 elif (
@@ -806,11 +864,11 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                     self._record(node, receiver)
                     self._record(node, self._fact(node.args[0]))
             elif (
-                method in _TWO_PATH_MUTATORS
+                canonical in _TWO_PATH_MUTATOR_CALLS
                 and len(node.args) >= 2
             ):
                 self._record(node, self._fact(node.args[1]))
-            elif method in _FUNCTION_PATH_MUTATORS and node.args:
+            elif canonical in _FUNCTION_PATH_MUTATOR_CALLS and node.args:
                 self._record(node, self._fact(node.args[0]))
             elif canonical in _DATABASE_CONNECTORS and node.args:
                 self._record(node, self._fact(node.args[0]))
@@ -850,9 +908,12 @@ class _LocalWriteAnalyzer(ast.NodeVisitor):
                     self.import_aliases = previous_import_aliases
             assert canonical is not None
             operation = canonical.rsplit(".", 1)[-1]
-            if operation in _TWO_PATH_MUTATORS and len(node.args) >= 2:
+            if (
+                canonical in _TWO_PATH_MUTATOR_CALLS
+                and len(node.args) >= 2
+            ):
                 self._record(node, self._fact(node.args[1]))
-            elif operation in _FUNCTION_PATH_MUTATORS and node.args:
+            elif canonical in _FUNCTION_PATH_MUTATOR_CALLS and node.args:
                 self._record(node, self._fact(node.args[0]))
             elif canonical in _DATABASE_CONNECTORS and node.args:
                 self._record(node, self._fact(node.args[0]))
@@ -1145,6 +1206,45 @@ def test_external_boundaries():
         )
         self.assertEqual(violations, [])
 
+    def test_analysis_roots_relative_string_and_path_sinks_in_project(
+        self,
+    ) -> None:
+        source = """
+import sqlite3
+import subprocess
+from pathlib import Path
+
+def test_escape():
+    Path("scratch/out").write_text("{}")
+    open("待删除/x", "w")
+    open(str("scratch/converted.txt"), "w")
+    sqlite3.connect("scratch/state.sqlite3")
+    subprocess.run(["tool"], cwd="scratch/subprocess")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_escape.py"),
+            {},
+        )
+        self.assertEqual(len(violations), 5)
+
+    def test_analysis_keeps_absolute_strings_external_and_text_non_path(
+        self,
+    ) -> None:
+        source = """
+def test_external_and_text_values():
+    open(r"D:\\tests\\external.txt", "w")
+    open("/tmp/external.txt", "w")
+    "ordinary text".replace("ordinary")
+    "https://example.test/artifact".replace("https")
+"""
+        violations, _ = analyze_source(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+            {},
+        )
+        self.assertEqual(violations, [])
+
     def test_analysis_propagates_helper_sequence_assignments(self) -> None:
         source = """
 import sqlite3
@@ -1312,7 +1412,7 @@ def test_escape():
             Path("tests/video_workflow/test_escape.py"),
             {},
         )
-        self.assertEqual(len(violations), 3)
+        self.assertEqual(len(violations), 4)
 
     def test_analysis_collects_helpers_before_visiting_callers(self) -> None:
         source = """

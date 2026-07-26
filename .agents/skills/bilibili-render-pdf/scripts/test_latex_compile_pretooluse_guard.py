@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 import unittest
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -308,9 +310,10 @@ class LatexCompilePreToolUseGuardTests(unittest.TestCase):
         self.assertLessEqual(guard_hooks[0]["timeout"], 5)
 
     def _make_scan_root(self, label: str) -> Path:
-        scan_root = Path.cwd() / "待删除" / "skill-tests" / f"latex-pretooluse-{label}-{time.time_ns()}"
-        scan_root.mkdir(parents=True, exist_ok=False)
-        return scan_root
+        return new_fixture_dir(
+            f"latex-pretooluse-{label}",
+            expected_suite="skill-tests",
+        )
 
 
 if __name__ == "__main__":

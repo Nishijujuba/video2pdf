@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
 
 SCRIPT_PATH = Path(__file__).resolve().with_name("evaluate_pyramid_text.py")
 
@@ -43,8 +45,10 @@ class FakeCompletedProcess:
 
 class EvaluatePyramidTextTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.run_dir = Path.cwd() / "待删除" / "pyramid-evaluator-test-runs" / uuid4().hex
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir = new_fixture_dir(
+            "pyramid-evaluator",
+            expected_suite="skill-tests",
+        )
         self.input_path = self.run_dir / "artifact.md"
         self.output_path = self.run_dir / "artifact.pyramid.json"
 

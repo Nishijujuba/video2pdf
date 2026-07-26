@@ -14,12 +14,14 @@ from pathlib import Path
 import fitz
 
 from validate_acceptance_report import compute_artifact_fingerprint, create_allowed_artifacts_manifest
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-CRITERIA_PATH = REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
-SCRIPT = REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
-WRAPPER_SCRIPT = REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
+SOURCE_REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = SOURCE_REPO_ROOT
+CRITERIA_PATH = SOURCE_REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
+SCRIPT = SOURCE_REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
+WRAPPER_SCRIPT = SOURCE_REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
 TEXT_ARTIFACT_CATEGORIES = {"style", "logic_readability", "formula_information_gain"}
 VISUAL_CATEGORIES = {
     "figure_visual_integrity",
@@ -34,7 +36,13 @@ def load_criteria() -> dict[str, object]:
 
 class DeliveryGuardTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.case_dir = REPO_ROOT / "待删除" / "delivery-guard-tests" / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        global REPO_ROOT
+        self.project_root = new_fixture_dir(
+            "delivery-guard-project",
+            expected_suite="skill-tests",
+        )
+        REPO_ROOT = self.project_root
+        self.case_dir = self.project_root / "cases" / self._testMethodName
         self.video_dir = self.case_dir / "video"
         self.acceptance_dir = self.video_dir / "review" / "acceptance"
         self.rendered_dir = self.acceptance_dir / "rendered_pages"
@@ -446,12 +454,12 @@ class DeliveryGuardTests(unittest.TestCase):
         self.target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def write_current_target(self, *, stage: str = "accepted", video_output_dir: str | None = None) -> None:
-        rel_video = video_output_dir or self.video_dir.relative_to(REPO_ROOT).as_posix()
+        rel_video = video_output_dir or self.video_dir.relative_to(self.project_root).as_posix()
         current = {
             "schema_version": "1.0",
             "stage": stage,
             "video_output_dir": rel_video,
-            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+            "target_file": self.target_path.relative_to(self.project_root).as_posix(),
             "source_skill": "test-fixture",
             "updated_at": "2026-07-05T12:00:00+08:00",
         }
@@ -467,7 +475,7 @@ class DeliveryGuardTests(unittest.TestCase):
         resolved_session_id = session_id or self.session_id
         target_path = self.current_target_path.parent / "sessions" / resolved_session_id / "current.json"
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        rel_video = video_output_dir or self.video_dir.relative_to(REPO_ROOT).as_posix()
+        rel_video = video_output_dir or self.video_dir.relative_to(self.project_root).as_posix()
         current = {
             "schema_version": "1.1",
             "scope": "session",
@@ -476,7 +484,7 @@ class DeliveryGuardTests(unittest.TestCase):
             "observed_codex_thread_id": "diagnostic-thread-fixture",
             "stage": stage,
             "video_output_dir": rel_video,
-            "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+            "target_file": self.target_path.relative_to(self.project_root).as_posix(),
             "source_skill": "test-fixture",
             "started_at": "2026-07-05T12:00:00+08:00",
             "updated_at": "2026-07-05T12:00:00+08:00",
@@ -501,8 +509,8 @@ class DeliveryGuardTests(unittest.TestCase):
             "turn_id": "turn-fixture",
             "observed_codex_thread_id": "diagnostic-thread-fixture",
             "stage": stage,
-            "video_output_dir": video_dir.relative_to(REPO_ROOT).as_posix(),
-            "target_file": target_path.relative_to(REPO_ROOT).as_posix(),
+            "video_output_dir": video_dir.relative_to(self.project_root).as_posix(),
+            "target_file": target_path.relative_to(self.project_root).as_posix(),
             "source_skill": "test-fixture",
             "started_at": "2026-07-05T12:00:00+08:00",
             "updated_at": "2026-07-05T12:00:00+08:00",
@@ -584,11 +592,11 @@ class DeliveryGuardTests(unittest.TestCase):
                 str(SCRIPT),
                 *extra,
                 "--project-root",
-                str(REPO_ROOT),
+                str(self.project_root),
                 "--current-target",
                 str(current_target or self.current_target_path),
             ],
-            cwd=REPO_ROOT,
+            cwd=self.project_root,
             text=True,
             input=json.dumps(hook_input) if hook_input is not None else None,
             capture_output=True,
@@ -903,9 +911,9 @@ class DeliveryGuardTests(unittest.TestCase):
                 str(SCRIPT),
                 "check",
                 "--project-root",
-                str(REPO_ROOT),
+                str(self.project_root),
             ],
-            cwd=REPO_ROOT,
+            cwd=self.project_root,
             text=True,
             capture_output=True,
             check=False,
@@ -994,7 +1002,9 @@ class DeliveryGuardTests(unittest.TestCase):
     def test_check_blocks_missing_video_delivery_target(self) -> None:
         session_target = self.write_session_current_target()
         current = json.loads(session_target.read_text(encoding="utf-8"))
-        current["target_file"] = (self.acceptance_dir / "missing_delivery_target.json").relative_to(REPO_ROOT).as_posix()
+        current["target_file"] = (
+            self.acceptance_dir / "missing_delivery_target.json"
+        ).relative_to(self.project_root).as_posix()
         session_target.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
 
         completed = self.run_check(current_target=session_target)
@@ -1638,8 +1648,8 @@ class DeliveryGuardTests(unittest.TestCase):
                 "schema_version": "1.0",
                 "tasks": [
                     {
-                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
-                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "video_output_dir": self.video_dir.relative_to(self.project_root).as_posix(),
+                        "target_file": self.target_path.relative_to(self.project_root).as_posix(),
                         "owner_session_id": "other-session",
                         "owner_status": "active",
                         "last_session_id": "other-session",
@@ -1656,8 +1666,8 @@ class DeliveryGuardTests(unittest.TestCase):
                 "schema_version": "1.0",
                 "tasks": [
                     {
-                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
-                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "video_output_dir": self.video_dir.relative_to(self.project_root).as_posix(),
+                        "target_file": self.target_path.relative_to(self.project_root).as_posix(),
                         "owner_session_id": "first-session",
                         "owner_status": "active",
                         "last_session_id": "first-session",
@@ -1665,8 +1675,8 @@ class DeliveryGuardTests(unittest.TestCase):
                         "updated_at": "2026-07-05T12:00:00+08:00",
                     },
                     {
-                        "video_output_dir": self.video_dir.relative_to(REPO_ROOT).as_posix(),
-                        "target_file": self.target_path.relative_to(REPO_ROOT).as_posix(),
+                        "video_output_dir": self.video_dir.relative_to(self.project_root).as_posix(),
+                        "target_file": self.target_path.relative_to(self.project_root).as_posix(),
                         "owner_session_id": "second-session",
                         "owner_status": "active",
                         "last_session_id": "second-session",
@@ -1759,7 +1769,7 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(isolated.returncode, 2)
         self.assertIn("requires an explicit video_output_dir", isolated.stderr)
 
-        outside_pdf = REPO_ROOT.parent / "outside.pdf"
+        outside_pdf = self.project_root.parent / "outside.pdf"
         escaped = self.run_guard(
             "old-pdf-prepare",
             str(outside_pdf),

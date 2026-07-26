@@ -27,7 +27,7 @@
   "migration_review": {
     "from_commit": "5b4d767",
     "to_state": "working-tree",
-    "working_tree_base_head": "2a09173d28b46aa9bd1dd22d661b4a6d465f72f1",
+    "working_tree_base_head": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
     "migrated_video_workflow_modules": 27,
     "shared_boundary": "tests/video_workflow/_test_run.py",
     "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
@@ -58,6 +58,77 @@
     },
     "finding": "The current migration diff changes generated-data plumbing only."
   },
+  "stage_27_cross_suite_migration": {
+    "comparison": "git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec versus the current working tree",
+    "migrated_files": 16,
+    "suite_groups": {
+      "persisted-command": {
+        "file_count": 1,
+        "paths": [
+          "tests/persisted_command/test_persisted_command_cli.py"
+        ],
+        "strategy": "Each test receives a synthetic project root from new_fixture_dir(..., expected_suite=\"persisted-command\"). The production persisted-command entrypoint and package are copied into that synthetic project, and reported run paths are containment-validated before use.",
+        "test_method_inventory_at_head": 40,
+        "test_method_inventory_working_tree": 40,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 313,
+        "unittest_assertion_inventory_working_tree": 315,
+        "original_unittest_assertions_preserved": 313,
+        "unittest_assertions_added": 2,
+        "added_assertion_purpose": "Security hardening: prove that the validated persisted run directory is absolute and remains under the synthetic project's 待删除/long-running boundary. These are additional safety assertions, so this migration does not claim zero assertion changes for the persisted-command file."
+      },
+      "project-scripts": {
+        "file_count": 2,
+        "paths": [
+          "scripts/test_generate_issue_dependency_views.py",
+          "scripts/test_normalize_video_workspace.py"
+        ],
+        "strategy": "Repository-relative generated roots are replaced with suite-bound synthetic fixture roots from new_fixture_dir(..., expected_suite=\"project-scripts\").",
+        "test_method_inventory_at_head": 22,
+        "test_method_inventory_working_tree": 22,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 108,
+        "unittest_assertion_inventory_working_tree": 108,
+        "unittest_assertion_semantics_changed": 0
+      },
+      "skill-tests": {
+        "file_count": 13,
+        "paths": [
+          ".agents/skills/bilibili-batch-render-pdf/scripts/test_run_batch.py",
+          ".agents/skills/bilibili-render-pdf/scripts/test_compile_latex_ascii.py",
+          ".agents/skills/bilibili-render-pdf/scripts/test_latex_compile_pretooluse_guard.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_acceptance_criteria.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_acceptance_report.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_glossary.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_glossary_governance_e2e.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_latex_compile_guard_e2e.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_render_pdf_pages.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_check_output_gate.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_evaluate_pyramid_text.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_validate_report.py"
+        ],
+        "strategy": "Generated test artifacts move to new_fixture_dir(..., expected_suite=\"skill-tests\"). Tests that require repository-relative identity use a synthetic project root while immutable production scripts, criteria, and other source inputs continue to resolve from the source checkout.",
+        "test_method_inventory_at_head": 196,
+        "test_method_inventory_working_tree": 196,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 788,
+        "unittest_assertion_inventory_working_tree": 788,
+        "unittest_assertion_semantics_changed": 0
+      }
+    },
+    "aggregate_semantic_inventory": {
+      "test_method_inventory_at_head": 258,
+      "test_method_inventory_working_tree": 258,
+      "test_method_ids_changed": 0,
+      "unittest_assertion_inventory_at_head": 1209,
+      "unittest_assertion_inventory_working_tree": 1211,
+      "original_unittest_assertions_preserved": 1209,
+      "security_hardening_assertions_added": 2,
+      "generated_data_behavior_assertions_removed": 0
+    },
+    "finding": "The 16-file Stage 27 migration preserves every pre-existing test method and unittest assertion. The only assertion additions are two explicit persisted-run path safety checks."
+  },
   "repo_local_exceptions": {
     "registry": "config/test-local-write-exceptions.v1.json",
     "count": 2,
@@ -65,6 +136,20 @@
       "issue7_path_boundary": 2,
       "source_live_smoke_pending": 0
     },
+    "entries": [
+      {
+        "suite_id": "video-workflow",
+        "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+        "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
+        "path_prefix": "workspace/待删除/slice4-fault-tests"
+      },
+      {
+        "suite_id": "video-workflow",
+        "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+        "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest",
+        "path_prefix": "workspace/待删除/slice4-source-manifest-tests"
+      }
+    ],
     "policy": "Each exception binds an exact unittest TestCase.id(), a narrow repository-relative prefix, and a review reason."
   },
   "earlier_migration_validation": [
@@ -144,10 +229,17 @@
     "ast_plumbing_validation": {
       "executed": true,
       "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_repository_contract",
-      "tests": 17,
+      "tests": 29,
       "result": "OK",
-      "elapsed_seconds": 0.326,
-      "coverage_note": "Regression coverage includes direct unknown assignments, unknown arguments, attribute propagation, branch-dependent helpers, recursive helpers, imported opaque receivers, and container lineage."
+      "elapsed_seconds": 26.238,
+      "registered_contract_sources": 68,
+      "registered_suite_count": 5,
+      "ast_scan_violations": 0,
+      "configured_exceptions": 2,
+      "used_exceptions": 2,
+      "unused_exceptions": 0,
+      "source_live_smoke_pending": 0,
+      "coverage_note": "Registry-driven coverage scans every registered authoritative source except this contract test itself. Regression coverage includes direct unknown assignments, unknown arguments, attribute propagation, branch-dependent helpers, recursive helpers, imported opaque receivers, container lineage, additional filesystem sinks, database connectors, and subprocess output paths."
     },
     "persisted_validation": {
       "executed": false,
@@ -174,12 +266,73 @@
       "matches_discovery_manifest_algorithm": true
     },
     "project_test_runner_pre_promotion_validation_set": {
-      "test_count": 85,
-      "module_count": 9,
+      "test_count": 103,
+      "module_count": 10,
       "duplicate_test_ids": 0,
-      "test_id_set_sha256": "ba925c607bbda456bb8c52578a02558309a49aabbd22a3ab4144b71337724de5",
+      "test_id_set_sha256": "43e875f9a5dd4e40d013b1c8ad85fe695f33275ad5f179a0f0f9d00d5ff1ebc8",
       "calculation": "Read-only dynamic unittest discovery against the current working tree.",
       "authority": "This is a pre-Promotion validation set only; it is not the Video Workflow Promotion closed set and does not prove a complete persisted run."
+    },
+    "full_registry_dynamic_discovery": {
+      "calculation": "Independent read-only dynamic unittest discovery against the current working tree using the versioned Registry and unittest.TestLoader.",
+      "registry_sha256": "dac757de961bd39db0f6a57487d33e191cbfb98c552ce2d1c772bdb68d873d57",
+      "suite_count": 5,
+      "registered_file_count": 69,
+      "module_count": 69,
+      "test_count": 856,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "02007b859ab77f3c6523972ba3584eeab0b3987ff62fa85a7c9411cbafdcfca0",
+      "suites": [
+        {
+          "suite_id": "persisted-command",
+          "registered_files": 2,
+          "modules": 2,
+          "test_ids": 42,
+          "test_id_set_sha256": "85017ae525b2aa78993128dce98582fc60bd5c40ea527df5a37249d7d8668f87"
+        },
+        {
+          "suite_id": "project-scripts",
+          "registered_files": 2,
+          "modules": 2,
+          "test_ids": 22,
+          "test_id_set_sha256": "4d4e2f86156522e227d5acfaa5451e3380f2767ebbcbcee21b6cf7c9be882538"
+        },
+        {
+          "suite_id": "project-test-runner",
+          "registered_files": 10,
+          "modules": 10,
+          "test_ids": 103,
+          "test_id_set_sha256": "43e875f9a5dd4e40d013b1c8ad85fe695f33275ad5f179a0f0f9d00d5ff1ebc8"
+        },
+        {
+          "suite_id": "skill-tests",
+          "registered_files": 17,
+          "modules": 17,
+          "test_ids": 214,
+          "test_id_set_sha256": "a3e72cb4ece7d8366a29ff784051163c4c6708be6dd7209c8df063ace80c88bf"
+        },
+        {
+          "suite_id": "video-workflow",
+          "registered_files": 38,
+          "modules": 38,
+          "test_ids": 475,
+          "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+        }
+      ],
+      "stage_28_30_registry_contract": {
+        "registered_contract_sources": 68,
+        "excluded_self_source": "tests/project_test_runner/test_repository_contract.py",
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "contract_tests": 29,
+        "contract_result": "OK"
+      },
+      "dynamic_suite_execution": {
+        "executed": false,
+        "result": "BLOCKED",
+        "reason": "The dynamic registered suites were not executed because External Test Root and persisted-run directory creation remain blocked by Windows ACL restrictions and the escalation approval usage limit.",
+        "pass_claimed": false
+      }
     },
     "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. The final Issue #9 and Promotion closed set is discovered dynamically; the current working-tree inventory is 475, and 475 is evidence rather than a hard-coded protocol constraint."
   },

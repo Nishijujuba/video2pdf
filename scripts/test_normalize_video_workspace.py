@@ -3,7 +3,8 @@ import os
 import unittest
 from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
+
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 def load_script():
@@ -22,8 +23,10 @@ def set_mtime(path: Path, value: str) -> None:
 
 class NormalizeVideoWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path.cwd() / "待删除" / "normalize-video-workspace-tests" / uuid4().hex
-        self.root.mkdir(parents=True)
+        self.root = new_fixture_dir(
+            "normalize-video-workspace-tests",
+            expected_suite="project-scripts",
+        )
         self.script = load_script()
 
     def tearDown(self) -> None:

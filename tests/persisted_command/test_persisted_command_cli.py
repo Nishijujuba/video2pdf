@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -12,8 +13,12 @@ from typing import Any, Callable
 import unittest
 import uuid
 
+from scripts.project_test_external_root import assert_safe_write_path
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+SOURCE_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = SOURCE_PROJECT_ROOT
 CLI = PROJECT_ROOT / "scripts/persisted_command.py"
 
 
@@ -213,6 +218,25 @@ def run_with_supervisor_hook(
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        global CLI, PROJECT_ROOT
+
+        PROJECT_ROOT = new_fixture_dir(
+            "persisted-command-project",
+            expected_suite="persisted-command",
+        )
+        scripts_root = PROJECT_ROOT / "scripts"
+        scripts_root.mkdir()
+        shutil.copy2(
+            SOURCE_PROJECT_ROOT / "scripts" / "persisted_command.py",
+            scripts_root / "persisted_command.py",
+        )
+        shutil.copytree(
+            SOURCE_PROJECT_ROOT / "src" / "video2pdf_persisted_command",
+            PROJECT_ROOT / "src" / "video2pdf_persisted_command",
+        )
+        CLI = scripts_root / "persisted_command.py"
+
     def test_short_cookie_value_is_detected_in_persisted_output(self) -> None:
         secret_root = (
             PROJECT_ROOT
@@ -2059,7 +2083,23 @@ class PersistedCommandCliTests(unittest.TestCase):
                     0,
                     started.stderr or started.stdout,
                 )
-                run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+                reported_run_dir = Path(
+                    json.loads(started.stdout)["data"]["run_dir"]
+                )
+                trusted_run_root = (
+                    PROJECT_ROOT / "待删除" / "long-running"
+                )
+                validated_run_dir = assert_safe_write_path(
+                    trusted_run_root,
+                    reported_run_dir,
+                )
+                self.assertTrue(validated_run_dir.is_absolute())
+                run_dir_relative = validated_run_dir.relative_to(PROJECT_ROOT)
+                self.assertEqual(
+                    run_dir_relative.parts[:2],
+                    ("待删除", "long-running"),
+                )
+                run_dir = PROJECT_ROOT / run_dir_relative
 
                 running_status = self._wait_for_status(
                     run_dir,

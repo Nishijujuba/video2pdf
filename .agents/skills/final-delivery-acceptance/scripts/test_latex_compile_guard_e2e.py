@@ -16,6 +16,7 @@ import uuid
 import fitz
 
 from validate_acceptance_report import compute_artifact_fingerprint, create_allowed_artifacts_manifest
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -41,7 +42,11 @@ def load_criteria() -> dict[str, object]:
 
 class LatexCompileGuardE2ETests(unittest.TestCase):
     def setUp(self) -> None:
-        self.case_dir = REPO_ROOT / "待删除" / "latex-compile-guard-e2e" / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.project_root = new_fixture_dir(
+            "latex-compile-guard-project",
+            expected_suite="skill-tests",
+        )
+        self.case_dir = self.project_root / "cases" / self._testMethodName
         self.case_dir.mkdir(parents=True, exist_ok=False)
         self.counter = 0
 
@@ -97,7 +102,7 @@ class LatexCompileGuardE2ETests(unittest.TestCase):
     def run_wrapper(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, "-X", "utf8", "-B", str(WRAPPER_SCRIPT), *args],
-            cwd=REPO_ROOT,
+            cwd=self.project_root,
             text=True,
             capture_output=True,
             check=False,
@@ -172,9 +177,9 @@ class LatexCompileGuardE2ETests(unittest.TestCase):
                     "turn_id": "turn-fixture",
                     "observed_codex_thread_id": "diagnostic-thread-fixture",
                     "stage": "accepted",
-                    "video_output_dir": video_dir.relative_to(REPO_ROOT).as_posix(),
+                    "video_output_dir": video_dir.relative_to(self.project_root).as_posix(),
                     "target_file": (video_dir / "review" / "acceptance" / "delivery_target.json")
-                    .relative_to(REPO_ROOT)
+                    .relative_to(self.project_root)
                     .as_posix(),
                     "source_skill": "e2e-fixture",
                     "started_at": "2026-07-06T00:00:00+08:00",
@@ -287,11 +292,11 @@ class LatexCompileGuardE2ETests(unittest.TestCase):
                 str(DELIVERY_GUARD_SCRIPT),
                 "check",
                 "--project-root",
-                str(REPO_ROOT),
+                str(self.project_root),
                 "--current-target",
                 str(current_target),
             ],
-            cwd=REPO_ROOT,
+            cwd=self.project_root,
             text=True,
             capture_output=True,
             check=False,

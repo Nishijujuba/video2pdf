@@ -1908,10 +1908,16 @@ class RepositoryGeneratedPathContractTests(unittest.TestCase):
     def test_registry_is_the_only_source_inventory(self) -> None:
         registry = load_registry(PROJECT_ROOT, REGISTRY_PATH)
         registered = registry.registered_test_files()
+        contract_sources = registered_contract_sources()
+        own_source = Path(__file__).resolve().relative_to(PROJECT_ROOT).as_posix()
 
         self.assertEqual(5, len(registry.suites))
-        self.assertEqual(69, len(registered))
-        self.assertEqual(68, len(registered_contract_sources()))
+        self.assertIn(own_source, registered)
+        self.assertEqual(
+            set(registered),
+            set(contract_sources) | {own_source},
+        )
+        self.assertEqual(len(registered) - 1, len(contract_sources))
         self.assertFalse(
             any(path.startswith(".claude/skills/") for path in registered)
         )
@@ -3021,7 +3027,12 @@ def test_read_only():
         self,
     ) -> None:
         source_suites = registered_contract_sources()
-        self.assertEqual(68, len(source_suites))
+        registry = load_registry(PROJECT_ROOT, REGISTRY_PATH)
+        own_source = Path(__file__).resolve().relative_to(PROJECT_ROOT).as_posix()
+        self.assertEqual(
+            set(source_suites),
+            set(registry.registered_test_files()) - {own_source},
+        )
         self.assertEqual(5, len(set(source_suites.values())))
         allowed = load_local_write_exceptions(source_suites)
         self.assertEqual(2, len(allowed))

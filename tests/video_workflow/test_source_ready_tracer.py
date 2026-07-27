@@ -8,12 +8,11 @@ import sqlite3
 import subprocess
 import sys
 import unittest
-import uuid
 from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import module_test_root
+from tests.video_workflow._test_run import new_case_dir, new_workflow_workspace
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -23,7 +22,6 @@ EXIT_V2_VALIDATOR = PROJECT_ROOT / "scripts" / "validate_slice_exit_evidence.py"
 FIXTURE = (
     PROJECT_ROOT / "tests" / "video_workflow" / "fixtures" / "source-ready-tracer"
 )
-TEST_RUNS = module_test_root(PROJECT_ROOT)
 SCHEMA_ROOT = PROJECT_ROOT / "schemas" / "video-workflow"
 
 
@@ -37,12 +35,6 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(65536), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def new_test_root(label: str) -> Path:
-    root = TEST_RUNS / f"{label}-{uuid.uuid4().hex}"
-    root.mkdir(parents=True, exist_ok=False)
-    return root
 
 
 def run_cli(*arguments: str, cwd: Path = PROJECT_ROOT) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -88,7 +80,7 @@ class ContractsCliTests(unittest.TestCase):
         )
 
     def test_contracts_check_rejects_unknown_contract_version(self) -> None:
-        root = new_test_root("unknown-contract-version")
+        root = new_case_dir(self.id(), label="unknown-contract-version")
         registry = json.loads(
             (SCHEMA_ROOT / "registry.v1.json").read_text(encoding="utf-8")
         )
@@ -103,7 +95,7 @@ class ContractsCliTests(unittest.TestCase):
         self.assertEqual(envelope["classification"], "contract_invalid")
 
     def test_contracts_check_rejects_unresolved_or_remote_reference(self) -> None:
-        root = new_test_root("bad-schema-ref")
+        root = new_case_dir(self.id(), label="bad-schema-ref")
         registry = json.loads(
             (SCHEMA_ROOT / "registry.v1.json").read_text(encoding="utf-8")
         )
@@ -188,7 +180,7 @@ class ContractsCliTests(unittest.TestCase):
 class SourceReadyCliTests(unittest.TestCase):
     def _trace(
         self,
-        root: Path,
+        workspace: Path,
         *,
         request_id: str = "request-a",
         task_start: str = "2026-07-15T01:02:03+08:00",
@@ -197,7 +189,7 @@ class SourceReadyCliTests(unittest.TestCase):
         return run_cli(
             "trace-source-ready",
             "--workspace-root",
-            str(root / "workspace"),
+            str(workspace),
             "--fixture",
             str(FIXTURE),
             "--task-start",
@@ -208,9 +200,11 @@ class SourceReadyCliTests(unittest.TestCase):
         )
 
     def test_offline_fixture_reaches_current_source_ready(self) -> None:
-        root = new_test_root("source-ready-positive")
+        workspace = new_workflow_workspace(
+            self.id(), label="source-ready-positive"
+        )
 
-        completed, envelope = self._trace(root)
+        completed, envelope = self._trace(workspace)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(envelope["classification"], "source_ready")
@@ -235,8 +229,7 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertTrue((run_dir / "source" / "manifest.json").is_file())
 
     def test_split_public_commands_cover_probe_import_init_reconcile_and_store_health(self) -> None:
-        root = new_test_root("public-commands")
-        workspace = root / "workspace"
+        workspace = new_workflow_workspace(self.id(), label="public-commands")
         completed, probe_envelope = run_cli(
             "bootstrap-probe",
             "--workspace-root",
@@ -289,8 +282,8 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertEqual(reconcile_envelope["classification"], "source_ready_current")
 
     def test_complete_scaffold_matches_contract_and_kernel_creation_ledger(self) -> None:
-        root = new_test_root("scaffold")
-        completed, envelope = self._trace(root)
+        workspace = new_workflow_workspace(self.id(), label="scaffold")
+        completed, envelope = self._trace(workspace)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         run_dir = Path(envelope["data"]["run_dir"])
         scaffold = json.loads(
@@ -314,8 +307,10 @@ class SourceReadyCliTests(unittest.TestCase):
         )
 
     def test_fixture_adapter_has_no_production_capabilities(self) -> None:
-        root = new_test_root("adapter-capabilities")
-        completed, envelope = self._trace(root)
+        workspace = new_workflow_workspace(
+            self.id(), label="adapter-capabilities"
+        )
+        completed, envelope = self._trace(workspace)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(
             envelope["data"]["adapter_capabilities"],
@@ -332,9 +327,9 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertEqual(envelope["classification"], "capability_forbidden")
 
     def test_identical_rerun_is_idempotent(self) -> None:
-        root = new_test_root("idempotent")
-        first, first_envelope = self._trace(root)
-        second, second_envelope = self._trace(root)
+        workspace = new_workflow_workspace(self.id(), label="idempotent")
+        first, first_envelope = self._trace(workspace)
+        second, second_envelope = self._trace(workspace)
 
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(second.returncode, 0, second.stderr)
@@ -347,10 +342,18 @@ class SourceReadyCliTests(unittest.TestCase):
         )
 
     def test_identity_and_contract_generation_are_deterministic_across_workspaces(self) -> None:
-        first_root = new_test_root("determinism-a")
-        second_root = new_test_root("determinism-b")
-        first, first_envelope = self._trace(first_root, request_id="stable-request")
-        second, second_envelope = self._trace(second_root, request_id="stable-request")
+        first_workspace = new_workflow_workspace(
+            self.id(), label="determinism-a"
+        )
+        second_workspace = new_workflow_workspace(
+            self.id(), label="determinism-b"
+        )
+        first, first_envelope = self._trace(
+            first_workspace, request_id="stable-request"
+        )
+        second, second_envelope = self._trace(
+            second_workspace, request_id="stable-request"
+        )
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(first_envelope["data"]["run_id"], second_envelope["data"]["run_id"])
@@ -367,9 +370,9 @@ class SourceReadyCliTests(unittest.TestCase):
         )
 
     def test_same_second_second_identity_uses_collision_safe_path(self) -> None:
-        root = new_test_root("same-second")
-        first, first_envelope = self._trace(root, request_id="request-a")
-        second, second_envelope = self._trace(root, request_id="request-b")
+        workspace = new_workflow_workspace(self.id(), label="same-second")
+        first, first_envelope = self._trace(workspace, request_id="request-a")
+        second, second_envelope = self._trace(workspace, request_id="request-b")
 
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(second.returncode, 0, second.stderr)
@@ -379,8 +382,8 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertRegex(Path(second_envelope["data"]["run_dir"]).name, r"_r[0-9a-f]{8}$")
 
     def test_source_drift_invalidates_source_ready(self) -> None:
-        root = new_test_root("source-drift")
-        completed, envelope = self._trace(root)
+        workspace = new_workflow_workspace(self.id(), label="source-drift")
+        completed, envelope = self._trace(workspace)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         run_dir = Path(envelope["data"]["run_dir"])
         subtitle = run_dir / "source" / "subtitles" / "subtitle.en.srt"
@@ -396,8 +399,8 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertEqual(record["checkpoints"]["source_ready"]["status"], "stale")
 
     def test_moved_imported_source_is_drift_and_not_silently_recreated(self) -> None:
-        root = new_test_root("source-missing")
-        completed, envelope = self._trace(root)
+        workspace = new_workflow_workspace(self.id(), label="source-missing")
+        completed, envelope = self._trace(workspace)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         run_dir = Path(envelope["data"]["run_dir"])
         source = run_dir / "source/media/video.fixture"
@@ -410,8 +413,10 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertTrue(displaced.exists())
 
     def test_unknown_run_contract_version_blocks_resume(self) -> None:
-        root = new_test_root("unknown-run-version")
-        completed, envelope = self._trace(root)
+        workspace = new_workflow_workspace(
+            self.id(), label="unknown-run-version"
+        )
+        completed, envelope = self._trace(workspace)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         run_dir = Path(envelope["data"]["run_dir"])
         record_path = run_dir / "workflow/run.json"
@@ -423,8 +428,9 @@ class SourceReadyCliTests(unittest.TestCase):
         self.assertEqual(envelope["classification"], "unknown_contract_version")
 
     def test_public_reconcile_run_recovers_interrupted_initialization(self) -> None:
-        root = new_test_root("public-init-recovery")
-        workspace = root / "workspace"
+        workspace = new_workflow_workspace(
+            self.id(), label="public-init-recovery"
+        )
         completed, probe_envelope = run_cli(
             "bootstrap-probe",
             "--workspace-root",
@@ -495,7 +501,7 @@ class PathBudgetCliTests(unittest.TestCase):
         return root / ("x" * pad)
 
     def _run_at(self, target: int) -> tuple[Path, subprocess.CompletedProcess[str], dict]:
-        root = new_test_root(f"path-{target}")
+        root = new_case_dir(self.id(), label=f"path-{target}")
         workspace = self._workspace_for_target(root, target)
         return root, *run_cli(
             "trace-source-ready",
@@ -556,8 +562,10 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
 
         for index, fault_point in enumerate(self.FAULT_POINTS):
             with self.subTest(fault_point=fault_point):
-                root = new_test_root(f"f{index}")
-                kernel = VideoWorkflowKernel(root / "workspace")
+                workspace = new_workflow_workspace(
+                    self.id(), label=f"f{index}"
+                )
+                kernel = VideoWorkflowKernel(workspace)
                 probe = kernel.bootstrap_probe(
                     fixture=FIXTURE,
                     task_start="2026-07-15T01:02:03+08:00",
@@ -594,8 +602,10 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
     def test_binding_conflicts_fail_closed(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
 
-        root = new_test_root("binding-conflict")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(
+            self.id(), label="binding-conflict"
+        )
+        kernel = VideoWorkflowKernel(workspace)
         first = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -610,15 +620,15 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
         with self.assertRaises(KernelConflict):
             kernel.control_store.bind_run(
                 run_id=first.run_id,
-                output_path=root / "workspace" / "other",
+                output_path=workspace / "other",
                 initialization_intent_id="conflicting-intent",
             )
 
     def test_same_second_collision_safe_path_also_fails_when_really_occupied(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
 
-        root = new_test_root("true-collision")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(self.id(), label="true-collision")
+        kernel = VideoWorkflowKernel(workspace)
         first = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -641,8 +651,8 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
     def test_prepublish_abort_can_retry_to_complete_new_state(self) -> None:
         from video2pdf_workflow_kernel import InitializationFault, VideoWorkflowKernel
 
-        root = new_test_root("retry-abort")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(self.id(), label="retry-abort")
+        kernel = VideoWorkflowKernel(workspace)
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -662,8 +672,10 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
     def test_fixture_path_succeeds_when_production_services_are_fail_fast(self) -> None:
         from video2pdf_workflow_kernel import VideoWorkflowKernel
 
-        root = new_test_root("deprived-services")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(
+            self.id(), label="deprived-services"
+        )
+        kernel = VideoWorkflowKernel(workspace)
         with mock.patch("socket.socket", side_effect=AssertionError("network forbidden")), mock.patch(
             "subprocess.run", side_effect=AssertionError("subprocess forbidden")
         ):
@@ -677,8 +689,8 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
     def test_control_store_health_and_migration_are_real_file_backed(self) -> None:
         from video2pdf_workflow_kernel import VideoWorkflowKernel
 
-        root = new_test_root("control-store")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(self.id(), label="control-store")
+        kernel = VideoWorkflowKernel(workspace)
         kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -698,8 +710,10 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
         from video2pdf_workflow_kernel import VideoWorkflowKernel
         from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
 
-        root = new_test_root("unknown-store-version")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(
+            self.id(), label="unknown-store-version"
+        )
+        kernel = VideoWorkflowKernel(workspace)
         kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -708,7 +722,7 @@ class SourceReadyDeepModuleTests(unittest.TestCase):
         with sqlite3.connect(kernel.control_store.path) as connection:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (99)")
         with self.assertRaises(ControlStoreUnavailable):
-            VideoWorkflowKernel(root / "workspace")
+            VideoWorkflowKernel(workspace)
 
 
 if __name__ == "__main__":

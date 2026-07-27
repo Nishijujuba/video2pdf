@@ -10,13 +10,12 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import module_test_root
+from tests.video_workflow._test_run import new_case_dir, new_workflow_workspace
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 CLI = PROJECT_ROOT / "scripts/video_workflow.py"
-TEST_ROOT = module_test_root(PROJECT_ROOT)
 
 
 def create_directory_link(link: Path, target: Path) -> None:
@@ -51,7 +50,7 @@ class VerifiedSourceImportCliTests(unittest.TestCase):
         return kernel, prior_run_dir, published
 
     def _run_import(self, prior_run_dir: Path):
-        workspace = TEST_ROOT / uuid.uuid4().hex / "workspace"
+        workspace = new_workflow_workspace(self.id(), label="source-import")
         completed = subprocess.run(
             [
                 sys.executable,
@@ -174,7 +173,7 @@ class VerifiedSourceImportCliTests(unittest.TestCase):
 
     def test_public_source_import_rejects_a_linked_prior_source_descendant(self) -> None:
         _, prior_run_dir, _ = self._current_prior_package()
-        outside = TEST_ROOT / "outside" / uuid.uuid4().hex
+        outside = new_case_dir(self.id(), label="linked-outside")
         create_directory_link(prior_run_dir / "source/linked", outside)
 
         completed, payload, workspace = self._run_import(prior_run_dir)

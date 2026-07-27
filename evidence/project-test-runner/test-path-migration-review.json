@@ -716,6 +716,393 @@
     },
     "finding": "Independent code and evidence review pass the Stage 47 repair scope after fresh 113-test persisted validation. The unresolved ADR closed-set divergence and the missing two complete passing Promotion trials remain explicit non-cutover limitations."
   },
+  "stage_52_61_remaining_path_review": {
+    "review_base_head": "3128b62cb4af4766fdf7d8f925168c2c8ebec10e",
+    "working_tree_paths": [
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/video_workflow/test_issue4_gate7.py",
+      "tests/video_workflow/test_source_live_smoke.py",
+      "tests/video_workflow/test_source_ready_tracer.py",
+      "tests/video_workflow/test_task_promotion.py",
+      "tests/video_workflow/test_verified_source_import_cli.py"
+    ],
+    "promotion_retry_1": {
+      "persisted_run_dir": "待删除/long-running/issue27_video_workflow_promotion_retry_1_20260727_054219_74982cd3",
+      "scheduler_run_dir": "D:/tests/video2pdf/video-workflow/20260726_214234_b50d1c2c",
+      "state": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 1920.171,
+      "failure_kind": "test_failure",
+      "requested_jobs": 4,
+      "observed_peak_concurrency": 4,
+      "module_count": 38,
+      "modules_passed": 33,
+      "modules_failed": 5,
+      "tests_discovered": 475,
+      "tests_started": 475,
+      "tests_terminal": 475,
+      "tests_passed": 427,
+      "tests_failed": 18,
+      "tests_errored": 30,
+      "missing_test_ids": 0,
+      "duplicate_test_ids": 0,
+      "multiply_executed_test_ids": 0,
+      "unassigned_test_ids": 0,
+      "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "discovery_sha256": "262f74a0268d4c1bd7b66ad5543070cdfa95f4bc249c91f39e5323aad897ceb7",
+      "summary_sha256": "78ba5e02879781021bb5b9a67bb1f82ea75daae23a43b762c21907eb7a8802e9",
+      "security_classification": "no_secret_detected",
+      "acceptance_evidence_eligible": true,
+      "closed_set_intact": true,
+      "promotion_pass_claimed": false,
+      "promotion_report_generated": false,
+      "finding": "The runner executed the complete dynamic 475-test closed set exactly once, but 18 failures and 30 errors across five modules made the trial fail. This failed trial cannot authorize Promotion or cutover."
+    },
+    "stage_52_repairs": {
+      "scope": [
+        "tests/video_workflow/test_source_live_smoke.py",
+        "tests/video_workflow/test_verified_source_import_cli.py"
+      ],
+      "finding": "Long semantic workspace paths were replaced with compact new_workflow_workspace paths. Generated workspace and case artifacts use the synthetic external run boundary while immutable fixtures, schemas, scripts, and production source inputs remain repository-backed.",
+      "initial_selector_diagnostic": {
+        "run_dir": "待删除/long-running/issue_27_stage52_source_live_smoke_focus_20260727_072035_30e36c61",
+        "state": "failed",
+        "exit_code": 1,
+        "elapsed_seconds": 13.063,
+        "failure_kind": "invalid unittest import selector",
+        "code_failure_claimed": false,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      "source_live_smoke_rerun": {
+        "run_dir": "待删除/long-running/issue_27_stage52_source_live_smoke_focus_rerun_20260727_072150_3864d130",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 24,
+        "tests_passed": 24,
+        "unittest_elapsed_seconds": 1215.593,
+        "persisted_elapsed_seconds": 1225.656,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      }
+    },
+    "stage_58_source_authority_repair": {
+      "scope": "tests/video_workflow/test_source_live_smoke.py",
+      "finding": "All eleven direct _execute_kernel_source_live_smoke calls and the closed-profile runner preserve the real checkout PROJECT_ROOT as the immutable source and runtime-policy authority. Test-only adapters redirect generated work-root and terminal-proof containment to the synthetic external boundary after asserting that production receives the checkout authority.",
+      "authority_contract": {
+        "immutable_source_authority": "PROJECT_ROOT",
+        "generated_data_authority": "D:/tests synthetic worker run",
+        "production_code_changed": false,
+        "existing_test_methods_changed": 0,
+        "existing_assertion_calls_before": 118,
+        "existing_assertion_calls_after": 122,
+        "authority_assertions_added": 4,
+        "assertion_purpose": "Prove the real checkout project_root reaches runtime-policy resolution, work-root validation, report construction, and terminal-proof construction while generated writes remain external."
+      },
+      "non_persisted_diagnostic": {
+        "synthetic_run_dir": "D:/t58b/video2pdf/video-workflow/20260727_023949_2f8fc4a2",
+        "tests": 24,
+        "tests_passed": 24,
+        "result": "OK",
+        "limitation": "This diagnostic was not persisted and is superseded by the Stage 59 persisted rerun."
+      }
+    },
+    "stage_54_persisted_validation": [
+      {
+        "scope": "tests.video_workflow.test_verified_source_import_cli",
+        "run_dir": "待删除/long-running/issue_27_stage54a_verified_source_import_20260727_085653_d083f1f9",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 3,
+        "tests_passed": 3,
+        "unittest_elapsed_seconds": 99.228,
+        "persisted_elapsed_seconds": 100.891,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": [
+          "tests.video_workflow.test_issue4_gate7",
+          "tests.video_workflow.test_source_ready_tracer",
+          "tests.video_workflow.test_task_promotion"
+        ],
+        "run_dir": "待删除/long-running/issue27_stage54b_three_modules_short_root_20260727_090653_8ada1c04",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 48,
+        "tests_passed": 48,
+        "unittest_elapsed_seconds": 1262.169,
+        "persisted_elapsed_seconds": 1269.219,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": "tests.project_test_runner.test_repository_contract",
+        "run_dir": "待删除/long-running/issue27_stage54b_repository_contract_20260727_090202_c7d24517",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 34,
+        "tests_passed": 34,
+        "unittest_elapsed_seconds": 65.219,
+        "persisted_elapsed_seconds": 69.125,
+        "registered_contract_sources": 68,
+        "registered_suites": 5,
+        "reviewed_local_write_exceptions": 2,
+        "repository_write_violations": 0,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      }
+    ],
+    "stage_59_fresh_persisted_validation": [
+      {
+        "scope": "tests.video_workflow.test_source_live_smoke",
+        "run_dir": "待删除/long-running/issue27_stage59_source_live_smoke_20260727_105812_1e30f387",
+        "synthetic_run_dir": "D:/tests/video2pdf/video-workflow/20260727_025823_42292163",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 24,
+        "tests_passed": 24,
+        "unittest_elapsed_seconds": 779.204,
+        "persisted_elapsed_seconds": 785.703,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": "tests.project_test_runner.test_repository_contract",
+        "run_dir": "待删除/long-running/issue27_stage59_repository_contract_20260727_105918_70b8a9eb",
+        "synthetic_run_dir": "D:/tests/video2pdf/project-test-runner/20260727_025924_f83b7307",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 40,
+        "tests_passed": 40,
+        "unittest_elapsed_seconds": 111.749,
+        "persisted_elapsed_seconds": 116.703,
+        "registered_contract_sources": 68,
+        "registered_suites": 5,
+        "reviewed_local_write_exceptions": 2,
+        "used_local_write_exceptions": 2,
+        "repository_write_violations": 0,
+        "workspace_path_violations": 0,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true,
+        "tree_scope": "Stage 59 tree with 40 contract tests; this persisted result predates the Stage 60 and Stage 61 analyzer repairs and does not cover the current 48-test contract."
+      }
+    ],
+    "current_repair_validation_matrix": {
+      "persisted_results": [
+        {
+          "label": "verified3",
+          "scope": "tests.video_workflow.test_verified_source_import_cli",
+          "run_dir": "待删除/long-running/issue_27_stage54a_verified_source_import_20260727_085653_d083f1f9",
+          "tests": 3,
+          "tests_passed": 3,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 100.891,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "B48",
+          "scope": [
+            "tests.video_workflow.test_issue4_gate7",
+            "tests.video_workflow.test_source_ready_tracer",
+            "tests.video_workflow.test_task_promotion"
+          ],
+          "run_dir": "待删除/long-running/issue27_stage54b_three_modules_short_root_20260727_090653_8ada1c04",
+          "tests": 48,
+          "tests_passed": 48,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 1269.219,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "source-current-authority-24",
+          "scope": "tests.video_workflow.test_source_live_smoke",
+          "run_dir": "待删除/long-running/issue27_stage59_source_live_smoke_20260727_105812_1e30f387",
+          "tests": 24,
+          "tests_passed": 24,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 785.703,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "contract-old-tree-40",
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "run_dir": "待删除/long-running/issue27_stage59_repository_contract_20260727_105918_70b8a9eb",
+          "tests": 40,
+          "tests_passed": 40,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 116.703,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true,
+          "limitation": "This persisted run covers the Stage 59 40-test contract only."
+        }
+      ],
+      "direct_results": [
+        {
+          "stage": 56,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct",
+          "tests": 36,
+          "tests_passed": 36
+        },
+        {
+          "stage": 60,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O0",
+          "tests": 46,
+          "tests_passed": 46
+        },
+        {
+          "stage": 60,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O2",
+          "tests": 46,
+          "tests_passed": 46
+        },
+        {
+          "stage": 61,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O0",
+          "tests": 48,
+          "tests_passed": 48
+        },
+        {
+          "stage": 61,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O2",
+          "tests": 48,
+          "tests_passed": 48
+        }
+      ],
+      "finding": "The 48/48 Stage 61 O0 and O2 results are direct test executions. They are not persisted-command evidence. Persisted evidence remains the verified3, B48, source-current-authority-24, and contract-old-tree-40 runs listed above."
+    },
+    "stage_61_adversarial_review": {
+      "status": "PASS",
+      "probe_expected_violation_counts": {
+        "argument": 1,
+        "control_if_try_match_loop": 4,
+        "rebound": 0,
+        "default_closure_staticmethod": 2
+      },
+      "probe_result": "PASS",
+      "repair": "Match-case nested helper declarations are included in lexical scope analysis. Multiple lexical helper candidates are evaluated and merged: any full or unknown UUID path fails closed, all compact uuid4().hex[:8] candidates remain allowed, and unresolved self or cls base methods remain fail closed.",
+      "registry_scan": {
+        "registered_contract_sources": 68,
+        "workspace_path_violations": 0,
+        "reviewed_local_write_exceptions": 2,
+        "used_local_write_exceptions": 2
+      }
+    },
+    "historical_review_failures": [
+      {
+        "stage": 55,
+        "status": "FAIL",
+        "finding": "The compact-path AST analyzer missed bare uuid.uuid4().hex, pure-UUID f-string, and method-helper forms. Stage 56 supplied the first repair."
+      },
+      {
+        "stage": 57,
+        "status": "FAIL",
+        "finding": "The analyzer missed cross-class same-named method helpers and uuid.uuid4().hex[:] or [:32] forms; the evidence test and assertion inventory was stale; and the source-live-smoke migration had replaced the checkout project_root authority with a synthetic root. Stage 58 restored the real PROJECT_ROOT authority and strengthened class and slice analysis."
+      },
+      {
+        "stage": 59,
+        "status": "FAIL",
+        "finding": "The analyzer missed function-local imports and nested helpers. The source-authority repair itself had fresh passing persisted evidence. Stages 60 and 61 repaired local lexical scope, argument and control-flow cases, match-case declarations, and helper rebinding before the final dual-axis pass."
+      }
+    ],
+    "semantic_diff_review": {
+      "existing_video_workflow_test_methods_before": 75,
+      "existing_video_workflow_test_methods_after": 75,
+      "existing_video_workflow_test_method_ids_changed": 0,
+      "existing_video_workflow_unittest_assertion_calls_before": 354,
+      "existing_video_workflow_unittest_assertion_calls_after": 358,
+      "existing_video_workflow_unittest_assertion_calls_added": 4,
+      "repository_contract_test_methods_before": 32,
+      "repository_contract_test_methods_after": 48,
+      "repository_contract_test_methods_added": 16,
+      "repository_contract_unittest_assertion_calls_before": 43,
+      "repository_contract_unittest_assertion_calls_after": 65,
+      "repository_contract_unittest_assertion_calls_added": 22,
+      "source_live_smoke_authority_assertions_added": 4,
+      "source_live_smoke_authority_finding": "The added assertions prove that the executor, work-root validator, report builder, and terminal-proof constructor receive the exact checkout PROJECT_ROOT supplied by the caller. Test-only adapters then rebind generated containment to the synthetic external boundary.",
+      "synthetic_project_authority": "Generated outputs use the synthetic external worker boundary. Immutable fixtures, schemas, scripts, runtime policy, and other production source inputs continue to resolve from the checkout authority.",
+      "compact_path_contract": "Video Workflow workspaces are created through new_workflow_workspace and end in the compact component w. The repository contract rejects full UUID workspace components, including bare and f-string UUID values, propagated aliases, unproven slices, function-local imports, nested helpers across if, try, match, and loop bodies, mixed lexical helper candidates, function helpers, method helpers, and ambiguous same-named methods. Proven uuid4().hex[:8] candidates remain allowed.",
+      "finding": "The five migrated Video Workflow modules preserve all 75 existing test methods and add four authority assertions. The repository contract grows from 32 to 48 test methods and from 43 to 65 unittest assertion calls to cover the analyzer repair surface."
+    },
+    "historical_stage_59_independent_review_gate": {
+      "status": "NEEDS_REPAIR",
+      "standards_axis": {
+        "status": "PASS",
+        "hard_findings": [],
+        "judgement_calls": [
+          {
+            "severity": "P3",
+            "path": "tests/project_test_runner/test_repository_contract.py",
+            "finding": "_WorkflowWorkspaceBypassAnalyzer stores its source constructor argument without reading it. Removing the unused state would simplify the analyzer, but this does not block the repair."
+          }
+        ]
+      },
+      "spec_axis": {
+        "status": "FAIL",
+        "findings": [
+          {
+            "severity": "P1",
+            "path": "tests/project_test_runner/test_repository_contract.py",
+            "finding": "The compact-workspace analyzer registers imports and helpers only from the module body. A function-local import followed by module_test_root() / uuid.uuid4().hex / workspace and a nested helper returning that path both produce zero violations, so a registered test can restore the prohibited long workspace form while the repository contract still passes.",
+            "required_repair": "Resolve function-local imports and nested helpers or fail closed when their lineage cannot be proven safe, and add regression tests for both forms."
+          }
+        ]
+      },
+      "commit_authorized": false,
+      "promotion_authorized": false
+    },
+    "independent_review_gate": {
+      "stage": 61,
+      "status": "PASS",
+      "standards_axis": {
+        "status": "PASS",
+        "findings": []
+      },
+      "spec_axis": {
+        "status": "PASS",
+        "findings": []
+      },
+      "commit_authorized": true,
+      "promotion_authorized": false,
+      "finding": "The independent dual-axis review found no Standards or Spec finding after the Stage 61 adversarial repair and 48/48 direct O0 and O2 validation."
+    },
+    "promotion_status": "FAILED_PRE_CUTOVER",
+    "promotion_report_status": "NOT_GENERATED",
+    "stage_62_final_evidence_verification": {
+      "video_workflow_discovery": {
+        "total_count": 475,
+        "module_count": 38,
+        "duplicate_test_ids": 0,
+        "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+      },
+      "method_and_assertion_inventory": {
+        "video_workflow_test_methods_before": 75,
+        "video_workflow_test_methods_after": 75,
+        "video_workflow_assertion_calls_before": 354,
+        "video_workflow_assertion_calls_after": 358,
+        "repository_contract_test_methods_before": 32,
+        "repository_contract_test_methods_after": 48,
+        "repository_contract_assertion_calls_before": 43,
+        "repository_contract_assertion_calls_after": 65
+      },
+      "json_parse": "PASS",
+      "git_diff_check": "PASS",
+      "secret_scan": "PASS"
+    },
+    "finding": "The current repair set passes the Stage 61 adversarial probe, 48/48 direct O0, 48/48 direct O2, the 68-source registry scan with zero violations, and independent Standards and Spec review. Persisted evidence separately proves verified3, B48, the current source-authority 24-test module, and the Stage 59 40-test contract tree. Stage 62 independently reconfirmed the 475-test Video Workflow closed set and current method and assertion inventories. The failed complete Promotion trial remains historical evidence; two complete passing trials are still required, and no Promotion report was generated."
+  },
   "discovery_review": {
     "video_workflow_test_count": 475,
     "video_workflow_module_count": 38,

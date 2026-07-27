@@ -1005,6 +1005,811 @@ def analyze_source(
     return analyzer.violations, analyzer.used
 
 
+@dataclass(frozen=True)
+class _WorkflowUuidPart:
+    max_length: int | None
+
+    @property
+    def could_be_uuid32(self) -> bool:
+        return self.max_length is None or self.max_length >= 32
+
+
+@dataclass(frozen=True)
+class _WorkflowWorkspaceFact:
+    module_rooted: bool
+    parts: tuple[str | None | _WorkflowUuidPart, ...] = ()
+
+
+_UNKNOWN_WORKFLOW_FACT = _WorkflowWorkspaceFact(False)
+_AMBIGUOUS_IMPORT = "<ambiguous-import>"
+
+
+@dataclass
+class _WorkflowLexicalScope:
+    parent: _WorkflowLexicalScope | None
+    bindings: dict[str, _WorkflowWorkspaceFact]
+    import_aliases: dict[str, str | None]
+    local_names: set[str]
+    helpers: dict[str, list[_WorkflowHelper]]
+
+
+@dataclass(frozen=True, eq=False)
+class _WorkflowHelper:
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+    defining_scope: _WorkflowLexicalScope
+    class_name: str | None = None
+    implicit_receiver: bool = False
+
+
+class _WorkflowWorkspaceBypassAnalyzer(ast.NodeVisitor):
+    """Find workspace paths built from a module root instead of its helper."""
+
+    def __init__(self) -> None:
+        self.scope = _WorkflowLexicalScope(None, {}, {}, set(), {})
+        self.method_helpers: dict[str, _WorkflowHelper] = {}
+        self.method_candidates: dict[str, list[_WorkflowHelper]] = {}
+        self.active_helpers: set[int] = set()
+        self.helper_evaluation_depth = 0
+        self.return_fact_stack: list[list[_WorkflowWorkspaceFact]] = []
+        self.current_class: str | None = None
+        self.violations: set[int] = set()
+
+    def prepare(self, tree: ast.Module) -> None:
+        self.scope = self._make_scope(tree.body, None)
+        for statement in tree.body:
+            if not isinstance(statement, ast.ClassDef):
+                continue
+            for member in statement.body:
+                if not isinstance(
+                    member,
+                    (ast.FunctionDef, ast.AsyncFunctionDef),
+                ):
+                    continue
+                helper = _WorkflowHelper(
+                    member,
+                    self.scope,
+                    statement.name,
+                    not any(
+                        isinstance(decorator, ast.Name)
+                        and decorator.id == "staticmethod"
+                        for decorator in member.decorator_list
+                    ),
+                )
+                qualified_name = f"{statement.name}.{member.name}"
+                self.method_helpers[qualified_name] = helper
+                self.method_candidates.setdefault(member.name, []).append(
+                    helper
+                )
+
+    @staticmethod
+    def _assigned_names(target: ast.AST) -> set[str]:
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.List, ast.Tuple)):
+            return {
+                name
+                for element in target.elts
+                for name in _WorkflowWorkspaceBypassAnalyzer._assigned_names(
+                    element
+                )
+            }
+        return set()
+
+    def _scope_declarations(
+        self,
+        statements: list[ast.stmt],
+    ) -> tuple[set[str], list[tuple[str, ast.AST]]]:
+        names: set[str] = set()
+        helpers: list[tuple[str, ast.AST]] = []
+
+        def collect(statement: ast.stmt) -> None:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(statement.name)
+                helpers.append((statement.name, statement))
+                return
+            if isinstance(statement, ast.ClassDef):
+                names.add(statement.name)
+                return
+            if isinstance(statement, ast.Import):
+                names.update(
+                    imported.asname or imported.name.split(".", 1)[0]
+                    for imported in statement.names
+                )
+                return
+            if isinstance(statement, ast.ImportFrom):
+                names.update(
+                    imported.asname or imported.name
+                    for imported in statement.names
+                )
+                return
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    assigned = self._assigned_names(target)
+                    names.update(assigned)
+                    if isinstance(statement.value, ast.Lambda):
+                        helpers.extend(
+                            (name, statement.value) for name in assigned
+                        )
+            elif isinstance(statement, ast.AnnAssign):
+                assigned = self._assigned_names(statement.target)
+                names.update(assigned)
+                if isinstance(statement.value, ast.Lambda):
+                    helpers.extend((name, statement.value) for name in assigned)
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                names.update(self._assigned_names(statement.target))
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                for item in statement.items:
+                    if item.optional_vars is not None:
+                        names.update(self._assigned_names(item.optional_vars))
+            elif isinstance(statement, ast.ExceptHandler):
+                if statement.name:
+                    names.add(statement.name)
+
+            nested_bodies: list[list[ast.stmt]] = []
+            for field_name in ("body", "orelse", "finalbody"):
+                value = getattr(statement, field_name, None)
+                if isinstance(value, list):
+                    nested_bodies.append(value)
+            if isinstance(statement, ast.Try):
+                nested_bodies.extend(
+                    handler.body for handler in statement.handlers
+                )
+            if isinstance(statement, ast.Match):
+                nested_bodies.extend(case.body for case in statement.cases)
+            for body in nested_bodies:
+                for child in body:
+                    collect(child)
+
+        for statement in statements:
+            collect(statement)
+        return names, helpers
+
+    def _make_scope(
+        self,
+        statements: list[ast.stmt],
+        parent: _WorkflowLexicalScope | None,
+        *,
+        parameters: ast.arguments | None = None,
+    ) -> _WorkflowLexicalScope:
+        names, helper_nodes = self._scope_declarations(statements)
+        if parameters is not None:
+            names.update(
+                argument.arg
+                for argument in (
+                    *parameters.posonlyargs,
+                    *parameters.args,
+                    *parameters.kwonlyargs,
+                )
+            )
+            if parameters.vararg is not None:
+                names.add(parameters.vararg.arg)
+            if parameters.kwarg is not None:
+                names.add(parameters.kwarg.arg)
+        scope = _WorkflowLexicalScope(
+            parent,
+            {name: _UNKNOWN_WORKFLOW_FACT for name in names},
+            {name: None for name in names},
+            names,
+            {},
+        )
+        for name, node in helper_nodes:
+            scope.helpers.setdefault(name, []).append(
+                _WorkflowHelper(node, scope)
+            )
+        return scope
+
+    def _lookup_binding(
+        self,
+        key: str,
+    ) -> _WorkflowWorkspaceFact | None:
+        scope: _WorkflowLexicalScope | None = self.scope
+        while scope is not None:
+            if key in scope.bindings:
+                return scope.bindings[key]
+            root_name = key.split(".", 1)[0]
+            if root_name in scope.local_names:
+                return _UNKNOWN_WORKFLOW_FACT
+            scope = scope.parent
+        return None
+
+    def _canonical_name(self, node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            scope: _WorkflowLexicalScope | None = self.scope
+            while scope is not None:
+                if node.id in scope.import_aliases:
+                    return scope.import_aliases[node.id]
+                scope = scope.parent
+            return node.id
+        if isinstance(node, ast.Attribute):
+            owner = self._canonical_name(node.value)
+            if owner is not None:
+                return f"{owner}.{node.attr}"
+        return None
+
+    def _is_uuid_hex(self, node: ast.AST) -> bool:
+        canonical = (
+            self._canonical_name(node.value.func)
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Call)
+            )
+            else None
+        )
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == "hex"
+            and isinstance(node.value, ast.Call)
+            and (
+                canonical == "uuid.uuid4"
+                or (
+                    canonical is not None
+                    and canonical.startswith(f"{_AMBIGUOUS_IMPORT}.")
+                )
+            )
+        )
+
+    @staticmethod
+    def _only_uuid_part(
+        fact: _WorkflowWorkspaceFact,
+    ) -> _WorkflowUuidPart | None:
+        if (
+            not fact.module_rooted
+            and len(fact.parts) == 1
+            and isinstance(fact.parts[0], _WorkflowUuidPart)
+        ):
+            return fact.parts[0]
+        return None
+
+    @staticmethod
+    def _slice_uuid_part(
+        part: _WorkflowUuidPart,
+        subscript: ast.AST,
+    ) -> _WorkflowUuidPart:
+        if isinstance(subscript, ast.Constant) and isinstance(
+            subscript.value,
+            int,
+        ):
+            return _WorkflowUuidPart(1)
+        if not isinstance(subscript, ast.Slice) or part.max_length is None:
+            return part
+
+        bounds: list[int | None] = []
+        for bound in (subscript.lower, subscript.upper, subscript.step):
+            if bound is None:
+                bounds.append(None)
+            elif isinstance(bound, ast.Constant) and isinstance(
+                bound.value,
+                int,
+            ):
+                bounds.append(bound.value)
+            else:
+                return part
+        lower, upper, step = bounds
+        if step == 0:
+            return part
+        start, stop, stride = slice(lower, upper, step).indices(
+            part.max_length
+        )
+        return _WorkflowUuidPart(len(range(start, stop, stride)))
+
+    def _helper(
+        self,
+        node: ast.Call,
+    ) -> _WorkflowHelper | list[_WorkflowHelper] | str | None:
+        if isinstance(node.func, ast.Name):
+            scope: _WorkflowLexicalScope | None = self.scope
+            while scope is not None:
+                candidates = scope.helpers.get(node.func.id, [])
+                if len(candidates) == 1:
+                    return candidates[0]
+                if len(candidates) > 1:
+                    return candidates
+                if node.func.id in scope.local_names:
+                    return None
+                scope = scope.parent
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in {"self", "cls"}
+        ):
+            if self.current_class is not None:
+                qualified_name = f"{self.current_class}.{node.func.attr}"
+                if qualified_name in self.method_helpers:
+                    return self.method_helpers[qualified_name]
+            candidates = self.method_candidates.get(node.func.attr, [])
+            if candidates:
+                return "<ambiguous-helper>"
+        return None
+
+    @staticmethod
+    def _literal_parts(value: str) -> tuple[str, ...]:
+        return tuple(
+            part
+            for part in re.split(r"[\\/]+", value)
+            if part
+        )
+
+    def _fact(self, node: ast.AST) -> _WorkflowWorkspaceFact:
+        key = _target_key(node)
+        if key is not None:
+            binding = self._lookup_binding(key)
+            if binding is not None:
+                return binding
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return _WorkflowWorkspaceFact(
+                False,
+                self._literal_parts(node.value),
+            )
+        if isinstance(node, ast.JoinedStr):
+            parts: list[str | None | _WorkflowUuidPart] = []
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(
+                    value.value,
+                    str,
+                ):
+                    parts.extend(self._literal_parts(value.value))
+                elif isinstance(value, ast.FormattedValue):
+                    embedded = self._fact(value.value)
+                    uuid_part = self._only_uuid_part(embedded)
+                    parts.append(uuid_part if uuid_part is not None else None)
+            return _WorkflowWorkspaceFact(False, tuple(parts) or (None,))
+        if self._is_uuid_hex(node):
+            return _WorkflowWorkspaceFact(False, (_WorkflowUuidPart(32),))
+        if isinstance(node, ast.Subscript):
+            base = self._fact(node.value)
+            uuid_part = self._only_uuid_part(base)
+            if uuid_part is not None:
+                return _WorkflowWorkspaceFact(
+                    False,
+                    (self._slice_uuid_part(uuid_part, node.slice),),
+                )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left = self._fact(node.left)
+            right = self._fact(node.right)
+            return _WorkflowWorkspaceFact(
+                left.module_rooted,
+                left.parts + right.parts,
+            )
+        if isinstance(node, ast.Call):
+            canonical = self._canonical_name(node.func)
+            if (
+                canonical
+                == "tests.video_workflow._test_run.module_test_root"
+            ):
+                return _WorkflowWorkspaceFact(True)
+            helper = self._helper(node)
+            if helper == "<ambiguous-helper>":
+                return _WorkflowWorkspaceFact(
+                    True,
+                    (_WorkflowUuidPart(None),),
+                )
+            if isinstance(helper, list):
+                return self._merge_facts(
+                    [
+                        self._helper_return_fact(candidate, node)
+                        for candidate in helper
+                    ]
+                )
+            if isinstance(helper, _WorkflowHelper):
+                return self._helper_return_fact(helper, node)
+        return _WorkflowWorkspaceFact(False)
+
+    def _bind(
+        self,
+        target: ast.AST,
+        fact: _WorkflowWorkspaceFact,
+        *,
+        preserve_helper: ast.Lambda | None = None,
+    ) -> None:
+        key = _target_key(target)
+        if key is None:
+            return
+        self.scope.bindings[key] = fact
+        root_name = key.split(".", 1)[0]
+        if root_name in self.scope.local_names:
+            self.scope.import_aliases[root_name] = None
+            if preserve_helper is None:
+                self.scope.helpers.pop(root_name, None)
+            else:
+                self.scope.helpers[root_name] = [
+                    _WorkflowHelper(preserve_helper, self.scope)
+                ]
+
+    def _apply_import(self, node: ast.Import | ast.ImportFrom) -> None:
+        if isinstance(node, ast.Import):
+            for imported in node.names:
+                name = imported.asname or imported.name.split(".", 1)[0]
+                self.scope.import_aliases[name] = imported.name
+        else:
+            module = node.module or ""
+            for imported in node.names:
+                name = imported.asname or imported.name
+                self.scope.import_aliases[name] = f"{module}.{imported.name}"
+
+    def _helper_return_fact(
+        self,
+        helper: _WorkflowHelper,
+        call: ast.Call,
+    ) -> _WorkflowWorkspaceFact:
+        helper_key = id(helper.node)
+        if helper_key in self.active_helpers:
+            return _WorkflowWorkspaceFact(False)
+        node = helper.node
+        if isinstance(node, ast.Lambda):
+            body: list[ast.stmt] = []
+            parameters = node.args
+        else:
+            body = node.body
+            parameters = node.args
+        helper_scope = self._make_scope(
+            body,
+            helper.defining_scope,
+            parameters=parameters,
+        )
+        all_positional_parameters = (
+            *parameters.posonlyargs,
+            *parameters.args,
+        )
+        positional_parameters = (
+            all_positional_parameters[1:]
+            if helper.implicit_receiver
+            else all_positional_parameters
+        )
+        caller_argument_facts = [self._fact(argument) for argument in call.args]
+        caller_keyword_facts = {
+            keyword.arg: self._fact(keyword.value)
+            for keyword in call.keywords
+            if keyword.arg is not None
+        }
+        previous_scope = self.scope
+        self.scope = helper.defining_scope
+        try:
+            positional_defaults = {
+                parameter.arg: self._fact(default)
+                for parameter, default in zip(
+                    all_positional_parameters[-len(parameters.defaults) :],
+                    parameters.defaults,
+                )
+            }
+            keyword_defaults = {
+                parameter.arg: self._fact(default)
+                for parameter, default in zip(
+                    parameters.kwonlyargs,
+                    parameters.kw_defaults,
+                )
+                if default is not None
+            }
+        finally:
+            self.scope = previous_scope
+        unresolved_argument = _WorkflowWorkspaceFact(
+            False,
+            (_WorkflowUuidPart(None),),
+        )
+        if helper.implicit_receiver and all_positional_parameters:
+            helper_scope.bindings[
+                all_positional_parameters[0].arg
+            ] = _UNKNOWN_WORKFLOW_FACT
+        for index, parameter in enumerate(positional_parameters):
+            if index < len(caller_argument_facts):
+                helper_scope.bindings[parameter.arg] = caller_argument_facts[index]
+            elif parameter.arg in caller_keyword_facts:
+                helper_scope.bindings[parameter.arg] = caller_keyword_facts[
+                    parameter.arg
+                ]
+            else:
+                helper_scope.bindings[parameter.arg] = positional_defaults.get(
+                    parameter.arg,
+                    unresolved_argument,
+                )
+        for parameter in parameters.kwonlyargs:
+            if parameter.arg in caller_keyword_facts:
+                helper_scope.bindings[parameter.arg] = caller_keyword_facts[
+                    parameter.arg
+                ]
+            else:
+                helper_scope.bindings[parameter.arg] = keyword_defaults.get(
+                    parameter.arg,
+                    unresolved_argument,
+                )
+        if parameters.vararg is not None:
+            helper_scope.bindings[parameters.vararg.arg] = unresolved_argument
+        if parameters.kwarg is not None:
+            helper_scope.bindings[parameters.kwarg.arg] = unresolved_argument
+        previous_class = self.current_class
+        self.scope = helper_scope
+        if helper.class_name is not None:
+            self.current_class = helper.class_name
+        self.active_helpers.add(helper_key)
+        self.helper_evaluation_depth += 1
+        self.return_fact_stack.append([])
+        try:
+            if isinstance(node, ast.Lambda):
+                return self._fact(node.body)
+            for statement in body:
+                self.visit(statement)
+            return self._merge_facts(self.return_fact_stack[-1])
+        finally:
+            self.return_fact_stack.pop()
+            self.helper_evaluation_depth -= 1
+            self.active_helpers.remove(helper_key)
+            self.current_class = previous_class
+            self.scope = previous_scope
+
+    @staticmethod
+    def _merge_facts(
+        facts: list[_WorkflowWorkspaceFact],
+    ) -> _WorkflowWorkspaceFact:
+        if not facts:
+            return _UNKNOWN_WORKFLOW_FACT
+        if all(fact == facts[0] for fact in facts[1:]):
+            return facts[0]
+        module_rooted = any(fact.module_rooted for fact in facts)
+        if len({len(fact.parts) for fact in facts}) != 1:
+            if any(
+                isinstance(part, _WorkflowUuidPart)
+                for fact in facts
+                for part in fact.parts
+            ):
+                return _WorkflowWorkspaceFact(
+                    module_rooted,
+                    (_WorkflowUuidPart(None),),
+                )
+            return _WorkflowWorkspaceFact(module_rooted)
+        merged_parts: list[str | None | _WorkflowUuidPart] = []
+        for parts in zip(*(fact.parts for fact in facts)):
+            if all(part == parts[0] for part in parts[1:]):
+                merged_parts.append(parts[0])
+            elif any(isinstance(part, _WorkflowUuidPart) for part in parts):
+                lengths = [
+                    part.max_length
+                    for part in parts
+                    if isinstance(part, _WorkflowUuidPart)
+                ]
+                merged_parts.append(
+                    _WorkflowUuidPart(
+                        None if None in lengths else max(lengths)
+                    )
+                )
+            else:
+                merged_parts.append(None)
+        return _WorkflowWorkspaceFact(module_rooted, tuple(merged_parts))
+
+    def _visit_branch(
+        self,
+        statements: list[ast.stmt],
+        base_scope: _WorkflowLexicalScope,
+    ) -> _WorkflowLexicalScope:
+        self.scope = _WorkflowLexicalScope(
+            base_scope.parent,
+            dict(base_scope.bindings),
+            dict(base_scope.import_aliases),
+            set(base_scope.local_names),
+            {
+                name: list(helpers)
+                for name, helpers in base_scope.helpers.items()
+            },
+        )
+        for statement in statements:
+            self.visit(statement)
+        return self.scope
+
+    def _merge_branch_scopes(
+        self,
+        base_scope: _WorkflowLexicalScope,
+        branches: list[_WorkflowLexicalScope],
+    ) -> None:
+        all_keys = set().union(
+            *(branch.bindings.keys() for branch in branches)
+        )
+        base_scope.bindings = {
+            key: self._merge_facts(
+                [
+                    branch.bindings.get(key, _UNKNOWN_WORKFLOW_FACT)
+                    for branch in branches
+                ]
+            )
+            for key in all_keys
+        }
+        alias_names = set().union(
+            *(branch.import_aliases.keys() for branch in branches)
+        )
+        base_scope.import_aliases = {
+            name: (
+                values[0]
+                if all(value == values[0] for value in values[1:])
+                else _AMBIGUOUS_IMPORT
+            )
+            for name in alias_names
+            for values in [
+                [branch.import_aliases.get(name) for branch in branches]
+            ]
+        }
+        helper_names = set().union(
+            *(branch.helpers.keys() for branch in branches)
+        )
+        merged_helpers: dict[str, list[_WorkflowHelper]] = {}
+        for name in helper_names:
+            values = [branch.helpers.get(name, []) for branch in branches]
+            if all(value == values[0] for value in values[1:]):
+                merged_helpers[name] = values[0]
+                continue
+            unique = list(
+                {
+                    id(helper): helper
+                    for value in values
+                    for helper in value
+                }.values()
+            )
+            if len(unique) == 1:
+                unique.append(unique[0])
+            merged_helpers[name] = unique
+        base_scope.helpers = merged_helpers
+        self.scope = base_scope
+
+    @staticmethod
+    def _is_workspace(fact: _WorkflowWorkspaceFact) -> bool:
+        if not fact.module_rooted:
+            return False
+        for index, part in enumerate(fact.parts):
+            if (
+                isinstance(part, _WorkflowUuidPart)
+                and part.could_be_uuid32
+                and any(
+                    trailing in {"w", "workspace"}
+                    for trailing in fact.parts[index + 1 :]
+                )
+            ):
+                return True
+        return False
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        fact = self._fact(node.value)
+        for target in node.targets:
+            self._bind(
+                target,
+                fact,
+                preserve_helper=(
+                    node.value if isinstance(node.value, ast.Lambda) else None
+                ),
+            )
+        if (
+            self.helper_evaluation_depth == 0
+            and self._is_workspace(fact)
+        ):
+            self.violations.add(node.lineno)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            fact = self._fact(node.value)
+            self._bind(
+                node.target,
+                fact,
+                preserve_helper=(
+                    node.value if isinstance(node.value, ast.Lambda) else None
+                ),
+            )
+            if (
+                self.helper_evaluation_depth == 0
+                and self._is_workspace(fact)
+            ):
+                self.violations.add(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self._apply_import(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._apply_import(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for argument in (*node.args, *(item.value for item in node.keywords)):
+            if (
+                self.helper_evaluation_depth == 0
+                and self._is_workspace(self._fact(argument))
+            ):
+                self.violations.add(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if self.return_fact_stack and node.value is not None:
+            self.return_fact_stack[-1].append(self._fact(node.value))
+
+    def visit_If(self, node: ast.If) -> None:
+        base_scope = self.scope
+        branches = [
+            self._visit_branch(node.body, base_scope),
+            self._visit_branch(node.orelse, base_scope),
+        ]
+        self._merge_branch_scopes(base_scope, branches)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        base_scope = self.scope
+        branches = [
+            self._visit_branch([*node.body, *node.orelse], base_scope),
+            *(
+                self._visit_branch(handler.body, base_scope)
+                for handler in node.handlers
+            ),
+        ]
+        self._merge_branch_scopes(base_scope, branches)
+        for statement in node.finalbody:
+            self.visit(statement)
+
+    visit_TryStar = visit_Try
+
+    def visit_Match(self, node: ast.Match) -> None:
+        base_scope = self.scope
+        branches = [
+            self._visit_branch([], base_scope),
+            *(
+                self._visit_branch(case.body, base_scope)
+                for case in node.cases
+            ),
+        ]
+        self._merge_branch_scopes(base_scope, branches)
+
+    def _visit_loop(self, node: ast.For | ast.AsyncFor | ast.While) -> None:
+        base_scope = self.scope
+        branches = [
+            self._visit_branch([], base_scope),
+            self._visit_branch(node.body, base_scope),
+            self._visit_branch(node.orelse, base_scope),
+        ]
+        self._merge_branch_scopes(base_scope, branches)
+
+    visit_For = _visit_loop
+    visit_AsyncFor = _visit_loop
+    visit_While = _visit_loop
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if self.helper_evaluation_depth:
+            return
+        if not node.name.startswith("test_"):
+            return
+        previous_scope = self.scope
+        self.scope = self._make_scope(
+            node.body,
+            previous_scope,
+            parameters=node.args,
+        )
+        try:
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.scope = previous_scope
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        previous_class = self.current_class
+        self.current_class = node.name
+        try:
+            for statement in node.body:
+                if (
+                    isinstance(
+                        statement,
+                        (ast.FunctionDef, ast.AsyncFunctionDef),
+                    )
+                    and statement.name.startswith("test_")
+                ):
+                    self.visit(statement)
+        finally:
+            self.current_class = previous_class
+
+
+def workflow_workspace_bypasses(source_text: str, source: Path) -> list[str]:
+    tree = ast.parse(source_text, filename=str(source))
+    analyzer = _WorkflowWorkspaceBypassAnalyzer()
+    analyzer.prepare(tree)
+    analyzer.visit(tree)
+    return [
+        f"{source.as_posix()}:{line}: workflow workspace must use "
+        "new_workflow_workspace"
+        for line in sorted(analyzer.violations)
+    ]
+
+
 def registered_contract_sources() -> dict[str, str]:
     registry = load_registry(PROJECT_ROOT, REGISTRY_PATH)
     sources: dict[str, str] = {}
@@ -1180,6 +1985,493 @@ def test_external_boundaries():
             Path("tests/video_workflow/test_external.py"),
             {},
         )
+        self.assertEqual(violations, [])
+
+    def test_workflow_workspace_contract_is_scoped_to_path_bypasses(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from uuid import uuid4
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def new_test_root(label):
+    return TEST_RUNS / f"{label}-{uuid.uuid4().hex}"
+
+def test_paths():
+    quarantine = TEST_RUNS / "quarantine"
+    quarantine.mkdir()
+    start_kernel(new_test_root("semantic-label") / "workspace")
+    start_kernel(TEST_RUNS / uuid.uuid4().hex / "workspace")
+    start_kernel(TEST_RUNS / uuid4().hex / "workspace")
+    start_kernel(TEST_RUNS / f"{uuid.uuid4().hex}" / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 4)
+        self.assertTrue(all("new_workflow_workspace" in item for item in violations))
+
+    def test_workflow_workspace_contract_follows_method_thin_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+class Harness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex
+
+    def test_paths(self):
+        start_kernel(self.new_test_root() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 1)
+
+    def test_workflow_workspace_contract_qualifies_same_named_method_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+class SafeHarness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex[:8]
+
+    def test_paths(self):
+        start_kernel(self.new_test_root() / "workspace")
+
+class UnsafeHarness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex
+
+    def test_paths(self):
+        start_kernel(self.new_test_root() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn(":19:", violations[0])
+
+    def test_workflow_workspace_contract_fails_closed_for_ambiguous_methods(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+class FirstHarness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex[:8]
+
+class SecondHarness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex
+
+class RuntimeSelectedHarness(choose_base()):
+    def test_paths(self):
+        start_kernel(self.new_test_root() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn(":17:", violations[0])
+
+    def test_workflow_workspace_contract_fails_closed_for_unknown_base_method(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+class UnrelatedHarness:
+    def new_test_root(self):
+        return TEST_RUNS / uuid.uuid4().hex[:8]
+
+class RuntimeSelectedHarness(choose_base()):
+    def test_paths(self):
+        start_kernel(self.new_test_root() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn(":13:", violations[0])
+
+    def test_workflow_workspace_contract_keeps_unproven_uuid_slices_risky(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(stop):
+    start_kernel(TEST_RUNS / uuid.uuid4().hex[:] / "workspace")
+    start_kernel(TEST_RUNS / uuid.uuid4().hex[:32] / "workspace")
+    start_kernel(TEST_RUNS / uuid.uuid4().hex[0:32] / "workspace")
+    start_kernel(TEST_RUNS / uuid.uuid4().hex[:stop] / "workspace")
+    start_kernel(TEST_RUNS / uuid.uuid4().hex[:8] / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 4)
+
+    def test_workflow_workspace_contract_propagates_uuid_aliases_and_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def full_token():
+    return uuid.uuid4().hex[:]
+
+def compact_token():
+    return uuid.uuid4().hex[:8]
+
+def test_paths():
+    token = uuid.uuid4().hex
+    start_kernel(TEST_RUNS / token[:] / "workspace")
+    start_kernel(TEST_RUNS / full_token() / "workspace")
+    start_kernel(TEST_RUNS / compact_token() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 2)
+
+    def test_workflow_workspace_contract_resolves_function_lexical_scopes(
+        self,
+    ) -> None:
+        source = """
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def module_token():
+    return "module-token"
+
+def test_paths():
+    import uuid
+    from uuid import uuid4 as local_uuid4
+
+    def nested_full():
+        return uuid.uuid4().hex
+
+    nested_compact = lambda: local_uuid4().hex[:8]
+
+    def closure():
+        def module_token():
+            return local_uuid4().hex
+        return module_token()
+
+    start_kernel(TEST_RUNS / uuid.uuid4().hex / "workspace")
+    start_kernel(TEST_RUNS / local_uuid4().hex / "workspace")
+    start_kernel(TEST_RUNS / nested_full() / "workspace")
+    start_kernel(TEST_RUNS / nested_compact() / "workspace")
+    start_kernel(TEST_RUNS / closure() / "workspace")
+
+def test_shadowed_import():
+    import uuid
+    uuid = application_uuid_provider
+    start_kernel(TEST_RUNS / uuid.uuid4().hex / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 4)
+        self.assertEqual(
+            [item.rsplit(":", 2)[-2] for item in violations],
+            ["23", "24", "25", "27"],
+        )
+
+    def test_workflow_workspace_contract_fails_closed_for_ambiguous_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(condition):
+    if condition:
+        def token():
+            return uuid.uuid4().hex[:8]
+    else:
+        def token():
+            return uuid.uuid4().hex
+    start_kernel(TEST_RUNS / token() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn(":14:", violations[0])
+
+    def test_workflow_workspace_contract_follows_nested_helpers_in_branches(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(condition, items, value):
+    if condition:
+        def if_token():
+            return uuid.uuid4().hex
+    else:
+        def if_token():
+            return uuid.uuid4().hex
+    start_kernel(TEST_RUNS / if_token() / "workspace")
+
+    try:
+        def try_token():
+            return uuid.uuid4().hex
+    except Exception:
+        def try_token():
+            return uuid.uuid4().hex
+    start_kernel(TEST_RUNS / try_token() / "workspace")
+
+    match value:
+        case "first":
+            def match_token():
+                return uuid.uuid4().hex
+        case _:
+            def match_token():
+                return uuid.uuid4().hex
+    start_kernel(TEST_RUNS / match_token() / "workspace")
+
+    for item in items:
+        def loop_token():
+            return uuid.uuid4().hex
+    else:
+        def loop_token():
+            return uuid.uuid4().hex
+    start_kernel(TEST_RUNS / loop_token() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 4)
+
+    def test_workflow_workspace_contract_allows_compact_match_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(value):
+    match value:
+        case "first":
+            def token():
+                return uuid.uuid4().hex[:8]
+        case _:
+            def token():
+                return uuid.uuid4().hex[:8]
+    start_kernel(TEST_RUNS / token() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_workflow_workspace_contract_merges_helper_and_branch_facts(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(condition):
+    full_path = lambda token: TEST_RUNS / token
+
+    def conditional_token():
+        if condition:
+            return uuid.uuid4().hex
+        return uuid.uuid4().hex[:8]
+
+    token = uuid.uuid4().hex
+    if condition:
+        token = uuid.uuid4().hex[:8]
+
+    start_kernel(full_path(uuid.uuid4().hex) / "workspace")
+    start_kernel(TEST_RUNS / conditional_token() / "workspace")
+    start_kernel(TEST_RUNS / token / "workspace")
+    start_kernel(TEST_RUNS / f"{uuid.uuid4().hex}/workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 4)
+
+    def test_workflow_workspace_contract_invalidates_rebound_helpers(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths():
+    def token():
+        return uuid.uuid4().hex
+    token = application_token_provider
+    start_kernel(TEST_RUNS / token() / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_workflow_workspace_contract_fails_closed_across_control_flow(
+        self,
+    ) -> None:
+        source = """
+import uuid
+from tests.video_workflow._test_run import module_test_root
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+class Harness:
+    def root(self, token=uuid.uuid4().hex):
+        return TEST_RUNS / token
+
+    @staticmethod
+    def static_root(token):
+        return TEST_RUNS / token
+
+    def test_default(self):
+        start_kernel(self.root() / "workspace")
+        start_kernel(self.static_root(uuid.uuid4().hex) / "workspace")
+
+def test_control_flow(value, items, condition):
+    token = uuid.uuid4().hex
+    match value:
+        case "compact":
+            token = uuid.uuid4().hex[:8]
+    start_kernel(TEST_RUNS / token / "workspace")
+
+    loop_token = uuid.uuid4().hex
+    for item in items:
+        break
+    else:
+        loop_token = uuid.uuid4().hex[:8]
+    start_kernel(TEST_RUNS / loop_token / "workspace")
+
+    if condition:
+        provider = lambda: uuid.uuid4().hex[:8]
+    else:
+        provider = lambda: uuid.uuid4().hex
+    start_kernel(TEST_RUNS / provider() / "workspace")
+
+def test_conditional_import(condition):
+    if condition:
+        import uuid
+    else:
+        uuid = application_uuid_provider
+    start_kernel(TEST_RUNS / uuid.uuid4().hex / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(len(violations), 6)
+
+    def test_workflow_workspace_contract_allows_trusted_helpers_and_non_uuids(
+        self,
+    ) -> None:
+        source = """
+from tests.video_workflow._test_run import (
+    module_test_root,
+    new_case_dir,
+    new_workflow_workspace,
+)
+
+TEST_RUNS = module_test_root(PROJECT_ROOT)
+
+def test_paths(value):
+    start_kernel(new_case_dir("test.id", label="case") / "workspace")
+    start_kernel(new_workflow_workspace("test.id", label="workflow"))
+    start_kernel(TEST_RUNS / value.hex / "workspace")
+    start_kernel(TEST_RUNS / "deadbeef" / "workspace")
+"""
+        violations = workflow_workspace_bypasses(
+            source,
+            Path("tests/video_workflow/test_external.py"),
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_registered_workflow_workspaces_use_compact_helper(self) -> None:
+        violations: list[str] = []
+        for source_path, suite_id in registered_contract_sources().items():
+            if suite_id != "video-workflow":
+                continue
+            source = PROJECT_ROOT / PurePosixPath(source_path)
+            violations.extend(
+                workflow_workspace_bypasses(
+                    source.read_text(encoding="utf-8"),
+                    PurePosixPath(source_path),
+                )
+            )
+
         self.assertEqual(violations, [])
 
     def test_analysis_preserves_trusted_paths_through_string_conversions(

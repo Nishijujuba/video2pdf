@@ -71,6 +71,26 @@ class ControlStoreV9FastPathTests(unittest.TestCase):
         self.assertEqual(reopened.check().schema_version, 9)
         self.assertEqual(validate_resources.call_count, 1)
 
+        primary = store._connect()
+        bypassing_secondary = mock.Mock()
+        try:
+            with mock.patch.object(
+                store,
+                "_connect_raw",
+                return_value=bypassing_secondary,
+            ), self.assertRaisesRegex(
+                ControlStoreUnavailable,
+                "Control Store second connection bypassed an immediate writer lock",
+            ):
+                store._probe_lock_contention(primary)
+        finally:
+            primary.close()
+        self.assertEqual(
+            bypassing_secondary.execute.call_args_list[0],
+            mock.call("PRAGMA busy_timeout=0"),
+        )
+        bypassing_secondary.close.assert_called_once_with()
+
     def test_v8_store_still_uses_planner_and_migrates_to_v9(self) -> None:
         store = self.new_store("v8")
         with sqlite3.connect(store.path) as connection:
@@ -166,16 +186,26 @@ class ControlStoreV9FastPathTests(unittest.TestCase):
 
     def test_healthy_check_runs_resource_validation_once(self) -> None:
         store = self.new_store("healthy-check")
+        self.assertEqual(control_store_module.LOCK_PROBE_TIMEOUT_MS, 0)
 
         with mock.patch.object(
             ControlStore,
             "_validate_resource_tables",
             autospec=True,
             wraps=ControlStore._validate_resource_tables,
-        ) as validate_resources:
-            self.assertEqual(store.check().status, "ok")
+        ) as validate_resources, mock.patch.object(
+            ControlStore,
+            "_probe_lock_contention",
+            autospec=True,
+            wraps=ControlStore._probe_lock_contention,
+        ) as probe_lock:
+            health = store.check()
 
+        self.assertEqual(health.status, "ok")
+        self.assertTrue(health.lock_contention_checked)
+        self.assertEqual(health.pragmas["busy_timeout"], control_store_module.BUSY_TIMEOUT_MS)
         self.assertEqual(validate_resources.call_count, 1)
+        self.assertEqual(probe_lock.call_count, 1)
 
     def test_non_resource_check_constraint_damage_keeps_generic_error(self) -> None:
         store = self.new_store("generic-integrity")
@@ -201,6 +231,95 @@ class ControlStoreV9FastPathTests(unittest.TestCase):
                 store.check()
 
         self.assertEqual(validate_resources.call_count, 0)
+
+        primary = store._connect()
+        failing_secondary = mock.Mock()
+        failing_secondary.execute.side_effect = (
+            None,
+            sqlite3.OperationalError("disk I/O error"),
+        )
+        try:
+            with mock.patch.object(
+                store,
+                "_connect_raw",
+                return_value=failing_secondary,
+            ), self.assertRaisesRegex(
+                ControlStoreUnavailable,
+                "Control Store lock probe failed unexpectedly: disk I/O error",
+            ) as raised:
+                store._probe_lock_contention(primary)
+        finally:
+            primary.close()
+        self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
+        self.assertEqual(
+            failing_secondary.execute.call_args_list[0],
+            mock.call("PRAGMA busy_timeout=0"),
+        )
+        failing_secondary.close.assert_called_once_with()
+
+        expected_contention = (
+            ("busy-primary-code", sqlite3.SQLITE_BUSY, "数据库正忙"),
+            ("locked-primary-code", sqlite3.SQLITE_LOCKED, "写入冲突"),
+            (
+                "busy-extended-code",
+                sqlite3.SQLITE_BUSY_RECOVERY,
+                "recovery contention",
+            ),
+            (
+                "locked-extended-code",
+                sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+                "shared-cache contention",
+            ),
+            ("missing-code-busy-compatibility", None, "database is busy"),
+            ("missing-code-compatibility", None, "database is locked"),
+        )
+        for label, error_code, message in expected_contention:
+            with self.subTest(label=label):
+                contention = sqlite3.OperationalError(message)
+                if error_code is not None:
+                    contention.sqlite_errorcode = error_code
+                secondary = mock.Mock()
+                secondary.execute.side_effect = (None, contention, None, None)
+                primary = store._connect()
+                try:
+                    with mock.patch.object(
+                        store,
+                        "_connect_raw",
+                        return_value=secondary,
+                    ):
+                        store._probe_lock_contention(primary)
+                finally:
+                    primary.close()
+                self.assertEqual(
+                    secondary.execute.call_args_list,
+                    [
+                        mock.call("PRAGMA busy_timeout=0"),
+                        mock.call("BEGIN IMMEDIATE"),
+                        mock.call("BEGIN IMMEDIATE"),
+                        mock.call("ROLLBACK"),
+                    ],
+                )
+                secondary.close.assert_called_once_with()
+
+        misleading_unknown = sqlite3.OperationalError("database is locked")
+        misleading_unknown.sqlite_errorcode = sqlite3.SQLITE_IOERR
+        unknown_secondary = mock.Mock()
+        unknown_secondary.execute.side_effect = (None, misleading_unknown)
+        primary = store._connect()
+        try:
+            with mock.patch.object(
+                store,
+                "_connect_raw",
+                return_value=unknown_secondary,
+            ), self.assertRaisesRegex(
+                ControlStoreUnavailable,
+                "Control Store lock probe failed unexpectedly: database is locked",
+            ) as unknown_raised:
+                store._probe_lock_contention(primary)
+        finally:
+            primary.close()
+        self.assertIs(unknown_raised.exception.__cause__, misleading_unknown)
+        unknown_secondary.close.assert_called_once_with()
 
     def test_recovery_sentinel_still_allows_reads_and_blocks_mutation(self) -> None:
         store = self.new_store("sentinel")

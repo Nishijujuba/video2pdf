@@ -69,7 +69,7 @@ RESOURCE_EVENT_KINDS = frozenset(
 RESOURCE_LAUNCH_FAILURE_STAGES = frozenset(
     {"launcher_exception", "process_identity_validation", "claim_generation_fence"}
 )
-LOCK_PROBE_TIMEOUT_MS = 100
+LOCK_PROBE_TIMEOUT_MS = 0
 SNAPSHOT_RETRY_LIMIT = 3
 MARKER_NAME = "control-store.json"
 DATABASE_RELPATH = ".workflow-control/control.sqlite3"
@@ -4430,7 +4430,18 @@ class ControlStore:
                 secondary.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as exc:
                 elapsed_ms = (time.monotonic() - started) * 1000
-                if "locked" not in str(exc).lower() or elapsed_ms > BUSY_TIMEOUT_MS:
+                error_code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(error_code, int):
+                    expected_contention = error_code & 0xFF in (
+                        sqlite3.SQLITE_BUSY,
+                        sqlite3.SQLITE_LOCKED,
+                    )
+                else:
+                    expected_contention = str(exc).strip().lower() in (
+                        "database is busy",
+                        "database is locked",
+                    )
+                if not expected_contention or elapsed_ms > BUSY_TIMEOUT_MS:
                     raise ControlStoreUnavailable(
                         f"Control Store lock probe failed unexpectedly: {exc}"
                     ) from exc

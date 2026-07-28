@@ -50,10 +50,13 @@ class PromotionReportTests(unittest.TestCase):
             / "schemas/project-test-promotion-report.v1.schema.json",
             repo / "schemas/project-test-promotion-report.v1.schema.json",
         )
-        test_ids = [
-            "case_alpha.AlphaTests.test_one",
-            "case_beta.BetaTests.test_two",
-        ]
+        test_ids = json.loads(
+            (
+                PROJECT_ROOT
+                / "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json"
+            ).read_text(encoding="utf-8")
+        )["baseline"]["test_ids"]
         test_set_sha = hashlib.sha256(
             canonical_json_bytes(test_ids)
         ).hexdigest()
@@ -327,9 +330,26 @@ class PromotionReportTests(unittest.TestCase):
             result["promotion_fingerprint"], report["promotion_fingerprint"]
         )
 
+    def test_schema_version_dispatch_rejects_boolean_and_unknown_versions(
+        self,
+    ) -> None:
+        for invalid_version in (True, 0, -1, 3, "1"):
+            with self.subTest(schema_version=invalid_version):
+                repo, report = self.make_report()
+                report["schema_version"] = invalid_version
+                write_json(
+                    repo
+                    / "evidence/project-test-runner/promotion-report.json",
+                    report,
+                )
+                with self.assertRaisesRegex(
+                    PromotionValidationError, "schema_version"
+                ):
+                    validate_promotion_report(repo)
+
     def test_count_is_dynamic_and_failures_block_cutover(self) -> None:
         repo, report = self.make_report()
-        report["promotion_closed_set"]["test_count"] = 475
+        report["promotion_closed_set"]["test_count"] = 499
         write_json(
             repo / "evidence/project-test-runner/invalid-report.json",
             report,

@@ -65,12 +65,17 @@ class ExternalRootValidationTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(
                 external_root.ExternalRootPathBudgetError,
-                r"83.*40.*240.*199",
+                r"83.*25.*240.*214",
             ),
         ):
             external_root.validate_external_test_root_path_budget(
                 Path(root_text),
                 suite_keys={"project-test-runner"},
+                reserved_artifact_paths=(),
+                self_hosted_reserved_artifact_paths={
+                    "execution-source-files/"
+                    "schemas/project-test-promotion-report.v2.schema.json",
+                },
             )
 
     @unittest.skipUnless(os.name == "nt", "Windows path budget")
@@ -87,9 +92,53 @@ class ExternalRootValidationTests(unittest.TestCase):
                 external_root.validate_external_test_root_path_budget(
                     root,
                     suite_keys={"project-test-runner"},
+                    reserved_artifact_paths=(),
+                    self_hosted_reserved_artifact_paths=(),
                 ),
                 root,
             )
+
+    @unittest.skipUnless(os.name == "nt", "Windows path budget")
+    def test_frozen_source_inventory_sets_49_unit_root_boundary(self) -> None:
+        longest_tracked_path = (
+            "docs/issues/delivery-glossary-terminology-governance/"
+            "01-establish-delivery-glossary-schema-and-validation-contract.md"
+        )
+        reserved_artifacts = {
+            f"execution-source-files/{longest_tracked_path}",
+        }
+        roots = {
+            units: Path("C:\\" + ("r" * (units - 3)))
+            for units in (49, 50, 153)
+        }
+
+        for units, root in roots.items():
+            with self.subTest(root_units=units), mock.patch.object(
+                external_root,
+                "validate_external_test_root",
+                return_value=root,
+            ):
+                if units == 49:
+                    self.assertEqual(
+                        external_root.validate_external_test_root_path_budget(
+                            root,
+                            suite_keys={"video-workflow"},
+                            reserved_artifact_paths=reserved_artifacts,
+                            self_hosted_reserved_artifact_paths=(),
+                        ),
+                        root,
+                    )
+                else:
+                    with self.assertRaisesRegex(
+                        external_root.ExternalRootPathBudgetError,
+                        rf"{units}.*49.*240.*190",
+                    ):
+                        external_root.validate_external_test_root_path_budget(
+                            root,
+                            suite_keys={"video-workflow"},
+                            reserved_artifact_paths=reserved_artifacts,
+                            self_hosted_reserved_artifact_paths=(),
+                        )
 
     def test_rejects_an_existing_non_directory(self) -> None:
         with temporary_root() as temporary_directory:

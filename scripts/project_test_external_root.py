@@ -24,7 +24,7 @@ _MODULE_KEY_BUDGET_COMPONENT = "0123456789ab"
 _MODULE_ASSIGNMENT_BUDGET_COMPONENT = (
     f"{_MODULE_KEY_BUDGET_COMPONENT}.assignment.json"
 )
-_SELF_HOSTED_FIXTURE_BUDGET_COMPONENT = "cli-" + ("a" * 32)
+_SELF_HOSTED_FIXTURE_BUDGET_COMPONENT = "cli-" + ("a" * 8)
 
 _MARKER_FIELDS = frozenset(
     {
@@ -60,40 +60,68 @@ def utf16_path_units(path: str | os.PathLike[str]) -> int:
     return len(os.fspath(path).encode("utf-16-le")) // 2
 
 
-def _reserved_relative_path_units(suite_keys: Collection[str]) -> int:
+def _reserved_relative_path_units(
+    suite_keys: Collection[str],
+    reserved_artifact_paths: Collection[str],
+    self_hosted_reserved_artifact_paths: Collection[str],
+) -> int:
     if not suite_keys:
         raise ExternalRootPathBudgetError(
             "at least one suite key is required for path-budget validation"
         )
+    run_suite_key = next(iter(suite_keys)) if len(suite_keys) == 1 else "all"
+    run_root = Path(PROJECT_KEY, run_suite_key, _RUN_ID_BUDGET_COMPONENT)
     reserved_paths = [
         Path(
-            PROJECT_KEY,
-            suite_key,
-            _RUN_ID_BUDGET_COMPONENT,
+            run_root,
             "modules",
             _MODULE_ASSIGNMENT_BUDGET_COMPONENT,
         )
-        for suite_key in suite_keys
     ]
+    for raw_path in reserved_artifact_paths:
+        path = Path(raw_path)
+        if (
+            not raw_path
+            or path.is_absolute()
+            or ".." in path.parts
+            or "\\" in raw_path
+        ):
+            raise ExternalRootPathBudgetError(
+                "reserved artifact paths must be canonical relative paths"
+            )
+        reserved_paths.append(run_root / path)
     if "project-test-runner" in suite_keys:
         # This authoritative suite recursively exercises the public runner.
         # Its generated CLI fixture therefore contains a second complete run.
-        reserved_paths.append(
-            Path(
-                PROJECT_KEY,
-                "project-test-runner",
-                _RUN_ID_BUDGET_COMPONENT,
-                "generated",
-                _MODULE_KEY_BUDGET_COMPONENT,
-                _SELF_HOSTED_FIXTURE_BUDGET_COMPONENT,
-                "external",
-                PROJECT_KEY,
-                "all",
-                _RUN_ID_BUDGET_COMPONENT,
-                "modules",
-                _MODULE_ASSIGNMENT_BUDGET_COMPONENT,
-            )
+        nested_run_root = Path(
+            PROJECT_KEY,
+            "project-test-runner",
+            _RUN_ID_BUDGET_COMPONENT,
+            "generated",
+            _MODULE_KEY_BUDGET_COMPONENT,
+            _SELF_HOSTED_FIXTURE_BUDGET_COMPONENT,
+            "external",
+            PROJECT_KEY,
+            "all",
+            _RUN_ID_BUDGET_COMPONENT,
         )
+        nested_artifacts = (
+            self_hosted_reserved_artifact_paths
+            or (f"modules/{_MODULE_ASSIGNMENT_BUDGET_COMPONENT}",)
+        )
+        for raw_path in nested_artifacts:
+            path = Path(raw_path)
+            if (
+                not raw_path
+                or path.is_absolute()
+                or ".." in path.parts
+                or "\\" in raw_path
+            ):
+                raise ExternalRootPathBudgetError(
+                    "self-hosted reserved artifact paths must be canonical "
+                    "relative paths"
+                )
+            reserved_paths.append(nested_run_root / path)
     return max(utf16_path_units(path) for path in reserved_paths)
 
 
@@ -101,13 +129,19 @@ def validate_external_test_root_path_budget(
     test_root: str | os.PathLike[str],
     *,
     suite_keys: Collection[str],
+    reserved_artifact_paths: Collection[str],
+    self_hosted_reserved_artifact_paths: Collection[str],
 ) -> Path:
     """Reject a Windows root that cannot contain every reserved runner path."""
 
     root = validate_external_test_root(test_root)
     if os.name != "nt":
         return root
-    reserved_units = _reserved_relative_path_units(suite_keys)
+    reserved_units = _reserved_relative_path_units(
+        suite_keys,
+        reserved_artifact_paths,
+        self_hosted_reserved_artifact_paths,
+    )
     root_units = utf16_path_units(root)
     maximum_root_units = (
         WINDOWS_ABSOLUTE_PATH_BUDGET_UTF16_UNITS - 1 - reserved_units

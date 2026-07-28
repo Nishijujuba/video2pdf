@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import subprocess
 import sys
 import unittest
@@ -12,6 +14,10 @@ from typing import Any, Iterator, Sequence
 
 from scripts.project_test_registry import Registry
 from scripts.project_test_results import canonical_json_bytes
+from src.video2pdf_persisted_command.process_identity import (
+    execution_identity_is_complete,
+    process_execution_identity,
+)
 
 
 DISCOVERY_SCHEMA_NAME = "video2pdf.project-test-discovery"
@@ -94,6 +100,7 @@ def discover_tests(
     selected_suite_ids: Sequence[str] | None = None,
     *,
     commit: str | None = None,
+    discovery_process: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Discover the selected closed set and return a stable manifest value."""
 
@@ -151,7 +158,7 @@ def discover_tests(
         )
     ordered_ids = sorted(all_test_ids)
     suite_ids = [suite.suite_id for suite in suites]
-    return {
+    manifest = {
         "schema_name": DISCOVERY_SCHEMA_NAME,
         "schema_version": DISCOVERY_SCHEMA_VERSION,
         "project": {
@@ -187,6 +194,65 @@ def discover_tests(
             canonical_json_bytes(ordered_ids)
         ).hexdigest(),
     }
+    if discovery_process is not None:
+        manifest["discovery_process"] = discovery_process
+    return manifest
+
+
+def _read_discovery_process_binding() -> dict[str, Any]:
+    """Self-observe the interpreter and bind it to the launcher's command."""
+
+    try:
+        raw = sys.stdin.buffer.readline()
+        binding = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DiscoveryError(
+            "discovery launcher binding is unreadable"
+        ) from error
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != {"launcher_identity", "command"}
+        or not execution_identity_is_complete(
+            binding.get("launcher_identity")
+        )
+        or not isinstance(binding.get("command"), list)
+        or not binding["command"]
+        or not all(isinstance(item, str) for item in binding["command"])
+        or binding["command"][1:6]
+        != [
+            "-X",
+            "utf8",
+            "-B",
+            "-m",
+            "scripts.project_test_discovery",
+        ]
+        or binding["command"][6:] != sys.argv[1:]
+    ):
+        raise DiscoveryError("discovery launcher binding is invalid")
+    self_identity = process_execution_identity(os.getpid())
+    if not execution_identity_is_complete(self_identity):
+        raise DiscoveryError("discovery self identity is unavailable")
+    launcher_identity = binding["launcher_identity"]
+    if self_identity == launcher_identity:
+        relationship = "direct"
+    elif (
+        self_identity["parent_pid"] == launcher_identity["pid"]
+        and self_identity["parent_process_creation_identity"]
+        == launcher_identity["process_creation_identity"]
+        and process_execution_identity(self_identity["parent_pid"])
+        == launcher_identity
+    ):
+        relationship = "launcher_child"
+    else:
+        raise DiscoveryError(
+            "discovery self identity is unrelated to the launcher"
+        )
+    return {
+        "relationship": relationship,
+        "command": binding["command"],
+        "launcher_identity": launcher_identity,
+        "self_identity": self_identity,
+    }
 
 
 def write_discovery_manifest(
@@ -209,13 +275,25 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--registry", required=True, type=Path)
     parser.add_argument("--destination", required=True, type=Path)
+    parser.add_argument("--commit", required=False)
     parser.add_argument("--suite", action="append")
+    parser.add_argument(
+        "--launcher-binding-stdin",
+        action="store_true",
+        required=True,
+    )
     arguments = parser.parse_args(argv)
     repo_root = arguments.repo_root.resolve(strict=True)
     from scripts.project_test_registry import load_registry
 
     registry = load_registry(repo_root, arguments.registry)
-    manifest = discover_tests(registry, arguments.suite)
+    discovery_process = _read_discovery_process_binding()
+    manifest = discover_tests(
+        registry,
+        arguments.suite,
+        commit=arguments.commit,
+        discovery_process=discovery_process,
+    )
     write_discovery_manifest(arguments.destination, manifest)
     return 0
 

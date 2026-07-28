@@ -1,77 +1,68 @@
 from __future__ import annotations
 
-import json
+import os
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from scripts.project_test_results import (
     ResultIntegrityError,
+    read_file_snapshot,
     read_module_result,
-    verify_summary_artifacts,
-    write_json_exclusive,
 )
 from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
-def run_directory(label: str) -> Path:
-    return new_fixture_dir(label)
-
-
-class ResultArtifactTests(unittest.TestCase):
-    def test_json_artifacts_are_exclusive_and_sha256_bound(self) -> None:
-        destination = run_directory("exclusive") / "result.json"
-        fingerprint = write_json_exclusive(
-            destination, {"value": "complete"}
-        )
-        self.assertEqual(len(fingerprint), 64)
-        self.assertEqual(
-            read_module_result(destination, fingerprint)["value"],
-            "complete",
-        )
-        with self.assertRaisesRegex(ResultIntegrityError, "already exists"):
-            write_json_exclusive(destination, {"value": "replacement"})
-
-    def test_missing_corrupt_and_fingerprint_mismatched_results_fail_closed(
-        self,
-    ) -> None:
-        run_dir = run_directory("integrity")
-        destination = run_dir / "result.json"
-        with self.assertRaisesRegex(ResultIntegrityError, "missing"):
-            read_module_result(destination)
-        destination.write_text("{", encoding="utf-8")
-        with self.assertRaisesRegex(ResultIntegrityError, "invalid JSON"):
-            read_module_result(destination)
-        second = run_dir / "second.json"
-        second.write_text(json.dumps({"ok": True}), encoding="utf-8")
-        with self.assertRaisesRegex(ResultIntegrityError, "fingerprint"):
-            read_module_result(second, "0" * 64)
-
-    def test_summary_fingerprints_detect_lost_or_changed_logs_and_results(
-        self,
-    ) -> None:
-        run_dir = run_directory("summary-fingerprints")
-        (run_dir / "modules").mkdir()
-        (run_dir / "logs").mkdir()
-        key = "module00"
-        assignment = run_dir / "modules" / f"{key}.assignment.json"
-        result = run_dir / "modules" / f"{key}.result.json"
-        stdout = run_dir / "logs" / f"{key}.stdout.log"
-        stderr = run_dir / "logs" / f"{key}.stderr.log"
-        fingerprints = {
-            "assignment_sha256": write_json_exclusive(assignment, {"a": 1}),
-            "result_sha256": write_json_exclusive(result, {"r": 1}),
-            "stdout_sha256": write_json_exclusive(stdout, {"out": 1}),
-            "stderr_sha256": write_json_exclusive(stderr, {"err": 1}),
-        }
-        summary = {
-            "modules": [{"module_key": key, **fingerprints}]
-        }
-        verify_summary_artifacts(run_dir, summary)
-        stdout.write_bytes(b"changed")
-        with self.assertRaisesRegex(
-            ResultIntegrityError, "fingerprint mismatch"
+class StableFileSnapshotTests(unittest.TestCase):
+    def test_module_result_rejects_nonfinite_json_constants(self) -> None:
+        root = new_fixture_dir("strict-module-result")
+        for label, duration_token in (
+            ("nan", "NaN"),
+            ("positive-infinity", "Infinity"),
+            ("negative-infinity", "-Infinity"),
         ):
-            verify_summary_artifacts(run_dir, summary)
+            with self.subTest(duration=label):
+                artifact = root / f"{label}.json"
+                artifact.write_text(
+                    f'{{"duration_seconds":{duration_token}}}',
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    ResultIntegrityError,
+                    "invalid JSON",
+                ):
+                    read_module_result(artifact)
+
+    def test_snapshot_binds_content_and_identity_from_open_handle(self) -> None:
+        root = new_fixture_dir("stable-snapshot")
+        artifact = root / "artifact.bin"
+        artifact.write_bytes(b"committed bytes")
+
+        canonical, content, identity = read_file_snapshot(artifact)
+
+        self.assertEqual(canonical, artifact.resolve())
+        self.assertEqual(content, b"committed bytes")
+        self.assertEqual(identity["size"], len(content))
+        self.assertEqual(
+            set(identity),
+            {"device", "inode", "size", "mtime_ns", "ctime_ns"},
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows final-handle identity")
+    def test_snapshot_rejects_unproved_windows_handle_path(self) -> None:
+        root = new_fixture_dir("unproved-handle")
+        artifact = root / "artifact.bin"
+        artifact.write_bytes(b"content")
+
+        with mock.patch(
+            "scripts.project_test_results._windows_final_handle_path",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(
+                ResultIntegrityError,
+                "identity is unproved",
+            ):
+                read_file_snapshot(artifact)
 
 
 if __name__ == "__main__":

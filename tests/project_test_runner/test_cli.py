@@ -8,6 +8,9 @@ import subprocess
 import sys
 import unittest
 
+from scripts.project_test_source_provenance import (
+    FIXED_EXECUTION_SOURCE_PATHS,
+)
 from tests.project_test_runner._fixture_root import (
     committed_fixture_root,
     new_fixture_dir,
@@ -15,29 +18,28 @@ from tests.project_test_runner._fixture_root import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = committed_fixture_root() / "cli_promotion"
-SCRIPT_NAMES = (
-    "run_project_tests.py",
-    "project_test_discovery.py",
-    "project_test_external_root.py",
-    "project_test_registry.py",
-    "project_test_results.py",
-    "project_test_scheduler.py",
-)
-
-
 class ProjectTestRunnerCliTests(unittest.TestCase):
     def make_fixture_repo(self) -> tuple[Path, Path]:
-        fixture_root = new_fixture_dir("cli")
+        fixture_root = new_fixture_dir("cli", suffix_hex_length=8)
         repo = fixture_root / "repo"
         external = fixture_root / "external"
         repo.mkdir()
         external.mkdir()
         shutil.copytree(FIXTURE / "config", repo / "config")
         shutil.copytree(FIXTURE / "tests", repo / "tests")
+        (repo / "requirements").mkdir()
+        (repo / "requirements/video-workflow-runtime.in").write_text(
+            "jsonschema==4.26.0\n",
+            encoding="utf-8",
+        )
         (repo / "scripts").mkdir()
         (repo / "scripts/__init__.py").write_text("", encoding="utf-8")
-        for name in SCRIPT_NAMES:
-            shutil.copy2(PROJECT_ROOT / "scripts" / name, repo / "scripts" / name)
+        for relative in FIXED_EXECUTION_SOURCE_PATHS:
+            target = repo / relative
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(PROJECT_ROOT / relative, target)
         subprocess.run(
             ["git", "init", "--quiet"],
             cwd=repo,
@@ -133,6 +135,42 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         self.assertEqual(test_run["command"], "discover")
         self.assertIsNone(test_run["requested_jobs"])
         self.assertEqual(len(record["discovery_sha256"]), 64)
+        self.assertEqual(
+            discovery["discovery_process"],
+            {
+                key: value
+                for key, value in test_run["discovery_process"].items()
+                if key != "exit_code"
+            },
+        )
+        self.assertEqual(
+            record["discovery_process"],
+            test_run["discovery_process"],
+        )
+        process = test_run["discovery_process"]
+        self.assertIn(
+            process["relationship"],
+            {"direct", "launcher_child"},
+        )
+        self.assertEqual(process["exit_code"], 0)
+        self.assertEqual(
+            process["launcher_identity"]["pid"],
+            (
+                process["self_identity"]["pid"]
+                if process["relationship"] == "direct"
+                else process["self_identity"]["parent_pid"]
+            ),
+        )
+        self.assertEqual(
+            process["launcher_identity"]["process_creation_identity"],
+            (
+                process["self_identity"]["process_creation_identity"]
+                if process["relationship"] == "direct"
+                else process["self_identity"][
+                    "parent_process_creation_identity"
+                ]
+            ),
+        )
 
     def test_run_repeats_suite_executes_child_discovery_and_forwards_output(
         self,
@@ -161,7 +199,23 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
             (run_dir / "test-run.json").read_text(encoding="utf-8")
         )
         self.assertNotEqual(
-            test_run["runner_pid"], test_run["discovery_process"]["pid"]
+            test_run["runner_identity"]["pid"],
+            test_run["discovery_process"]["self_identity"]["pid"],
+        )
+        self.assertEqual(
+            record["discovery_process"],
+            test_run["discovery_process"],
+        )
+        discovery = json.loads(
+            (run_dir / "discovery.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            discovery["discovery_process"],
+            {
+                key: value
+                for key, value in test_run["discovery_process"].items()
+                if key != "exit_code"
+            },
         )
         self.assertEqual(test_run["suite_ids"], ["alpha", "beta"])
         self.assertEqual(test_run["requested_jobs"], 2)
@@ -216,7 +270,30 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
             "external_root_path_budget_failure",
         )
         self.assertIn("240", record["detail"])
-        self.assertIn("199", record["detail"])
+        self.assertIn("214", record["detail"])
+        self.assertFalse((external / "video2pdf").exists())
+
+    def test_dirty_execution_source_fails_before_external_run_creation(
+        self,
+    ) -> None:
+        repo, external = self.make_fixture_repo()
+        runner = repo / "scripts/run_project_tests.py"
+        runner.write_bytes(runner.read_bytes() + b"\n# dirty source\n")
+
+        completed = self.invoke(
+            repo,
+            "discover",
+            "--test-root",
+            str(external),
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        record = self.final_record(completed)
+        self.assertEqual(
+            record["failure_kind"],
+            "source_provenance_failure",
+        )
+        self.assertIn("clean Git worktree", record["detail"])
         self.assertFalse((external / "video2pdf").exists())
 
 

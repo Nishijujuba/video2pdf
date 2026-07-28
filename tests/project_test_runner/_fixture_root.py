@@ -90,6 +90,7 @@ def new_fixture_dir(
     label: str,
     *,
     expected_suite: str | None = None,
+    suffix_hex_length: int = 32,
 ) -> Path:
     """Create one unique fixture directory without changing the active root."""
 
@@ -97,8 +98,12 @@ def new_fixture_dir(
         raise FixtureRootError(
             "fixture label must contain lowercase letters, digits, or hyphens"
         )
+    if suffix_hex_length not in {8, 32}:
+        raise FixtureRootError(
+            "fixture suffix length must be the full or short UUID shape"
+        )
     path = generated_fixture_root(
         expected_suite=expected_suite
-    ) / f"{label}-{uuid.uuid4().hex}"
+    ) / f"{label}-{uuid.uuid4().hex[:suffix_hex_length]}"
     path.mkdir(exist_ok=False)
     return path

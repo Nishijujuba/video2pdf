@@ -583,8 +583,89 @@ class SchedulerTests(unittest.TestCase):
                     jobs=1,
                     timings_from=bad_path,
                     stdout=io.BytesIO(),
-                    stderr=io.BytesIO(),
+                stderr=io.BytesIO(),
             )
+
+    def test_historical_timings_reject_nonfinite_and_negative_durations(
+        self,
+    ) -> None:
+        manifest = discovery("worker_fast.py")
+        module = manifest["modules"][0]
+        for label, duration_token in (
+            ("nan", "NaN"),
+            ("positive-infinity", "Infinity"),
+            ("negative-infinity", "-Infinity"),
+            ("negative", "-0.001"),
+        ):
+            with self.subTest(duration=label):
+                run_dir = run_directory(f"invalid-duration-{label}")
+                timing_path = run_dir / "historical.json"
+                timing_path.write_text(
+                    (
+                        '{"schema_name":"video2pdf.project-test-timings",'
+                        '"schema_version":1,'
+                        f'"project":{json.dumps(manifest["project"])},'
+                        f'"suite_ids":{json.dumps(manifest["suite_ids"])},'
+                        '"modules":[{'
+                        f'"module_key":{json.dumps(module["module_key"])},'
+                        f'"source_path":{json.dumps(module["source_path"])},'
+                        f'"duration_seconds":{duration_token}'
+                        "}]}"
+                    ),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    SchedulerError,
+                    "timing provenance",
+                ):
+                    run_modules(
+                        repo_root=REPO_ROOT,
+                        run_dir=run_dir,
+                        discovery=manifest,
+                        jobs=1,
+                        timings_from=timing_path,
+                        stdout=io.BytesIO(),
+                        stderr=io.BytesIO(),
+                    )
+                self.assertFalse((run_dir / "modules").exists())
+
+    def test_worker_result_rejects_nonfinite_duration_before_timings(
+        self,
+    ) -> None:
+        run_dir = run_directory("nonfinite-worker-duration")
+        real_read_module_result = scheduler.read_module_result
+
+        def nonfinite_result(*args, **kwargs):
+            value = real_read_module_result(*args, **kwargs)
+            return {**value, "duration_seconds": float("nan")}
+
+        with mock.patch.object(
+            scheduler,
+            "read_module_result",
+            side_effect=nonfinite_result,
+        ):
+            summary = run_modules(
+                repo_root=REPO_ROOT,
+                run_dir=run_dir,
+                discovery=discovery("worker_fast.py"),
+                jobs=1,
+                stdout=io.BytesIO(),
+                stderr=io.BytesIO(),
+            )
+
+        self.assertEqual(
+            summary["failure_kind"],
+            "result_integrity_failure",
+        )
+        timings = json.loads(
+            (run_dir / "timings.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(timings["modules"]), 1)
+        self.assertEqual(
+            timings["modules"][0]["duration_seconds"],
+            0.0,
+        )
 
     def test_launch_and_import_failures_are_structured_and_do_not_fail_fast(
         self,

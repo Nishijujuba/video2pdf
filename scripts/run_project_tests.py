@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any, Sequence
 
 
@@ -41,11 +42,48 @@ from scripts.project_test_scheduler import (  # noqa: E402
     SchedulerError,
     run_modules,
 )
+from scripts.project_test_source_provenance import (  # noqa: E402
+    FIXED_EXECUTION_SOURCE_PATHS,
+    SOURCE_MANIFEST_RELATIVE_PATH,
+    SourceProvenanceError,
+    build_execution_source_manifest,
+    create_frozen_git_authority,
+    freeze_execution_source_files,
+    planned_execution_source_paths,
+)
+from src.video2pdf_persisted_command.process_identity import (  # noqa: E402
+    execution_identity_is_complete,
+    process_execution_identity,
+)
 
 
 REGISTRY_RELATIVE_PATH = Path("config/test-suites.v1.json")
 TEST_RUN_SCHEMA_NAME = "video2pdf.project-test-run"
 SCHEMA_VERSION = 1
+_MODULE_KEY_BUDGET_COMPONENT = "0123456789ab"
+_RESERVED_RUN_ARTIFACT_PATHS = (
+    "test-run.json",
+    "discovery.json",
+    "events.jsonl",
+    "summary.json",
+    "timings.json",
+    SOURCE_MANIFEST_RELATIVE_PATH.as_posix(),
+    f"modules/{_MODULE_KEY_BUDGET_COMPONENT}.assignment.json",
+    f"modules/{_MODULE_KEY_BUDGET_COMPONENT}.result.json",
+    f"logs/{_MODULE_KEY_BUDGET_COMPONENT}.stdout.log",
+    f"logs/{_MODULE_KEY_BUDGET_COMPONENT}.stderr.log",
+    "execution-source-files/.git",
+    "execution-git/config",
+    "execution-git/objects/info/alternates",
+    "execution-git/refs/heads/execution-source",
+)
+_SELF_HOSTED_RESERVED_ARTIFACT_PATHS = (
+    *_RESERVED_RUN_ARTIFACT_PATHS,
+    *(
+        f"execution-source-files/{path}"
+        for path in FIXED_EXECUTION_SOURCE_PATHS
+    ),
+)
 
 
 class CliError(RuntimeError):
@@ -57,6 +95,85 @@ class CliError(RuntimeError):
 class _StrictArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise CliError(message)
+
+
+def _clean_git_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for name in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ):
+        environment.pop(name, None)
+    return environment
+
+
+def _persisted_launch_binding() -> dict[str, Any] | None:
+    run_id = os.environ.get("VIDEO2PDF_PERSISTED_RUN_ID")
+    run_nonce = os.environ.get("VIDEO2PDF_PERSISTED_RUN_NONCE")
+    run_dir_text = os.environ.get("VIDEO2PDF_PERSISTED_RUN_DIR")
+    if not run_id and not run_nonce and not run_dir_text:
+        return None
+    if not run_id or not run_nonce or not run_dir_text:
+        raise CliError(
+            "persisted launch environment is incomplete",
+            failure_kind="persisted_binding_failure",
+        )
+    status_path = Path(run_dir_text) / "status.json"
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            time.sleep(0.01)
+            continue
+        if (
+            isinstance(status, dict)
+            and status.get("run_id") == run_id
+            and status.get("run_nonce") == run_nonce
+            and execution_identity_is_complete(
+                status.get("target_identity")
+            )
+            and execution_identity_is_complete(
+                status.get("supervisor_identity")
+            )
+        ):
+            return {
+                "run_id": run_id,
+                "run_nonce": run_nonce,
+                "target_identity": status["target_identity"],
+                "supervisor_identity": status["supervisor_identity"],
+            }
+        time.sleep(0.01)
+    raise CliError(
+        "persisted launch identity is unavailable",
+        failure_kind="persisted_binding_failure",
+    )
+
+
+def _git_directory(repo_root: Path) -> Path:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=_clean_git_environment(),
+    )
+    try:
+        value = Path(completed.stdout.strip()).resolve(strict=True)
+    except OSError as error:
+        raise SourceProvenanceError(
+            "cannot resolve the repository Git directory"
+        ) from error
+    if completed.returncode != 0 or not value.is_dir():
+        raise SourceProvenanceError(
+            "cannot resolve the repository Git directory"
+        )
+    return value
 
 
 def _emit(value: dict[str, Any], *, stream: Any = sys.stdout) -> None:
@@ -72,6 +189,7 @@ def _remote_identity(repo_root: Path) -> str:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=_clean_git_environment(),
     )
     remote = completed.stdout.strip()
     if completed.returncode != 0 or not remote:
@@ -94,11 +212,6 @@ def _prepare_run(
     test_root: Path,
 ) -> tuple[Path, list[str]]:
     selected = registry.select_suites(suite_ids)
-    suite_keys = {suite.suite_key for suite in selected}
-    validate_external_test_root_path_budget(
-        test_root,
-        suite_keys=suite_keys,
-    )
     project_root = ensure_project_root(
         test_root,
         _remote_identity(repo_root),
@@ -130,11 +243,12 @@ def _forward_child_output(completed_stdout: bytes, completed_stderr: bytes) -> N
 
 def _independent_discovery(
     *,
-    repo_root: Path,
+    execution_root: Path,
     registry_path: Path,
+    commit: str,
     suite_ids: Sequence[str] | None,
     destination: Path,
-) -> tuple[dict[str, Any], str, int]:
+) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
     command = [
         sys.executable,
         "-X",
@@ -143,26 +257,52 @@ def _independent_discovery(
         "-m",
         "scripts.project_test_discovery",
         "--repo-root",
-        str(repo_root),
+        str(execution_root),
         "--registry",
         str(registry_path),
         "--destination",
         str(destination),
+        "--commit",
+        commit,
+        "--launcher-binding-stdin",
     ]
     for suite_id in suite_ids or ():
         command.extend(("--suite", suite_id))
     creationflags = (
         getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(execution_root)
     child = subprocess.Popen(
         command,
-        cwd=repo_root,
-        stdin=subprocess.DEVNULL,
+        cwd=execution_root,
+        env=environment,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=creationflags,
     )
-    child_stdout, child_stderr = child.communicate()
+    deadline = time.monotonic() + 2.0
+    child_identity = None
+    while child_identity is None and time.monotonic() < deadline:
+        child_identity = process_execution_identity(child.pid)
+        if child_identity is None:
+            time.sleep(0.01)
+    if not execution_identity_is_complete(child_identity):
+        child.kill()
+        child.communicate()
+        raise CliError(
+            "independent discovery launcher identity is unavailable",
+            failure_kind="discovery_failure",
+        )
+    child_stdout, child_stderr = child.communicate(
+        input=canonical_json_bytes(
+            {
+                "launcher_identity": child_identity,
+                "command": command,
+            }
+        )
+    )
     _forward_child_output(child_stdout, child_stderr)
     if child.returncode != 0:
         raise CliError(
@@ -182,7 +322,20 @@ def _independent_discovery(
             "independent discovery manifest must be an object",
             failure_kind="discovery_failure",
         )
-    return manifest, hashlib.sha256(raw).hexdigest(), child.pid
+    discovery_process = manifest.get("discovery_process")
+    if (
+        not isinstance(discovery_process, dict)
+        or discovery_process.get("launcher_identity") != child_identity
+    ):
+        raise CliError(
+            "independent discovery identity binding is invalid",
+            failure_kind="discovery_failure",
+        )
+    return (
+        manifest,
+        hashlib.sha256(raw).hexdigest(),
+        {**discovery_process, "exit_code": 0},
+    )
 
 
 def _validate_timings_path(value: Path | None) -> Path | None:
@@ -202,15 +355,77 @@ def _validate_timings_path(value: Path | None) -> Path | None:
 def _public_command(arguments: argparse.Namespace) -> int:
     repo_root = REPO_ROOT.resolve(strict=True)
     registry = load_registry(repo_root, repo_root / REGISTRY_RELATIVE_PATH)
+    selected = registry.select_suites(arguments.suite)
+    suite_keys = {suite.suite_key for suite in selected}
+    registered_test_files = registry.registered_test_files(
+        [suite.suite_id for suite in selected]
+    )
+    planned_source_paths = planned_execution_source_paths(
+        repo_root,
+        registered_test_files,
+    )
+    validate_external_test_root_path_budget(
+        arguments.test_root,
+        suite_keys=suite_keys,
+        reserved_artifact_paths=(
+            *_RESERVED_RUN_ARTIFACT_PATHS,
+            *(
+                f"execution-source-files/{path}"
+                for path in planned_source_paths
+            ),
+        ),
+        self_hosted_reserved_artifact_paths=(
+            _SELF_HOSTED_RESERVED_ARTIFACT_PATHS
+        ),
+    )
+    source_manifest = build_execution_source_manifest(
+        repo_root,
+        registered_test_files,
+    )
+    validate_external_test_root_path_budget(
+        arguments.test_root,
+        suite_keys=suite_keys,
+        reserved_artifact_paths=(
+            *_RESERVED_RUN_ARTIFACT_PATHS,
+            *(
+                item["frozen_path"]
+                for item in source_manifest["entries"]
+            ),
+        ),
+        self_hosted_reserved_artifact_paths=(
+            _SELF_HOSTED_RESERVED_ARTIFACT_PATHS
+        ),
+    )
+    git_dir = _git_directory(repo_root)
+    persisted_launch = _persisted_launch_binding()
     run_dir, selected_suite_ids = _prepare_run(
         repo_root,
         registry,
         arguments.suite,
         arguments.test_root,
     )
-    discovery, discovery_sha256, discovery_pid = _independent_discovery(
-        repo_root=repo_root,
-        registry_path=registry.registry_path,
+    source_manifest_path = run_dir / SOURCE_MANIFEST_RELATIVE_PATH
+    freeze_execution_source_files(repo_root, run_dir, source_manifest)
+    execution_root = run_dir / "execution-source-files"
+    create_frozen_git_authority(
+        repo_root,
+        run_dir,
+        execution_root,
+        git_dir,
+        source_manifest,
+    )
+    source_manifest_sha256 = write_json_exclusive(
+        source_manifest_path,
+        source_manifest,
+    )
+    (
+        discovery,
+        discovery_sha256,
+        discovery_identity,
+    ) = _independent_discovery(
+        execution_root=execution_root,
+        registry_path=execution_root / REGISTRY_RELATIVE_PATH,
+        commit=source_manifest["commit"],
         suite_ids=selected_suite_ids,
         destination=run_dir / "discovery.json",
     )
@@ -232,16 +447,34 @@ def _public_command(arguments: argparse.Namespace) -> int:
         "commit": discovery.get("commit"),
         "registry_sha256": registry.fingerprint,
         "discovery_sha256": discovery_sha256,
+        "source_manifest_path": str(source_manifest_path),
+        "source_manifest_sha256": source_manifest_sha256,
         "suite_ids": selected_suite_ids,
         "run_dir": str(run_dir),
+        "project_marker_sha256": sha256_file(
+            run_dir.parent.parent / "project.json"
+        ),
+        "persisted_run_id": os.environ.get("VIDEO2PDF_PERSISTED_RUN_ID"),
+        "persisted_run_nonce": os.environ.get(
+            "VIDEO2PDF_PERSISTED_RUN_NONCE"
+        ),
+        "persisted_target_identity": (
+            persisted_launch["target_identity"]
+            if persisted_launch is not None
+            else None
+        ),
+        "persisted_supervisor_identity": (
+            persisted_launch["supervisor_identity"]
+            if persisted_launch is not None
+            else None
+        ),
         "requested_jobs": arguments.jobs
         if arguments.command == "run"
         else None,
         "timings_from": str(timings_from) if timings_from is not None else None,
-        "runner_pid": os.getpid(),
+        "runner_identity": process_execution_identity(os.getpid()),
         "discovery_process": {
-            "pid": discovery_pid,
-            "exit_code": 0,
+            **discovery_identity,
         },
     }
     write_json_exclusive(run_dir / "test-run.json", test_run)
@@ -255,6 +488,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
                 "suite_ids": selected_suite_ids,
                 "total_count": discovery.get("total_count"),
                 "discovery_sha256": discovery_sha256,
+                "discovery_process": discovery_identity,
             }
         )
         return 0
@@ -270,6 +504,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
             "run_dir": str(run_dir),
             "discovery_sha256": discovery_sha256,
             "total_count": discovery.get("total_count"),
+            "discovery_process": discovery_identity,
         }
     )
     summary = run_modules(
@@ -278,6 +513,8 @@ def _public_command(arguments: argparse.Namespace) -> int:
         discovery=discovery,
         jobs=arguments.jobs,
         timings_from=timings_from,
+        source_manifest_sha256=source_manifest_sha256,
+        execution_root=execution_root,
     )
     _emit(
         {
@@ -287,6 +524,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
             "run_dir": str(run_dir),
             "summary_sha256": sha256_file(run_dir / "summary.json"),
             "discovery_sha256": discovery_sha256,
+            "discovery_process": discovery_identity,
         }
     )
     return 0 if summary["success"] else 1
@@ -340,6 +578,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         detail = str(error)
     except ResultIntegrityError as error:
         failure_kind = "result_integrity_failure"
+        detail = str(error)
+    except SourceProvenanceError as error:
+        failure_kind = "source_provenance_failure"
         detail = str(error)
     except (OSError, ValueError) as error:
         failure_kind = "runner_failure"

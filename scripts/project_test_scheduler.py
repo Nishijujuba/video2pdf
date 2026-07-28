@@ -9,9 +9,11 @@ from dataclasses import dataclass
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -23,6 +25,7 @@ from typing import Any, BinaryIO, Iterator, Mapping, Sequence
 from scripts.project_test_results import (
     ResultIntegrityError,
     canonical_json_bytes,
+    file_artifact_identity,
     read_module_result,
     sha256_file,
     write_bytes_exclusive,
@@ -32,6 +35,15 @@ from scripts.project_test_external_root import (
     ExternalRootError,
     assert_safe_write_path,
     validate_owned_run_directory,
+)
+from scripts.project_test_source_provenance import (
+    SOURCE_MANIFEST_RELATIVE_PATH,
+    SourceProvenanceError,
+    validate_execution_source_manifest,
+)
+from src.video2pdf_persisted_command.process_identity import (
+    execution_identity_is_complete,
+    process_execution_identity,
 )
 
 
@@ -233,8 +245,33 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         assignment_path = _safe_artifact_path(run_dir, assignment_path)
         assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
         repo_root = Path(assignment["repo_root"])
+        execution_root = Path(
+            assignment.get("execution_root", assignment["repo_root"])
+        )
+        if assignment.get("source_manifest_sha256") is not None:
+            source_manifest_path = _safe_artifact_path(
+                run_dir,
+                run_dir / SOURCE_MANIFEST_RELATIVE_PATH,
+            )
+            source_manifest_bytes = source_manifest_path.read_bytes()
+            if (
+                hashlib.sha256(source_manifest_bytes).hexdigest()
+                != assignment["source_manifest_sha256"]
+            ):
+                raise SchedulerError(
+                    "worker execution source manifest fingerprint mismatch",
+                    failure_kind="result_integrity_failure",
+                )
+            source_manifest = json.loads(source_manifest_bytes.decode("utf-8"))
+            validate_execution_source_manifest(
+                repo_root,
+                source_manifest,
+                expected_test_module_paths=[],
+                require_worktree_match=False,
+                frozen_run_dir=run_dir,
+            )
         suite = _load_assigned_suite(
-            repo_root,
+            execution_root,
             assignment["source_path"],
             assignment["test_ids"],
         )
@@ -248,9 +285,13 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         failure_kind = None if recorded.wasSuccessful() else "test_failure"
         exit_code = 0 if failure_kind is None else 1
         detail = None
-    except SchedulerError as error:
+    except (SchedulerError, SourceProvenanceError) as error:
         executions = []
-        failure_kind = error.failure_kind
+        failure_kind = (
+            error.failure_kind
+            if isinstance(error, SchedulerError)
+            else "result_integrity_failure"
+        )
         exit_code = 1
         detail = str(error)
         traceback.print_exc(file=sys.stderr)
@@ -268,6 +309,21 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         "suite_id": assignment.get("suite_id"),
         "source_path": assignment.get("source_path"),
         "assigned_test_ids": assignment.get("test_ids", []),
+        "worker_launch_nonce": assignment.get("worker_launch_nonce"),
+        "source_manifest_sha256": assignment.get(
+            "source_manifest_sha256"
+        ),
+        "worker_identity": {
+            **(process_execution_identity(os.getpid()) or {
+                "pid": os.getpid(),
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            }),
+        },
         "executions": executions,
         "failure_kind": failure_kind,
         "exit_code": exit_code,
@@ -435,9 +491,15 @@ def _load_timing_durations(
     discovery: Mapping[str, Any],
     modules: Sequence[Mapping[str, Any]],
 ) -> dict[str, float]:
+    def reject_nonfinite_constant(value: str) -> None:
+        raise ValueError(f"non-finite numeric constant: {value}")
+
     try:
-        value = json.loads(timings_from.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        value = json.loads(
+            timings_from.read_text(encoding="utf-8"),
+            parse_constant=reject_nonfinite_constant,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         raise SchedulerError(f"invalid timing provenance: {error}") from error
     if (
         not isinstance(value, dict)
@@ -467,6 +529,7 @@ def _load_timing_durations(
             or expected[key] != item["source_path"]
             or key in durations
             or type(duration) not in (int, float)
+            or not math.isfinite(duration)
             or duration < 0
         ):
             raise SchedulerError("invalid timing provenance module")
@@ -556,6 +619,7 @@ class _ActiveModule:
     module: dict[str, Any]
     process: subprocess.Popen[bytes]
     assignment_sha256: str
+    assignment_file_identity: dict[str, int]
     result_path: Path
     stdout_path: Path
     stderr_path: Path
@@ -563,6 +627,8 @@ class _ActiveModule:
     stderr_handle: BinaryIO
     drain_threads: tuple[threading.Thread, threading.Thread]
     drain_errors: list[str]
+    worker_launch_nonce: str
+    worker_execution_identity: dict[str, Any] | None
 
 
 _DIRECT_WORKER_CLEANUP_TIMEOUT_SECONDS = 1.0
@@ -647,6 +713,7 @@ def _binary_stream(stream: BinaryIO | None, fallback: Any) -> BinaryIO:
 def _launch_module(
     *,
     repo_root: Path,
+    execution_root: Path,
     run_dir: Path,
     module: dict[str, Any],
     stdout: BinaryIO,
@@ -654,6 +721,7 @@ def _launch_module(
     stdout_lock: threading.Lock,
     stderr_lock: threading.Lock,
     child_environment: Mapping[str, str] | None,
+    source_manifest_sha256: str | None,
 ) -> _ActiveModule:
     module_dir = _safe_artifact_path(run_dir, run_dir / "modules")
     logs_dir = _safe_artifact_path(run_dir, run_dir / "logs")
@@ -671,17 +739,22 @@ def _launch_module(
         run_dir,
         module_dir / f"{module['module_key']}.result.json",
     )
+    worker_launch_nonce = secrets.token_hex(32)
     assignment = {
         "schema_name": "video2pdf.project-test-module-assignment",
         "schema_version": SCHEMA_VERSION,
         "repo_root": str(repo_root),
+        "execution_root": str(execution_root),
         "module_key": module["module_key"],
         "suite_id": module["suite_id"],
         "source_path": module["source_path"],
         "test_ids": module["test_ids"],
+        "worker_launch_nonce": worker_launch_nonce,
+        "source_manifest_sha256": source_manifest_sha256,
     }
     assignment_path = _safe_artifact_path(run_dir, assignment_path)
     assignment_sha256 = write_json_exclusive(assignment_path, assignment)
+    assignment_file_identity = file_artifact_identity(assignment_path)
     stdout_path = _safe_artifact_path(
         run_dir,
         logs_dir / f"{module['module_key']}.stdout.log",
@@ -712,13 +785,13 @@ def _launch_module(
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
         )
+        environment["PYTHONPATH"] = str(execution_root)
         command = [
             sys.executable,
             "-X",
             "utf8",
             "-B",
-            "-m",
-            "scripts.project_test_scheduler",
+            str(execution_root / "scripts" / "project_test_scheduler.py"),
             "_worker",
             "--assignment",
             str(assignment_path),
@@ -731,12 +804,15 @@ def _launch_module(
         try:
             process = subprocess.Popen(
                 command,
-                cwd=repo_root,
+                cwd=execution_root,
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 creationflags=creationflags,
+            )
+            worker_execution_identity = process_execution_identity(
+                process.pid
             )
             if process.stdout is None or process.stderr is None:
                 raise SchedulerError("worker pipes were not created")
@@ -774,6 +850,7 @@ def _launch_module(
                     module=module,
                     process=process,
                     assignment_sha256=assignment_sha256,
+                    assignment_file_identity=assignment_file_identity,
                     result_path=result_path,
                     stdout_path=stdout_path,
                     stderr_path=stderr_path,
@@ -781,6 +858,8 @@ def _launch_module(
                     stderr_handle=stderr_handle,
                     drain_threads=tuple(drain_threads),
                     drain_errors=[],
+                    worker_launch_nonce=worker_launch_nonce,
+                    worker_execution_identity=worker_execution_identity,
                 )
                 _cleanup_direct_worker(partial)
             raise
@@ -789,6 +868,7 @@ def _launch_module(
         module=module,
         process=process,
         assignment_sha256=assignment_sha256,
+        assignment_file_identity=assignment_file_identity,
         result_path=result_path,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
@@ -796,6 +876,8 @@ def _launch_module(
         stderr_handle=stderr_handle,
         drain_threads=(stdout_thread, stderr_thread),
         drain_errors=drain_errors,
+        worker_launch_nonce=worker_launch_nonce,
+        worker_execution_identity=worker_execution_identity,
     )
 
 
@@ -803,7 +885,11 @@ def _validate_module_result(
     module: Mapping[str, Any],
     value: Mapping[str, Any],
     process_exit_code: int,
-) -> tuple[list[dict[str, Any]], str | None]:
+    *,
+    worker_launch_nonce: str,
+    source_manifest_sha256: str | None,
+) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+    worker_identity = value.get("worker_identity")
     if (
         value.get("schema_name") != MODULE_RESULT_SCHEMA_NAME
         or value.get("schema_version") != SCHEMA_VERSION
@@ -811,6 +897,9 @@ def _validate_module_result(
         or value.get("suite_id") != module["suite_id"]
         or value.get("source_path") != module["source_path"]
         or value.get("assigned_test_ids") != module["test_ids"]
+        or value.get("worker_launch_nonce") != worker_launch_nonce
+        or value.get("source_manifest_sha256") != source_manifest_sha256
+        or not execution_identity_is_complete(worker_identity)
         or value.get("exit_code") != process_exit_code
         or not isinstance(value.get("executions"), list)
     ):
@@ -836,10 +925,10 @@ def _validate_module_result(
             raise ResultIntegrityError(
                 "pre-execution failure reported executed tests"
             )
-        return list(executions), failure_kind
+        return list(executions), failure_kind, worker_identity
     if Counter(execution_ids) != Counter(module["test_ids"]):
         raise ResultIntegrityError("module result test execution mismatch")
-    return list(executions), failure_kind
+    return list(executions), failure_kind, worker_identity
 
 
 def run_modules(
@@ -852,6 +941,8 @@ def run_modules(
     stdout: BinaryIO | None = None,
     stderr: BinaryIO | None = None,
     child_environment: Mapping[str, str] | None = None,
+    source_manifest_sha256: str | None = None,
+    execution_root: Path | None = None,
 ) -> dict[str, Any]:
     """Run every discovered module once and write immutable result artifacts."""
 
@@ -864,7 +955,10 @@ def run_modules(
             f"run directory ownership is invalid: {error}",
             failure_kind="coordinator_failure",
         ) from error
-    modules = _validate_discovery(repo_root, discovery)
+    execution_root = (
+        repo_root if execution_root is None else execution_root.resolve(strict=True)
+    )
+    modules = _validate_discovery(execution_root, discovery)
     durations = (
         _load_timing_durations(timings_from, discovery, modules)
         if timings_from is not None
@@ -903,6 +997,7 @@ def run_modules(
                 try:
                     launched = _launch_module(
                         repo_root=repo_root,
+                        execution_root=execution_root,
                         run_dir=run_dir,
                         module=module,
                         stdout=out,
@@ -910,6 +1005,7 @@ def run_modules(
                         stdout_lock=stdout_lock,
                         stderr_lock=stderr_lock,
                         child_environment=child_environment,
+                        source_manifest_sha256=source_manifest_sha256,
                     )
                 except Exception as error:
                     assignment_path = (
@@ -943,6 +1039,27 @@ def run_modules(
                             stderr_path,
                         ),
                         "duration_seconds": 0.0,
+                        "worker_launch_nonce": None,
+                        "worker_identity": None,
+                        "worker_launcher_identity": None,
+                        "artifact_identities": {
+                            "assignment": (
+                                file_artifact_identity(assignment_path)
+                                if assignment_path.is_file()
+                                else None
+                            ),
+                            "result": None,
+                            "stdout": (
+                                file_artifact_identity(stdout_path)
+                                if stdout_path.is_file()
+                                else None
+                            ),
+                            "stderr": (
+                                file_artifact_identity(stderr_path)
+                                if stderr_path.is_file()
+                                else None
+                            ),
+                        },
                     }
                     _append_event(
                         events,
@@ -960,7 +1077,14 @@ def run_modules(
                     "started",
                     module,
                     sequence,
-                    pid=launched.process.pid,
+                    worker_launcher_identity=(
+                        launched.worker_execution_identity
+                    ),
+                    artifact_identities={
+                        "assignment": launched.assignment_file_identity,
+                    },
+                    worker_launch_nonce=launched.worker_launch_nonce,
+                    source_manifest_sha256=source_manifest_sha256,
                 )
                 peak = max(peak, len(active))
 
@@ -984,6 +1108,20 @@ def run_modules(
                 executions: list[dict[str, Any]] = []
                 result_sha256: str | None = None
                 duration_seconds = 0.0
+                worker_identity = {
+                    **(
+                        launched.worker_execution_identity
+                        or {
+                            "pid": launched.process.pid,
+                            "process_creation_identity": None,
+                            "executable_path": None,
+                            "executable_file_identity": None,
+                            "parent_pid": None,
+                            "parent_process_creation_identity": None,
+                            "observation_sha256": None,
+                        }
+                    ),
+                }
                 try:
                     launched.result_path = _safe_artifact_path(
                         run_dir,
@@ -999,16 +1137,39 @@ def run_modules(
                         result_sha256,
                     )
                     duration = value.get("duration_seconds")
-                    if type(duration) not in (int, float) or duration < 0:
+                    if (
+                        type(duration) not in (int, float)
+                        or not math.isfinite(duration)
+                        or duration < 0
+                    ):
                         raise ResultIntegrityError(
                             "module result duration is invalid"
                         )
                     duration_seconds = float(duration)
-                    executions, failure_kind = _validate_module_result(
+                    (
+                        executions,
+                        failure_kind,
+                        worker_identity,
+                    ) = _validate_module_result(
                         launched.module,
                         value,
                         exit_code,
+                        worker_launch_nonce=launched.worker_launch_nonce,
+                        source_manifest_sha256=source_manifest_sha256,
                     )
+                    launcher_identity = launched.worker_execution_identity
+                    if (
+                        not isinstance(launcher_identity, dict)
+                        or worker_identity["parent_pid"]
+                        != launcher_identity["pid"]
+                        or worker_identity[
+                            "parent_process_creation_identity"
+                        ]
+                        != launcher_identity["process_creation_identity"]
+                    ):
+                        raise ResultIntegrityError(
+                            "worker parent identity differs from scheduler launch identity"
+                        )
                     if launched.drain_errors:
                         raise ResultIntegrityError(
                             " | ".join(launched.drain_errors)
@@ -1032,6 +1193,25 @@ def run_modules(
                         _safe_artifact_path(run_dir, launched.stderr_path)
                     ),
                     "duration_seconds": duration_seconds,
+                    "worker_launch_nonce": launched.worker_launch_nonce,
+                    "worker_identity": worker_identity,
+                    "worker_launcher_identity": (
+                        launched.worker_execution_identity
+                    ),
+                    "artifact_identities": {
+                        "assignment": launched.assignment_file_identity,
+                        "result": (
+                            file_artifact_identity(launched.result_path)
+                            if launched.result_path.is_file()
+                            else None
+                        ),
+                        "stdout": file_artifact_identity(
+                            launched.stdout_path
+                        ),
+                        "stderr": file_artifact_identity(
+                            launched.stderr_path
+                        ),
+                    },
                 }
                 _append_event(
                     events,
@@ -1040,6 +1220,15 @@ def run_modules(
                     sequence,
                     failure_kind=failure_kind,
                     exit_code=exit_code,
+                    worker_identity=worker_identity,
+                    worker_launcher_identity=(
+                        launched.worker_execution_identity
+                    ),
+                    worker_launch_nonce=launched.worker_launch_nonce,
+                    source_manifest_sha256=source_manifest_sha256,
+                    artifact_identities=terminal[key][
+                        "artifact_identities"
+                    ],
                 )
                 active.pop(key)
     except BaseException as error:
@@ -1082,6 +1271,42 @@ def run_modules(
                         launched.stderr_path
                     ),
                     "duration_seconds": 0.0,
+                    "worker_launch_nonce": launched.worker_launch_nonce,
+                    "worker_identity": {
+                        **(
+                            launched.worker_execution_identity
+                            or {
+                                "pid": launched.process.pid,
+                                "process_creation_identity": None,
+                                "executable_path": None,
+                                "executable_file_identity": None,
+                                "parent_pid": None,
+                                "parent_process_creation_identity": None,
+                                "observation_sha256": None,
+                            }
+                        ),
+                    },
+                    "worker_launcher_identity": (
+                        launched.worker_execution_identity
+                    ),
+                    "artifact_identities": {
+                        "assignment": launched.assignment_file_identity,
+                        "result": (
+                            file_artifact_identity(launched.result_path)
+                            if launched.result_path.is_file()
+                            else None
+                        ),
+                        "stdout": (
+                            file_artifact_identity(launched.stdout_path)
+                            if launched.stdout_path.is_file()
+                            else None
+                        ),
+                        "stderr": (
+                            file_artifact_identity(launched.stderr_path)
+                            if launched.stderr_path.is_file()
+                            else None
+                        ),
+                    },
                 }
                 _append_event(
                     events,
@@ -1115,6 +1340,15 @@ def run_modules(
                 "stdout_sha256": None,
                 "stderr_sha256": None,
                 "duration_seconds": 0.0,
+                "worker_launch_nonce": None,
+                "worker_identity": None,
+                "worker_launcher_identity": None,
+                "artifact_identities": {
+                    "assignment": None,
+                    "result": None,
+                    "stdout": None,
+                    "stderr": None,
+                },
             }
             _append_event(
                 events,
@@ -1194,6 +1428,13 @@ def run_modules(
                 "result_sha256": outcome["result_sha256"],
                 "stdout_sha256": outcome["stdout_sha256"],
                 "stderr_sha256": outcome["stderr_sha256"],
+                "worker_launch_nonce": outcome["worker_launch_nonce"],
+                "source_manifest_sha256": source_manifest_sha256,
+                "worker_identity": outcome["worker_identity"],
+                "worker_launcher_identity": outcome[
+                    "worker_launcher_identity"
+                ],
+                "artifact_identities": outcome["artifact_identities"],
             }
         )
     coverage = {

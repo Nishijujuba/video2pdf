@@ -13,6 +13,13 @@ from scripts.project_test_registry import load_registry
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = PROJECT_ROOT / "config" / "test-suites.v1.json"
 EXCEPTIONS_PATH = PROJECT_ROOT / "config" / "test-local-write-exceptions.v1.json"
+PROMOTION_V2_CONTRACT_SOURCES = (
+    "evidence/project-test-runner/optimization-safety-review.v1.json",
+    "evidence/project-test-runner/promotion-superset-authority.v2.json",
+    "schemas/project-test-promotion-report.v2.schema.json",
+    "scripts/generate_project_test_promotion_v2_authority.py",
+    "scripts/validate_project_test_promotion.py",
+)
 
 
 @dataclass(frozen=True)
@@ -1905,6 +1912,40 @@ def parse_local_write_exceptions(
 
 
 class RepositoryGeneratedPathContractTests(unittest.TestCase):
+    def test_promotion_v2_contract_sources_are_registered_and_strict(
+        self,
+    ) -> None:
+        self.assertEqual(
+            tuple(sorted(PROMOTION_V2_CONTRACT_SOURCES)),
+            PROMOTION_V2_CONTRACT_SOURCES,
+        )
+        for relative_path in PROMOTION_V2_CONTRACT_SOURCES:
+            with self.subTest(path=relative_path):
+                self.assertTrue((PROJECT_ROOT / relative_path).is_file())
+        schema = json.loads(
+            (
+                PROJECT_ROOT
+                / "schemas/project-test-promotion-report.v2.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertFalse(schema["additionalProperties"])
+        authority = json.loads(
+            (
+                PROJECT_ROOT
+                / "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json"
+            ).read_text(encoding="utf-8")
+        )
+        safety = json.loads(
+            (
+                PROJECT_ROOT
+                / "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(2, authority["schema_version"])
+        self.assertEqual(1, safety["schema_version"])
+
     def test_registry_is_the_only_source_inventory(self) -> None:
         registry = load_registry(PROJECT_ROOT, REGISTRY_PATH)
         registered = registry.registered_test_files()

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/production-task-envelope.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "run_id", "task_id", "logical_task_key", "role", "claim_generation", "claim_token", "input_generations", "write_set", "required_outputs"],
+  "properties": {
+    "schema_name": {"const": "production-task-envelope"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "logical_task_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,95}$"},
+    "role": {"enum": ["outline", "pyramid_outline", "writer", "figure", "pyramid_section", "pyramid_main"]},
+    "claim_generation": {"type": "integer", "minimum": 1},
+    "claim_token": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "input_generations": {"type": "array", "minItems": 1, "items": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactBinding"}},
+    "write_set": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "required_outputs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "pyramid_target": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactTarget"},
+    "evaluation_context": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pyramid_standard", "checkpoint", "audience"],
+      "properties": {
+        "pyramid_standard": {"const": "pyramid-principle-v1"},
+        "checkpoint": {"enum": ["pyramid_outline", "pyramid_section", "pyramid_main"]},
+        "audience": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

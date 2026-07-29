@@ -14,6 +14,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import new_case_dir
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -33,15 +34,6 @@ RESOURCE_V8_TABLES = (
     "resource_sequences",
     "resource_configurations",
 )
-TEST_RUNS = PROJECT_ROOT / "待删除" / "kernel-hardening-test-runs"
-
-
-def new_test_root(label: str) -> Path:
-    root = TEST_RUNS / f"{label}-{uuid.uuid4().hex}"
-    root.mkdir(parents=True, exist_ok=False)
-    return root
-
-
 def run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
     completed = subprocess.run(
         [sys.executable, "-X", "utf8", "-B", str(CLI), *arguments],
@@ -78,7 +70,7 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         return Path(envelope["data"]["probe_record"])
 
     def test_control_store_check_is_read_only_when_store_is_absent(self) -> None:
-        workspace = new_test_root("store-absent") / "workspace"
+        workspace = new_case_dir(self.id(), label="store-absent") / "w"
 
         completed, envelope = run_cli(
             "control-store-check", "--workspace-root", str(workspace)
@@ -89,7 +81,7 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         self.assertFalse((workspace / ".workflow-control").exists())
 
     def test_first_bootstrap_explicitly_creates_bound_store_marker_and_database(self) -> None:
-        workspace = new_test_root("store-bootstrap") / "workspace"
+        workspace = new_case_dir(self.id(), label="store-bootstrap") / "w"
         self._probe(workspace)
         marker_path = workspace / ".workflow-control" / "control-store.json"
         database_path = workspace / ".workflow-control" / "control.sqlite3"
@@ -105,8 +97,8 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         self.assertEqual(stored_id, marker["store_id"])
 
     def test_marker_without_database_fails_closed_without_replacement(self) -> None:
-        root = new_test_root("store-loss")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="store-loss")
+        workspace = root / "w"
         self._probe(workspace)
         database_path = workspace / ".workflow-control" / "control.sqlite3"
         displaced = root / "待删除" / "control.sqlite3.missing"
@@ -125,8 +117,8 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
         from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 
-        root = new_test_root("store-full-loss")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="store-full-loss")
+        workspace = root / "w"
         self._probe(workspace)
         anchors = list((root / ".video-workflow-control-anchors").glob("*.json"))
         self.assertEqual(len(anchors), 1)
@@ -151,8 +143,8 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
         from video2pdf_workflow_kernel.errors import ControlStoreUnavailable
         from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 
-        root = new_test_root("store-anchor-tamper")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="store-anchor-tamper")
+        workspace = root / "w"
         self._probe(workspace)
         anchor_path = next(
             (root / ".video-workflow-control-anchors").glob("*.json")
@@ -165,8 +157,8 @@ class BootstrapAndStoreHardeningTests(unittest.TestCase):
             VideoWorkflowKernel(workspace)
 
     def test_loaded_probe_schema_and_exact_fixture_identity_are_both_enforced(self) -> None:
-        root = new_test_root("probe-tamper")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="probe-tamper")
+        workspace = root / "w"
         probe_path = self._probe(workspace)
         original = json.loads(probe_path.read_text(encoding="utf-8"))
 
@@ -203,8 +195,8 @@ class PersistenceHardeningTests(unittest.TestCase):
     def test_publication_expectations_are_bound_before_output_publish(self) -> None:
         from video2pdf_workflow_kernel import InitializationFault, VideoWorkflowKernel
 
-        root = new_test_root("ipb")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="ipb")
+        kernel = VideoWorkflowKernel(root / "w")
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -232,8 +224,8 @@ class PersistenceHardeningTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import write_json_atomic
 
-        root = new_test_root("prt")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="prt")
+        kernel = VideoWorkflowKernel(root / "w")
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -262,8 +254,8 @@ class PersistenceHardeningTests(unittest.TestCase):
         from video2pdf_workflow_kernel import ArtifactDrift, VideoWorkflowKernel
         from video2pdf_workflow_kernel.utils import write_json_atomic
 
-        root = new_test_root("ccd")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="ccd")
+        kernel = VideoWorkflowKernel(root / "w")
         result = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -302,8 +294,11 @@ class PersistenceHardeningTests(unittest.TestCase):
 
         for displaced_kind in ("anchor", "store"):
             with self.subTest(displaced_kind=displaced_kind):
-                root = new_test_root(f"lp-{displaced_kind[0]}")
-                workspace = root / "workspace"
+                root = new_case_dir(
+                    self.id(),
+                    label=f"lp-{displaced_kind[0]}",
+                )
+                workspace = root / "w"
                 kernel = VideoWorkflowKernel(workspace)
                 probe = kernel.bootstrap_probe(
                     fixture=FIXTURE,
@@ -336,8 +331,8 @@ class PersistenceHardeningTests(unittest.TestCase):
     def test_slice1_v1_control_store_migrates_forward_to_intent_identity_columns(self) -> None:
         from video2pdf_workflow_kernel import VideoWorkflowKernel
 
-        root = new_test_root("store-v1-migration")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="store-v1-migration")
+        workspace = root / "w"
         kernel = VideoWorkflowKernel(workspace)
         kernel.bootstrap_probe(
             fixture=FIXTURE,
@@ -415,7 +410,7 @@ class PersistenceHardeningTests(unittest.TestCase):
     def test_intent_transition_uses_expected_state_compare_and_swap(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
 
-        workspace = new_test_root("intent-cas") / "workspace"
+        workspace = new_case_dir(self.id(), label="intent-cas") / "w"
         kernel = VideoWorkflowKernel(workspace)
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
@@ -449,8 +444,8 @@ class PersistenceHardeningTests(unittest.TestCase):
     def test_committed_binding_with_missing_run_record_blocks_retry(self) -> None:
         from video2pdf_workflow_kernel import KernelConflict, VideoWorkflowKernel
 
-        root = new_test_root("committed-loss")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="committed-loss")
+        kernel = VideoWorkflowKernel(root / "w")
         first = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -478,8 +473,8 @@ class PersistenceHardeningTests(unittest.TestCase):
             VideoWorkflowKernel,
         )
 
-        root = new_test_root("published-loss")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="published-loss")
+        kernel = VideoWorkflowKernel(root / "w")
         probe = kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -523,7 +518,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        root = new_test_root("registry-closed-set")
+        root = new_case_dir(self.id(), label="registry-closed-set")
         partial = json.loads(json.dumps(canonical))
         partial["contracts"].pop()
         partial_path = root / "partial.json"
@@ -556,13 +551,25 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "artifact-plan",
                 "bootstrap-record",
                 "common-definitions",
+                "compile-manifest",
+                "compile-runtime-policy",
                 "control-store-backup-manifest",
                 "control-store-identity",
                 "control-store-recovery-report",
                 "control-store-restore-sentinel",
                 "control-store-restore-state",
+                "diagnostic-compile-report",
+                "figure-manifest",
                 "fixture-package",
+                "integration-manifest",
                 "orphaned-filesystem-commit-report",
+                "outline-contract",
+                "production-common",
+                "production-promotion-journal",
+                "production-state",
+                "production-task-attempt",
+                "production-task-envelope",
+                "pyramid-evaluation-binding",
                 "recorded-provider-package",
                 "resource-admission-configuration",
                 "resource-lease-resolution-evidence",
@@ -581,6 +588,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "task-completion-record",
                 "task-promotion-journal",
                 "workflow-result",
+                "writer-result",
             },
         )
         self.assertIn(
@@ -599,8 +607,8 @@ class ContractAndPathHardeningTests(unittest.TestCase):
     def test_control_store_anchor_and_marker_share_a_registered_schema(self) -> None:
         from video2pdf_workflow_kernel.contracts import ContractRegistry
 
-        root = new_test_root("store-identity-schema")
-        workspace = root / "workspace"
+        root = new_case_dir(self.id(), label="store-identity-schema")
+        workspace = root / "w"
         completed, _ = run_cli(
             "bootstrap-probe",
             "--workspace-root",
@@ -670,7 +678,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             contracts.validate("artifact-plan", extra)
 
-        root = new_test_root("ap")
+        root = new_case_dir(self.id(), label="ap")
         completed, envelope = run_cli(
             "trace-source-ready",
             "--workspace-root",
@@ -709,7 +717,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         self.assertTrue(value.endswith("_20260715_010203_r1234abcd"))
 
     def test_registry_rejects_unknown_registered_invariant(self) -> None:
-        root = new_test_root("unknown-invariant")
+        root = new_case_dir(self.id(), label="unknown-invariant")
         registry = json.loads(
             (PROJECT_ROOT / "schemas/video-workflow/registry.v1.json").read_text(
                 encoding="utf-8"
@@ -798,7 +806,7 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         from video2pdf_workflow_kernel.contracts import ContractRegistry
         from video2pdf_workflow_kernel.errors import ContractError
 
-        root = new_test_root("fixture-runtime-escape")
+        root = new_case_dir(self.id(), label="fixture-runtime-escape")
         copied = root / "fixture"
         shutil.copytree(FIXTURE, copied)
         outside = root / f"outside-{uuid.uuid4().hex}.bin"
@@ -872,8 +880,8 @@ class HealthAndLauncherHardeningTests(unittest.TestCase):
         from video2pdf_workflow_kernel import VideoWorkflowKernel
         from video2pdf_workflow_kernel.control_store import BUSY_TIMEOUT_MS
 
-        root = new_test_root("health-probes")
-        kernel = VideoWorkflowKernel(root / "workspace")
+        root = new_case_dir(self.id(), label="health-probes")
+        kernel = VideoWorkflowKernel(root / "w")
         kernel.bootstrap_probe(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",

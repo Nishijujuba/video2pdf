@@ -12,6 +12,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import new_case_dir, new_workflow_workspace
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -33,7 +34,6 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
 TASK_START = "2026-07-15T01:02:03+08:00"
 
 
@@ -43,8 +43,7 @@ def trusted_task_provider_verifier(**identity: object) -> str:
 
 class TaskPromotionTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.workspace = TEST_RUNS / f"slice2-{uuid.uuid4().hex}" / "workspace"
-        self.workspace.mkdir(parents=True)
+        self.workspace = new_workflow_workspace(self.id(), label="slice2")
         self.kernel = VideoWorkflowKernel(
             self.workspace,
             resource_provider_verifiers={
@@ -268,13 +267,8 @@ class TaskPromotionTestCase(unittest.TestCase):
         with self.assertRaises(ContractError):
             self.complete(prepared, claimed)
 
-        quarantined_output = (
-            TEST_RUNS
-            / "待删除"
-            / "isolated-test-scenarios"
-            / f"{uuid.uuid4().hex}-undeclared-output.txt"
-        )
-        quarantined_output.parent.mkdir(parents=True, exist_ok=True)
+        quarantine = new_case_dir(self.id(), label="undeclared-output-quarantine")
+        quarantined_output = quarantine / "undeclared-output.txt"
         undeclared_output.replace(quarantined_output)
         self.assertFalse(undeclared_output.exists())
         self.assertTrue(quarantined_output.is_file())

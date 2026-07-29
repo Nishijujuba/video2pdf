@@ -14,6 +14,7 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -71,7 +72,7 @@ def run_git(repo: Path, *arguments: str) -> str:
 class LegacyBaselineCliTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        fixture_parent = PROJECT_ROOT / "待删除" / "kernel-test-runs"
+        fixture_parent = module_test_root(PROJECT_ROOT)
         fixture_parent.mkdir(parents=True, exist_ok=True)
         cls.cli_project_root = (
             fixture_parent / f"legacy-baseline-fixture-{time.time_ns()}"
@@ -504,7 +505,7 @@ class LegacyBaselineCliTests(unittest.TestCase):
 
 class LegacyBaselineContractFixtureTests(unittest.TestCase):
     def make_git_repo(self, name: str) -> Path:
-        repo = PROJECT_ROOT / "待删除" / "kernel-test-runs" / f"{name}-{time.time_ns()}"
+        repo = module_test_root(PROJECT_ROOT) / f"repo-{time.time_ns()}"
         repo.mkdir(parents=True)
         run_git(repo, "init")
         run_git(repo, "config", "user.email", "slice0-tests@example.invalid")
@@ -550,7 +551,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
             ContractError, r"commands\[0\]\.timeout_seconds.*3600"
         ):
             validate_json_schema_instance(manifest, schema, "exit evidence manifest")
-        manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
+        manifest_path = module_test_root(PROJECT_ROOT) / (
             f"schema-maximum-{time.time_ns()}.json"
         )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -579,7 +580,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
     def test_schema_only_routes_non_object_roots_to_schema_evaluator(self) -> None:
         for label, value in (("array", []), ("null", None)):
             with self.subTest(root=label):
-                manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
+                manifest_path = module_test_root(PROJECT_ROOT) / (
                     f"schema-root-{label}-{time.time_ns()}.json"
                 )
                 manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -621,7 +622,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
             )
         )
         validate_json_schema_instance(manifest, schema, "exit evidence manifest")
-        manifest_path = PROJECT_ROOT / "待删除" / "kernel-test-runs" / (
+        manifest_path = module_test_root(PROJECT_ROOT) / (
             f"schema-only-semantic-{time.time_ns()}.json"
         )
         manifest_path.parent.mkdir(parents=True, exist_ok=True)

@@ -14,6 +14,8 @@ import time
 import unittest
 from unittest import mock
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
 
 def load_compile_helper():
     script_path = Path(__file__).with_name("compile_latex_ascii.py")
@@ -29,9 +31,10 @@ class CompileLatexAsciiTests(unittest.TestCase):
         self.module = load_compile_helper()
 
     def test_copy_candidates_keep_compile_assets_and_skip_bulk_intermediates(self) -> None:
-        trash_root = Path.cwd() / "待删除" / "skill-tests"
-        trash_root.mkdir(parents=True, exist_ok=True)
-        source_dir = trash_root / f"compile-latex-{time.time_ns()}" / "P05-P05"
+        source_dir = new_fixture_dir(
+            "compile-latex-copy",
+            expected_suite="skill-tests",
+        ) / "P05-P05"
         (source_dir / "figures").mkdir(parents=True)
         (source_dir / "待删除").mkdir()
         (source_dir / "review").mkdir()
@@ -836,9 +839,7 @@ class CompileLatexAsciiTests(unittest.TestCase):
         compile_quick.assert_not_called()
 
     def _make_video_dir(self, label: str) -> Path:
-        root = Path.cwd() / "待删除" / "skill-tests" / f"{label}-{time.time_ns()}"
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        return new_fixture_dir(label, expected_suite="skill-tests")
 
     def _write_fake_engine(self, video_dir: Path, name: str) -> Path:
         script_path = video_dir / f"{name}.py"

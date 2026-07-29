@@ -10,6 +10,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -25,7 +26,7 @@ class ProductionSourceTaskTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 
-        root = PROJECT_ROOT / "待删除" / "st" / uuid.uuid4().hex[:8]
+        root = module_test_root(PROJECT_ROOT) / f"st-{uuid.uuid4().hex[:8]}"
         workspace = root / "workspace"
         staging = root / "provider-staging"
         cookie = root / "credentials/cookies.txt"

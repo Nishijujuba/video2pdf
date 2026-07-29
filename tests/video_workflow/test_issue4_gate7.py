@@ -7,24 +7,17 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-import uuid
 from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import new_case_dir, new_workflow_workspace
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "\u5f85\u5220\u9664/kernel-test-runs"
 SLICE_BASE_COMMIT = "96089b99c9ae63fff61107e1920fc3481ffc0802"
-
-
-def new_test_root(label: str) -> Path:
-    root = TEST_RUNS / f"{label}-{uuid.uuid4().hex}"
-    root.mkdir(parents=True, exist_ok=False)
-    return root
 
 
 def load_script(name: str, relative_path: str):
@@ -41,8 +34,9 @@ class ClosedSourceInventoryTests(unittest.TestCase):
     def trace(self, label: str):
         from video2pdf_workflow_kernel import VideoWorkflowKernel
 
-        root = new_test_root(label)
-        kernel = VideoWorkflowKernel(root / "workspace")
+        workspace = new_workflow_workspace(self.id(), label=label)
+        root = workspace.parent
+        kernel = VideoWorkflowKernel(workspace)
         result = kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start="2026-07-15T01:02:03+08:00",
@@ -106,7 +100,7 @@ class SharedExitEvidenceTests(unittest.TestCase):
     def test_shared_evidence_hash_has_known_sha256_result(self) -> None:
         from video2pdf_workflow_kernel.evidence import sha256_file
 
-        path = new_test_root("shared-sha") / "abc.bin"
+        path = new_case_dir(self.id(), label="shared-sha") / "abc.bin"
         path.write_bytes(b"abc")
         self.assertEqual(
             sha256_file(path),
@@ -180,6 +174,8 @@ class SharedExitEvidenceTests(unittest.TestCase):
                 (2, "904f46409b87aca96aeecf5cb0be4855c2cfdafa"),
                 (3, "aaaaeac5747fddc0915a59df34de47e6e8cfec48"),
                 (4, "654362017fa974946fb252af5311868bb47efcf0"),
+                (5, "7b33a2dcf8b19608943f12efd814907a69c35e8f"),
+                (6, "6f8241ddb4bd725d3b584dd1c403ed59dda32219"),
             },
         )
 

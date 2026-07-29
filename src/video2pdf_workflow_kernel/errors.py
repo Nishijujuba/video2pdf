@@ -30,6 +30,10 @@ class KernelConflict(KernelError):
     exit_code = 30
 
 
+class SupersededProductionAttempt(KernelConflict, ContractError):
+    """A stale Attempt is both contract-invalid and identity-conflicting."""
+
+
 class PathBudgetError(KernelError):
     classification = "path_budget_exceeded"
     exit_code = 30
@@ -43,6 +47,23 @@ class CapabilityForbidden(KernelError):
 class ArtifactDrift(KernelError):
     classification = "artifact_drift"
     exit_code = 40
+
+
+class CompileDependencyGap(KernelError):
+    classification = "compile_dependency_gap"
+    exit_code = 40
+
+
+class ProductionFault(KernelError):
+    classification = "injected_production_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Content Production fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
 
 
 class ControlStoreUnavailable(KernelError):

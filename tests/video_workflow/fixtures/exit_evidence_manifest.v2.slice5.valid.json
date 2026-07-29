@@ -1,0 +1,28 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {"number": 5, "name": "single-section-production"},
+  "slice_base_commit": "7b33a2dcf8b19608943f12efd814907a69c35e8f",
+  "implementation_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "evidence_paths": ["evidence/slice-05/exit-evidence-manifest.json", "evidence/slice-05/logs/contracts.log"],
+  "generated_at": "2026-07-21T00:00:00Z",
+  "activation_scope": {"kind": "none", "runtime_authority_change": false, "components_activated": [], "legacy_track_authority": "preserved"},
+  "commands": [
+    {"test_id": "slice5-contracts", "command": ["python", "contracts"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-05/logs/contracts.log", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "conforms": true},
+    {"test_id": "slice5-production", "command": ["python", "production"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-05/logs/production.log", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "conforms": true},
+    {"test_id": "slice5-full-video-workflow", "command": ["python", "full"], "expected_exit_code": 0, "actual_exit_code": 0, "log": {"role": "command_log", "path": "evidence/slice-05/logs/full.log", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "conforms": true}
+  ],
+  "expected_checkpoints": [{"name": "source_ready", "status": "current"}, {"name": "draft_compile_ready", "status": "current"}],
+  "fixtures": [{"role": "compile_provider_fixture", "path": "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+  "results": {"positive": ["guarded_compile_closure"], "negative": ["unsafe_input_rejected"], "recovery": ["idempotent_plan"]},
+  "result_bindings": [
+    {"result_id": "guarded_compile_closure", "result_kind": "positive", "command_id": "slice5-production", "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_plan_and_advance_reach_guarded_diagnostic_compile"},
+    {"result_id": "unsafe_input_rejected", "result_kind": "negative", "command_id": "slice5-production", "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_runtime_policy_and_recorder_evidence_fail_closed"},
+    {"result_id": "idempotent_plan", "result_kind": "recovery", "command_id": "slice5-production", "test_target": "tests.video_workflow.test_single_section_production.SingleSectionProductionTests.test_public_cli_plan_is_idempotent_and_advance_fail_closed_machine_readable"}
+  ],
+  "artifact_fingerprints": [{"role": "implementation", "path": "src/video2pdf_workflow_kernel/content_production.py", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

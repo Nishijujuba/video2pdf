@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import unittest
 import uuid
+
+from tests.project_test_runner._fixture_root import new_fixture_dir
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +98,10 @@ def candidate_classifier() -> Any:
 
 class DeliveryGlossaryGovernanceFixturesTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.video_dir = REPO_ROOT / "待删除" / "delivery-glossary-governance-e2e" / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.video_dir = new_fixture_dir(
+            "delivery-glossary-governance",
+            expected_suite="skill-tests",
+        )
         self.acceptance_dir = self.video_dir / "review" / "acceptance"
         self.rendered_dir = self.acceptance_dir / "rendered_pages"
         self.rendered_dir.mkdir(parents=True, exist_ok=True)

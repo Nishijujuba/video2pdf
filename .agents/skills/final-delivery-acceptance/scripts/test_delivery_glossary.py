@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from validate_delivery_glossary import ValidationError, validate_delivery_glossary
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -42,8 +43,10 @@ def minimal_glossary() -> dict[str, object]:
 
 class DeliveryGlossaryValidationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.run_dir = REPO_ROOT / "\u5f85\u5220\u9664" / "delivery-glossary-tests"
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir = new_fixture_dir(
+            "delivery-glossary",
+            expected_suite="skill-tests",
+        )
 
     def write_json(self, payload: dict[str, object], name: str) -> Path:
         path = self.run_dir / name

@@ -12,12 +12,20 @@ import os
 from pathlib import Path
 import queue
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
 import uuid
 from typing import Any, BinaryIO, Literal, Mapping, Sequence
+
+from video2pdf_persisted_command.process_identity import (
+    EXECUTION_IDENTITY_FIELDS,
+    execution_identity_is_complete,
+    execution_identity_observation_sha256,
+    process_execution_identity,
+)
 
 
 COMMAND_SCHEMA_VERSION = "1.0.0"
@@ -296,7 +304,14 @@ def _read_status_snapshot(
                     "status and supervisor identity records have different run IDs"
                 )
             supervisor_pid = supervisor_record["supervisor_pid"]
-            persisted_identity = supervisor_record["process_creation_identity"]
+            execution_identity = supervisor_record.get(
+                "execution_identity"
+            )
+            persisted_identity = (
+                execution_identity.get("process_creation_identity")
+                if isinstance(execution_identity, dict)
+                else supervisor_record.get("process_creation_identity")
+            )
             identity_evidence_path = supervisor_identity_path
     if not isinstance(supervisor_pid, int) or not isinstance(
         persisted_identity, str
@@ -313,6 +328,11 @@ def _read_status_snapshot(
         **status,
         "supervisor_pid": supervisor_pid,
         "supervisor_identity": {
+            **(
+                status.get("supervisor_identity")
+                if isinstance(status.get("supervisor_identity"), dict)
+                else {}
+            ),
             "pid": supervisor_pid,
             "process_creation_identity": persisted_identity,
         },
@@ -401,22 +421,22 @@ def _record_supervisor_identity(
     run_dir: Path,
     run_id: str,
     supervisor_pid: int,
-) -> str | None:
-    process_creation_identity = _process_identity(supervisor_pid)
+) -> dict[str, Any] | None:
+    execution_identity = process_execution_identity(supervisor_pid)
     record = {
         "schema_name": "persisted-command-supervisor-identity",
         "schema_version": "1.0.0",
         "run_id": run_id,
         "recorded_at": _now(),
         "supervisor_pid": supervisor_pid,
-        "process_creation_identity": process_creation_identity,
+        "execution_identity": execution_identity,
     }
     with _status_lock(run_dir):
         _write_json_new_locked(
             run_dir / SUPERVISOR_IDENTITY_FILENAME,
             record,
         )
-    return process_creation_identity
+    return execution_identity
 
 
 def _publish_terminal_status(
@@ -540,9 +560,6 @@ def _process_observation(pid: int) -> tuple[str, str | None]:
     return "present", None
 
 
-def _process_identity(pid: int) -> str | None:
-    observation, creation_identity = _process_observation(pid)
-    return creation_identity if observation == "present" else None
 def _environment_secret_values(environment: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -808,17 +825,48 @@ def _log_sizes(run_dir: Path) -> dict[str, int]:
     }
 
 
+def _file_artifact_identity_or_none(path: Path) -> dict[str, int] | None:
+    try:
+        value = path.stat()
+    except OSError:
+        return None
+    return {
+        "device": int(value.st_dev),
+        "inode": int(value.st_ino),
+        "size": int(value.st_size),
+        "mtime_ns": int(value.st_mtime_ns),
+        "ctime_ns": int(value.st_ctime_ns),
+    }
+
+
+def _execution_artifact_identities(
+    run_dir: Path,
+) -> dict[str, dict[str, int] | None]:
+    return {
+        name: _file_artifact_identity_or_none(run_dir / filename)
+        for name, filename in (
+            ("command", "command.json"),
+            ("supervisor_launch", SUPERVISOR_IDENTITY_FILENAME),
+            ("stdout", "stdout.log"),
+            ("stderr", "stderr.log"),
+            ("merged", "command.log"),
+            ("exit_code", "exit-code.txt"),
+        )
+    }
+
+
 def _execution_status(
     run_id: str,
+    run_nonce: str,
     state: str,
     run_dir: Path,
     *,
     started_at: str,
     elapsed_seconds: float,
     supervisor_pid: int,
-    supervisor_creation_identity: str | None,
+    supervisor_execution_identity: Mapping[str, Any] | None,
     target_pid: int | None,
-    target_creation_identity: str | None,
+    target_execution_identity: Mapping[str, Any] | None,
     latest_output_at: str | None,
     exit_code: int | None,
     finished_at: str | None = None,
@@ -827,21 +875,41 @@ def _execution_status(
     status = _status(
         run_id,
         state,
+        run_nonce=run_nonce,
         started_at=started_at,
         elapsed_seconds=round(elapsed_seconds, 3),
         heartbeat_at=None,
         latest_output_at=latest_output_at,
         log_sizes=_log_sizes(run_dir),
+        artifact_identities=_execution_artifact_identities(run_dir),
         supervisor_pid=supervisor_pid,
         child_pid=target_pid,
-        supervisor_identity={
-            "pid": supervisor_pid,
-            "process_creation_identity": supervisor_creation_identity,
-        },
-        target_identity={
-            "pid": target_pid,
-            "process_creation_identity": target_creation_identity,
-        },
+        supervisor_identity=(
+            dict(supervisor_execution_identity)
+            if supervisor_execution_identity is not None
+            else {
+                "pid": supervisor_pid,
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            }
+        ),
+        target_identity=(
+            dict(target_execution_identity)
+            if target_execution_identity is not None
+            else {
+                "pid": target_pid,
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            }
+        ),
         exit_code=exit_code,
         **fields,
     )
@@ -853,26 +921,28 @@ def _execution_status(
 
 def _launch_failure_status(
     run_id: str,
+    run_nonce: str,
     run_dir: Path,
     *,
     started_at: str,
     started_monotonic: float,
     supervisor_pid: int,
-    supervisor_creation_identity: str | None,
+    supervisor_execution_identity: Mapping[str, Any] | None,
     failure_kind: str,
     failure_message: str,
 ) -> dict[str, Any]:
     return _execution_status(
         run_id,
+        run_nonce,
         "launch_failed",
         run_dir,
         started_at=started_at,
         elapsed_seconds=time.monotonic() - started_monotonic,
         finished_at=_now(),
         supervisor_pid=supervisor_pid,
-        supervisor_creation_identity=supervisor_creation_identity,
+        supervisor_execution_identity=supervisor_execution_identity,
         target_pid=None,
-        target_creation_identity=None,
+        target_execution_identity=None,
         latest_output_at=None,
         exit_code=None,
         failure={
@@ -888,17 +958,18 @@ def _record_supervisor_handoff_failure(
     *,
     started_monotonic: float,
     supervisor_pid: int,
-    supervisor_creation_identity: str | None,
+    supervisor_execution_identity: Mapping[str, Any] | None,
 ) -> None:
     _publish_terminal_status(
         run_dir,
         _launch_failure_status(
             command_record["run_id"],
+            command_record["run_nonce"],
             run_dir,
             started_at=command_record["created_at"],
             started_monotonic=started_monotonic,
             supervisor_pid=supervisor_pid,
-            supervisor_creation_identity=supervisor_creation_identity,
+            supervisor_execution_identity=supervisor_execution_identity,
             failure_kind="supervisor_handoff_failed",
             failure_message="target launch request could not be received",
         ),
@@ -926,11 +997,13 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         _secret_values,
     )
     run_id, run_dir = _create_run_directory(project_root, safe_task_name)
+    run_nonce = secrets.token_hex(32)
     created_at = _now()
     command_record = {
         "schema_name": "persisted-command",
         "schema_version": COMMAND_SCHEMA_VERSION,
         "run_id": run_id,
+        "run_nonce": run_nonce,
         "task_name": safe_task_name,
         "normalized_task_name": _normalized_task_name(safe_task_name),
         "created_at": created_at,
@@ -946,20 +1019,32 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         _status(
             run_id,
             "running",
+            run_nonce=run_nonce,
             started_at=created_at,
             elapsed_seconds=0.0,
             heartbeat_at=None,
             latest_output_at=None,
             log_sizes=_log_sizes(run_dir),
+            artifact_identities=_execution_artifact_identities(run_dir),
             supervisor_pid=None,
             child_pid=None,
             supervisor_identity={
                 "pid": None,
                 "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
             },
             target_identity={
                 "pid": None,
                 "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
             },
             exit_code=None,
         ),
@@ -991,7 +1076,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         options["start_new_session"] = True
     supervisor = subprocess.Popen(supervisor_command, **options)
     assert supervisor.stdin is not None
-    supervisor_creation_identity = _record_supervisor_identity(
+    supervisor_execution_identity = _record_supervisor_identity(
         run_dir,
         run_id,
         supervisor.pid,
@@ -1017,7 +1102,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
             command_record,
             started_monotonic=started_monotonic,
             supervisor_pid=supervisor.pid,
-            supervisor_creation_identity=supervisor_creation_identity,
+            supervisor_execution_identity=supervisor_execution_identity,
         )
     return {"run_id": run_id, "run_dir": str(run_dir)}
 
@@ -1053,7 +1138,7 @@ def _supervise(run_dir: Path) -> int:
     run_id = command_record["run_id"]
     started_monotonic = time.monotonic()
     supervisor_pid = os.getpid()
-    supervisor_creation_identity = _process_identity(supervisor_pid)
+    supervisor_execution_identity = process_execution_identity(supervisor_pid)
     try:
         launch_request = json.load(sys.stdin)
         target_command = launch_request["argv"]
@@ -1071,7 +1156,7 @@ def _supervise(run_dir: Path) -> int:
             command_record,
             started_monotonic=started_monotonic,
             supervisor_pid=supervisor_pid,
-            supervisor_creation_identity=supervisor_creation_identity,
+            supervisor_execution_identity=supervisor_execution_identity,
         )
         return 1
 
@@ -1081,12 +1166,21 @@ def _supervise(run_dir: Path) -> int:
         working_directory=working_directory,
     )
     target_process_options: dict[str, Any] = {}
+    target_environment = os.environ.copy()
+    target_environment.update(
+        {
+            "VIDEO2PDF_PERSISTED_RUN_ID": run_id,
+            "VIDEO2PDF_PERSISTED_RUN_NONCE": command_record["run_nonce"],
+            "VIDEO2PDF_PERSISTED_RUN_DIR": str(run_dir),
+        }
+    )
     if os.name == "nt":
         target_process_options["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         process = subprocess.Popen(
             target_command,
             cwd=working_directory,
+            env=target_environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1097,18 +1191,19 @@ def _supervise(run_dir: Path) -> int:
             run_dir,
             _launch_failure_status(
                 run_id,
+                command_record["run_nonce"],
                 run_dir,
                 started_at=command_record["created_at"],
                 started_monotonic=started_monotonic,
                 supervisor_pid=supervisor_pid,
-                supervisor_creation_identity=supervisor_creation_identity,
+                supervisor_execution_identity=supervisor_execution_identity,
                 failure_kind="child_launch_failed",
                 failure_message="target process could not be launched",
             ),
         )
         return 1
 
-    target_creation_identity = _process_identity(process.pid)
+    target_execution_identity = process_execution_identity(process.pid)
     latest_output_at = None
     nonterminal_status_publication_failures = 0
 
@@ -1119,14 +1214,15 @@ def _supervise(run_dir: Path) -> int:
                 run_dir,
                 _execution_status(
                     run_id,
+                    command_record["run_nonce"],
                     "running",
                     run_dir,
                     started_at=command_record["created_at"],
                     elapsed_seconds=current_monotonic - started_monotonic,
                     supervisor_pid=supervisor_pid,
-                    supervisor_creation_identity=supervisor_creation_identity,
+                    supervisor_execution_identity=supervisor_execution_identity,
                     target_pid=process.pid,
-                    target_creation_identity=target_creation_identity,
+                    target_execution_identity=target_execution_identity,
                     latest_output_at=latest_output_at,
                     exit_code=None,
                 ),
@@ -1300,15 +1396,16 @@ def _supervise(run_dir: Path) -> int:
         run_dir,
         _execution_status(
             run_id,
+            command_record["run_nonce"],
             terminal_state,
             run_dir,
             started_at=command_record["created_at"],
             elapsed_seconds=time.monotonic() - started_monotonic,
             finished_at=_now(),
             supervisor_pid=supervisor_pid,
-            supervisor_creation_identity=supervisor_creation_identity,
+            supervisor_execution_identity=supervisor_execution_identity,
             target_pid=process.pid,
-            target_creation_identity=target_creation_identity,
+            target_execution_identity=target_execution_identity,
             latest_output_at=latest_output_at,
             exit_code=exit_code,
             **terminal_fields,
@@ -1422,17 +1519,23 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
         observation: str,
         observed_pid: int | None,
         observed_creation_identity: str | None,
+        observed_target_identity: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        observed_record = (
+            observed_target_identity
+            if observed_target_identity is not None
+            else {
+                "observation": observation,
+                "pid": observed_pid,
+                "process_creation_identity": observed_creation_identity,
+            }
+        )
         reconciliation = {
             "decision": decision,
             "reason": reason,
             "observed_at": _now(),
             "persisted_target_identity": status.get("target_identity"),
-            "observed_target_identity": {
-                "observation": observation,
-                "pid": observed_pid,
-                "process_creation_identity": observed_creation_identity,
-            },
+            "observed_target_identity": observed_record,
         }
         corrected_status = {
             **status,
@@ -1512,15 +1615,105 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
             observed_pid=target_pid,
             observed_creation_identity=observed_creation_identity,
         )
+    if (
+        not isinstance(target_identity, dict)
+        or set(target_identity) != EXECUTION_IDENTITY_FIELDS
+    ):
+        return persist_correction(
+            "unknown",
+            "target_identity_incomplete",
+            observation=observation,
+            observed_pid=target_pid,
+            observed_creation_identity=observed_creation_identity,
+        )
+    observed_target_identity = process_execution_identity(target_pid)
+    if not execution_identity_is_complete(observed_target_identity):
+        if (
+            isinstance(observed_target_identity, dict)
+            and set(observed_target_identity) == EXECUTION_IDENTITY_FIELDS
+            and observed_target_identity.get("observation_sha256")
+            != execution_identity_observation_sha256(
+                observed_target_identity
+            )
+        ):
+            return persist_correction(
+                "unknown",
+                "target_identity_observation_sha256_mismatch",
+                observation="present",
+                observed_pid=target_pid,
+                observed_creation_identity=observed_creation_identity,
+                observed_target_identity=observed_target_identity,
+            )
+        repeated_observation, repeated_creation_identity = (
+            _process_observation(target_pid)
+        )
+        if repeated_observation == "missing":
+            return persist_correction(
+                "interrupted",
+                "target_process_missing",
+                observation=repeated_observation,
+                observed_pid=target_pid,
+                observed_creation_identity=None,
+            )
+        return persist_correction(
+            "unknown",
+            "target_identity_unavailable",
+            observation=repeated_observation,
+            observed_pid=target_pid,
+            observed_creation_identity=repeated_creation_identity,
+        )
+
+    def identity_field_matches(field: str) -> bool:
+        if field != "executable_path":
+            return target_identity[field] == observed_target_identity[field]
+        try:
+            persisted_path = os.path.normcase(
+                str(Path(target_identity[field]).resolve(strict=False))
+            )
+            observed_path = os.path.normcase(
+                str(
+                    Path(observed_target_identity[field]).resolve(
+                        strict=False
+                    )
+                )
+            )
+        except (OSError, TypeError):
+            return False
+        return persisted_path == observed_path
+
+    fields_in_precedence = (
+        "pid",
+        "process_creation_identity",
+        "executable_path",
+        "executable_file_identity",
+        "parent_pid",
+        "parent_process_creation_identity",
+        "observation_sha256",
+    )
+    for field in fields_in_precedence:
+        if field == "observation_sha256" and (
+            target_identity[field]
+            != execution_identity_observation_sha256(target_identity)
+        ):
+            matches = False
+        else:
+            matches = identity_field_matches(field)
+        if matches:
+            continue
+        return persist_correction(
+            "unknown",
+            f"target_identity_{field}_mismatch",
+            observation="present",
+            observed_pid=target_pid,
+            observed_creation_identity=observed_creation_identity,
+            observed_target_identity=observed_target_identity,
+        )
 
     snapshot["reconciliation"] = {
         "decision": "running",
         "reason": "target_identity_matches",
         "observed_at": _now(),
-        "target_identity": {
-            "pid": target_pid,
-            "process_creation_identity": observed_creation_identity,
-        },
+        "target_identity": observed_target_identity,
     }
     return snapshot
 

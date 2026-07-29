@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import importlib.metadata
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+from threading import RLock
 import tomllib
 from typing import Any, Iterator
 
@@ -42,6 +45,61 @@ class ContractEntry:
     negative_example: Path | None
     invariants: tuple[str, ...]
     canonical_instance: Path | None
+
+
+@dataclass(frozen=True)
+class _PreparedRegistryKey:
+    cache_format_version: str
+    project_root: str
+    registry_path: str
+    canonical_registry_raw_sha256: str
+    canonical_registry_canonical_sha256: str
+    selected_registry_raw_sha256: str
+    selected_registry_canonical_sha256: str
+    schemas: tuple[tuple[str, str], ...]
+    disk_schema_inventory: tuple[str, ...]
+    runtime_input_sha256: str
+    runtime_lock_sha256: str
+    locked_package_versions: tuple[tuple[str, str], ...]
+    installed_package_versions: tuple[tuple[str, str], ...]
+    jsonschema_version: str
+    json_schema_draft: str
+
+
+@dataclass(frozen=True)
+class _PreparedRegistrySnapshot:
+    schemas: tuple[tuple[str, str, str, bytes], ...]
+
+
+@dataclass(frozen=True)
+class _LockedRuntimeSnapshot:
+    jsonschema_version: str
+    locked_packages: tuple[tuple[str, str], ...]
+    lock_path: str
+    runtime_input_sha256: str
+    runtime_lock_sha256: str
+
+    def report(self) -> dict[str, Any]:
+        return {
+            "jsonschema_version": self.jsonschema_version,
+            "locked_packages": dict(self.locked_packages),
+            "lock_path": self.lock_path,
+            "lock_sha256": self.runtime_lock_sha256,
+        }
+
+
+_PREPARED_REGISTRY_CACHE_LIMIT = 8
+_PREPARED_REGISTRY_CACHE: OrderedDict[
+    _PreparedRegistryKey, _PreparedRegistrySnapshot
+] = OrderedDict()
+_PREPARED_REGISTRY_CACHE_LOCK = RLock()
+
+
+def _clear_prepared_registry_cache_for_tests() -> None:
+    """Reset process-local prepared registry state at the test boundary."""
+
+    with _PREPARED_REGISTRY_CACHE_LOCK:
+        _PREPARED_REGISTRY_CACHE.clear()
 
 
 WINDOWS_DEVICE_NAMES = frozenset(
@@ -1478,6 +1536,7 @@ class ContractRegistry:
         self.entries = self._load_entries()
         self.schemas: dict[tuple[str, str], dict[str, Any]] = {}
         self._registry: Registry | None = None
+        self._prepared_key: _PreparedRegistryKey | None = None
 
     def _load_entries(self) -> tuple[ContractEntry, ...]:
         if not isinstance(self._manifest, dict):
@@ -1604,18 +1663,19 @@ class ContractRegistry:
             "runtime_lock": runtime,
         }
 
-    def _check_locked_runtime(self) -> dict[str, Any]:
+    def _capture_locked_runtime(self) -> _LockedRuntimeSnapshot:
         input_path = self.project_root / RUNTIME_INPUT
         lock_path = self.project_root / RUNTIME_LOCK
+        input_raw = input_path.read_bytes()
+        lock_raw = lock_path.read_bytes()
         direct_lines = {
             line.strip()
-            for line in input_path.read_text(encoding="utf-8").splitlines()
+            for line in input_raw.decode("utf-8").splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         }
         if direct_lines != {f"jsonschema=={JSONSCHEMA_VERSION}"}:
             raise ContractError("runtime input must contain only the exact jsonschema pin")
-        with lock_path.open("rb") as handle:
-            lock = tomllib.load(handle)
+        lock = tomllib.loads(lock_raw.decode("utf-8"))
         if lock.get("lock-version") != "1.0" or lock.get("created-by") != "uv":
             raise ContractError("runtime lock is not the expected uv PEP 751 lock")
         packages = lock.get("packages")
@@ -1653,12 +1713,13 @@ class ContractRegistry:
                     f"locked runtime package mismatch: {name}: expected {expected}, got {actual}"
                 )
             installed[name] = actual
-        return {
-            "jsonschema_version": installed["jsonschema"],
-            "locked_packages": installed,
-            "lock_path": str(lock_path),
-            "lock_sha256": sha256_file(lock_path),
-        }
+        return _LockedRuntimeSnapshot(
+            jsonschema_version=installed["jsonschema"],
+            locked_packages=tuple(sorted(installed.items())),
+            lock_path=str(lock_path),
+            runtime_input_sha256=sha256_bytes(input_raw),
+            runtime_lock_sha256=sha256_bytes(lock_raw),
+        )
 
     def validate(self, schema_name: str, instance: Any) -> None:
         if self._registry is None:
@@ -1734,15 +1795,123 @@ class ContractRegistry:
 
     def _prepare_registry(self) -> dict[str, Any]:
         """Prepare every registry entry through the same closed, locked path."""
-        if self._registry is not None:
-            return self._check_locked_runtime()
-        runtime = self._check_locked_runtime()
-        registered_ids = {entry.schema_id for entry in self.entries}
+        runtime_snapshot = self._capture_locked_runtime()
+        runtime = runtime_snapshot.report()
+        key, schema_inputs = self._capture_prepared_registry_inputs(
+            runtime_snapshot
+        )
+        if self._registry is not None and self._prepared_key == key:
+            return runtime
+        with _PREPARED_REGISTRY_CACHE_LOCK:
+            snapshot = _PREPARED_REGISTRY_CACHE.get(key)
+            if snapshot is None:
+                snapshot = self._build_prepared_registry_snapshot(
+                    key, schema_inputs
+                )
+                _PREPARED_REGISTRY_CACHE[key] = snapshot
+                if len(_PREPARED_REGISTRY_CACHE) > _PREPARED_REGISTRY_CACHE_LIMIT:
+                    _PREPARED_REGISTRY_CACHE.popitem(last=False)
+            else:
+                _PREPARED_REGISTRY_CACHE.move_to_end(key)
         resources: list[tuple[str, Resource]] = []
+        self.schemas = {}
+        for schema_name, schema_version, schema_id, raw_schema in snapshot.schemas:
+            schema = json.loads(raw_schema)
+            self.schemas[(schema_name, schema_version)] = schema
+            resources.append((schema_id, Resource.from_contents(schema)))
+        self._registry = Registry().with_resources(resources)
+        self._prepared_key = key
+        return runtime
+
+    def _capture_prepared_registry_inputs(
+        self, runtime: _LockedRuntimeSnapshot
+    ) -> tuple[_PreparedRegistryKey, tuple[tuple[ContractEntry, bytes], ...]]:
+        canonical_path = self.project_root / REGISTRY_RELATIVE_PATH
+        try:
+            canonical_raw = canonical_path.read_bytes()
+            selected_raw = self.registry_path.read_bytes()
+            canonical_document = json.loads(canonical_raw)
+            selected_document = json.loads(selected_raw)
+        except (FileNotFoundError, json.JSONDecodeError) as exc:
+            raise ContractError(f"cannot load registry authority: {exc}") from exc
+        if (
+            canonical_document != self._canonical
+            or selected_document != canonical_document
+        ):
+            raise ContractError(
+                "alternate registry authority metadata differs from the canonical registry"
+            )
+
+        schema_inputs: list[tuple[ContractEntry, bytes]] = []
+        schema_fingerprints: list[tuple[str, str]] = []
         for entry in self.entries:
             try:
-                schema = read_json(entry.schema_path)
-            except (FileNotFoundError, json.JSONDecodeError) as exc:
+                raw_schema = entry.schema_path.read_bytes()
+            except FileNotFoundError as exc:
+                raise ContractError(
+                    f"cannot load schema: {entry.schema_path}: {exc}"
+                ) from exc
+            schema_inputs.append((entry, raw_schema))
+            schema_fingerprints.append(
+                (str(entry.schema_path), sha256_bytes(raw_schema))
+            )
+
+        disk_schema_inventory = tuple(
+            sorted(
+                str(path.resolve())
+                for path in (
+                    self.project_root / "schemas/video-workflow"
+                ).glob("v*/*.schema.json")
+            )
+        )
+        input_path = self.project_root / RUNTIME_INPUT
+        lock_path = self.project_root / RUNTIME_LOCK
+        try:
+            current_input_sha256 = sha256_file(input_path)
+            current_lock_sha256 = sha256_file(lock_path)
+        except FileNotFoundError as exc:
+            raise ContractError(f"cannot load locked runtime inputs: {exc}") from exc
+        if (
+            current_input_sha256 != runtime.runtime_input_sha256
+            or current_lock_sha256 != runtime.runtime_lock_sha256
+        ):
+            raise ContractError(
+                "locked runtime inputs changed during registry preparation"
+            )
+        key = _PreparedRegistryKey(
+            cache_format_version="1",
+            project_root=os.path.normcase(str(self.project_root)),
+            registry_path=os.path.normcase(str(self.registry_path)),
+            canonical_registry_raw_sha256=sha256_bytes(canonical_raw),
+            canonical_registry_canonical_sha256=sha256_bytes(
+                canonical_json_bytes(canonical_document)
+            ),
+            selected_registry_raw_sha256=sha256_bytes(selected_raw),
+            selected_registry_canonical_sha256=sha256_bytes(
+                canonical_json_bytes(selected_document)
+            ),
+            schemas=tuple(sorted(schema_fingerprints)),
+            disk_schema_inventory=disk_schema_inventory,
+            runtime_input_sha256=runtime.runtime_input_sha256,
+            runtime_lock_sha256=runtime.runtime_lock_sha256,
+            locked_package_versions=runtime.locked_packages,
+            installed_package_versions=runtime.locked_packages,
+            jsonschema_version=JSONSCHEMA_VERSION,
+            json_schema_draft=DRAFT,
+        )
+        return key, tuple(schema_inputs)
+
+    def _build_prepared_registry_snapshot(
+        self,
+        key: _PreparedRegistryKey,
+        schema_inputs: tuple[tuple[ContractEntry, bytes], ...],
+    ) -> _PreparedRegistrySnapshot:
+        registered_ids = {entry.schema_id for entry in self.entries}
+        prepared: list[tuple[str, str, str, bytes]] = []
+        for entry, raw_schema in schema_inputs:
+            try:
+                schema = json.loads(raw_schema)
+            except json.JSONDecodeError as exc:
                 raise ContractError(f"cannot load schema: {entry.schema_path}: {exc}") from exc
             if not isinstance(schema, dict):
                 raise ContractError(f"schema root must be an object: {entry.schema_path}")
@@ -1762,20 +1931,21 @@ class ContractRegistry:
                     raise UnresolvedSchemaReference(
                         f"unregistered schema reference {reference!r} in {entry.schema_id}"
                     )
-            self.schemas[(entry.schema_name, entry.schema_version)] = schema
-            resources.append((entry.schema_id, Resource.from_contents(schema)))
-        self._registry = Registry().with_resources(resources)
-        registered_paths = {entry.schema_path for entry in self.entries}
-        disk_paths = {
-            path.resolve()
-            for path in (self.project_root / "schemas/video-workflow").glob(
-                "v*/*.schema.json"
+            Resource.from_contents(schema)
+            prepared.append(
+                (
+                    entry.schema_name,
+                    entry.schema_version,
+                    entry.schema_id,
+                    raw_schema,
+                )
             )
-        }
+        registered_paths = {str(entry.schema_path) for entry in self.entries}
+        disk_paths = set(key.disk_schema_inventory)
         if registered_paths != disk_paths:
-            missing = sorted(str(path) for path in disk_paths - registered_paths)
-            extra = sorted(str(path) for path in registered_paths - disk_paths)
+            missing = sorted(disk_paths - registered_paths)
+            extra = sorted(registered_paths - disk_paths)
             raise ContractError(
                 f"registry completeness mismatch: missing={missing}, extra={extra}"
             )
-        return runtime
+        return _PreparedRegistrySnapshot(schemas=tuple(prepared))

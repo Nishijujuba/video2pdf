@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v4/integration-manifest.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "run_id", "main", "sections", "figures", "terminology", "source_binding"],
+  "properties": {
+    "schema_name": {"const": "integration-manifest"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "main": {"$ref": "#/$defs/namedGeneration"},
+    "sections": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/namedGeneration"}},
+    "figures": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/namedGeneration"}},
+    "terminology": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["term", "definition"], "properties": {"term": {"type": "string", "minLength": 1}, "definition": {"type": "string", "minLength": 1}}}},
+    "source_binding": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactBinding"}
+  },
+  "$defs": {
+    "namedGeneration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logical_id", "path", "generation", "sha256", "size", "producer"],
+      "properties": {
+        "logical_id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 0},
+        "producer": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

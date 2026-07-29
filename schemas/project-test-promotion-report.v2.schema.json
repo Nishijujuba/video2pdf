@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Nishijujuba/video2pdf/schemas/project-test-promotion-report.v2.schema.json",
+  "title": "Project Test Runner Promotion Report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "issue",
+    "historical_performance_baseline",
+    "final_issue9_closed_set",
+    "superset_authority",
+    "implementation",
+    "promotion_closed_set",
+    "parallel_runs",
+    "semantic_parity",
+    "migration_review",
+    "optimization_safety_review",
+    "performance",
+    "authorization_model",
+    "promotion_fingerprint",
+    "cutover_authorized"
+  ],
+  "properties": {
+    "schema_name": {"const": "video2pdf.project-test-promotion-report"},
+    "schema_version": {"const": 2},
+    "issue": {"const": 27},
+    "historical_performance_baseline": {"$ref": "#/$defs/historicalBaseline"},
+    "final_issue9_closed_set": {"$ref": "#/$defs/finalIssue9ClosedSet"},
+    "superset_authority": {"$ref": "#/$defs/artifactBinding"},
+    "implementation": {"$ref": "#/$defs/implementation"},
+    "promotion_closed_set": {"$ref": "#/$defs/promotionClosedSet"},
+    "parallel_runs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"$ref": "#/$defs/parallelRun"}
+    },
+    "semantic_parity": {"$ref": "#/$defs/semanticParity"},
+    "migration_review": {"$ref": "#/$defs/reviewBinding"},
+    "optimization_safety_review": {"$ref": "#/$defs/reviewBinding"},
+    "performance": {"$ref": "#/$defs/performance"},
+    "authorization_model": {"$ref": "#/$defs/authorizationModel"},
+    "promotion_fingerprint": {"$ref": "#/$defs/sha256"},
+    "cutover_authorized": {"const": true}
+  },
+  "$defs": {
+    "authorizationModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_semantics",
+        "cryptographic_provenance",
+        "path_identity_required",
+        "unproved_path_identity_authorizes",
+        "persisted_record_contract",
+        "execution_source_contract",
+        "process_identity_contract",
+        "local_attacker_limit"
+      ],
+      "properties": {
+        "decision_semantics": {"const": "local-fail-closed-non-cryptographic-v1"},
+        "cryptographic_provenance": {"const": false},
+        "path_identity_required": {"const": true},
+        "unproved_path_identity_authorizes": {"const": false},
+        "persisted_record_contract": {
+          "const": "persisted-command-v1.0.0-current-success-shape"
+        },
+        "execution_source_contract": {
+          "const": "clean-git-tree-plus-frozen-runtime-bytes-v1"
+        },
+        "process_identity_contract": {
+          "const": "pid-creation-executable-parent-file-identity-v1"
+        },
+        "local_attacker_limit": {
+          "const": "an arbitrary local writer can forge the worktree, frozen source, and every unsigned evidence artifact"
+        }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "nonemptyPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "historicalBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation_commit",
+        "test_count",
+        "result",
+        "test_duration_seconds",
+        "persisted_elapsed_seconds",
+        "persisted_run_dir",
+        "persisted_status_path",
+        "persisted_status_sha256",
+        "persisted_exit_code_path",
+        "persisted_exit_code_sha256"
+      ],
+      "properties": {
+        "implementation_commit": {
+          "const": "18f78fad0be5a66d2da6250dc268bc8de81fdbcc"
+        },
+        "test_count": {"const": 474},
+        "result": {"const": "OK"},
+        "test_duration_seconds": {"const": 4847.218},
+        "persisted_elapsed_seconds": {"const": 4849.187},
+        "persisted_run_dir": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_status_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_status_sha256": {"$ref": "#/$defs/sha256"},
+        "persisted_exit_code_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_exit_code_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "testIds475": {
+      "type": "array",
+      "minItems": 475,
+      "maxItems": 475,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "finalIssue9ClosedSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "test_count",
+        "test_id_set_sha256",
+        "test_ids",
+        "evidence_path",
+        "evidence_sha256",
+        "inventory_path",
+        "inventory_sha256"
+      ],
+      "properties": {
+        "commit": {"$ref": "#/$defs/commit"},
+        "test_count": {"const": 475},
+        "test_id_set_sha256": {
+          "const": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+        },
+        "test_ids": {"$ref": "#/$defs/testIds475"},
+        "evidence_path": {
+          "const": "evidence/project-test-runner/test-path-migration-review.json"
+        },
+        "evidence_sha256": {"$ref": "#/$defs/sha256"},
+        "inventory_path": {"$ref": "#/$defs/nonemptyPath"},
+        "inventory_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/nonemptyPath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "authority_sources",
+        "registry_path",
+        "registry_sha256",
+        "runner_path",
+        "runner_sha256",
+        "scheduler_path",
+        "scheduler_sha256"
+      ],
+      "properties": {
+        "commit": {"$ref": "#/$defs/commit"},
+        "authority_sources": {
+          "type": "array",
+          "minItems": 19,
+          "maxItems": 19,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/sourceFingerprint"}
+        },
+        "registry_path": {"const": "config/test-suites.v1.json"},
+        "registry_sha256": {"$ref": "#/$defs/sha256"},
+        "runner_path": {"const": "scripts/run_project_tests.py"},
+        "runner_sha256": {"$ref": "#/$defs/sha256"},
+        "scheduler_path": {"const": "scripts/project_test_scheduler.py"},
+        "scheduler_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "sourceFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/nonemptyPath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "promotionClosedSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_ids",
+        "test_count",
+        "test_id_set_sha256",
+        "baseline_test_count",
+        "baseline_test_id_set_sha256",
+        "added_test_count",
+        "added_test_id_set_sha256",
+        "removed_test_count",
+        "renamed_test_count"
+      ],
+      "properties": {
+        "suite_ids": {"const": ["video-workflow"]},
+        "test_count": {"const": 499},
+        "test_id_set_sha256": {
+          "const": "ea008eb2d56cf7bed8e489a0bf1dfabeabbb8f70410b65f1891c68a067ce36b7"
+        },
+        "baseline_test_count": {"const": 475},
+        "baseline_test_id_set_sha256": {
+          "const": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+        },
+        "added_test_count": {"const": 24},
+        "added_test_id_set_sha256": {
+          "const": "53a65650fb48bab050e4e236e3fd0e2b448a0aac7ff9b6599ebf0d1cae549121"
+        },
+        "removed_test_count": {"const": 0},
+        "renamed_test_count": {"const": 0}
+      }
+    },
+    "parallelRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_dir",
+        "discovery_path",
+        "discovery_sha256",
+        "summary_path",
+        "summary_sha256",
+        "persisted_run_dir",
+        "persisted_status_path",
+        "persisted_status_sha256",
+        "persisted_exit_code_path",
+        "persisted_exit_code_sha256",
+        "persisted_command_path",
+        "persisted_command_sha256",
+        "persisted_stdout_path",
+        "persisted_stdout_sha256",
+        "semantic_outcomes_sha256",
+        "module_assignment_sha256",
+        "registry_sha256"
+      ],
+      "properties": {
+        "run_dir": {"$ref": "#/$defs/nonemptyPath"},
+        "discovery_path": {"$ref": "#/$defs/nonemptyPath"},
+        "discovery_sha256": {"$ref": "#/$defs/sha256"},
+        "summary_path": {"$ref": "#/$defs/nonemptyPath"},
+        "summary_sha256": {"$ref": "#/$defs/sha256"},
+        "persisted_run_dir": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_status_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_status_sha256": {"$ref": "#/$defs/sha256"},
+        "persisted_exit_code_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_exit_code_sha256": {"$ref": "#/$defs/sha256"},
+        "persisted_command_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_command_sha256": {"$ref": "#/$defs/sha256"},
+        "persisted_stdout_path": {"$ref": "#/$defs/nonemptyPath"},
+        "persisted_stdout_sha256": {"$ref": "#/$defs/sha256"},
+        "semantic_outcomes_sha256": {"$ref": "#/$defs/sha256"},
+        "module_assignment_sha256": {"$ref": "#/$defs/sha256"},
+        "registry_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "semanticParity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "test_id_set_sha256",
+        "semantic_outcomes_sha256",
+        "module_assignment_sha256",
+        "ignored_fields"
+      ],
+      "properties": {
+        "passed": {"const": true},
+        "test_id_set_sha256": {
+          "const": "ea008eb2d56cf7bed8e489a0bf1dfabeabbb8f70410b65f1891c68a067ce36b7"
+        },
+        "semantic_outcomes_sha256": {"$ref": "#/$defs/sha256"},
+        "module_assignment_sha256": {"$ref": "#/$defs/sha256"},
+        "ignored_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "timestamps",
+              "pids",
+              "durations",
+              "completion_order"
+            ]
+          }
+        }
+      }
+    },
+    "reviewBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "passed"],
+      "properties": {
+        "path": {"$ref": "#/$defs/nonemptyPath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "passed": {"const": true}
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_elapsed_seconds", "passed"],
+      "properties": {
+        "maximum_elapsed_seconds": {"const": 1800},
+        "passed": {"const": true}
+      }
+    }
+  }
+}

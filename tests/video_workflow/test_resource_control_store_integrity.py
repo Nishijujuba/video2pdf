@@ -9,6 +9,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import new_workflow_workspace
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -19,7 +20,6 @@ from video2pdf_workflow_kernel.utils import canonical_json_bytes  # noqa: E402
 
 
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
 TASK_START = "2026-07-17T12:00:00+08:00"
 RESOURCE_V8_TABLES = (
     "resource_lease_resources",
@@ -39,8 +39,10 @@ def trusted_provider_verifier(**identity: object) -> str:
 
 class ResourceControlStoreIntegrityTests(unittest.TestCase):
     def initialized_workspace(self, label: str) -> tuple[Path, VideoWorkflowKernel]:
-        workspace = TEST_RUNS / f"s3m-{label}-{uuid.uuid4().hex[:10]}" / "workspace"
-        workspace.mkdir(parents=True)
+        workspace = new_workflow_workspace(
+            self.id(),
+            label=f"resource-control-initialized-{label}",
+        )
         kernel = VideoWorkflowKernel(
             workspace,
             resource_provider_verifiers={
@@ -55,10 +57,10 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
         return workspace, kernel
 
     def admitted_claim(self, label: str):
-        workspace = (
-            TEST_RUNS / f"s3i-{uuid.uuid4().hex[:10]}" / "workspace"
+        workspace = new_workflow_workspace(
+            self.id(),
+            label=f"resource-control-admitted-{label}",
         )
-        workspace.mkdir(parents=True)
         kernel = VideoWorkflowKernel(
             workspace,
             resource_provider_verifiers={

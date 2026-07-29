@@ -2092,6 +2092,40 @@ class VideoWorkflowKernel:
             raise ArtifactDrift("Validated Source Package is not current")
         return record
 
+    def production_plan(
+        self,
+        run_dir: Path,
+        *,
+        supersede_task_id: str | None = None,
+        expected_claim_generation: int | None = None,
+    ) -> dict[str, Any]:
+        from .content_production import ContentProduction
+
+        return ContentProduction(self).plan(
+            run_dir,
+            supersede_task_id=supersede_task_id,
+            expected_claim_generation=expected_claim_generation,
+        )
+
+    def production_advance(
+        self,
+        run_dir: Path,
+        task_id: str,
+        attempt_id: str,
+        *,
+        compile_runtime_policy: dict[str, Any] | None = None,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        from .content_production import ContentProduction
+
+        return ContentProduction(self).advance(
+            run_dir,
+            task_id,
+            attempt_id,
+            compile_runtime_policy=compile_runtime_policy,
+            fault_point=fault_point,
+        )
+
     def _verify_current_source(
         self,
         run_dir: Path,

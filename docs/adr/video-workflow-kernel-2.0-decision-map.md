@@ -8,7 +8,7 @@ Deterministic workflow mechanics belong to one script-owned Video Workflow Kerne
 
 ## Component activation status
 
-This table records current executable authority as of 2026-07-14. Status applies to components and contracts; a context may contain both active Legacy language and accepted target-only language.
+This table records current executable authority as of 2026-07-21. Status applies to components and contracts; a context may contain both active Legacy language and accepted target-only language.
 
 | Component or contract | Status | Current authority | Activation event |
 |---|---|---|---|
@@ -18,13 +18,15 @@ This table records current executable authority as of 2026-07-14. Status applies
 | Legacy Final Acceptance and Acceptance Report v1 | `active_legacy` | Current Final Acceptance skill, criteria, report contract, and Delivery Guard integration | Global Gate Cutover |
 | Current Delivery Guard and session-scoped delivery targets | `active_legacy` | Current guard scripts, target records, hooks, and tests | Global Gate Cutover for v2 report consumption; later platform cutovers for Run ownership |
 | Acceptance Report v2 and dual Reviewer execution | `target_only` | ADRs 0028–0031, 0041, 0051, and 0056 | Global Gate Cutover |
-| Video Workflow Kernel core and Workflow CLI | `target_only` | ADRs 0008–0027 and planned schemas/providers | First validated Platform Kernel Cutover |
-| Kernel Gate Provider adapters | `target_only` | ADRs 0024–0027 and provider executable contracts | Owning Global or Platform Cutover |
+| Video Workflow Kernel core and Workflow CLI | `target_only` | `scripts/video_workflow.py`, `src/video2pdf_workflow_kernel/`, registered Kernel schemas, ADRs 0008–0027, and passed Slice Exit Evidence | First validated Platform Kernel Cutover |
+| Kernel Gate Provider adapters | `target_only` | Registered provider executable contracts, including Pyramid bindings and manifest-only diagnostic compile | Owning Global or Platform Cutover |
 | Bilibili Video Platform Adapter | `target_only` | ADRs 0008, 0011, 0018–0019, and 0040 | Bilibili Platform Kernel Cutover |
 | YouTube Video Platform Adapter | `target_only` | ADRs 0008, 0011, 0018–0019, and 0040 | YouTube Platform Kernel Cutover |
 | Resource Admission and Batch projection | `target_only` | ADRs 0035–0037 and 0042–0047 | Batch Cutover |
 
 No component currently has `active_global_gate` or `active_kernel` status.
+
+Slice 5 adds target-only `production-plan` and `production-advance` operations, single-section Outline/Writer/Figure orchestration, generation-bound Pyramid Evaluation bindings, deterministic Integration and Compile Manifests, and recorder-validated diagnostic compilation. These executable contracts do not alter Legacy Track compilation or delivery authority.
 
 ```mermaid
 flowchart TD

@@ -12,6 +12,8 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -121,12 +123,7 @@ class SourcePublicationTests(unittest.TestCase):
             write_json_atomic,
         )
 
-        run_dir = (
-            PROJECT_ROOT
-            / "待删除"
-            / "source-publication-tests"
-            / f"{label}-{time.time_ns()}"
-        )
+        run_dir = TEST_ROOT / f"run-{time.time_ns()}"
         (run_dir / "workflow").mkdir(parents=True)
         (run_dir / "source").mkdir()
         record = json.loads(
@@ -323,11 +320,7 @@ class SourcePublicationTests(unittest.TestCase):
         authority = _PublicationAuthority(prior_sha)
         intent_id = authority.intent_id(record, prior_sha)
         package = self._package(run_dir, record, intent_id, contracts)
-        outside = (
-            PROJECT_ROOT
-            / "workspace/待删除/kernel-test-runs/source-publication-outside"
-            / f"{time.time_ns()}"
-        )
+        outside = TEST_ROOT / f"outside-{time.time_ns()}"
         create_directory_link(run_dir / "source/media", outside)
 
         with self.assertRaisesRegex(Exception, "link|reparse|boundary"):
@@ -355,11 +348,7 @@ class SourcePublicationTests(unittest.TestCase):
         canonical = run_dir / "source/media/video.mp4"
         canonical.parent.mkdir(parents=True)
         canonical.write_bytes(b"prior-video")
-        outside = (
-            PROJECT_ROOT
-            / "workspace/待删除/kernel-test-runs/source-preservation-outside"
-            / f"{time.time_ns()}"
-        )
+        outside = TEST_ROOT / f"preserve-{time.time_ns()}"
         preservation_parent = (
             run_dir
             / "待删除/source-publications"
@@ -392,11 +381,7 @@ class SourcePublicationTests(unittest.TestCase):
         authority = _PublicationAuthority(prior_sha)
         intent_id = authority.intent_id(record, prior_sha)
         package = self._package(run_dir, record, intent_id, contracts)
-        outside = (
-            PROJECT_ROOT
-            / "workspace/待删除/kernel-test-runs/source-write-staging-outside"
-            / f"{time.time_ns()}"
-        )
+        outside = TEST_ROOT / f"staging-{time.time_ns()}"
         staging_parent = (
             run_dir
             / "待删除/source-publications"
@@ -426,11 +411,7 @@ class SourcePublicationTests(unittest.TestCase):
         authority = _PublicationAuthority(prior_sha)
         intent_id = authority.intent_id(record, prior_sha)
         package = self._package(run_dir, record, intent_id, contracts)
-        outside = (
-            PROJECT_ROOT
-            / "workspace/待删除/kernel-test-runs/source-hard-link-outside"
-            / f"{time.time_ns()}.mp4"
-        )
+        outside = TEST_ROOT / f"hardlink-{time.time_ns()}.mp4"
         outside.parent.mkdir(parents=True, exist_ok=True)
         outside.write_bytes(b"prior-video")
         canonical = run_dir / "source/media/video.mp4"

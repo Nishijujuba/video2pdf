@@ -1,0 +1,1373 @@
+{
+  "schema_name": "video2pdf.test-path-migration-review",
+  "schema_version": 1,
+  "issue": 27,
+  "baseline_review": {
+    "from_commit": "18f78fad0be5a66d2da6250dc268bc8de81fdbcc",
+    "to_commit": "5b4d767",
+    "test_method_changes": {
+      "added": 5,
+      "removed": 4,
+      "added_ids": [
+        "test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice5_exit_evidence_remains_valid",
+        "test_issue9_exit_evidence.Slice6ExitEvidenceTests.test_slice6_contract_binds_slice5_compatibility_to_executed_unittest_target",
+        "test_multi_section_production.MultiSectionProductionTests.test_hyphen_and_underscore_figure_slots_keep_distinct_task_identity_and_reclaim_binding",
+        "test_multi_section_production.MultiSectionProductionTests.test_incremental_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation",
+        "test_multi_section_production.MultiSectionProductionTests.test_required_figure_reclaim_rebinds_exact_slot_and_invalidates_old_generation"
+      ],
+      "removed_ids": [
+        "test_production_source_acquisition_hardening.ProductionSourceAcquisitionHardeningTests.test_production_initialization_retries_transient_windows_directory_publication",
+        "test_source_ready_hardening.PersistenceHardeningTests.test_verified_import_initialization_retries_transient_windows_directory_publication",
+        "test_source_ready_hardening.BootstrapAndStoreHardeningTests.test_windows_publication_retry_budget_exhaustion_reraises_last_error",
+        "test_source_ready_hardening.BootstrapAndStoreHardeningTests.test_windows_publication_retry_rejects_ineligible_error_or_path_state"
+      ]
+    },
+    "finding": "The pre-migration Issue #9 history contains the reviewed five additions and four removals."
+  },
+  "migration_review": {
+    "from_commit": "5b4d767",
+    "to_commit": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
+    "migrated_video_workflow_modules": 27,
+    "shared_boundary": "tests/video_workflow/_test_run.py",
+    "active_layout": "generated/<module-key>/<existing-unique-test-data-path>",
+    "direct_execution_fallback": "待删除/kernel-test-runs",
+    "generated_path_manifest": "generated/<module-key>/generated-paths.jsonl",
+    "comparison_evidence": {
+      "comparison": "git tree 5b4d767 versus git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
+      "changed_existing_test_modules": 27,
+      "added_shared_boundary_modules": 1,
+      "test_method_inventory_before": 475,
+      "test_method_inventory_after": 475,
+      "test_method_ids_added": [],
+      "test_method_ids_removed": [],
+      "unittest_assertion_inventory_before": 2140,
+      "unittest_assertion_inventory_after": 2140,
+      "unittest_assertion_lines_changed": 0,
+      "committed_fixture_paths_changed": [],
+      "production_input_paths_changed": [],
+      "generated_data_path_plumbing_only": true,
+      "note": "The shared boundary adds one internal impossible-state assert after environment validation; it is infrastructure validation and does not alter a unittest assertion or a production input."
+    },
+    "semantic_change_checks": {
+      "test_method_names_changed": 0,
+      "assertion_lines_changed": 0,
+      "committed_fixtures_changed_by_migration": 0,
+      "production_inputs_changed": 0,
+      "expected_behavior_changed": 0
+    },
+    "finding": "The commit-to-commit migration changes generated-data plumbing only."
+  },
+  "stage_27_cross_suite_migration": {
+    "from_commit": "d4d1093eb07074ac5e9f68df0ea469388a3f9aec",
+    "to_commit": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+    "comparison": "git tree d4d1093eb07074ac5e9f68df0ea469388a3f9aec versus git tree ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+    "migrated_files": 16,
+    "suite_groups": {
+      "persisted-command": {
+        "file_count": 1,
+        "paths": [
+          "tests/persisted_command/test_persisted_command_cli.py"
+        ],
+        "strategy": "Each test receives a synthetic project root from new_fixture_dir(..., expected_suite=\"persisted-command\"). The production persisted-command entrypoint and package are copied into that synthetic project, and reported run paths are containment-validated before use.",
+        "test_method_inventory_at_head": 40,
+        "test_method_inventory_working_tree": 40,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 313,
+        "unittest_assertion_inventory_working_tree": 315,
+        "original_unittest_assertions_preserved": 313,
+        "unittest_assertions_added": 2,
+        "added_assertion_purpose": "Security hardening: prove that the validated persisted run directory is absolute and remains under the synthetic project's 待删除/long-running boundary. These are additional safety assertions, so this migration does not claim zero assertion changes for the persisted-command file."
+      },
+      "project-scripts": {
+        "file_count": 2,
+        "paths": [
+          "scripts/test_generate_issue_dependency_views.py",
+          "scripts/test_normalize_video_workspace.py"
+        ],
+        "strategy": "Repository-relative generated roots are replaced with suite-bound synthetic fixture roots from new_fixture_dir(..., expected_suite=\"project-scripts\").",
+        "test_method_inventory_at_head": 22,
+        "test_method_inventory_working_tree": 22,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 108,
+        "unittest_assertion_inventory_working_tree": 108,
+        "unittest_assertion_semantics_changed": 0
+      },
+      "skill-tests": {
+        "file_count": 13,
+        "paths": [
+          ".agents/skills/bilibili-batch-render-pdf/scripts/test_run_batch.py",
+          ".agents/skills/bilibili-render-pdf/scripts/test_compile_latex_ascii.py",
+          ".agents/skills/bilibili-render-pdf/scripts/test_latex_compile_pretooluse_guard.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_acceptance_criteria.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_acceptance_report.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_glossary.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_glossary_governance_e2e.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_latex_compile_guard_e2e.py",
+          ".agents/skills/final-delivery-acceptance/scripts/test_render_pdf_pages.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_check_output_gate.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_evaluate_pyramid_text.py",
+          ".agents/skills/pyramid-principle-validate/scripts/test_validate_report.py"
+        ],
+        "strategy": "Generated test artifacts move to new_fixture_dir(..., expected_suite=\"skill-tests\"). Tests that require repository-relative identity use a synthetic project root while immutable production scripts, criteria, and other source inputs continue to resolve from the source checkout.",
+        "test_method_inventory_at_head": 196,
+        "test_method_inventory_working_tree": 196,
+        "test_method_ids_changed": 0,
+        "unittest_assertion_inventory_at_head": 788,
+        "unittest_assertion_inventory_working_tree": 788,
+        "unittest_assertion_semantics_changed": 0
+      }
+    },
+    "aggregate_semantic_inventory": {
+      "test_method_inventory_at_head": 258,
+      "test_method_inventory_working_tree": 258,
+      "test_method_ids_changed": 0,
+      "unittest_assertion_inventory_at_head": 1209,
+      "unittest_assertion_inventory_working_tree": 1211,
+      "original_unittest_assertions_preserved": 1209,
+      "security_hardening_assertions_added": 2,
+      "generated_data_behavior_assertions_removed": 0
+    },
+    "finding": "The 16-file Stage 27 migration preserves every pre-existing test method and unittest assertion. The only assertion additions are two explicit persisted-run path safety checks."
+  },
+  "repo_local_exceptions": {
+    "registry": "config/test-local-write-exceptions.v1.json",
+    "count": 2,
+    "categories": {
+      "issue7_path_boundary": 2,
+      "source_live_smoke_pending": 0
+    },
+    "entries": [
+      {
+        "suite_id": "video-workflow",
+        "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+        "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
+        "path_prefix": "workspace/待删除/slice4-fault-tests"
+      },
+      {
+        "suite_id": "video-workflow",
+        "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+        "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest",
+        "path_prefix": "workspace/待删除/slice4-source-manifest-tests"
+      }
+    ],
+    "policy": "Each exception binds an exact unittest TestCase.id(), a narrow repository-relative prefix, and a review reason."
+  },
+  "earlier_migration_validation": [
+    {
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_test_run_boundary",
+      "tests": 4,
+      "result": "OK"
+    },
+    {
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_repository_contract",
+      "tests": 1,
+      "result": "OK"
+    },
+    {
+      "command": "python -X utf8 -B -m unittest tests.video_workflow.test_issue4_gate4 tests.video_workflow.test_source_package tests.video_workflow.test_source_publication",
+      "tests": 21,
+      "result": "OK"
+    },
+    {
+      "command": "external-run probe: tests.video_workflow.test_issue4_gate4",
+      "tests": 8,
+      "result": "OK",
+      "run_dir": "D:/tests/video2pdf-stage05-20260723-019f8f5c-b"
+    }
+  ],
+  "post_head_repair_review": {
+    "comparison": "git tree 2a09173d28b46aa9bd1dd22d661b4a6d465f72f1 versus the current working tree",
+    "changed_paths": [
+      "config/test-local-write-exceptions.v1.json",
+      "scripts/run_project_tests.py",
+      "tests/project_test_runner/test_external_root.py",
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/project_test_runner/test_test_run_boundary.py",
+      "tests/video_workflow/_test_run.py",
+      "tests/video_workflow/test_source_live_smoke.py"
+    ],
+    "run_identity_validation": {
+      "executed": [
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_test_run_boundary",
+          "tests": 12,
+          "result": "OK"
+        },
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_external_root tests.project_test_runner.test_cli tests.project_test_runner.test_test_run_boundary",
+          "tests": 39,
+          "result": "OK"
+        },
+        {
+          "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_scheduler tests.project_test_runner.test_results tests.project_test_runner.test_external_root tests.project_test_runner.test_cli tests.project_test_runner.test_test_run_boundary",
+          "tests": 48,
+          "result": "OK",
+          "elapsed_seconds": 23.462
+        }
+      ],
+      "later_static_check": {
+        "scope": "The final absolute-path and parent-traversal identity adjustment made after the 48-test run.",
+        "result": "syntax review passed",
+        "executed_test_result": null
+      }
+    },
+    "all_project_test_runner_suite": {
+      "executed": false,
+      "result": "BLOCKED",
+      "reason": "The complete suite was not started because Windows ACL creation failed with WinError 5 and the required escalated execution was rejected after the approval usage limit was reached.",
+      "pass_claimed": false
+    },
+    "source_live_smoke_review": {
+      "test_method_inventory_at_head": 24,
+      "test_method_inventory_working_tree": 24,
+      "assertion_inventory_at_head": 118,
+      "assertion_inventory_working_tree": 118,
+      "generated_path_change": "Seven recorded source-adapter cases now allocate through new_case_dir(self.id(), label=...) and no longer require repository-local exceptions.",
+      "dynamic_tests_executed": 0,
+      "result": "STATIC_REVIEW_ONLY"
+    },
+    "ast_plumbing_validation": {
+      "executed": true,
+      "command": "python -X utf8 -B -m unittest tests.project_test_runner.test_repository_contract",
+      "tests": 29,
+      "result": "OK",
+      "elapsed_seconds": 26.238,
+      "registered_contract_sources": 68,
+      "registered_suite_count": 5,
+      "ast_scan_violations": 0,
+      "configured_exceptions": 2,
+      "used_exceptions": 2,
+      "unused_exceptions": 0,
+      "source_live_smoke_pending": 0,
+      "coverage_note": "Registry-driven coverage scans every registered authoritative source except this contract test itself. Regression coverage includes direct unknown assignments, unknown arguments, attribute propagation, branch-dependent helpers, recursive helpers, imported opaque receivers, container lineage, additional filesystem sinks, database connectors, and subprocess output paths."
+    },
+    "persisted_validation": {
+      "executed": false,
+      "result": "BLOCKED",
+      "run_dir": null,
+      "status_json": null,
+      "exit_code_txt": null,
+      "initial_failure": "scripts/persisted_command.py start failed with WinError 5 while creating work/i9/待删除/long-running; no child process or persisted run identity was created.",
+      "escalation_result": "The require_escalated request was rejected because the approval usage limit was reached.",
+      "acceptance_evidence_eligible": false,
+      "pass_claimed": false
+    }
+  },
+  "stage_34_shared_identity_review": {
+    "comparison": "git tree ae46acff82ab63fc7e6de9d05e4041c72753a57d versus the current working tree",
+    "working_tree_base_head": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+    "changed_paths": [
+      "scripts/project_test_run_identity.py",
+      "scripts/project_test_scheduler.py",
+      "tests/project_test_runner/_fixture_root.py",
+      "tests/project_test_runner/test_fixture_root.py",
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/project_test_runner/test_scheduler.py",
+      "tests/project_test_runner/test_test_run_boundary.py",
+      "tests/video_workflow/_test_run.py"
+    ],
+    "implementation_contract": {
+      "shared_production_identity_api": "scripts/project_test_run_identity.py",
+      "resolver": "resolve_active_worker_identity(...) validates the frozen worker environment, owned run directory, canonical test-run and discovery manifests, live commit and Registry fingerprints, selected suite identity, complete closed-set test IDs, and active module identity.",
+      "delegating_helpers": [
+        "tests/project_test_runner/_fixture_root.py",
+        "tests/video_workflow/_test_run.py"
+      ],
+      "duplicated_identity_helpers_removed": true,
+      "synthetic_identity_factory": "create_synthetic_project_test_run(...) creates complete synthetic project, discovery, and test-run identity fixtures through the production identity contract.",
+      "scheduler_module_identity_validation": "scripts/project_test_scheduler.py validates each discovery module key against its suite ID and source-path identity before scheduling.",
+      "relative_path_contract": "Discovery source paths remain normalized repository-relative paths; absolute paths, parent traversal, and paths that resolve outside the repository fail closed before worker import.",
+      "behavior_scope": "The refactor centralizes identity validation and fixture construction without changing generated-data behavior or Video Workflow test semantics."
+    },
+    "focused_validation": {
+      "executed": [
+        {
+          "scope": "fixture-root and test-run-boundary identity contract",
+          "modules": [
+            "tests.project_test_runner.test_fixture_root",
+            "tests.project_test_runner.test_test_run_boundary"
+          ],
+          "tests_expected": 19,
+          "tests_executed": 19,
+          "result": "OK"
+        },
+        {
+          "scope": "scheduler module identity and path validation",
+          "modules": [
+            "tests.project_test_runner.test_scheduler"
+          ],
+          "tests_expected": 11,
+          "tests_executed": 11,
+          "result": "OK"
+        },
+        {
+          "scope": "Registry and repository-local write contract",
+          "modules": [
+            "tests.project_test_runner.test_registry",
+            "tests.project_test_runner.test_repository_contract"
+          ],
+          "tests_expected": 40,
+          "tests_executed": 40,
+          "result": "OK"
+        }
+      ],
+      "repository_contract": {
+        "registered_contract_sources": 68,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2
+      }
+    },
+    "video_workflow_semantic_inventory": {
+      "test_method_inventory_at_head": 475,
+      "test_method_inventory_working_tree": 475,
+      "test_method_ids_changed": 0,
+      "unittest_assertion_inventory_at_head": 2140,
+      "unittest_assertion_inventory_working_tree": 2140,
+      "unittest_assertion_lines_changed": 0,
+      "finding": "Video Workflow test methods and unittest assertions are unchanged by the shared identity refactor."
+    },
+    "dynamic_suite_execution": {
+      "executed": false,
+      "result": "NOT_RUN",
+      "pass_claimed": false
+    },
+    "finding": "Stage 34 establishes one production-owned worker identity contract, removes duplicate helper implementations, binds synthetic fixtures to that contract, and hardens scheduler module identity without claiming full-suite or Promotion success."
+  },
+  "stage_47_validation_and_commit_review": {
+    "validation_base_head": "1af96d455015736e0752f9a3d3777c83a75158a2",
+    "comparison": "git tree 1af96d455015736e0752f9a3d3777c83a75158a2 versus the Stage 44 and Stage 46 working tree",
+    "adr_source_audit": {
+      "supplied_source": "D:/Project/video2pdf/newskill-kimi/work/test-runner-docs/docs/adr/0059-run-project-tests-from-an-external-root-with-bounded-process-parallelism.md",
+      "supplied_source_commit": "d1c111240811fa62e7c04461a8f270e31379abc9",
+      "supplied_source_sha256": "11c41432c7b24fba1efbab69bc03b57ad02a0092c1fd82971fb9c07955983354",
+      "supplied_status": "proposed",
+      "checkout_record": "docs/adr/0059-run-project-tests-from-an-external-root-with-bounded-process-parallelism.md",
+      "source_requirements_preserved_except_closed_set_authority": [
+        "versioned suite registry and dynamic unittest discovery",
+        "explicit external test root",
+        "process-isolated scheduling with maximum concurrency four",
+        "immutable run identities and external generated-data boundary",
+        "one-time Promotion requiring two passing parallel runs"
+      ],
+      "contract_divergence": {
+        "supplied_source_requirement": "Both parallel runs cover the same 474 Video Workflow test IDs.",
+        "checkout_requirement": "Both parallel runs bind the same dynamically discovered immutable inventory; the current observation is 475 IDs.",
+        "resolution": "UNRESOLVED",
+        "authority_note": "The final Issue #9 inventory explains the 475-ID observation, but no authority artifact in this review resolves the supplied ADR's literal 474-ID requirement."
+      },
+      "checkout_clarifications": [
+        "474 is historical performance evidence while the current semantic closed set is discovered dynamically",
+        "the observed pre-Promotion closed set is 475 IDs with its exact fingerprint",
+        "the Windows absolute path budget is derived and enforced before worker creation",
+        "status remains proposed and runtime cutover requires a passing Promotion Report"
+      ],
+      "finding": "The checkout ADR preserves the proposed preflight and Promotion boundary, while changing the supplied source's literal 474-ID requirement to a dynamic closed set. That contract divergence remains unresolved and does not authorize cutover."
+    },
+    "focused_sandbox_preflight": {
+      "result": "ENVIRONMENT_FAILED",
+      "scope": [
+        "tests.project_test_runner.test_scheduler",
+        "tests.project_test_runner.test_test_run_boundary",
+        "tests.video_workflow.test_issue6_exit_evidence",
+        "tests.project_test_runner.test_repository_contract"
+      ],
+      "observed_counts": {
+        "scheduler": {
+          "tests": 14,
+          "passed_before_environment_errors": 4,
+          "errors": 10
+        },
+        "test_run_boundary": {
+          "tests": 14,
+          "passed_before_environment_errors": 2,
+          "errors": 12
+        },
+        "issue6_exit_evidence": {
+          "tests": 10,
+          "passed_before_environment_errors": 8,
+          "errors": 2
+        },
+        "repository_contract": {
+          "tests": 32,
+          "passed": 32,
+          "errors": 0
+        }
+      },
+      "root_cause": "The sandbox identity inherited an explicit deny ACL on the direct-execution compatibility root at repository 待删除/kernel-test-runs. Every dynamic error was PermissionError WinError 5 during fixture-directory creation before the affected test body ran.",
+      "code_failure_claimed": false
+    },
+    "promotion_attempt_1": {
+      "persisted_run_dir": "待删除/long-running/issue27_video_workflow_promotion_1_20260727_012721_aa179291",
+      "external_runner_run_dir": "D:\\tests\\video2pdf\\video-workflow\\20260726_172733_6a1a54f1",
+      "state": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 1520.828,
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "requested_jobs": 4,
+      "observed_peak_concurrency": 4,
+      "closed_set_coverage": {
+        "discovered": 475,
+        "assigned": 475,
+        "started": 475,
+        "terminal": 475,
+        "executed_test_ids": 475,
+        "module_count": 38,
+        "duplicate_test_ids": 0,
+        "missing_test_ids": 0,
+        "multiply_executed_test_ids": 0,
+        "unassigned_test_ids": 0
+      },
+      "outcomes": {
+        "passed": 330,
+        "failed": 14,
+        "errors": 131
+      },
+      "root_cause_classification": {
+        "scheduler_import_path_lifecycle_errors": 82,
+        "windows_path_budget_errors": 48,
+        "issue6_project_relative_path_errors": 2,
+        "path_budget_cascade_failures": {
+          "source_ready_tracer": 11,
+          "resource_intent": 1
+        }
+      },
+      "authority": "This is terminal persisted failure evidence for the complete Promotion closed set. It supports diagnosis and the repair scope; it does not authorize Promotion."
+    },
+    "root_cause_repairs": [
+      {
+        "root_cause": "The scheduler removed sys.path[0] after discovery even when the imported test module inserted another path at index zero.",
+        "repair": "Remove only the exact scheduler-owned worker import path and preserve paths added by the imported test module.",
+        "regression_seam": "tests.project_test_runner.test_scheduler.SchedulerTests.test_worker_preserves_import_paths_added_by_test_module"
+      },
+      {
+        "root_cause": "Several Video Workflow tests embedded long semantic labels in workspace directory names, so valid short external roots could still exceed the reserved Windows absolute-path budget.",
+        "repair": "Create compact collision-safe c-<test-hash>-<nonce>/w workspaces while retaining the full semantic label in generated-paths.jsonl; trust only the fully qualified shared provider in the repository-write contract.",
+        "regression_seam": "tests.project_test_runner.test_test_run_boundary.VideoWorkflowTestRunBoundaryTests.test_workflow_workspace_preflight_is_canonical_collision_safe_and_budgeted"
+      },
+      {
+        "root_cause": "Two Issue 6 provenance tests bound generated command logs to the live repository PROJECT_ROOT, preventing their data from moving to a synthetic external project boundary.",
+        "repair": "Build each provenance case under the suite test root and patch the validator's PROJECT_ROOT to that synthetic project while preserving the original validation assertions.",
+        "regression_seam": "tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests"
+      }
+    ],
+    "short_gate_validation": {
+      "execution_boundary": "The identical command was rerun outside the sandbox so the existing direct-execution compatibility root was writable.",
+      "tests": 70,
+      "result": "OK",
+      "modules": [
+        {
+          "module": "tests.project_test_runner.test_scheduler",
+          "tests": 14
+        },
+        {
+          "module": "tests.project_test_runner.test_test_run_boundary",
+          "tests": 14
+        },
+        {
+          "module": "tests.video_workflow.test_issue6_exit_evidence",
+          "tests": 10
+        },
+        {
+          "module": "tests.project_test_runner.test_repository_contract",
+          "tests": 32
+        }
+      ],
+      "repository_contract_scan": {
+        "registered_contract_sources": 68,
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2,
+        "used_exceptions": 2,
+        "unused_exceptions": 0
+      }
+    },
+    "video_workflow_discovery": {
+      "command": "scripts/run_project_tests.py discover --suite video-workflow --test-root D:\\tests",
+      "run_dir": "D:\\tests\\video2pdf\\video-workflow\\20260726_192836_39a47fde",
+      "test_count": 475,
+      "module_count": 38,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "result": "OK"
+    },
+    "full_video_workflow_semantic_inventory": {
+      "test_methods_at_head": 475,
+      "test_methods_working_tree": 475,
+      "test_method_count_changed": 0,
+      "self_assert_occurrences_at_head": 2153,
+      "self_assert_occurrences_working_tree": 2153,
+      "self_assert_occurrence_count_changed": 0,
+      "finding": "The Stage 44 and Stage 46 working tree preserves the full Video Workflow test-method and self.assert occurrence inventories."
+    },
+    "five_module_diagnostic": {
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "direct_execution_result_from_prior_stage": "OK",
+      "direct_execution_tests": 113,
+      "rerun_in_stage_47": false,
+      "authority": "Diagnostic only. Direct module execution does not exercise the external-root scheduler, does not create persisted terminal runner evidence, and cannot support Promotion.",
+      "semantic_inventory": {
+        "test_methods_at_head": 113,
+        "test_methods_working_tree": 113,
+        "test_method_names_changed": 0,
+        "unittest_assertion_calls_at_head": 566,
+        "unittest_assertion_calls_working_tree": 566,
+        "unittest_assertion_call_inventory_changed": 0
+      }
+    },
+    "independent_review_gate": {
+      "status": "BLOCKED",
+      "standards_findings": [
+        "sys.path.remove(worker_import_path) removes the first equal value rather than proving removal of the scheduler-owned insertion; an imported module can insert the same value and leave the scheduler entry behind.",
+        "new_test_root and new_workspace are thin test helpers whose names or ownership do not make their side effects and boundary behavior explicit."
+      ],
+      "spec_findings": [
+        "The scheduler repair lacks a same-value duplicate-path regression and does not yet satisfy the requirement to remove only its own sys.path entry.",
+        "Promotion remains pending because the required two successful complete persisted parallel runs do not exist.",
+        "The migration narrowed one assertRaises(Exception) expectation to InitializationFault and left one unused identity variable outside the requested generated-path repair scope."
+      ],
+      "commit_created": false,
+      "next_action": "Run a separate repair stage, repeat the focused gates and both review axes, then commit only when the review gate passes."
+    },
+    "final_static_checks": {
+      "git_diff_check": "PASS",
+      "json_parse": "PASS",
+      "secret_scan": "PASS",
+      "unexpected_generated_files": 0
+    },
+    "promotion": {
+      "status": "PENDING",
+      "reason": "No two successful bounded-parallel runs with immutable persisted-command terminal status and exit-code evidence have been completed for the Promotion closed set.",
+      "pass_claimed": false
+    },
+    "finding": "The Stage 44 and Stage 46 repairs pass the focused short gates and preserve the five-module test-method and assertion-call inventory. Independent review found a scheduler ownership defect and unrelated test-diff cleanup, so commit, the persisted acceptance rerun, and Promotion remain pending."
+  },
+  "stage_48_review_repairs": {
+    "review_findings_addressed": [
+      {
+        "finding": "The scheduler removed the first sys.path entry equal to the worker import path instead of the exact entry it inserted.",
+        "repair": "The worker now inserts an identity-bearing str subclass and the finally block locates and pops only that object with is.",
+        "tdd_regression": "A synthetic imported module inserts its own str-subclass path entry with the same string value. The regression failed before the ownership repair and passes after it while preserving the module-owned entry."
+      },
+      {
+        "finding": "source-ready new_test_root pre-created w and returned its parent through a thin wrapper.",
+        "repair": "The wrapper was removed. Callers use new_case_dir directly and create or pass the w workspace at the test's natural ownership site."
+      },
+      {
+        "finding": "control-store transaction scope added a thin new_workspace wrapper.",
+        "repair": "The wrapper was removed and new_workflow_workspace is called directly at each workspace ownership site."
+      },
+      {
+        "finding": "The migration narrowed assertRaises(Exception) and retained an unnecessary task-promotion identity local.",
+        "repair": "The original broad exception assertion is restored. The task-promotion request identity is generated directly where consumed."
+      }
+    ],
+    "short_gate": {
+      "scope": [
+        "tests.project_test_runner.test_scheduler",
+        "tests.project_test_runner.test_test_run_boundary",
+        "tests.video_workflow.test_issue6_exit_evidence",
+        "tests.project_test_runner.test_repository_contract"
+      ],
+      "tests": 70,
+      "elapsed_seconds": 57.403,
+      "result": "OK",
+      "repository_contract": {
+        "registered_contract_sources": 68,
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "configured_exceptions": 2,
+        "used_exceptions": 2,
+        "unused_exceptions": 0,
+        "final_tree_zero_violation_test": {
+          "tests": 1,
+          "elapsed_seconds": 10.696,
+          "result": "OK"
+        }
+      }
+    },
+    "targeted_validation": {
+      "passing_checks": [
+        "scheduler same-value sys.path identity regression",
+        "control-store transaction workspace boundary",
+        "resource-admission workspace boundary",
+        "resource-control-store workspace boundary",
+        "source-ready original exception contract and case-root boundary",
+        "task-promotion workspace boundary and direct request identity"
+      ],
+      "diagnostic_terminal_run": {
+        "run_dir": "待删除/long-running/issue27_stage48_targeted_final_20260727_035830_635e2fd4",
+        "state": "failed",
+        "exit_code": 1,
+        "elapsed_seconds": 57.266,
+        "acceptance_evidence_eligible": true,
+        "security_classification": "no_secret_detected",
+        "tests_passed": 5,
+        "tests_errored": 1,
+        "failure_kind": "invalid unittest selector named a nonexistent class; the corrected TaskFailClosedTests selector passed separately",
+        "code_failure_claimed": false
+      }
+    },
+    "five_module_diagnostic": {
+      "run_dir": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8",
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "tests": 113,
+      "state": "succeeded",
+      "exit_code": 0,
+      "elapsed_seconds": 3002.657,
+      "started_at": "2026-07-27T03:46:25.557+08:00",
+      "finished_at": "2026-07-27T04:36:31.782+08:00",
+      "status_json": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/status.json",
+      "exit_code_txt": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/exit-code.txt",
+      "command_json": "待删除/long-running/issue27_stage48_five_module_focused_20260727_034625_f79542c8/command.json",
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "current_tree_bound": false,
+      "modified_after_run_start": [
+        "tests/video_workflow/test_control_store_transaction_scope.py",
+        "tests/video_workflow/test_resource_admission.py",
+        "tests/video_workflow/test_resource_control_store_integrity.py",
+        "tests/video_workflow/test_source_ready_hardening.py"
+      ],
+      "authority": "Historical persisted diagnostic only. Four tested files changed after launch, so this run cannot prove the Stage 49 working tree and cannot authorize Promotion."
+    },
+    "review_gate": {
+      "status": "READY_FOR_INDEPENDENT_REREVIEW",
+      "prior_findings_claimed_resolved": true,
+      "independent_pass_claimed": false,
+      "commit_created": false,
+      "next_action": "A separate Standards reviewer and Spec reviewer must inspect the repaired diff and terminal validation evidence before commit."
+    },
+    "promotion": {
+      "status": "PENDING",
+      "reason": "Stage 48 did not run the two required complete 475-test Promotion trials.",
+      "pass_claimed": false
+    },
+    "finding": "Stage 48 resolves every Stage 47 code and test-diff finding and records a 70-test diagnostic short gate with zero repository-contract violations. Its 113-test persisted run is terminal but stale for the final working tree. Promotion remains pending."
+  },
+  "stage_49_independent_review_and_fresh_validation": {
+    "fresh_five_module_persisted_run": {
+      "run_dir": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44",
+      "scope": [
+        "tests.video_workflow.test_control_store_transaction_scope",
+        "tests.video_workflow.test_resource_admission",
+        "tests.video_workflow.test_resource_control_store_integrity",
+        "tests.video_workflow.test_source_ready_hardening",
+        "tests.video_workflow.test_task_promotion_hardening"
+      ],
+      "tests": 113,
+      "state": "succeeded",
+      "exit_code": 0,
+      "elapsed_seconds": 2903.25,
+      "unittest_elapsed_seconds": 2900.045,
+      "started_at": "2026-07-27T04:46:53.305+08:00",
+      "finished_at": "2026-07-27T05:35:20.362+08:00",
+      "status_json": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/status.json",
+      "exit_code_txt": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/exit-code.txt",
+      "command_json": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/command.json",
+      "stderr_log": "待删除/long-running/issue27_stage49_five_module_current_tree_20260727_044653_dae5ad44/stderr.log",
+      "acceptance_evidence_eligible": true,
+      "security_classification": "no_secret_detected",
+      "current_tested_code_binding": {
+        "validation_base_head": "1af96d455015736e0752f9a3d3777c83a75158a2",
+        "basis": "Each tested module's final write time predates started_at; the evidence document was refreshed only after finished_at.",
+        "tested_module_sha256": {
+          "tests/video_workflow/test_control_store_transaction_scope.py": "8d869e5e011bfcbcf73332b7ad1152b375c4e26cbeceb5256ed8ff5b1122fdf3",
+          "tests/video_workflow/test_resource_admission.py": "ca171c08243131db62320c6557318e1ea3112768cfe5f4d9f47a168e089ec2c2",
+          "tests/video_workflow/test_resource_control_store_integrity.py": "aa0b2a05c083a146a3bc289c4298936db5d35e81de0b2fe6364e004444ab4bde",
+          "tests/video_workflow/test_source_ready_hardening.py": "07de3c5d6d2d6febe6fcd57e6dc6f95c796e49f2e73060a1bc3f1d9884f3430c",
+          "tests/video_workflow/test_task_promotion_hardening.py": "6f0a42f34125ed958bb5222d8969abd92b47df45bd565e3303d374751c2e6cfb"
+        }
+      },
+      "authority": "Fresh persisted diagnostic evidence for the repaired five-module working tree. It supports the independent commit review and cannot authorize Promotion."
+    },
+    "independent_review_gate": {
+      "status": "PASS",
+      "standards_axis": {
+        "status": "PASS",
+        "findings_p0_p2": 0,
+        "finding": "The scheduler removes only its identity-owned sys.path entry; thin test wrappers and unrelated diff changes identified in Stage 47 are resolved."
+      },
+      "spec_and_evidence_axis": {
+        "status": "PASS",
+        "initial_blockers_repaired": [
+          "The stale Stage 48 113-test run is classified as historical and not current-tree-bound.",
+          "A fresh eligible 113-test persisted run proves the final tested code.",
+          "Migration comparisons are fixed to immutable commit intervals.",
+          "The supplied ADR source is hash-bound and the 474-versus-dynamic-closed-set divergence is explicit and unresolved."
+        ],
+        "promotion_authorized": false
+      },
+      "commit_authorized": true,
+      "promotion_status": "PENDING"
+    },
+    "finding": "Independent code and evidence review pass the Stage 47 repair scope after fresh 113-test persisted validation. The unresolved ADR closed-set divergence and the missing two complete passing Promotion trials remain explicit non-cutover limitations."
+  },
+  "stage_52_61_remaining_path_review": {
+    "review_base_head": "3128b62cb4af4766fdf7d8f925168c2c8ebec10e",
+    "working_tree_paths": [
+      "tests/project_test_runner/test_repository_contract.py",
+      "tests/video_workflow/test_issue4_gate7.py",
+      "tests/video_workflow/test_source_live_smoke.py",
+      "tests/video_workflow/test_source_ready_tracer.py",
+      "tests/video_workflow/test_task_promotion.py",
+      "tests/video_workflow/test_verified_source_import_cli.py"
+    ],
+    "promotion_retry_1": {
+      "persisted_run_dir": "待删除/long-running/issue27_video_workflow_promotion_retry_1_20260727_054219_74982cd3",
+      "scheduler_run_dir": "D:/tests/video2pdf/video-workflow/20260726_214234_b50d1c2c",
+      "state": "failed",
+      "exit_code": 1,
+      "elapsed_seconds": 1920.171,
+      "failure_kind": "test_failure",
+      "requested_jobs": 4,
+      "observed_peak_concurrency": 4,
+      "module_count": 38,
+      "modules_passed": 33,
+      "modules_failed": 5,
+      "tests_discovered": 475,
+      "tests_started": 475,
+      "tests_terminal": 475,
+      "tests_passed": 427,
+      "tests_failed": 18,
+      "tests_errored": 30,
+      "missing_test_ids": 0,
+      "duplicate_test_ids": 0,
+      "multiply_executed_test_ids": 0,
+      "unassigned_test_ids": 0,
+      "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "discovery_sha256": "262f74a0268d4c1bd7b66ad5543070cdfa95f4bc249c91f39e5323aad897ceb7",
+      "summary_sha256": "78ba5e02879781021bb5b9a67bb1f82ea75daae23a43b762c21907eb7a8802e9",
+      "security_classification": "no_secret_detected",
+      "acceptance_evidence_eligible": true,
+      "closed_set_intact": true,
+      "promotion_pass_claimed": false,
+      "promotion_report_generated": false,
+      "finding": "The runner executed the complete dynamic 475-test closed set exactly once, but 18 failures and 30 errors across five modules made the trial fail. This failed trial cannot authorize Promotion or cutover."
+    },
+    "stage_52_repairs": {
+      "scope": [
+        "tests/video_workflow/test_source_live_smoke.py",
+        "tests/video_workflow/test_verified_source_import_cli.py"
+      ],
+      "finding": "Long semantic workspace paths were replaced with compact new_workflow_workspace paths. Generated workspace and case artifacts use the synthetic external run boundary while immutable fixtures, schemas, scripts, and production source inputs remain repository-backed.",
+      "initial_selector_diagnostic": {
+        "run_dir": "待删除/long-running/issue_27_stage52_source_live_smoke_focus_20260727_072035_30e36c61",
+        "state": "failed",
+        "exit_code": 1,
+        "elapsed_seconds": 13.063,
+        "failure_kind": "invalid unittest import selector",
+        "code_failure_claimed": false,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      "source_live_smoke_rerun": {
+        "run_dir": "待删除/long-running/issue_27_stage52_source_live_smoke_focus_rerun_20260727_072150_3864d130",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 24,
+        "tests_passed": 24,
+        "unittest_elapsed_seconds": 1215.593,
+        "persisted_elapsed_seconds": 1225.656,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      }
+    },
+    "stage_58_source_authority_repair": {
+      "scope": "tests/video_workflow/test_source_live_smoke.py",
+      "finding": "All eleven direct _execute_kernel_source_live_smoke calls and the closed-profile runner preserve the real checkout PROJECT_ROOT as the immutable source and runtime-policy authority. Test-only adapters redirect generated work-root and terminal-proof containment to the synthetic external boundary after asserting that production receives the checkout authority.",
+      "authority_contract": {
+        "immutable_source_authority": "PROJECT_ROOT",
+        "generated_data_authority": "D:/tests synthetic worker run",
+        "production_code_changed": false,
+        "existing_test_methods_changed": 0,
+        "existing_assertion_calls_before": 118,
+        "existing_assertion_calls_after": 122,
+        "authority_assertions_added": 4,
+        "assertion_purpose": "Prove the real checkout project_root reaches runtime-policy resolution, work-root validation, report construction, and terminal-proof construction while generated writes remain external."
+      },
+      "non_persisted_diagnostic": {
+        "synthetic_run_dir": "D:/t58b/video2pdf/video-workflow/20260727_023949_2f8fc4a2",
+        "tests": 24,
+        "tests_passed": 24,
+        "result": "OK",
+        "limitation": "This diagnostic was not persisted and is superseded by the Stage 59 persisted rerun."
+      }
+    },
+    "stage_54_persisted_validation": [
+      {
+        "scope": "tests.video_workflow.test_verified_source_import_cli",
+        "run_dir": "待删除/long-running/issue_27_stage54a_verified_source_import_20260727_085653_d083f1f9",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 3,
+        "tests_passed": 3,
+        "unittest_elapsed_seconds": 99.228,
+        "persisted_elapsed_seconds": 100.891,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": [
+          "tests.video_workflow.test_issue4_gate7",
+          "tests.video_workflow.test_source_ready_tracer",
+          "tests.video_workflow.test_task_promotion"
+        ],
+        "run_dir": "待删除/long-running/issue27_stage54b_three_modules_short_root_20260727_090653_8ada1c04",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 48,
+        "tests_passed": 48,
+        "unittest_elapsed_seconds": 1262.169,
+        "persisted_elapsed_seconds": 1269.219,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": "tests.project_test_runner.test_repository_contract",
+        "run_dir": "待删除/long-running/issue27_stage54b_repository_contract_20260727_090202_c7d24517",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 34,
+        "tests_passed": 34,
+        "unittest_elapsed_seconds": 65.219,
+        "persisted_elapsed_seconds": 69.125,
+        "registered_contract_sources": 68,
+        "registered_suites": 5,
+        "reviewed_local_write_exceptions": 2,
+        "repository_write_violations": 0,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      }
+    ],
+    "stage_59_fresh_persisted_validation": [
+      {
+        "scope": "tests.video_workflow.test_source_live_smoke",
+        "run_dir": "待删除/long-running/issue27_stage59_source_live_smoke_20260727_105812_1e30f387",
+        "synthetic_run_dir": "D:/tests/video2pdf/video-workflow/20260727_025823_42292163",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 24,
+        "tests_passed": 24,
+        "unittest_elapsed_seconds": 779.204,
+        "persisted_elapsed_seconds": 785.703,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      {
+        "scope": "tests.project_test_runner.test_repository_contract",
+        "run_dir": "待删除/long-running/issue27_stage59_repository_contract_20260727_105918_70b8a9eb",
+        "synthetic_run_dir": "D:/tests/video2pdf/project-test-runner/20260727_025924_f83b7307",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 40,
+        "tests_passed": 40,
+        "unittest_elapsed_seconds": 111.749,
+        "persisted_elapsed_seconds": 116.703,
+        "registered_contract_sources": 68,
+        "registered_suites": 5,
+        "reviewed_local_write_exceptions": 2,
+        "used_local_write_exceptions": 2,
+        "repository_write_violations": 0,
+        "workspace_path_violations": 0,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true,
+        "tree_scope": "Stage 59 tree with 40 contract tests; this persisted result predates the Stage 60 and Stage 61 analyzer repairs and does not cover the current 48-test contract."
+      }
+    ],
+    "current_repair_validation_matrix": {
+      "persisted_results": [
+        {
+          "label": "verified3",
+          "scope": "tests.video_workflow.test_verified_source_import_cli",
+          "run_dir": "待删除/long-running/issue_27_stage54a_verified_source_import_20260727_085653_d083f1f9",
+          "tests": 3,
+          "tests_passed": 3,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 100.891,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "B48",
+          "scope": [
+            "tests.video_workflow.test_issue4_gate7",
+            "tests.video_workflow.test_source_ready_tracer",
+            "tests.video_workflow.test_task_promotion"
+          ],
+          "run_dir": "待删除/long-running/issue27_stage54b_three_modules_short_root_20260727_090653_8ada1c04",
+          "tests": 48,
+          "tests_passed": 48,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 1269.219,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "source-current-authority-24",
+          "scope": "tests.video_workflow.test_source_live_smoke",
+          "run_dir": "待删除/long-running/issue27_stage59_source_live_smoke_20260727_105812_1e30f387",
+          "tests": 24,
+          "tests_passed": 24,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 785.703,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true
+        },
+        {
+          "label": "contract-old-tree-40",
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "run_dir": "待删除/long-running/issue27_stage59_repository_contract_20260727_105918_70b8a9eb",
+          "tests": 40,
+          "tests_passed": 40,
+          "state": "succeeded",
+          "exit_code": 0,
+          "persisted_elapsed_seconds": 116.703,
+          "security_classification": "no_secret_detected",
+          "acceptance_evidence_eligible": true,
+          "limitation": "This persisted run covers the Stage 59 40-test contract only."
+        }
+      ],
+      "direct_results": [
+        {
+          "stage": 56,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct",
+          "tests": 36,
+          "tests_passed": 36
+        },
+        {
+          "stage": 60,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O0",
+          "tests": 46,
+          "tests_passed": 46
+        },
+        {
+          "stage": 60,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O2",
+          "tests": 46,
+          "tests_passed": 46
+        },
+        {
+          "stage": 61,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O0",
+          "tests": 48,
+          "tests_passed": 48
+        },
+        {
+          "stage": 61,
+          "scope": "tests.project_test_runner.test_repository_contract",
+          "mode": "direct O2",
+          "tests": 48,
+          "tests_passed": 48
+        }
+      ],
+      "finding": "The 48/48 Stage 61 O0 and O2 results are direct test executions. They are not persisted-command evidence. Persisted evidence remains the verified3, B48, source-current-authority-24, and contract-old-tree-40 runs listed above."
+    },
+    "stage_61_adversarial_review": {
+      "status": "PASS",
+      "probe_expected_violation_counts": {
+        "argument": 1,
+        "control_if_try_match_loop": 4,
+        "rebound": 0,
+        "default_closure_staticmethod": 2
+      },
+      "probe_result": "PASS",
+      "repair": "Match-case nested helper declarations are included in lexical scope analysis. Multiple lexical helper candidates are evaluated and merged: any full or unknown UUID path fails closed, all compact uuid4().hex[:8] candidates remain allowed, and unresolved self or cls base methods remain fail closed.",
+      "registry_scan": {
+        "registered_contract_sources": 68,
+        "workspace_path_violations": 0,
+        "reviewed_local_write_exceptions": 2,
+        "used_local_write_exceptions": 2
+      }
+    },
+    "historical_review_failures": [
+      {
+        "stage": 55,
+        "status": "FAIL",
+        "finding": "The compact-path AST analyzer missed bare uuid.uuid4().hex, pure-UUID f-string, and method-helper forms. Stage 56 supplied the first repair."
+      },
+      {
+        "stage": 57,
+        "status": "FAIL",
+        "finding": "The analyzer missed cross-class same-named method helpers and uuid.uuid4().hex[:] or [:32] forms; the evidence test and assertion inventory was stale; and the source-live-smoke migration had replaced the checkout project_root authority with a synthetic root. Stage 58 restored the real PROJECT_ROOT authority and strengthened class and slice analysis."
+      },
+      {
+        "stage": 59,
+        "status": "FAIL",
+        "finding": "The analyzer missed function-local imports and nested helpers. The source-authority repair itself had fresh passing persisted evidence. Stages 60 and 61 repaired local lexical scope, argument and control-flow cases, match-case declarations, and helper rebinding before the final dual-axis pass."
+      }
+    ],
+    "semantic_diff_review": {
+      "existing_video_workflow_test_methods_before": 75,
+      "existing_video_workflow_test_methods_after": 75,
+      "existing_video_workflow_test_method_ids_changed": 0,
+      "existing_video_workflow_unittest_assertion_calls_before": 354,
+      "existing_video_workflow_unittest_assertion_calls_after": 358,
+      "existing_video_workflow_unittest_assertion_calls_added": 4,
+      "repository_contract_test_methods_before": 32,
+      "repository_contract_test_methods_after": 48,
+      "repository_contract_test_methods_added": 16,
+      "repository_contract_unittest_assertion_calls_before": 43,
+      "repository_contract_unittest_assertion_calls_after": 65,
+      "repository_contract_unittest_assertion_calls_added": 22,
+      "source_live_smoke_authority_assertions_added": 4,
+      "source_live_smoke_authority_finding": "The added assertions prove that the executor, work-root validator, report builder, and terminal-proof constructor receive the exact checkout PROJECT_ROOT supplied by the caller. Test-only adapters then rebind generated containment to the synthetic external boundary.",
+      "synthetic_project_authority": "Generated outputs use the synthetic external worker boundary. Immutable fixtures, schemas, scripts, runtime policy, and other production source inputs continue to resolve from the checkout authority.",
+      "compact_path_contract": "Video Workflow workspaces are created through new_workflow_workspace and end in the compact component w. The repository contract rejects full UUID workspace components, including bare and f-string UUID values, propagated aliases, unproven slices, function-local imports, nested helpers across if, try, match, and loop bodies, mixed lexical helper candidates, function helpers, method helpers, and ambiguous same-named methods. Proven uuid4().hex[:8] candidates remain allowed.",
+      "finding": "The five migrated Video Workflow modules preserve all 75 existing test methods and add four authority assertions. The repository contract grows from 32 to 48 test methods and from 43 to 65 unittest assertion calls to cover the analyzer repair surface."
+    },
+    "historical_stage_59_independent_review_gate": {
+      "status": "NEEDS_REPAIR",
+      "standards_axis": {
+        "status": "PASS",
+        "hard_findings": [],
+        "judgement_calls": [
+          {
+            "severity": "P3",
+            "path": "tests/project_test_runner/test_repository_contract.py",
+            "finding": "_WorkflowWorkspaceBypassAnalyzer stores its source constructor argument without reading it. Removing the unused state would simplify the analyzer, but this does not block the repair."
+          }
+        ]
+      },
+      "spec_axis": {
+        "status": "FAIL",
+        "findings": [
+          {
+            "severity": "P1",
+            "path": "tests/project_test_runner/test_repository_contract.py",
+            "finding": "The compact-workspace analyzer registers imports and helpers only from the module body. A function-local import followed by module_test_root() / uuid.uuid4().hex / workspace and a nested helper returning that path both produce zero violations, so a registered test can restore the prohibited long workspace form while the repository contract still passes.",
+            "required_repair": "Resolve function-local imports and nested helpers or fail closed when their lineage cannot be proven safe, and add regression tests for both forms."
+          }
+        ]
+      },
+      "commit_authorized": false,
+      "promotion_authorized": false
+    },
+    "independent_review_gate": {
+      "stage": 61,
+      "status": "PASS",
+      "standards_axis": {
+        "status": "PASS",
+        "findings": []
+      },
+      "spec_axis": {
+        "status": "PASS",
+        "findings": []
+      },
+      "commit_authorized": true,
+      "promotion_authorized": false,
+      "finding": "The independent dual-axis review found no Standards or Spec finding after the Stage 61 adversarial repair and 48/48 direct O0 and O2 validation."
+    },
+    "promotion_status": "FAILED_PRE_CUTOVER",
+    "promotion_report_status": "NOT_GENERATED",
+    "stage_62_final_evidence_verification": {
+      "video_workflow_discovery": {
+        "total_count": 475,
+        "module_count": 38,
+        "duplicate_test_ids": 0,
+        "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+      },
+      "method_and_assertion_inventory": {
+        "video_workflow_test_methods_before": 75,
+        "video_workflow_test_methods_after": 75,
+        "video_workflow_assertion_calls_before": 354,
+        "video_workflow_assertion_calls_after": 358,
+        "repository_contract_test_methods_before": 32,
+        "repository_contract_test_methods_after": 48,
+        "repository_contract_assertion_calls_before": 43,
+        "repository_contract_assertion_calls_after": 65
+      },
+      "json_parse": "PASS",
+      "git_diff_check": "PASS",
+      "secret_scan": "PASS"
+    },
+    "finding": "The current repair set passes the Stage 61 adversarial probe, 48/48 direct O0, 48/48 direct O2, the 68-source registry scan with zero violations, and independent Standards and Spec review. Persisted evidence separately proves verified3, B48, the current source-authority 24-test module, and the Stage 59 40-test contract tree. Stage 62 independently reconfirmed the 475-test Video Workflow closed set and current method and assertion inventories. The failed complete Promotion trial remains historical evidence; two complete passing trials are still required, and no Promotion report was generated."
+  },
+  "stage_79_final_optimization_review": {
+    "comparison": "git tree 118f79f02e8ca31eda6b65bdd9d4c57845401715 versus the Stage 79 working tree",
+    "changed_paths": [
+      "src/video2pdf_workflow_kernel/contracts.py",
+      "src/video2pdf_workflow_kernel/control_store.py",
+      "tests/video_workflow/test_contract_registry_cache.py",
+      "tests/video_workflow/test_control_store_v9_fastpath.py"
+    ],
+    "registry_prepared_snapshot_cache": {
+      "cache_scope": "Process-local bounded LRU of frozen prepared Schema bytes.",
+      "immutable_key_inputs": [
+        "resolved project and selected Registry paths",
+        "canonical and selected Registry raw and canonical fingerprints",
+        "every registered Schema path and raw-content fingerprint",
+        "complete on-disk Schema inventory",
+        "runtime input and runtime lock fingerprints",
+        "locked and installed package versions",
+        "jsonschema version and JSON Schema draft"
+      ],
+      "ownership": "Each ContractRegistry materializes new decoded Schema instances and a new referencing Registry from the frozen byte snapshot.",
+      "failure_policy": "Preparation failures are never inserted into the cache.",
+      "same_instance_drift": "ContractRegistry.check() recaptures the complete key and rebuilds or fails closed after runtime-input, Registry-authority, Schema-content, or Schema-inventory drift.",
+      "concurrency": "An RLock protects one build per key and LRU mutation.",
+      "limit": 8
+    },
+    "control_store_v9_fastpath": {
+      "eligibility": "The migration ledger must equal exactly 1..9 and the maintenance index must be valid.",
+      "skipped_work": "Eligible v9 stores skip migration backup, migration-plan construction, and migration-row materialization.",
+      "preserved_paths": [
+        "v8 migration planning and migration to v9",
+        "ledger-gap failure before planning",
+        "future-version failure before planning",
+        "missing-maintenance-index planning and repair",
+        "Resource Admission Configuration validation and specific constructor diagnostic",
+        "full ControlStore.check health and integrity validation",
+        "recovery-sentinel read availability and mutation blocking"
+      ]
+    },
+    "withdrawn_health_memo": {
+      "status": "WITHDRAWN",
+      "reason": "Health memo hits could hide database health changes and weaken error visibility.",
+      "tracked_health_memo_symbols": 0,
+      "withdrawn_profile": {
+        "profile": "r6",
+        "full_checks": 115,
+        "memo_hits": 692,
+        "run_dir": "待删除/long-running/issue27_stage70_combined_reprofile_r6_retry1_20260727_184056_419ee9cd"
+      },
+      "safe_profiles": {
+        "r7": {
+          "full_checks": 807,
+          "memo_hits": 0
+        },
+        "r8": {
+          "full_checks": 807,
+          "memo_hits": 0
+        }
+      }
+    },
+    "focused_persisted_validation": {
+      "cache_and_v9": {
+        "run_dir": "待删除/long-running/stage77_cache_v9_green_2_20260727_223236_643912f4",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 24,
+        "tests_passed": 24,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      "combined_52": {
+        "run_dir": "待删除/long-running/stage77_cache14_v9_control_recovery_20260727_223611_a310b8ee",
+        "state": "failed",
+        "exit_code": 1,
+        "tests": 52,
+        "tests_passed": 50,
+        "host_acl_errors": 2,
+        "failure_scope": "Two recovery selectors ended in Windows os.replace WinError 5; no assertion failure was reported.",
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      },
+      "acl_exact_rerun": {
+        "run_dir": "待删除/long-running/stage77_recovery_acl_rerun_20260727_224956_37f3e16e",
+        "state": "succeeded",
+        "exit_code": 0,
+        "tests": 2,
+        "tests_passed": 2,
+        "security_classification": "no_secret_detected",
+        "acceptance_evidence_eligible": true
+      }
+    },
+    "profile_series": [
+      {
+        "profile": "r4",
+        "role": "pre-optimization representative baseline",
+        "wall_seconds": 681.6186058000021,
+        "check_schema_calls": 756,
+        "run_dir": "待删除/long-running/issue27_stage64_three_test_profile_r4_20260727_131856_3982776a"
+      },
+      {
+        "profile": "r5",
+        "role": "Registry cache only",
+        "wall_seconds": 949.0204554999946,
+        "check_schema_calls": 54,
+        "run_dir": "待删除/long-running/issue27_stage67_cache_reprofile_r5_20260727_145022_28260db6"
+      },
+      {
+        "profile": "r6",
+        "role": "withdrawn health-memo experiment",
+        "wall_seconds": 219.24711810000008,
+        "check_schema_calls": 54,
+        "run_dir": "待删除/long-running/issue27_stage70_combined_reprofile_r6_retry1_20260727_184056_419ee9cd"
+      },
+      {
+        "profile": "r7",
+        "role": "safe cache and v9 fast-path combination",
+        "wall_seconds": 268.4237812000065,
+        "check_schema_calls": 54,
+        "run_dir": "待删除/long-running/issue27_stage75_safe_combination_reprofile_r7_retry2_20260727_213756_e50ddfeb"
+      },
+      {
+        "profile": "r8",
+        "role": "final safe reprofile",
+        "wall_seconds": 384.2002116000076,
+        "check_schema_calls": 54,
+        "control_store_full_checks": 807,
+        "control_store_memo_hits": 0,
+        "run_dir": "待删除/long-running/issue27_stage78_final_safe_reprofile_r8_20260727_225751_ea10b512"
+      }
+    ],
+    "performance_estimate": {
+      "r8_vs_r4_improvement_percent": 43.63413669597832,
+      "historical_failed_promotion_elapsed_seconds": 1920.171,
+      "scaled_estimate_seconds": 1082.3209610634663,
+      "method": "Historical failed Promotion elapsed multiplied by the exact representative r8/r4 wall ratio.",
+      "authority": "DIRECTIONAL_ONLY",
+      "limitation": "Three representative tests and one run per revision cannot prove complete-suite runtime or remove host variance."
+    },
+    "fresh_dynamic_discovery": {
+      "persisted_run_dir": "待删除/long-running/stage79_final_dynamic_discovery_20260727_232935_9f75583b",
+      "scheduler_run_dir": "D:/tests/video2pdf/all/20260727_153026_bbc487db",
+      "state": "succeeded",
+      "exit_code": 0,
+      "total_count": 908,
+      "module_count": 71,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "de0655f8a1f31b00556d973d91512f82d6709e9f8f1cbefe11a417f2994af43f",
+      "discovery_sha256": "87d6d7b60e66b517d3375ae347cf567ff89ee3372354b1b8eb30d73607318037",
+      "video_workflow": {
+        "test_count": 499,
+        "module_count": 40
+      },
+      "security_classification": "no_secret_detected",
+      "acceptance_evidence_eligible": true
+    },
+    "test_inventory_diff": {
+      "test_methods_added": 24,
+      "test_methods_removed": 0,
+      "unittest_assertion_calls_added": 46,
+      "unittest_assertion_calls_removed": 0,
+      "production_test_methods_changed": 0,
+      "production_unittest_assertions_changed": 0
+    },
+    "static_gates": {
+      "json_parse": "PASS",
+      "git_diff_check": "PASS",
+      "high_confidence_secret_scan": "PASS"
+    },
+    "independent_review_gate": {
+      "status": "PASS",
+      "standards_axis": "PASS",
+      "spec_axis": "PASS",
+      "hard_findings": []
+    },
+    "commit_authorized": true,
+    "promotion_status": "PENDING",
+    "promotion_authorized": false,
+    "finding": "The final safe optimization preserves fail-closed Registry and Control Store behavior, removes the unsafe health memo, and passes focused persisted validation plus fresh dynamic discovery. Two complete passing Promotion trials remain required."
+  },
+  "discovery_review": {
+    "video_workflow_test_count": 475,
+    "video_workflow_module_count": 38,
+    "duplicate_test_ids": 0,
+    "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+    "independent_recalculation": {
+      "ordered_test_ids": 475,
+      "unique_test_ids": 475,
+      "canonical_encoding": "UTF-8 JSON, sorted IDs, compact separators, one trailing newline",
+      "sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f",
+      "matches_discovery_manifest_algorithm": true
+    },
+    "project_test_runner_pre_promotion_validation_set": {
+      "test_count": 110,
+      "module_count": 10,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "844d6cd30911486351a859f0f869aa261b35bcbf70a318de75f12589bd8cb115",
+      "calculation": "Read-only dynamic unittest discovery against the current working tree.",
+      "authority": "This is a pre-Promotion validation set only; it is not the Video Workflow Promotion closed set and does not prove a complete persisted run."
+    },
+    "full_registry_dynamic_discovery": {
+      "calculation": "Independent read-only dynamic unittest discovery against the current working tree using the versioned Registry and unittest.TestLoader.",
+      "working_tree_base_head": "ae46acff82ab63fc7e6de9d05e4041c72753a57d",
+      "execution_scope": "Discovery only; no registered test suite or scheduler worker was executed.",
+      "registry_sha256": "dac757de961bd39db0f6a57487d33e191cbfb98c552ce2d1c772bdb68d873d57",
+      "suite_count": 5,
+      "registered_file_count": 69,
+      "module_count": 69,
+      "test_count": 863,
+      "duplicate_test_ids": 0,
+      "test_id_set_sha256": "d20345ef07289cfe474da74e10778916946fbdace5f536000997d0c7ee6a514c",
+      "suites": [
+        {
+          "suite_id": "persisted-command",
+          "registered_files": 2,
+          "modules": 2,
+          "test_ids": 42,
+          "test_id_set_sha256": "85017ae525b2aa78993128dce98582fc60bd5c40ea527df5a37249d7d8668f87"
+        },
+        {
+          "suite_id": "project-scripts",
+          "registered_files": 2,
+          "modules": 2,
+          "test_ids": 22,
+          "test_id_set_sha256": "4d4e2f86156522e227d5acfaa5451e3380f2767ebbcbcee21b6cf7c9be882538"
+        },
+        {
+          "suite_id": "project-test-runner",
+          "registered_files": 10,
+          "modules": 10,
+          "test_ids": 110,
+          "test_id_set_sha256": "844d6cd30911486351a859f0f869aa261b35bcbf70a318de75f12589bd8cb115"
+        },
+        {
+          "suite_id": "skill-tests",
+          "registered_files": 17,
+          "modules": 17,
+          "test_ids": 214,
+          "test_id_set_sha256": "a3e72cb4ece7d8366a29ff784051163c4c6708be6dd7209c8df063ace80c88bf"
+        },
+        {
+          "suite_id": "video-workflow",
+          "registered_files": 38,
+          "modules": 38,
+          "test_ids": 475,
+          "test_id_set_sha256": "b315b255a81e06847f3c41a01fa36115dd40390924df395108684a0a3967f98f"
+        }
+      ],
+      "stage_28_30_registry_contract": {
+        "registered_contract_sources": 68,
+        "excluded_self_source": "tests/project_test_runner/test_repository_contract.py",
+        "covered_suite_count": 5,
+        "ast_scan_violations": 0,
+        "contract_tests": 29,
+        "contract_result": "OK"
+      },
+      "dynamic_suite_execution": {
+        "executed": false,
+        "result": "NOT_RUN",
+        "reason": "Stage 35 refreshed discovery evidence only. The five dynamic registered suites and both Promotion runs remain unexecuted.",
+        "pass_claimed": false
+      }
+    },
+    "authority_note": "The 474 count belongs only to the 18f78fa historical performance baseline. The final Issue #9 and Promotion closed set is discovered dynamically; the current working-tree inventory is 475, and 475 is evidence rather than a hard-coded protocol constraint."
+  },
+  "historical_slice_evidence": {
+    "rewritten": false,
+    "policy": "Historical Slice evidence and its collectors remain unchanged; this review records the current migration and Promotion closed set separately."
+  }
+}

@@ -2575,6 +2575,9 @@ class PersistedCommandCliTests(unittest.TestCase):
                 run_dir,
                 lambda status: bool(
                     status.get("heartbeat_at")
+                    and status.get("latest_output_at")
+                    and status.get("log_sizes", {}).get("stdout", 0) > 0
+                    and status.get("log_sizes", {}).get("stderr", 0) > 0
                     and (status.get("target_identity") or {}).get(
                         "process_creation_identity"
                     )
@@ -2583,12 +2586,20 @@ class PersistedCommandCliTests(unittest.TestCase):
             )
 
             initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
+            initial_output = datetime.fromisoformat(
+                initial_status["latest_output_at"]
+            )
             time.sleep(27)
             refreshed_status = self._wait_for_status(
                 run_dir,
                 lambda status: bool(
                     status.get("heartbeat_at")
                     and status["heartbeat_at"] != initial_status["heartbeat_at"]
+                    and status.get("latest_output_at")
+                    == initial_status["latest_output_at"]
+                    and status.get("elapsed_seconds", 0) >= 25
+                    and datetime.fromisoformat(status["heartbeat_at"])
+                    > initial_output
                 ),
                 timeout_seconds=15,
                 poll_seconds=0.1,
@@ -2598,9 +2609,13 @@ class PersistedCommandCliTests(unittest.TestCase):
                 refreshed_status["heartbeat_at"]
             )
             self.assertGreater(refreshed_heartbeat, initial_heartbeat)
+            self.assertGreater(refreshed_heartbeat, initial_output)
             self.assertEqual(refreshed_status["state"], "running")
             self.assertGreaterEqual(refreshed_status["elapsed_seconds"], 25)
-            self.assertIsNotNone(refreshed_status["latest_output_at"])
+            self.assertEqual(
+                refreshed_status["latest_output_at"],
+                initial_status["latest_output_at"],
+            )
             self.assertEqual(
                 refreshed_status["log_sizes"],
                 {

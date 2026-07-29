@@ -199,6 +199,87 @@
       "last_session_id": "019f821c-0c0a-7371-a769-55379b93d958",
       "stage": "delivered",
       "updated_at": "2026-07-21T09:52:00+08:00"
+    },
+    {
+      "video_output_dir": "workspace/The thinking lever_20260722_185636",
+      "target_file": "workspace/The thinking lever_20260722_185636/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8976-3d1e-7cf3-931a-7c4688af0ec4",
+      "owner_status": "delivered",
+      "last_session_id": "019f8976-3d1e-7cf3-931a-7c4688af0ec4",
+      "stage": "delivered",
+      "updated_at": "2026-07-22T21:46:00+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Agent identity_ A new access model for Claude Tag_20260722_172445",
+      "target_file": "workspace/Agent identity_ A new access model for Claude Tag_20260722_172445/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f893a-cc47-7352-90df-b281a31ba0b3",
+      "owner_status": "delivered",
+      "last_session_id": "019f893a-cc47-7352-90df-b281a31ba0b3",
+      "stage": "delivered",
+      "updated_at": "2026-07-22T21:53:27+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Don_t waste time on specs_ _prototype instead_20260723_231105",
+      "target_file": "workspace/Don_t waste time on specs_ _prototype instead_20260723_231105/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8f86-2085-7aa2-9e77-3665f39a8732",
+      "owner_status": "active",
+      "last_session_id": "019f8f86-2085-7aa2-9e77-3665f39a8732",
+      "stage": "generating",
+      "updated_at": "2026-07-23T23:25:40+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Why Your Agent Disagrees With Itself _And What To Do About It_ _ Diane Lin_ Datadog_20260723_231118",
+      "target_file": "workspace/Why Your Agent Disagrees With Itself _And What To Do About It_ _ Diane Lin_ Datadog_20260723_231118/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8f87-7fdd-7302-bfff-9f0105f6406b",
+      "owner_status": "delivered",
+      "last_session_id": "019f8f87-7fdd-7302-bfff-9f0105f6406b",
+      "stage": "delivered",
+      "updated_at": "2026-07-26T22:27:44+08:00"
+    },
+    {
+      "video_output_dir": "workspace/pi agent 最佳实践 _ Harness Agent 定制全流程实战_20260723_233246",
+      "target_file": "workspace/pi agent 最佳实践 _ Harness Agent 定制全流程实战_20260723_233246/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8f89-2a45-7073-b03d-a40e280a056d",
+      "owner_status": "delivered",
+      "last_session_id": "019f8f89-2a45-7073-b03d-a40e280a056d",
+      "stage": "delivered",
+      "updated_at": "2026-07-27T00:15:30+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Move Over Loop Engineering_ Graph Engineering Is Now Here_20260723_231118",
+      "target_file": "workspace/Move Over Loop Engineering_ Graph Engineering Is Now Here_20260723_231118/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8f83-4cf7-7a12-9c10-f9aa63e5700f",
+      "owner_status": "delivered",
+      "last_session_id": "019f8f83-4cf7-7a12-9c10-f9aa63e5700f",
+      "stage": "delivered",
+      "updated_at": "2026-07-28T13:06:10+08:00"
+    },
+    {
+      "video_output_dir": "workspace/AI Security After Codex and Claude Code _ Zico Kolter _ Matt Fredrikson_ Gray Swan_20260727_144154",
+      "target_file": "workspace/AI Security After Codex and Claude Code _ Zico Kolter _ Matt Fredrikson_ Gray Swan_20260727_144154/review/acceptance/delivery_target.json",
+      "owner_session_id": "019fa24b-1755-7d00-b8d4-8f859ee016a8",
+      "owner_status": "delivered",
+      "last_session_id": "019fa24b-1755-7d00-b8d4-8f859ee016a8",
+      "stage": "delivered",
+      "updated_at": "2026-07-28T13:49:05+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Move Over Loop Engineering_ Graph Engineering Is Now Here_20260723_231118",
+      "target_file": "workspace/Move Over Loop Engineering_ Graph Engineering Is Now Here_20260723_231118/review/acceptance/delivery_target.json",
+      "owner_session_id": "019f8f83-4cf7-7a12-9c10-f9aa63e5700f",
+      "owner_status": "delivered",
+      "last_session_id": "019f8f83-4cf7-7a12-9c10-f9aa63e5700f",
+      "stage": "delivered",
+      "updated_at": "2026-07-28T13:08:05+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Claude for Long_Horizon Tasks _ Lance Martin_ Anthropic_20260728_161214",
+      "target_file": "workspace/Claude for Long_Horizon Tasks _ Lance Martin_ Anthropic_20260728_161214/review/acceptance/delivery_target.json",
+      "owner_session_id": "019fa7c3-ded8-79d3-b8e5-9a70813488af",
+      "owner_status": "delivered",
+      "last_session_id": "019fa7c3-ded8-79d3-b8e5-9a70813488af",
+      "stage": "delivered",
+      "updated_at": "2026-07-28T20:05:45+08:00"
     }
   ]
 }

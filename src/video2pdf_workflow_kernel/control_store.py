@@ -69,7 +69,7 @@ RESOURCE_EVENT_KINDS = frozenset(
 RESOURCE_LAUNCH_FAILURE_STAGES = frozenset(
     {"launcher_exception", "process_identity_validation", "claim_generation_fence"}
 )
-LOCK_PROBE_TIMEOUT_MS = 100
+LOCK_PROBE_TIMEOUT_MS = 0
 SNAPSHOT_RETRY_LIMIT = 3
 MARKER_NAME = "control-store.json"
 DATABASE_RELPATH = ".workflow-control/control.sqlite3"
@@ -671,7 +671,9 @@ class ControlStore:
         finally:
             connection.close()
 
-    def _validate_existing(self) -> None:
+    def _validate_existing(
+        self, *, validate_resource_domain: bool = True
+    ) -> None:
         if (
             not self.anchor_path.is_file()
             or not self.marker_path.is_file()
@@ -699,7 +701,9 @@ class ControlStore:
         if marker != self._identity_record("marker"):
             raise ControlStoreUnavailable("Control Store marker identity is invalid")
         try:
-            self._migrate_existing()
+            self._migrate_existing(
+                validate_resource_domain=validate_resource_domain
+            )
         except ControlStoreUnavailable:
             raise
         except (sqlite3.Error, OSError) as exc:
@@ -4106,19 +4110,31 @@ class ControlStore:
         finally:
             connection.close()
 
-    def _migrate_existing(self) -> None:
+    def _migrate_existing(
+        self, *, validate_resource_domain: bool = True
+    ) -> None:
         for _attempt in range(SNAPSHOT_RETRY_LIMIT):
             connection = self._connect()
             try:
                 connection.execute("BEGIN")
                 snapshot_data_version = self._data_version(connection)
-                plan = self._prepare_migration_plan(connection)
+                versions = self._migration_versions(connection)
                 maintenance_indexes_valid = self._maintenance_index_is_valid(
                     connection
                 )
-                connection.execute("COMMIT")
-                if plan.source_version == SCHEMA_VERSION and maintenance_indexes_valid:
+                if versions == list(range(1, SCHEMA_VERSION + 1)) and (
+                    maintenance_indexes_valid
+                ):
+                    if validate_resource_domain:
+                        self._validate_resource_tables(connection)
+                    connection.execute("COMMIT")
                     return
+                if versions and versions[-1] > SCHEMA_VERSION:
+                    raise ControlStoreUnavailable(
+                        f"unknown Control Store schema version: {versions[-1]}"
+                    )
+                plan = self._prepare_migration_plan(connection)
+                connection.execute("COMMIT")
                 self._assert_mutation_allowed()
                 if not self._begin_immediate_if_snapshot_unchanged(
                     connection,
@@ -4277,7 +4293,7 @@ class ControlStore:
         }
 
     def check(self) -> ControlStoreHealth:
-        self._validate_existing()
+        self._validate_existing(validate_resource_domain=False)
         try:
             connection = self._connect()
             try:
@@ -4414,7 +4430,18 @@ class ControlStore:
                 secondary.execute("BEGIN IMMEDIATE")
             except sqlite3.OperationalError as exc:
                 elapsed_ms = (time.monotonic() - started) * 1000
-                if "locked" not in str(exc).lower() or elapsed_ms > BUSY_TIMEOUT_MS:
+                error_code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(error_code, int):
+                    expected_contention = error_code & 0xFF in (
+                        sqlite3.SQLITE_BUSY,
+                        sqlite3.SQLITE_LOCKED,
+                    )
+                else:
+                    expected_contention = str(exc).strip().lower() in (
+                        "database is busy",
+                        "database is locked",
+                    )
+                if not expected_contention or elapsed_ms > BUSY_TIMEOUT_MS:
                     raise ControlStoreUnavailable(
                         f"Control Store lock probe failed unexpectedly: {exc}"
                     ) from exc

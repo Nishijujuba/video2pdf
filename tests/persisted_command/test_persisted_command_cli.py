@@ -5,16 +5,28 @@ from datetime import datetime
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import time
 from typing import Any, Callable
 import unittest
+from unittest import mock
 import uuid
 
+from scripts.project_test_external_root import assert_safe_write_path
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = SOURCE_PROJECT_ROOT
 CLI = PROJECT_ROOT / "scripts/persisted_command.py"
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from video2pdf_persisted_command import cli as persisted_cli
+from video2pdf_persisted_command.process_identity import (
+    execution_identity_observation_sha256,
+)
 
 
 def run_cli(
@@ -213,6 +225,87 @@ def run_with_supervisor_hook(
 
 
 class PersistedCommandCliTests(unittest.TestCase):
+    def test_show_infers_missing_terminal_from_legacy_supervisor_identity(
+        self,
+    ) -> None:
+        _started, _waited, run_dir, data = run_to_terminal(
+            "start",
+            "--task-name",
+            f"legacy supervisor identity {uuid.uuid4().hex}",
+            "--",
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('legacy-supervisor-fixture')",
+        )
+        supervisor_path = (
+            run_dir / persisted_cli.SUPERVISOR_IDENTITY_FILENAME
+        )
+        supervisor = json.loads(
+            supervisor_path.read_text(encoding="utf-8")
+        )
+        execution_identity = supervisor.pop("execution_identity")
+        supervisor["process_creation_identity"] = execution_identity[
+            "process_creation_identity"
+        ]
+        supervisor_path.write_text(
+            json.dumps(supervisor, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        status = data["status"]
+        status.update(
+            {
+                "state": "running",
+                "supervisor_pid": None,
+                "supervisor_identity": {
+                    "pid": None,
+                    "process_creation_identity": None,
+                },
+                "exit_code": None,
+            }
+        )
+        (run_dir / "status.json").write_text(
+            json.dumps(status, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        shown = run_cli("show", "--run-dir", str(run_dir))
+
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        snapshot = json.loads(shown.stdout)["data"]
+        self.assertEqual(snapshot["state"], "unknown")
+        self.assertEqual(
+            snapshot["status"]["supervisor_pid"],
+            supervisor["supervisor_pid"],
+        )
+        self.assertEqual(
+            snapshot["status"]["supervisor_identity"][
+                "process_creation_identity"
+            ],
+            supervisor["process_creation_identity"],
+        )
+        self.assertEqual(snapshot["exit_code"], 0)
+
+    def setUp(self) -> None:
+        global CLI, PROJECT_ROOT
+
+        PROJECT_ROOT = new_fixture_dir(
+            "persisted-command-project",
+            expected_suite="persisted-command",
+        )
+        scripts_root = PROJECT_ROOT / "scripts"
+        scripts_root.mkdir()
+        shutil.copy2(
+            SOURCE_PROJECT_ROOT / "scripts" / "persisted_command.py",
+            scripts_root / "persisted_command.py",
+        )
+        shutil.copytree(
+            SOURCE_PROJECT_ROOT / "src" / "video2pdf_persisted_command",
+            PROJECT_ROOT / "src" / "video2pdf_persisted_command",
+        )
+        CLI = scripts_root / "persisted_command.py"
+
     def test_short_cookie_value_is_detected_in_persisted_output(self) -> None:
         secret_root = (
             PROJECT_ROOT
@@ -333,7 +426,15 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         self.assertEqual(
             data["status"]["target_identity"],
-            {"pid": None, "process_creation_identity": None},
+            {
+                "pid": None,
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            },
         )
         self.assertIsInstance(
             data["status"]["supervisor_identity"]["process_creation_identity"],
@@ -1105,7 +1206,15 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertIsNone(data["status"]["exit_code"])
         self.assertEqual(
             data["status"]["target_identity"],
-            {"pid": None, "process_creation_identity": None},
+            {
+                "pid": None,
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            },
         )
         self.assertFalse((run_dir / "exit-code.txt").exists())
 
@@ -1230,7 +1339,15 @@ class PersistedCommandCliTests(unittest.TestCase):
         )
         self.assertEqual(
             status["target_identity"],
-            {"pid": None, "process_creation_identity": None},
+            {
+                "pid": None,
+                "process_creation_identity": None,
+                "executable_path": None,
+                "executable_file_identity": None,
+                "parent_pid": None,
+                "parent_process_creation_identity": None,
+                "observation_sha256": None,
+            },
         )
         self.assertEqual(
             status["failure"],
@@ -2059,7 +2176,23 @@ class PersistedCommandCliTests(unittest.TestCase):
                     0,
                     started.stderr or started.stdout,
                 )
-                run_dir = Path(json.loads(started.stdout)["data"]["run_dir"])
+                reported_run_dir = Path(
+                    json.loads(started.stdout)["data"]["run_dir"]
+                )
+                trusted_run_root = (
+                    PROJECT_ROOT / "待删除" / "long-running"
+                )
+                validated_run_dir = assert_safe_write_path(
+                    trusted_run_root,
+                    reported_run_dir,
+                )
+                self.assertTrue(validated_run_dir.is_absolute())
+                run_dir_relative = validated_run_dir.relative_to(PROJECT_ROOT)
+                self.assertEqual(
+                    run_dir_relative.parts[:2],
+                    ("待删除", "long-running"),
+                )
+                run_dir = PROJECT_ROOT / run_dir_relative
 
                 running_status = self._wait_for_status(
                     run_dir,
@@ -2134,6 +2267,114 @@ class PersistedCommandCliTests(unittest.TestCase):
                     (run_dir / "stdout.log").read_text(encoding="utf-8"),
                     "alive\nfinished\n",
                 )
+
+    def test_reconcile_rejects_every_rich_target_identity_field_drift(
+        self,
+    ) -> None:
+        persisted = {
+            "pid": 4101,
+            "process_creation_identity": "windows-filetime:100",
+            "executable_path": r"C:\Python\python.exe",
+            "executable_file_identity": {
+                "device": 1,
+                "inode": 2,
+                "size": 3,
+                "mtime_ns": 4,
+            },
+            "parent_pid": 3101,
+            "parent_process_creation_identity": "windows-filetime:90",
+        }
+        observed = json.loads(json.dumps(persisted))
+        observed["observation_sha256"] = (
+            execution_identity_observation_sha256(observed)
+        )
+        mutations = {
+            "pid": 4102,
+            "process_creation_identity": "windows-filetime:101",
+            "executable_path": r"C:\Other\python.exe",
+            "executable_file_identity": {
+                "device": 9,
+                "inode": 8,
+                "size": 7,
+                "mtime_ns": 6,
+            },
+            "parent_pid": 3102,
+            "parent_process_creation_identity": "windows-filetime:91",
+            "observation_sha256": "f" * 64,
+        }
+        for field, replacement in mutations.items():
+            with self.subTest(field=field):
+                drifted_persisted = json.loads(json.dumps(observed))
+                drifted_persisted[field] = replacement
+                if field != "observation_sha256":
+                    drifted_persisted["observation_sha256"] = (
+                        execution_identity_observation_sha256(
+                            drifted_persisted
+                        )
+                    )
+                status = {
+                    "state": "running",
+                    "target_identity": drifted_persisted,
+                }
+                written: list[dict[str, Any]] = []
+                with (
+                    mock.patch.object(
+                        persisted_cli,
+                        "process_execution_identity",
+                        return_value=observed,
+                    ),
+                    mock.patch.object(
+                        persisted_cli,
+                        "_process_observation",
+                        return_value=(
+                            "present",
+                            observed["process_creation_identity"],
+                        ),
+                    ),
+                    mock.patch.object(
+                        persisted_cli,
+                        "_write_status_locked",
+                        side_effect=lambda _path, value: written.append(value),
+                    ),
+                    mock.patch.object(
+                        persisted_cli,
+                        "_inspect_snapshot",
+                        return_value={
+                            "run_dir": "D:/fixture",
+                            "status": status,
+                        },
+                    ),
+                ):
+                    result = persisted_cli._reconcile_locked(
+                        {
+                            "run_dir": "D:/fixture",
+                            "status": status,
+                        }
+                    )
+                self.assertTrue(written)
+                self.assertEqual(written[-1]["state"], "unknown")
+                self.assertEqual(
+                    result["reconciliation"]["reason"],
+                    (
+                        "target_process_creation_mismatch"
+                        if field == "process_creation_identity"
+                        else f"target_identity_{field}_mismatch"
+                    ),
+                )
+                if field == "process_creation_identity":
+                    self.assertEqual(
+                        result["reconciliation"][
+                            "observed_target_identity"
+                        ]["process_creation_identity"],
+                        observed["process_creation_identity"],
+                    )
+                else:
+                    self.assertEqual(
+                        result["reconciliation"][
+                            "observed_target_identity"
+                        ],
+                        observed,
+                    )
 
     def test_reconcile_marks_proven_missing_target_interrupted(self) -> None:
         stop_marker = (
@@ -2334,6 +2575,9 @@ class PersistedCommandCliTests(unittest.TestCase):
                 run_dir,
                 lambda status: bool(
                     status.get("heartbeat_at")
+                    and status.get("latest_output_at")
+                    and status.get("log_sizes", {}).get("stdout", 0) > 0
+                    and status.get("log_sizes", {}).get("stderr", 0) > 0
                     and (status.get("target_identity") or {}).get(
                         "process_creation_identity"
                     )
@@ -2342,12 +2586,20 @@ class PersistedCommandCliTests(unittest.TestCase):
             )
 
             initial_heartbeat = datetime.fromisoformat(initial_status["heartbeat_at"])
+            initial_output = datetime.fromisoformat(
+                initial_status["latest_output_at"]
+            )
             time.sleep(27)
             refreshed_status = self._wait_for_status(
                 run_dir,
                 lambda status: bool(
                     status.get("heartbeat_at")
                     and status["heartbeat_at"] != initial_status["heartbeat_at"]
+                    and status.get("latest_output_at")
+                    == initial_status["latest_output_at"]
+                    and status.get("elapsed_seconds", 0) >= 25
+                    and datetime.fromisoformat(status["heartbeat_at"])
+                    > initial_output
                 ),
                 timeout_seconds=15,
                 poll_seconds=0.1,
@@ -2357,9 +2609,13 @@ class PersistedCommandCliTests(unittest.TestCase):
                 refreshed_status["heartbeat_at"]
             )
             self.assertGreater(refreshed_heartbeat, initial_heartbeat)
+            self.assertGreater(refreshed_heartbeat, initial_output)
             self.assertEqual(refreshed_status["state"], "running")
             self.assertGreaterEqual(refreshed_status["elapsed_seconds"], 25)
-            self.assertIsNotNone(refreshed_status["latest_output_at"])
+            self.assertEqual(
+                refreshed_status["latest_output_at"],
+                initial_status["latest_output_at"],
+            )
             self.assertEqual(
                 refreshed_status["log_sizes"],
                 {

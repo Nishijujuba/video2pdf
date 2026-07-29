@@ -9,25 +9,18 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-import uuid
 from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import new_case_dir, new_workflow_workspace
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-TEST_ROOT = PROJECT_ROOT / "待删除" / "kernel-test-runs" / "source-live-smoke"
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 RUN_ID = "1" * 32
-
-
-def new_test_root(label: str) -> Path:
-    root = TEST_ROOT / f"{label}-{uuid.uuid4().hex}"
-    root.mkdir(parents=True, exist_ok=False)
-    return root
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -55,7 +48,7 @@ def create_directory_link(link: Path, target: Path) -> None:
         raise unittest.SkipTest("directory junctions are unavailable")
 
 
-def recorded_youtube_smoke_inputs(label: str):
+def recorded_youtube_smoke_inputs(test_id: str, label: str):
     from video2pdf_workflow_kernel.adapters import (
         RecordedCommandRunner,
         YtDlpRuntime,
@@ -65,9 +58,8 @@ def recorded_youtube_smoke_inputs(label: str):
         SourceLiveSmokeCase,
     )
 
-    root = PROJECT_ROOT / "\u5f85\u5220\u9664" / label[:4] / uuid.uuid4().hex[:6]
-    root.mkdir(parents=True, exist_ok=False)
-    work_root = root / "workspace"
+    work_root = new_workflow_workspace(test_id, label=label)
+    root = work_root.parent
     cookie = root / "cookie.txt"
     cookie.write_text(
         "# Netscape HTTP Cookie File\n"
@@ -198,11 +190,29 @@ class RecordingKernel:
 
 
 class SourceLiveSmokeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from video2pdf_workflow_kernel import source_live_smoke
+
+        production_registry = source_live_smoke._TerminalProofRegistry
+
+        def external_proof_registry(proof_root: Path, project_root: Path):
+            self.assertEqual(project_root.resolve(), PROJECT_ROOT.resolve())
+            generated_authority_root = proof_root.parents[2]
+            return production_registry(proof_root, generated_authority_root)
+
+        patcher = mock.patch.object(
+            source_live_smoke,
+            "_TerminalProofRegistry",
+            side_effect=external_proof_registry,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_smoke_case_rejects_an_ancestor_link_outside_its_boundary(self) -> None:
         from video2pdf_workflow_kernel.errors import ContractError
         from video2pdf_workflow_kernel.source_live_smoke import load_smoke_case
 
-        root = new_test_root("case-link")
+        root = new_case_dir(self.id(), label="case-link")
         boundary = root / "project"
         outside = root / "outside"
         boundary.mkdir()
@@ -219,11 +229,11 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.errors import ContractError
         from video2pdf_workflow_kernel.source_live_smoke import load_smoke_case
 
-        root = new_test_root("case")
+        root = new_case_dir(self.id(), label="case")
         path = root / "case.json"
         write_json(path, case_value())
 
-        parsed = load_smoke_case(path, project_root=PROJECT_ROOT)
+        parsed = load_smoke_case(path, project_root=root)
 
         self.assertEqual(parsed.platform, "bilibili")
         self.assertEqual(parsed.original_title, "Bilibili live smoke fixture")
@@ -232,14 +242,14 @@ class SourceLiveSmokeTests(unittest.TestCase):
         unexpected["cookie_file"] = "C:/private/cookies.txt"
         write_json(path, unexpected)
         with self.assertRaisesRegex(ContractError, "closed field set"):
-            load_smoke_case(path, project_root=PROJECT_ROOT)
+            load_smoke_case(path, project_root=root)
 
     def test_deterministic_locator_bootstrap_never_calls_an_adapter_or_runner(self) -> None:
         from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
         from video2pdf_workflow_kernel.models import DeterministicLocatorRequest
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = new_test_root("locator")
+        workspace = new_workflow_workspace(self.id(), label="locator")
         calls: list[str] = []
 
         class NoCallAdapter:
@@ -260,7 +270,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 calls.append("runner.run")
                 raise AssertionError("deterministic locator launched a command")
 
-        kernel = VideoWorkflowKernel(root / "workspace")
+        kernel = VideoWorkflowKernel(workspace)
         result = kernel.bootstrap_production_source(
             adapter=NoCallAdapter(),
             request=DeterministicLocatorRequest(
@@ -335,7 +345,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         for index, (platform, request) in enumerate(cases):
             with self.subTest(platform=platform, source_url=request.source_url):
                 kernel = VideoWorkflowKernel(
-                    new_test_root(f"ambiguous-{index}") / "workspace"
+                    new_workflow_workspace(
+                        self.id(), label=f"ambiguous-{index}"
+                    )
                 )
                 with self.assertRaises(ContractError):
                     kernel.bootstrap_production_source(
@@ -363,7 +375,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
             def acquire(self, request, *, runner):
                 raise AssertionError("deterministic locator acquired media")
 
-        kernel = VideoWorkflowKernel(new_test_root("bilibili-locator") / "workspace")
+        kernel = VideoWorkflowKernel(
+            new_workflow_workspace(self.id(), label="bilibili-locator")
+        )
         result = kernel.bootstrap_production_source(
             adapter=NoCallBilibiliAdapter(),
             request=DeterministicLocatorRequest(
@@ -401,7 +415,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 raise AssertionError("deterministic locator acquired media")
 
         kernel = VideoWorkflowKernel(
-            PROJECT_ROOT / "待删除" / "r" / uuid.uuid4().hex[:6] / "w"
+            new_workflow_workspace(self.id(), label="locator-replay")
         )
         bootstrap = kernel.bootstrap_production_source(
             adapter=NoCallAdapter(),
@@ -447,10 +461,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "s" / uuid.uuid4().hex[:6]
-        work_root = root / "w"
+        work_root = new_workflow_workspace(self.id(), label="resource-admission")
+        root = work_root.parent
         cookie = root / "c.txt"
-        cookie.parent.mkdir(parents=True, exist_ok=False)
         cookie.write_text(
             "# Netscape HTTP Cookie File\n"
             ".example.test\tTRUE\t/\tTRUE\t2147483647\tSID\trecorded\n",
@@ -561,10 +574,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "cookie-blocker" / uuid.uuid4().hex[:6]
-        work_root = root / "workspace"
+        work_root = new_workflow_workspace(self.id(), label="cookie-rejection")
+        root = work_root.parent
         cookie = root / "cookie.txt"
-        cookie.parent.mkdir(parents=True, exist_ok=False)
         cookie.write_text(
             "# Netscape HTTP Cookie File\n"
             ".example.test\tTRUE\t/\tTRUE\t2147483647\tSID\trejected\n",
@@ -655,9 +667,10 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "pmf" / uuid.uuid4().hex[:6]
-        root.mkdir(parents=True, exist_ok=False)
-        work_root = root / "workspace"
+        work_root = new_workflow_workspace(
+            self.id(), label="materialization-failure"
+        )
+        root = work_root.parent
         cookie = root / "cookie.txt"
         cookie.write_text(
             "# Netscape HTTP Cookie File\n"
@@ -750,7 +763,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("semantic-callback-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "semantic-callback-failure"
+            )
         )
         with (
             mock.patch.object(
@@ -814,7 +829,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("semantic-output-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "semantic-output-failure"
+            )
         )
         real_write = source_live_smoke._write_task_json_output
 
@@ -885,7 +902,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-provider-failure")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-provider-failure"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 
@@ -963,7 +982,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-output-missing")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-output-missing"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 
@@ -1042,7 +1063,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json, sha256_file
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-output-drift")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-output-drift"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
         transcript_output: Path | None = None
@@ -1146,7 +1169,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-token-ambiguity")
+            recorded_youtube_smoke_inputs(
+                self.id(), "whisper-token-ambiguity"
+            )
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
         real_launch = AdmittedSourceProviderLauncher.launch_whisper
@@ -1255,7 +1280,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         from video2pdf_workflow_kernel.utils import read_json
 
         work_root, recorded, runtime, case, credential = (
-            recorded_youtube_smoke_inputs("whisper-success")
+            recorded_youtube_smoke_inputs(self.id(), "whisper-success")
         )
         real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
 
@@ -1347,10 +1372,9 @@ class SourceLiveSmokeTests(unittest.TestCase):
         )
         from video2pdf_workflow_kernel.utils import read_json
 
-        root = PROJECT_ROOT / "待删除" / "stale-title" / uuid.uuid4().hex[:6]
-        work_root = root / "workspace"
+        work_root = new_workflow_workspace(self.id(), label="stale-locator")
+        root = work_root.parent
         cookie = root / "cookie.txt"
-        cookie.parent.mkdir(parents=True, exist_ok=False)
         cookie.write_text(
             "# Netscape HTTP Cookie File\n"
             ".example.test\tTRUE\t/\tTRUE\t2147483647\tSID\trecorded\n",
@@ -1497,7 +1521,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
 
         from video2pdf_workflow_kernel.source_live_smoke import _transcribe_whisper
 
-        root = new_test_root("whisper-cues")
+        root = new_case_dir(self.id(), label="whisper-cues")
         output = root / "transcription.srt"
 
         class Model:
@@ -1528,7 +1552,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             build_smoke_report,
         )
 
-        root = new_test_root("report")
+        root = new_case_dir(self.id(), label="report")
         run_path, manifest_path = current_run(root)
         execution = SourceLiveSmokeExecution(
             run_path=run_path,
@@ -1551,7 +1575,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         report = build_smoke_report(
             execution,
             expected_platform="bilibili",
-            project_root=PROJECT_ROOT,
+            project_root=root,
             recorded_at="2026-07-18T12:00:00+08:00",
         )
 
@@ -1597,7 +1621,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             build_smoke_report,
         )
 
-        root = new_test_root("stale")
+        root = new_case_dir(self.id(), label="stale-report")
         run_path, manifest_path = current_run(root, "youtube")
         run_record = json.loads(run_path.read_text(encoding="utf-8"))
         run_record["checkpoints"]["source_ready"]["status"] = "stale"
@@ -1621,22 +1645,26 @@ class SourceLiveSmokeTests(unittest.TestCase):
             build_smoke_report(
                 execution,
                 expected_platform="youtube",
-                project_root=PROJECT_ROOT,
+                project_root=root,
                 recorded_at=datetime.now(timezone.utc).isoformat(),
             )
 
     def test_runner_resolves_the_closed_profile_only_inside_the_process(self) -> None:
+        from video2pdf_workflow_kernel import source_live_smoke
         from video2pdf_workflow_kernel.errors import ContractError
         from video2pdf_workflow_kernel.source_live_smoke import (
             SourceLiveSmokeExecution,
             run_source_live_smoke,
         )
 
-        root = new_test_root("profile")
-        case_path = root / "case.json"
-        write_json(case_path, case_value("youtube"))
+        root = new_case_dir(self.id(), label="profile")
+        case_path = (
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/providers/youtube/live-smoke-case.json"
+        )
         run_path, manifest_path = current_run(root, "youtube")
         observed_cookie_paths: list[Path] = []
+        production_report_builder = source_live_smoke.build_smoke_report
 
         def execute(case, credential, work_root, project_root, recorded_at):
             observed_cookie_paths.append(credential.localized_cookie_file)
@@ -1659,32 +1687,66 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 runtime_policy_sha256=HASH_A,
             )
 
-        report = run_source_live_smoke(
-            spec_path=case_path,
-            credential_profile="youtube-project-cookie",
-            work_root=root / "work",
-            project_root=PROJECT_ROOT,
-            executor=execute,
-            clock=lambda: datetime.fromisoformat("2026-07-18T12:00:00+08:00"),
-        )
+        def external_work_root_target(path: Path, project_root: Path) -> Path:
+            self.assertEqual(path, root / "work")
+            self.assertEqual(project_root.resolve(), PROJECT_ROOT.resolve())
+            return path.resolve()
 
-        self.assertEqual(len(observed_cookie_paths), 1)
-        cookie_path = observed_cookie_paths[0]
-        self.assertEqual(cookie_path.name, "www.youtube.com_cookies.txt")
-        self.assertNotIn(str(cookie_path), json.dumps(report, ensure_ascii=False))
-        with self.assertRaisesRegex(ContractError, "another platform"):
-            run_source_live_smoke(
+        def external_report_builder(
+            execution,
+            *,
+            expected_platform,
+            project_root,
+            recorded_at,
+        ):
+            self.assertEqual(project_root.resolve(), PROJECT_ROOT.resolve())
+            return production_report_builder(
+                execution,
+                expected_platform=expected_platform,
+                project_root=root,
+                recorded_at=recorded_at,
+            )
+
+        with (
+            mock.patch.object(
+                source_live_smoke,
+                "_work_root_target",
+                side_effect=external_work_root_target,
+            ),
+            mock.patch.object(
+                source_live_smoke,
+                "build_smoke_report",
+                side_effect=external_report_builder,
+            ),
+        ):
+            report = run_source_live_smoke(
                 spec_path=case_path,
-                credential_profile="bilibili-project-cookie",
+                credential_profile="youtube-project-cookie",
                 work_root=root / "work",
                 project_root=PROJECT_ROOT,
                 executor=execute,
+                clock=lambda: datetime.fromisoformat(
+                    "2026-07-18T12:00:00+08:00"
+                ),
             )
+
+            self.assertEqual(len(observed_cookie_paths), 1)
+            cookie_path = observed_cookie_paths[0]
+            self.assertEqual(cookie_path.name, "www.youtube.com_cookies.txt")
+            self.assertNotIn(str(cookie_path), json.dumps(report, ensure_ascii=False))
+            with self.assertRaisesRegex(ContractError, "another platform"):
+                run_source_live_smoke(
+                    spec_path=case_path,
+                    credential_profile="bilibili-project-cookie",
+                    work_root=root / "work",
+                    project_root=PROJECT_ROOT,
+                    executor=execute,
+                )
 
     def test_cli_emits_raw_closed_report_and_masks_unexpected_failure(self) -> None:
         from video2pdf_workflow_kernel import cli
 
-        root = new_test_root("cli")
+        root = new_case_dir(self.id(), label="cli")
         case_path = root / "case.json"
         write_json(case_path, case_value())
         report = {

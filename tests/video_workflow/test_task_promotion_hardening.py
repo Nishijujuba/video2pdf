@@ -14,6 +14,10 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import (
+    module_test_root,
+    new_workflow_workspace,
+)
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -46,7 +50,7 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 PYTHON = Path(r"D:\Project\video2pdf\kimi\.venv\Scripts\python.exe")
 LAUNCHER = PROJECT_ROOT / "scripts/video_workflow.py"
 FIXTURE = PROJECT_ROOT / "tests/video_workflow/fixtures/source-ready-tracer"
-TEST_RUNS = PROJECT_ROOT / "待删除/kernel-test-runs"
+TEST_RUNS = module_test_root(PROJECT_ROOT)
 TASK_START = "2026-07-15T01:02:03+08:00"
 
 
@@ -60,12 +64,10 @@ class Slice2Harness:
     run_dir: Path
 
     def initialize(self, label: str) -> None:
-        # Keep the harness identity compact so the fixture itself does not
-        # consume the workflow's deliberately strict 240 UTF-16-unit budget.
-        identity = uuid.uuid4().hex[:8]
-        root = TEST_RUNS / f"s2-{identity}"
-        self.workspace = root / "workspace"
-        self.workspace.mkdir(parents=True)
+        self.workspace = new_workflow_workspace(
+            self.id(),
+            label=f"slice2-{label}",
+        )
         self.kernel = VideoWorkflowKernel(
             self.workspace,
             resource_provider_verifiers={
@@ -76,7 +78,7 @@ class Slice2Harness:
         self.run_dir = self.kernel.trace_source_ready(
             fixture=FIXTURE,
             task_start=TASK_START,
-            request_id=f"s2-{identity}",
+            request_id=f"s2-{uuid.uuid4().hex[:8]}",
         ).run_dir
 
     def prepare(self, key: str = "source-acquisition-decision", **kwargs):
@@ -351,9 +353,7 @@ class TaskPriorGenerationPreservationTests(unittest.TestCase, Slice2Harness):
 
     def _move_preservation_aside(self, preservation: Path, label: str) -> Path:
         quarantine = (
-            PROJECT_ROOT
-            / "待删除/preservation-regression-tamper"
-            / f"{uuid.uuid4().hex}-{label}-{preservation.name}"
+            TEST_RUNS / f"q-{uuid.uuid4().hex[:8]}-{preservation.name}"
         )
         quarantine.parent.mkdir(parents=True, exist_ok=True)
         preservation.replace(quarantine)
@@ -723,11 +723,7 @@ class TaskFailClosedTests(unittest.TestCase, Slice2Harness):
         prepared = self.prepare("hardlinked-required-output")
         claimed = self.claim(prepared)
         patch_path = self.patch(prepared, claimed)
-        mirror_root = (
-            PROJECT_ROOT
-            / "待删除/task-attempt-hardlinks"
-            / uuid.uuid4().hex
-        )
+        mirror_root = TEST_RUNS / f"hl-{uuid.uuid4().hex[:8]}"
         mirror_root.mkdir(parents=True, exist_ok=False)
         os.link(patch_path, mirror_root / patch_path.name)
 

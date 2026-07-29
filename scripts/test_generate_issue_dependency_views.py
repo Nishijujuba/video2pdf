@@ -3,7 +3,8 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from uuid import uuid4
+
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 def load_script():
@@ -19,7 +20,10 @@ def load_script():
 class IssueDependencyViewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.script = load_script()
-        self.root = Path.cwd() / "待删除" / "issue-dependency-view-tests" / uuid4().hex
+        self.root = new_fixture_dir(
+            "issue-dependency-view-tests",
+            expected_suite="project-scripts",
+        )
         self.docs_issues = self.root / "docs" / "issues"
         self.feature_dir = self.docs_issues / "sample-feature"
         self.feature_dir.mkdir(parents=True)

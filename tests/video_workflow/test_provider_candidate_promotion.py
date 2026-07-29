@@ -11,6 +11,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from tests.video_workflow._test_run import module_test_root
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -32,7 +33,7 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 TASK_START = "2026-07-18T04:01:00Z"
-TEST_ROOT = PROJECT_ROOT / "待删除" / "pcp"
+TEST_ROOT = module_test_root(PROJECT_ROOT)
 
 
 def trusted_provider_verifier(**identity: object) -> str:
@@ -343,10 +344,7 @@ class ProviderCandidatePromotionTests(unittest.TestCase):
     @staticmethod
     def _quarantine(path: Path, label: str) -> Path:
         quarantine = (
-            PROJECT_ROOT
-            / "待删除/pcp-quarantine"
-            / f"{label}-{uuid.uuid4().hex}"
-            / path.name
+            TEST_ROOT / f"q-{uuid.uuid4().hex[:8]}" / path.name
         )
         quarantine.parent.mkdir(parents=True, exist_ok=True)
         path.replace(quarantine)
@@ -411,11 +409,7 @@ class ProviderCandidatePromotionTests(unittest.TestCase):
         claim = self._claim("hardlinked-candidate")
         self._stage(claim, "hardlinked")
         candidate = claim.attempt_dir / "o/candidates/media/video.mp4"
-        mirror = (
-            PROJECT_ROOT
-            / "待删除/provider-candidate-hardlinks"
-            / f"{uuid.uuid4().hex}.mp4"
-        )
+        mirror = TEST_ROOT / f"hl-{uuid.uuid4().hex[:8]}.mp4"
         mirror.parent.mkdir(parents=True, exist_ok=True)
         os.link(candidate, mirror)
         self._release(claim)

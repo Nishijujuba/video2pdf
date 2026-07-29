@@ -1,0 +1,20 @@
+{
+  "schema_name": "video2pdf.test-local-write-exceptions",
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "suite_id": "video-workflow",
+      "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+      "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_fault_markers_use_generic_command_bindings",
+      "path_prefix": "workspace/待删除/slice4-fault-tests",
+      "reason": "Path-boundary fixture must remain repository-relative for manifest validation."
+    },
+    {
+      "suite_id": "video-workflow",
+      "source_path": "tests/video_workflow/test_issue7_exit_evidence.py",
+      "test_id": "test_issue7_exit_evidence.Slice4ExitEvidenceTests.test_slice4_collector_binds_report_to_validated_source_manifest",
+      "path_prefix": "workspace/待删除/slice4-source-manifest-tests",
+      "reason": "Collector contract requires a repository-relative source manifest path."
+    }
+  ]
+}

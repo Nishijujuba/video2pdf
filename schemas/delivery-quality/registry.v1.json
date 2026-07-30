@@ -1,0 +1,77 @@
+{
+  "schema_name": "delivery-quality-contract-registry",
+  "schema_version": "1.0.0",
+  "authority": "target_only",
+  "contracts": [
+    {
+      "schema_name": "delivery-quality-rule-catalog",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-rule-catalog.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-rule-catalog.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/rule-catalog.v1.json",
+      "canonical_sha256": "b25dd274bf2072f75db1f26f9e26892a2e2718de70a358804937e773601f455f",
+      "positive_example": "delivery-quality/v1/rule-catalog.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/rule-catalog.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-language-profiles",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-language-profiles.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-language-profiles.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/language-profiles.v1.json",
+      "canonical_sha256": "f717d7323a6af54fd4eee0e4755dfd1dc509d6ce0dc8016437d269ef45be0236",
+      "positive_example": "delivery-quality/v1/language-profiles.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/language-profiles.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-role-projections",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-role-projections.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-role-projections.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/role-projections.v1.json",
+      "canonical_sha256": "1c0f7b102c930656fb60fbc25f867bf87187d88566ca25a460c141ebddb6841b",
+      "positive_example": "delivery-quality/v1/role-projections.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/role-projections.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-waiver-ledger",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-waiver-ledger.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-waiver-ledger.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/waiver-ledger.v1.json",
+      "canonical_sha256": "615c2d4f8d7d8fe6776a12267b4c80852a4999b9932c5660cfae2a803a34f09f",
+      "positive_example": "delivery-quality/v1/waiver-ledger.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/waiver-ledger.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-migration-ledger",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-migration-ledger.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-migration-ledger.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/migration-ledger.v1.json",
+      "canonical_sha256": "f1e230f532aa7c2bae78fb887610c4e2c292df303fda634b64eaa47bac2e3355",
+      "positive_example": "delivery-quality/v1/migration-ledger.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/migration-ledger.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-conformance-corpus",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-conformance-corpus.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-conformance-corpus.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/conformance-corpus.v1.json",
+      "canonical_sha256": "111d861664ea16d1d17fcc6efc407be60dc068d5b51fa3470c920a9675ab82db",
+      "positive_example": "delivery-quality/v1/conformance-corpus.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/conformance-corpus.invalid.json"
+    },
+    {
+      "schema_name": "delivery-quality-conformance-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/conformance-report.example.v1.json",
+      "canonical_sha256": "2b5a5553a9b974d6de976b247a942c875ed3e5455cae84a498641dda722dfe82",
+      "positive_example": "delivery-quality/v1/conformance-report.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/conformance-report.invalid.json"
+    }
+  ]
+}

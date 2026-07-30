@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-rule-catalog.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "authority", "catalog_id", "catalog_version", "evaluation_policy", "language_profile_registry", "rules"],
+  "properties": {
+    "schema_name": {"const": "delivery-quality-rule-catalog"},
+    "schema_version": {"const": "1.0.0"},
+    "authority": {"const": "target_only"},
+    "catalog_id": {"type": "string", "pattern": "^[a-z][a-z0-9.-]+$"},
+    "catalog_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "evaluation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocking_only", "fail_fast", "report_all_failures"],
+      "properties": {
+        "blocking_only": {"const": true},
+        "fail_fast": {"const": false},
+        "report_all_failures": {"const": true}
+      }
+    },
+    "language_profile_registry": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profile_id", "profile_semantic_sha256"],
+        "properties": {
+          "profile_id": {"$ref": "#/$defs/identity"},
+          "profile_semantic_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/rule"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identity": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"},
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "semantic_sha256", "scope", "requirement", "violations", "exceptions", "language_profiles", "evidence_requirements"],
+      "properties": {
+        "rule_id": {"$ref": "#/$defs/identity"},
+        "semantic_sha256": {"$ref": "#/$defs/sha256"},
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact_kinds", "object_kinds", "reader_facing_regions", "trigger_condition", "excluded_contexts"],
+          "properties": {
+            "artifact_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+            "object_kinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+            "reader_facing_regions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+            "trigger_condition": {"type": ["string", "null"], "minLength": 1},
+            "excluded_contexts": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "requirement": {"type": "string", "minLength": 1},
+        "violations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["violation_id", "observable_condition"],
+            "properties": {
+              "violation_id": {"$ref": "#/$defs/identity"},
+              "observable_condition": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["exception_id", "condition", "applies_to_violation_ids", "required_evidence"],
+            "properties": {
+              "exception_id": {"$ref": "#/$defs/identity"},
+              "condition": {"type": "string", "minLength": 1},
+              "applies_to_violation_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+              "required_evidence": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "language_profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+        "evidence_requirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coverage_mode", "allowed_locator_types", "pass_evidence", "failure_evidence"],
+          "properties": {
+            "coverage_mode": {"enum": ["full_artifact", "all_applicable_items", "all_rendered_pages"]},
+            "allowed_locator_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["text_span", "semantic_region", "page_region", "inventory_item"]}},
+            "pass_evidence": {"type": "string", "minLength": 1},
+            "failure_evidence": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

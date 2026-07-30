@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "report_id", "authority", "implementation", "bindings", "semantic_results", "mechanical_results", "failures", "overall_decision"],
+  "properties": {
+    "schema_name": {"const": "delivery-quality-conformance-report"},
+    "schema_version": {"const": "1.0.0"},
+    "report_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+    "authority": {"const": "implementation_qualification_only"},
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["track", "activation_status", "adapter_id", "commit"],
+      "properties": {
+        "track": {"enum": ["kernel", "legacy"]},
+        "activation_status": {"const": "target_only"},
+        "adapter_id": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog_sha256", "projections_sha256", "corpus_sha256"],
+      "properties": {
+        "catalog_sha256": {"$ref": "#/$defs/sha256"},
+        "projections_sha256": {"$ref": "#/$defs/sha256"},
+        "corpus_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "semantic_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "profile_id", "target_rule_id", "entry_point", "projection_id", "task_projection_sha256", "attempts", "conforms", "semantic_variance"],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "profile_id": {"type": "string", "minLength": 1},
+          "target_rule_id": {"type": "string", "minLength": 1},
+          "entry_point": {"const": "semantic-reviewer-task-entry"},
+          "projection_id": {"type": "string", "minLength": 1},
+          "task_projection_sha256": {"$ref": "#/$defs/sha256"},
+          "attempts": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["context_id", "provider", "model_revision", "sampling", "decision", "violation_id", "exception_id", "evidence_locator", "rationale"],
+              "properties": {
+                "context_id": {"type": "string", "minLength": 1},
+                "provider": {"type": "string", "minLength": 1},
+                "model_revision": {"type": "string", "minLength": 1},
+                "sampling": {"type": "string", "minLength": 1},
+                "decision": {"enum": ["pass", "fail", "pass_with_exception"]},
+                "violation_id": {"type": ["string", "null"]},
+                "exception_id": {"type": ["string", "null"]},
+                "evidence_locator": {"type": "string", "minLength": 1},
+                "rationale": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "conforms": {"type": "boolean"},
+          "semantic_variance": {"type": "boolean"}
+        }
+      }
+    },
+    "mechanical_results": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_id", "entry_point", "expected", "actual", "conforms"],
+        "properties": {
+          "fixture_id": {"type": "string", "minLength": 1},
+          "entry_point": {"type": "string", "minLength": 1},
+          "expected": {"enum": ["pass", "fail_closed"]},
+          "actual": {"enum": ["pass", "fail_closed", "unexpected_error"]},
+          "conforms": {"type": "boolean"}
+        }
+      }
+    },
+    "failures": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "overall_decision": {"enum": ["pass", "fail"]}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

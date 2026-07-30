@@ -1,0 +1,197 @@
+{
+  "schema_name": "delivery-quality-conformance-corpus",
+  "schema_version": "1.0.0",
+  "corpus_id": "delivery-quality-minimum",
+  "corpus_version": "1.0.0",
+  "applicable_language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+  "case_templates": [
+    {
+      "template_id": "predicate-object-violation",
+      "pair_kind": "predicate_object_fit",
+      "variant": "violation",
+      "domain": "software reliability",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.predicate_object_mismatch", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "该重试策略读取了系统的可靠性。",
+        "en": "The retry policy reads the system's reliability.",
+        "zh-en-bilingual": "该重试策略会“读取可靠性”（reads reliability）。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "The predicate changes only from an applicable operational effect to an inapplicable act."
+    },
+    {
+      "template_id": "predicate-object-compliant",
+      "pair_kind": "predicate_object_fit",
+      "variant": "compliant",
+      "domain": "software reliability",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass", "violation_id": null, "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "该重试策略通过恢复瞬时失败来提高系统可靠性。",
+        "en": "The retry policy improves system reliability by recovering transient failures.",
+        "zh-en-bilingual": "该重试策略通过恢复瞬时失败来提高可靠性（improves reliability）。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "The predicate applies to the subject and names the operational mechanism."
+    },
+    {
+      "template_id": "semantic-domain-violation",
+      "pair_kind": "semantic_domain_drift",
+      "variant": "violation",
+      "domain": "clinical research",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.semantic_domain_drift", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "统计显著性证明了这种治疗对每位患者都有临床意义。",
+        "en": "Statistical significance proves that the treatment is clinically meaningful for every patient.",
+        "zh-en-bilingual": "统计显著性（statistical significance）证明每位患者都获得临床获益。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "The conclusion silently moves from population-level statistical evidence to universal clinical benefit."
+    },
+    {
+      "template_id": "semantic-domain-compliant",
+      "pair_kind": "semantic_domain_drift",
+      "variant": "compliant",
+      "domain": "clinical research",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass", "violation_id": null, "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "统计显著性说明组间差异不太可能由抽样波动解释；临床意义仍需结合效应量和患者情境判断。",
+        "en": "Statistical significance makes sampling variation a less plausible explanation for the group difference; clinical importance still depends on effect size and patient context.",
+        "zh-en-bilingual": "统计显著性（statistical significance）降低了抽样波动这一解释的可信度；临床意义仍取决于效应量（effect size）与患者情境。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "Statistical and clinical domains remain explicit and separately bounded."
+    },
+    {
+      "template_id": "lifecycle-stage-violation",
+      "pair_kind": "lifecycle_stage_confusion",
+      "variant": "violation",
+      "domain": "machine learning",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.lifecycle_stage_confusion", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "训练损失下降证明模型在生产环境中保持准确。",
+        "en": "Lower training loss proves that the model remains accurate in production.",
+        "zh-en-bilingual": "训练损失（training loss）下降证明模型上线后持续准确。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "Training-stage evidence is used as production-stage authority."
+    },
+    {
+      "template_id": "lifecycle-stage-compliant",
+      "pair_kind": "lifecycle_stage_confusion",
+      "variant": "compliant",
+      "domain": "machine learning",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass", "violation_id": null, "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "训练损失下降只说明优化过程拟合了训练数据；生产准确性需要独立的上线评测与漂移监控。",
+        "en": "Lower training loss shows optimization fit to the training data; production accuracy requires separate deployment evaluation and drift monitoring.",
+        "zh-en-bilingual": "训练损失（training loss）下降只说明对训练数据的拟合；生产准确性需要上线评测与漂移监控（drift monitoring）。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "Training and production stages have separate evidence boundaries."
+    },
+    {
+      "template_id": "modifier-dimension-violation",
+      "pair_kind": "missing_modifier_dimensions",
+      "variant": "violation",
+      "domain": "organizational governance",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.modifier_dimension_missing", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "新审批制度让决策快了百分之三十。",
+        "en": "The new approval policy made decisions thirty percent faster.",
+        "zh-en-bilingual": "新审批制度让决策速度提升 30%（thirty percent faster）。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "The comparison omits the measured interval, case class, and baseline."
+    },
+    {
+      "template_id": "modifier-dimension-compliant",
+      "pair_kind": "missing_modifier_dimensions",
+      "variant": "compliant",
+      "domain": "organizational governance",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass", "violation_id": null, "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "在低风险采购申请中，新制度把提交到首次决定的中位时长从十天降到七天。",
+        "en": "For low-risk procurement requests, the policy reduced median time from submission to first decision from ten days to seven.",
+        "zh-en-bilingual": "对于低风险采购申请，新制度把提交到首次决定的中位时长（median time）从 10 天降到 7 天。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "Population, interval, statistic, baseline, and comparison value are explicit."
+    },
+    {
+      "template_id": "modal-strength-violation",
+      "pair_kind": "modal_strength_error",
+      "variant": "violation",
+      "domain": "education",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.modal_strength_unsupported", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "一次小规模课堂试验表明，所有学校都必须采用这种教学法。",
+        "en": "One small classroom trial shows that every school must adopt this method.",
+        "zh-en-bilingual": "一次小规模课堂试验表明，所有学校都必须采用该方法（must adopt）。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "A bounded exploratory result is converted into a universal obligation."
+    },
+    {
+      "template_id": "modal-strength-compliant",
+      "pair_kind": "modal_strength_error",
+      "variant": "compliant",
+      "domain": "education",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass", "violation_id": null, "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "这次小规模课堂试验支持在类似班级继续评估该教学法，尚不足以形成普遍采用要求。",
+        "en": "The small classroom trial supports further evaluation in similar classes and does not establish a universal adoption requirement.",
+        "zh-en-bilingual": "该小规模课堂试验支持在类似班级继续评估（supports further evaluation），尚不足以要求普遍采用。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "The modal strength matches the bounded evidence and states the limit."
+    },
+    {
+      "template_id": "exception-boundary-valid",
+      "pair_kind": "exception_boundary",
+      "variant": "valid_exception",
+      "domain": "source quotation",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "pass_with_exception", "violation_id": null, "exception_id": "argument_chain_integrity.attributed_source_quotation"},
+      "inputs_by_profile": {
+        "zh-hans": "原讲者说：“训练损失证明生产准确性。”这里保留原话，是为了分析其把训练阶段与生产阶段混同的问题。",
+        "en": "The speaker says, “Training loss proves production accuracy.” The exact wording is preserved to analyze its confusion of training and production stages.",
+        "zh-en-bilingual": "原讲者说：“Training loss proves production accuracy.” 这里保留英文原话，以分析训练阶段与生产阶段的混同。"
+      },
+      "evidence_locator": "sentence:1-2",
+      "provenance_note": "The exact quotation, attribution, and critical analysis satisfy the registered exception."
+    },
+    {
+      "template_id": "exception-boundary-rejected",
+      "pair_kind": "exception_boundary",
+      "variant": "rejected_exception",
+      "domain": "source quotation",
+      "target_rule_id": "argument_chain_integrity",
+      "expected": {"decision": "fail", "violation_id": "argument_chain_integrity.lifecycle_stage_confusion", "exception_id": null},
+      "inputs_by_profile": {
+        "zh-hans": "训练损失证明生产准确性。原讲者也说过类似的话。",
+        "en": "Training loss proves production accuracy. The speaker said something similar.",
+        "zh-en-bilingual": "训练损失证明生产准确性（training loss proves production accuracy），原讲者也说过类似的话。"
+      },
+      "evidence_locator": "sentence:1",
+      "provenance_note": "A vague attribution cannot broaden the exact-quotation exception or transfer the claim to the source."
+    }
+  ],
+  "mechanical_fixtures": [
+    {"fixture_id": "projection-identity-valid", "capability": "projection_identity", "expected": "pass", "mutation": null},
+    {"fixture_id": "projection-identity-rewrite", "capability": "projection_identity", "expected": "fail_closed", "mutation": "Rewrite one requirement while retaining the registered rule fingerprint."},
+    {"fixture_id": "reviewer-ownership-valid", "capability": "reviewer_ownership", "expected": "pass", "mutation": null},
+    {"fixture_id": "reviewer-ownership-missing", "capability": "reviewer_ownership", "expected": "fail_closed", "mutation": "Remove one rule from every evaluation projection."},
+    {"fixture_id": "closed-contract-valid", "capability": "closed_contract", "expected": "pass", "mutation": null},
+    {"fixture_id": "closed-contract-unregistered-violation", "capability": "closed_contract", "expected": "fail_closed", "mutation": "Submit an unregistered violation identity."}
+  ]
+}

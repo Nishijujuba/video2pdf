@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-waiver-ledger.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "ledger_version", "waivers"],
+  "properties": {
+    "schema_name": {"const": "delivery-quality-waiver-ledger"},
+    "schema_version": {"const": "1.0.0"},
+    "ledger_version": {"const": "1.0.0"},
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["waiver_id", "rule_id", "violation_ids", "scope_binding", "approved_by", "approved_at", "expires_at", "rationale"],
+        "properties": {
+          "waiver_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"},
+          "rule_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"},
+          "violation_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"}},
+          "scope_binding": {"type": "string", "minLength": 1},
+          "approved_by": {"type": "string", "minLength": 1},
+          "approved_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "rationale": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

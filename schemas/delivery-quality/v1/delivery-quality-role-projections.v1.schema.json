@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-role-projections.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "projection_version", "source_catalog_sha256", "projections"],
+  "properties": {
+    "schema_name": {"const": "delivery-quality-role-projections"},
+    "schema_version": {"const": "1.0.0"},
+    "projection_version": {"const": "1.0.0"},
+    "source_catalog_sha256": {"$ref": "#/$defs/sha256"},
+    "projections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["projection_id", "projection_kind", "consumer_role", "rules", "generated_prompt"],
+        "properties": {
+          "projection_id": {"$ref": "#/$defs/identity"},
+          "projection_kind": {"enum": ["guidance", "evaluation"]},
+          "consumer_role": {"$ref": "#/$defs/identity"},
+          "rules": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule_id", "rule_semantic_sha256", "requirement", "blocking"],
+              "properties": {
+                "rule_id": {"$ref": "#/$defs/identity"},
+                "rule_semantic_sha256": {"$ref": "#/$defs/sha256"},
+                "requirement": {"type": "string", "minLength": 1},
+                "blocking": {"const": true}
+              }
+            }
+          },
+          "generated_prompt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identity": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"}
+  }
+}

@@ -2,6 +2,9 @@
 requirements/video-workflow-runtime.in text eol=lf
 requirements/pylock.video-workflow-runtime.toml text eol=lf
 prompts/video-workflow/** text eol=lf
+prompts/delivery-quality/** text eol=lf
+delivery-quality/** text eol=lf
+schemas/delivery-quality/** text eol=lf
 schemas/exit-evidence-manifest.v2.schema.json text eol=lf
 schemas/video-workflow/** text eol=lf
 scripts/collect_slice1_exit_evidence.py text eol=lf
@@ -19,6 +22,7 @@ tests/video_workflow/test_issue5_review_repairs.py text eol=lf
 tests/video_workflow/test_source_ready_tracer.py text eol=lf
 tests/video_workflow/test_task_promotion_hardening.py text eol=lf
 tests/video_workflow/fixtures/contracts/** text eol=lf
+tests/video_workflow/fixtures/delivery-quality/** text eol=lf
 tests/video_workflow/fixtures/exit_evidence_manifest.v2.*.json text eol=lf
 tests/video_workflow/fixtures/source-ready-tracer/** -text
 tests/video_workflow/fixtures/providers/** text eol=lf

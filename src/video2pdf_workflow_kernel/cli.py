@@ -8,6 +8,7 @@ from typing import Any
 
 from .adapters import FixturePlatformAdapter
 from .contracts import ContractRegistry
+from .delivery_quality import DeliveryQualityRegistry
 from .control_store import ControlStore
 from .control_store_recovery import ControlStoreRecovery
 from .errors import CliUsageError, ControlStoreUnavailable, KernelError
@@ -37,6 +38,28 @@ def _parser() -> argparse.ArgumentParser:
 
     contracts = commands.add_parser("contracts-check")
     contracts.add_argument("--registry", type=Path)
+
+    delivery_quality_contracts = commands.add_parser(
+        "delivery-quality-contracts-check"
+    )
+    delivery_quality_contracts.add_argument("--registry", type=Path)
+
+    delivery_quality_conformance = commands.add_parser(
+        "delivery-quality-conformance"
+    )
+    delivery_quality_conformance.add_argument(
+        "--semantic-results", required=True, type=Path
+    )
+    delivery_quality_conformance.add_argument("--output", required=True, type=Path)
+    delivery_quality_conformance.add_argument(
+        "--implementation-commit", required=True
+    )
+    delivery_quality_conformance.add_argument(
+        "--track", choices=("kernel", "legacy"), default="kernel"
+    )
+    delivery_quality_conformance.add_argument(
+        "--adapter-id", default="recorded-reviewer-fixture"
+    )
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -424,6 +447,41 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command == "contracts-check":
         registry = ContractRegistry(project_root, args.registry)
         return _ok(command, "contracts_valid", registry.check(), str(registry.registry_path))
+    if command == "delivery-quality-contracts-check":
+        registry = DeliveryQualityRegistry(project_root, args.registry)
+        return _ok(
+            command,
+            "delivery_quality_contracts_valid",
+            registry.check(),
+            str(registry.registry_path),
+        )
+    if command == "delivery-quality-conformance":
+        registry = DeliveryQualityRegistry(project_root)
+        report = registry.conformance(
+            semantic_results_path=args.semantic_results,
+            output_path=args.output,
+            implementation_commit=args.implementation_commit,
+            track=args.track,
+            adapter_id=args.adapter_id,
+        )
+        return _ok(
+            command,
+            "delivery_quality_conformance_passed",
+            {
+                "report_id": report["report_id"],
+                "semantic_case_count": len(report["semantic_results"]),
+                "semantic_attempt_count": sum(
+                    len(item["attempts"]) for item in report["semantic_results"]
+                ),
+                "mechanical_fixture_count": len(report["mechanical_results"]),
+                "overall_decision": report["overall_decision"],
+                "authority": report["authority"],
+                "activation_status": report["implementation"][
+                    "activation_status"
+                ],
+            },
+            str(args.output.resolve()),
+        )
     if command == "control-store-check":
         contracts = ContractRegistry(project_root)
         contracts.check()

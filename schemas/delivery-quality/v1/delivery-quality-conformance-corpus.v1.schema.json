@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-conformance-corpus.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "corpus_id", "corpus_version", "applicable_language_profiles", "case_templates", "mechanical_fixtures"],
+  "properties": {
+    "schema_name": {"const": "delivery-quality-conformance-corpus"},
+    "schema_version": {"const": "1.0.0"},
+    "corpus_id": {"const": "delivery-quality-minimum"},
+    "corpus_version": {"const": "1.0.0"},
+    "applicable_language_profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identity"}},
+    "case_templates": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["template_id", "pair_kind", "variant", "domain", "target_rule_id", "expected", "inputs_by_profile", "evidence_locator", "provenance_note"],
+        "properties": {
+          "template_id": {"$ref": "#/$defs/identity"},
+          "pair_kind": {"enum": ["predicate_object_fit", "semantic_domain_drift", "lifecycle_stage_confusion", "missing_modifier_dimensions", "modal_strength_error", "exception_boundary"]},
+          "variant": {"enum": ["violation", "compliant", "valid_exception", "rejected_exception"]},
+          "domain": {"type": "string", "minLength": 1},
+          "target_rule_id": {"$ref": "#/$defs/identity"},
+          "expected": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision", "violation_id", "exception_id"],
+            "properties": {
+              "decision": {"enum": ["pass", "fail", "pass_with_exception"]},
+              "violation_id": {"type": ["string", "null"]},
+              "exception_id": {"type": ["string", "null"]}
+            }
+          },
+          "inputs_by_profile": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {"type": "string", "minLength": 1}
+          },
+          "evidence_locator": {"type": "string", "minLength": 1},
+          "provenance_note": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "mechanical_fixtures": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_id", "capability", "expected", "mutation"],
+        "properties": {
+          "fixture_id": {"$ref": "#/$defs/identity"},
+          "capability": {"enum": ["projection_identity", "reviewer_ownership", "closed_contract"]},
+          "expected": {"enum": ["pass", "fail_closed"]},
+          "mutation": {"type": ["string", "null"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identity": {"type": "string", "pattern": "^[a-z][a-z0-9._-]+$"}
+  }
+}

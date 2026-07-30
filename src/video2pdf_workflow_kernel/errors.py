@@ -17,6 +17,11 @@ class ContractError(KernelError):
     exit_code = 20
 
 
+class DeliveryQualityConformanceFailed(KernelError):
+    classification = "delivery_quality_conformance_failed"
+    exit_code = 30
+
+
 class UnknownContractVersion(ContractError):
     classification = "unknown_contract_version"
 

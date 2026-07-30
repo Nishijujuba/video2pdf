@@ -16,6 +16,10 @@ The teaching-document specialization of the Pyramid Principle Text Standard. It 
 
 A meaning-based evaluation of whether claims, headings, explanations, and evidence form a valid support hierarchy. It supplies the judgment that mechanical structure checks cannot establish.
 
+## Pyramid Reviewer
+
+An independent read-only semantic actor that owns macro-organization judgments under the selected Pyramid standard, including top-level answer placement, hierarchy, grouping, MECE, section order, title-body alignment, and learner-facing progression. Its findings require structural movement, splitting, merging, regrouping, or reordering when those operations are necessary to restore the support hierarchy.
+
 ## Pyramid Evaluation Target
 
 A caller-supplied text artifact and evaluation context whose reasoning structure is assessed against one Pyramid standard. Its workflow timing and downstream state belong to the calling workflow.

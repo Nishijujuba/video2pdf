@@ -158,6 +158,14 @@ The discriminated identity of the coordination authority allowed to validate and
 
 The immutable semantic prompt produced from registered role guidance and the applicable platform policy for one Subagent Task Envelope.
 
+## Composite Authoring Contract
+
+The workflow-assembled input contract for a Writer task. It binds the fingerprinted Writer Guidance Projection from the Delivery Quality Rule Catalog, the applicable Source-Faithfulness constraints, and the selected Pyramid authoring target while preserving each input's separate semantic authority. The contract grants artifact-production authority and carries no gate judgment authority.
+
+## Reviewer Task Isolation
+
+The execution rule that assigns each Primary Semantic Decision Owner a separate Subagent Task Envelope bound to one current Artifact Generation set, one Evaluation Projection, and one permitted evidence boundary. Each Reviewer commits an independent immutable judgment before peer verdicts become visible. Provider materialization consumes those judgments and performs no semantic reinterpretation.
+
 ## Task Completion Gate
 
 The deterministic validation boundary that decides whether a Task Attempt is eligible for promotion. A passing result leaves canonical state unchanged until promotion commits.
@@ -296,7 +304,7 @@ The read-only Content Assurance Adapter that evaluates terminology, notation, re
 
 ## Source-Faithfulness Reviewer
 
-The read-only Content Assurance Adapter that compares the integrated draft and figure provenance with the Validated Source Package for omissions, unsupported claims, and source drift.
+The read-only Content Assurance Adapter that owns correspondence between the integrated draft, figure provenance, and the Validated Source Package. Its semantic boundary includes material omission, distortion, unsupported claims, attribution, quotation accuracy, timestamp correspondence, and source drift.
 
 ## Content Assurance Checkpoint
 
@@ -314,9 +322,21 @@ The internal deterministic Module that converts a current Content Assurance fail
 
 The validated contract that binds one repair cycle's failures to task capabilities, dependencies, and exact read and write boundaries.
 
+## Conflict-Aware Repair Planning
+
+The rule that repair planning consumes the complete current failure set, permits parallel repair only across disjoint write boundaries, and assigns overlapping or interacting changes to one Integration Repair. A semantic requirement conflict becomes a blocking Contract Gap. Every repair produces the freshness consequences required by its mutation boundary.
+
 ## Repair Capability
 
 A registered class of artifact change with a deterministic ownership boundary for repair planning.
+
+## Content Repair Role
+
+A mutation role that resolves Source-Faithfulness, Writing Quality, or Pyramid findings by changing source claims, reader-facing text, terminology, reasoning connections, or document structure. Its changes create a new Artifact Generation and require fresh evaluation from every invalidated precompile semantic owner.
+
+## Presentation Repair Role
+
+A mutation role that resolves Visual Quality findings through presentation changes proven to preserve the complete Reader-Facing Text Inventory. Any change to reader-facing text, including text inside figures or tables, exceeds this capability and routes to the Content Repair Role.
 
 ## Integration Repair
 

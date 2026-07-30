@@ -140,6 +140,342 @@ def module_assignment(discovery: dict) -> list[dict]:
 
 
 class PromotionReportV2Tests(unittest.TestCase):
+    def make_authority_generator_cli_fixture(
+        self,
+    ) -> tuple[Path, str, list[str]]:
+        repo = new_fixture_dir("authority-generator-cli")
+        fixture_paths = {
+            *PROMOTION_AUTHORITY_SOURCE_PATHS,
+            MIGRATION.as_posix(),
+            AUTHORITY.as_posix(),
+            (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json"
+            ),
+        }
+        for relative in fixture_paths:
+            target = repo / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(PROJECT_ROOT / relative, target)
+        focused_root = repo / "focused"
+        write_json(focused_root / "status.json", {"state": "succeeded"})
+        write_bytes(focused_root / "exit-code.txt", b"0\n")
+        write_json(focused_root / "command.json", {"argv": ["focused"]})
+        write_bytes(focused_root / "stderr.log", b"")
+        profile_root = repo / "profile"
+        write_json(profile_root / "status.json", {"state": "succeeded"})
+        write_bytes(profile_root / "exit-code.txt", b"0\n")
+        write_json(
+            profile_root / "result.json",
+            {
+                "success": True,
+                "control_store_check_classification": {"memo_hits": 0},
+            },
+        )
+        review_root = repo / "待删除" / "review"
+        for axis in ("spec", "standards"):
+            write_bytes(
+                review_root / f"stage95-{axis}-review.md",
+                f"{axis}: PASS\n".encode("utf-8"),
+            )
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Authority Generator Fixture"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "config",
+                "user.email",
+                "authority-generator@example.invalid",
+            ],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "core.autocrlf", "false"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "reviewed implementation"],
+            cwd=repo,
+            check=True,
+        )
+        reviewed_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        arguments = [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            "scripts/generate_project_test_promotion_v2_authority.py",
+            "--focused-run",
+            "focused",
+            "--profile-run",
+            "profile",
+            "--profile-result",
+            "profile/result.json",
+            "--reviewed-implementation-commit",
+            reviewed_commit,
+        ]
+        return repo, reviewed_commit, arguments
+
+    def test_authority_generator_materializes_only_fixed_canonical_artifacts(
+        self,
+    ) -> None:
+        repo, reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+
+        completed = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["mode"], "materialized")
+        self.assertEqual(
+            result["reviewed_implementation_commit"],
+            reviewed_commit,
+        )
+        self.assertEqual(result["evidence_parent_commit"], reviewed_commit)
+        changed = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.splitlines()
+        self.assertEqual(
+            {
+                line[3:].replace("\\", "/")
+                for line in changed
+                if line.strip()
+            },
+            {
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            },
+        )
+
+    def test_authority_generator_verify_rejects_stale_artifacts(self) -> None:
+        repo, reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+
+        completed = subprocess.run(
+            [
+                *arguments,
+                "--execution-evidence-commit",
+                reviewed_commit,
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("authority artifact is stale", completed.stderr)
+
+    def test_authority_generator_materialization_and_verify_are_idempotent(
+        self,
+    ) -> None:
+        repo, reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        first = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        paths = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        first_bytes = {path: path.read_bytes() for path in paths}
+
+        second = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        verified = subprocess.run(
+            [
+                *arguments,
+                "--execution-evidence-commit",
+                reviewed_commit,
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertEqual(json.loads(verified.stdout)["mode"], "verified")
+        self.assertEqual(first_bytes, {path: path.read_bytes() for path in paths})
+
+    def test_authority_generator_rejects_unknown_output_argument(self) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+
+        completed = subprocess.run(
+            [*arguments, "--write", "--output", "unexpected.json"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("unrecognized arguments", completed.stderr)
+        self.assertFalse((repo / "unexpected.json").exists())
+
+    def test_authority_generator_rejects_unsafe_worktree_state(self) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        unexpected = repo / "unexpected.txt"
+        unexpected.write_text("unreviewed state\n", encoding="utf-8")
+
+        completed = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "clean worktree outside exact authority artifacts",
+            completed.stderr,
+        )
+        self.assertIn("unexpected.txt", completed.stderr)
+
+    def test_authority_generator_binds_created_evidence_commit(self) -> None:
+        repo, reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        materialized = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(materialized.returncode, 0, materialized.stderr)
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            ],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "execution evidence"],
+            cwd=repo,
+            check=True,
+        )
+        evidence_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+
+        verified = subprocess.run(
+            [
+                *arguments,
+                "--execution-evidence-commit",
+                evidence_commit,
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        result = json.loads(verified.stdout)
+        self.assertEqual(
+            result["reviewed_implementation_commit"],
+            reviewed_commit,
+        )
+        self.assertEqual(result["execution_evidence_commit"], evidence_commit)
+        forbidden = repo / "scripts" / "after-evidence.py"
+        forbidden.write_text("# forbidden descendant\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "scripts/after-evidence.py"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "forbidden descendant"],
+            cwd=repo,
+            check=True,
+        )
+        rejected = subprocess.run(
+            [
+                *arguments,
+                "--execution-evidence-commit",
+                evidence_commit,
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("contains non-evidence paths", rejected.stderr)
+
     def test_promotion_authority_source_closed_set_is_explicit_and_live(
         self,
     ) -> None:

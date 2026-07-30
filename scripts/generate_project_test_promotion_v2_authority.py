@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Sequence
 
 
@@ -18,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.project_test_results import canonical_json_bytes, sha256_file
 from scripts.project_test_source_provenance import (
     PROMOTION_AUTHORITY_SOURCE_PATHS,
+    PROMOTION_EVIDENCE_ONLY_PATHS,
     SourceProvenanceError,
     committed_source_fingerprints,
     validate_evidence_only_commit_range,
@@ -57,6 +61,12 @@ SAFETY_RELATIVE_PATH = Path(
     "evidence/project-test-runner/optimization-safety-review.v1.json"
 )
 FINAL_ISSUE9_COMMIT = "5b4d76753da68713c8c2c009a77c4fa43b25373c"
+MATERIALIZED_AUTHORITY_PATHS = frozenset(
+    {
+        SUPERSET_AUTHORITY_RELATIVE_PATH.as_posix(),
+        SAFETY_RELATIVE_PATH.as_posix(),
+    }
+)
 
 
 def _load_snapshot(path: Path) -> tuple[dict[str, Any], str]:
@@ -273,6 +283,166 @@ def _safety_artifact(
     }
 
 
+def _git_stdout(repo_root: Path, arguments: Sequence[str]) -> str:
+    completed = subprocess.run(
+        ["git", *arguments],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            "cannot inspect repository state: "
+            + (completed.stderr.strip() or "git command failed")
+        )
+    return completed.stdout
+
+
+def _changed_worktree_paths(repo_root: Path) -> frozenset[str]:
+    raw = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if raw.returncode != 0:
+        raise SystemExit("cannot inspect materialization worktree state")
+    records = raw.stdout.split(b"\0")
+    changed: set[str] = set()
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4:
+            raise SystemExit("materialization worktree status is malformed")
+        status = record[:2]
+        changed.add(os.fsdecode(record[3:]).replace("\\", "/"))
+        if b"R" in status or b"C" in status:
+            if index >= len(records) or not records[index]:
+                raise SystemExit("materialization rename status is malformed")
+            changed.add(os.fsdecode(records[index]).replace("\\", "/"))
+            index += 1
+    return frozenset(changed)
+
+
+def _assert_materialization_boundary(repo_root: Path) -> None:
+    if (
+        not MATERIALIZED_AUTHORITY_PATHS
+        or not MATERIALIZED_AUTHORITY_PATHS.issubset(
+            PROMOTION_EVIDENCE_ONLY_PATHS
+        )
+        or "evidence/project-test-runner/promotion-report.json"
+        in MATERIALIZED_AUTHORITY_PATHS
+    ):
+        raise SystemExit("materialization output allowlist is invalid")
+    unexpected = (
+        _changed_worktree_paths(repo_root) - MATERIALIZED_AUTHORITY_PATHS
+    )
+    if unexpected:
+        raise SystemExit(
+            "materialization requires a clean worktree outside exact authority "
+            "artifacts: " + ", ".join(sorted(unexpected))
+        )
+
+
+def _assert_safe_target(repo_root: Path, relative_path: Path) -> Path:
+    canonical_relative = relative_path.as_posix()
+    if canonical_relative not in MATERIALIZED_AUTHORITY_PATHS:
+        raise SystemExit(
+            f"refusing unexpected materialization path: {canonical_relative}"
+        )
+    target = repo_root / relative_path
+    try:
+        if target.exists() and (
+            target.is_dir()
+            or target.is_symlink()
+            or target.stat(follow_symlinks=False).st_nlink != 1
+        ):
+            raise SystemExit(
+                f"materialization target is not an ordinary private file: "
+                f"{canonical_relative}"
+            )
+        for component in (target.parent, *target.parent.parents):
+            if component == repo_root.parent:
+                break
+            value = component.stat(follow_symlinks=False)
+            if component.is_symlink() or getattr(
+                value,
+                "st_file_attributes",
+                0,
+            ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                raise SystemExit(
+                    "materialization target contains a reparse point: "
+                    f"{canonical_relative}"
+                )
+            if component == repo_root:
+                break
+        if target.parent.resolve(strict=True) != (
+            repo_root / relative_path.parent
+        ).resolve(strict=True):
+            raise SystemExit(
+                f"materialization target escapes repository: "
+                f"{canonical_relative}"
+            )
+    except OSError as error:
+        raise SystemExit(
+            f"materialization target boundary is unproved: {canonical_relative}"
+        ) from error
+    return target
+
+
+def _atomic_replace(destination: Path, content: bytes) -> None:
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    except OSError as error:
+        raise SystemExit(
+            f"cannot atomically materialize authority artifact: {destination}"
+        ) from error
+
+
+def _materialize(
+    repo_root: Path,
+    expected: dict[Path, dict[str, Any]],
+) -> dict[str, str]:
+    _assert_materialization_boundary(repo_root)
+    if {
+        relative_path.as_posix() for relative_path in expected
+    } != MATERIALIZED_AUTHORITY_PATHS:
+        raise SystemExit("materialization did not produce the exact authority set")
+    encoded = {
+        relative_path: canonical_json_bytes(value)
+        for relative_path, value in expected.items()
+    }
+    targets = {
+        relative_path: _assert_safe_target(repo_root, relative_path)
+        for relative_path in encoded
+    }
+    for relative_path in sorted(encoded, key=lambda value: value.as_posix()):
+        target = targets[relative_path]
+        content = encoded[relative_path]
+        if not target.exists() or target.read_bytes() != content:
+            _atomic_replace(target, content)
+    return {
+        relative_path.as_posix(): hashlib.sha256(content).hexdigest()
+        for relative_path, content in encoded.items()
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--discovery", type=Path, default=DEFAULT_DISCOVERY)
@@ -290,16 +460,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--reviewed-implementation-commit")
     parser.add_argument("--execution-evidence-commit")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help=(
+            "atomically materialize the two fixed authority artifacts at the "
+            "parent of a future execution-evidence commit"
+        ),
+    )
     args = parser.parse_args(argv)
     repo_root = REPO_ROOT.resolve(strict=True)
     safety_path = repo_root / SAFETY_RELATIVE_PATH
     existing_safety, _safety_sha256 = _load_snapshot(safety_path)
+    live_head = _git_stdout(repo_root, ["rev-parse", "HEAD"]).strip()
+    if args.write and args.execution_evidence_commit is not None:
+        raise SystemExit(
+            "--write cannot bind --execution-evidence-commit before that "
+            "future evidence commit exists"
+        )
+    if args.write and args.reviewed_implementation_commit is None:
+        raise SystemExit(
+            "--write requires --reviewed-implementation-commit explicitly"
+        )
     reviewed_implementation_commit = (
         args.reviewed_implementation_commit
         or existing_safety.get("reviewed_source_commit")
     )
     execution_evidence_commit = (
-        args.execution_evidence_commit or reviewed_implementation_commit
+        args.execution_evidence_commit or live_head
     )
     if not isinstance(reviewed_implementation_commit, str):
         raise SystemExit("optimization safety reviewed_source_commit is invalid")
@@ -312,14 +500,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except SourceProvenanceError as error:
         raise SystemExit(str(error)) from error
-    live_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout.strip()
     try:
         validate_evidence_only_commit_range(
             repo_root,
@@ -370,6 +550,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             reviewed_implementation_commit,
         ),
     }
+    if args.write:
+        fingerprints = _materialize(repo_root, expected)
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "mode": "materialized",
+                    "artifacts": fingerprints,
+                    "reviewed_implementation_commit": (
+                        reviewed_implementation_commit
+                    ),
+                    "evidence_parent_commit": live_head,
+                    "execution_evidence_commit": None,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     fingerprints: dict[str, str] = {}
     for relative_path, value in expected.items():
         expected_bytes = canonical_json_bytes(value)
@@ -387,7 +585,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dumps(
             {
                 "valid": True,
+                "mode": "verified",
                 "artifacts": fingerprints,
+                "reviewed_implementation_commit": (
+                    reviewed_implementation_commit
+                ),
+                "execution_evidence_commit": execution_evidence_commit,
             },
             sort_keys=True,
         )

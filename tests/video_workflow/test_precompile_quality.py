@@ -49,6 +49,7 @@ def generation_set() -> dict:
         "schema_name": "precompile-artifact-generation-set",
         "schema_version": "1.0.0",
         "generation_set_id": "integrated-draft-7",
+        "producer_ids": ["writer-attempt-7", "figure-attempt-2"],
         "artifacts": [
             {
                 "logical_id": "integrated_main_tex",
@@ -221,8 +222,15 @@ class PrecompileQualityCliTests(unittest.TestCase):
         fail_result_key: str | None = None,
         contract_gap: bool = False,
         fault_point: str | None = None,
+        reviewer_id: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
-        skeleton_path = workspace / "skeletons" / f"{owner}.skeleton.json"
+        skeleton_path = (
+            workspace
+            / "reviewers"
+            / owner
+            / "input"
+            / "review-skeleton.json"
+        )
         skeleton = json.loads(skeleton_path.read_text(encoding="utf-8"))
         results = []
         for required in skeleton["required_results"]:
@@ -251,7 +259,7 @@ class PrecompileQualityCliTests(unittest.TestCase):
             "skeleton_sha256": skeleton["skeleton_sha256"],
             "generation_set_sha256": skeleton["generation_set_sha256"],
             "reviewer": {
-                "reviewer_id": f"reviewer-{owner}",
+                "reviewer_id": reviewer_id or f"reviewer-{owner}",
                 "runtime_sha256": "b" * 64,
                 "independent_from_generation_producers": True,
             },
@@ -326,11 +334,15 @@ class PrecompileQualityCliTests(unittest.TestCase):
         *,
         changed_text: bool = False,
     ) -> tuple[Path, Path]:
+        seal = json.loads(
+            (workspace / "precompile-text-seal.json").read_text(encoding="utf-8")
+        )
+        binding_root = workspace / "seal-bindings" / seal["seal_sha256"]
         generations = json.loads(
-            (workspace / "artifact-generations.json").read_text(encoding="utf-8")
+            (binding_root / "artifact-generations.json").read_text(encoding="utf-8")
         )
         inventory_value = json.loads(
-            (workspace / "reader-facing-text-inventory.json").read_text(
+            (binding_root / "reader-facing-text-inventory.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -341,7 +353,9 @@ class PrecompileQualityCliTests(unittest.TestCase):
         )
         main["generation"] += 1
         main["sha256"] = "c" * 64
-        generations["generation_set_id"] = "integrated-draft-8"
+        generations["generation_set_id"] = (
+            f"integrated-draft-{main['generation']}"
+        )
         generations["generation_set_sha256"] = canonical_sha(
             {
                 key: value
@@ -401,7 +415,9 @@ class PrecompileQualityCliTests(unittest.TestCase):
         self.assertEqual(envelope["data"]["owner_count"], 3)
         skeletons = [
             json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted((workspace / "skeletons").glob("*.json"))
+            for path in sorted(
+                (workspace / "reviewers").glob("*/input/review-skeleton.json")
+            )
         ]
         self.assertEqual(
             {item["owner"] for item in skeletons},
@@ -443,7 +459,7 @@ class PrecompileQualityCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 20)
         self.assertEqual(envelope["classification"], "contract_invalid")
         self.assertIn("raster", envelope["data"]["message"].lower())
-        self.assertFalse((workspace / "skeletons").exists())
+        self.assertFalse((workspace / "reviewers").exists())
 
     def test_independent_complete_patches_materialize_pass_and_create_initial_seal(
         self,
@@ -521,7 +537,11 @@ class PrecompileQualityCliTests(unittest.TestCase):
         owner = "writing-quality-reviewer"
         skeleton = json.loads(
             (
-                workspace / "skeletons" / f"{owner}.skeleton.json"
+                workspace
+                / "reviewers"
+                / owner
+                / "input"
+                / "review-skeleton.json"
             ).read_text(encoding="utf-8")
         )
         patch = {
@@ -555,7 +575,15 @@ class PrecompileQualityCliTests(unittest.TestCase):
         )
         self.assertEqual(rejected.returncode, 20)
         self.assertEqual(envelope["classification"], "contract_invalid")
-        self.assertFalse((workspace / "patches" / f"{owner}.patch.json").exists())
+        self.assertFalse(
+            (
+                workspace
+                / "reviewers"
+                / owner
+                / "output"
+                / "judgment-patch.json"
+            ).exists()
+        )
 
     def test_presentation_only_equivalence_creates_successor_seal_with_lineage(
         self,
@@ -734,6 +762,195 @@ class PrecompileQualityCliTests(unittest.TestCase):
         self.assertFalse(envelope["data"]["semantic_attempt_budget_consumed"])
         self.assertFalse((workspace / "precompile-quality-report.json").exists())
 
+    def test_failed_generation_is_repaired_then_fresh_reviewers_pass_successor(
+        self,
+    ) -> None:
+        workspace, completed, _ = self.prepare_case()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for owner in (
+            "source-faithfulness-reviewer",
+            "writing-quality-reviewer",
+            "pyramid-reviewer",
+        ):
+            committed, _ = self.commit_patch(
+                workspace,
+                owner,
+                fail_result_key=(
+                    "no_meta_writing_content:main.title"
+                    if owner == "writing-quality-reviewer"
+                    else None
+                ),
+            )
+            self.assertEqual(committed.returncode, 0, committed.stderr)
+        failed, _ = run_cli(
+            "delivery-quality-precompile-materialize",
+            "--workspace-root",
+            str(workspace),
+            "--provider-id",
+            "precompile-quality-provider",
+            "--provider-version",
+            "1.0.0",
+            "--materialized-at",
+            "2026-07-30T15:20:00Z",
+        )
+        self.assertEqual(failed.returncode, 0, failed.stderr)
+        failed_report = json.loads(
+            (workspace / "precompile-quality-report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(failed_report["overall_decision"], "fail")
+
+        generations = json.loads(
+            (workspace / "artifact-generations.json").read_text(encoding="utf-8")
+        )
+        unchanged_generation_path = write_json(
+            workspace.parent / "unchanged-generations.json", generations
+        )
+        unchanged_inventory_path = workspace / "reader-facing-text-inventory.json"
+        rejected_repair, rejected_envelope = run_cli(
+            "delivery-quality-precompile-repair-prepare",
+            "--predecessor-workspace-root",
+            str(workspace),
+            "--workspace-root",
+            str(workspace.parent / "rejected-repair-attempt"),
+            "--inventory",
+            str(unchanged_inventory_path),
+            "--artifact-generations",
+            str(unchanged_generation_path),
+            "--semantic-dependencies",
+            str(workspace / "semantic-dependencies.json"),
+            "--repair-attempt-number",
+            "2",
+            "--prepared-at",
+            "2026-07-30T15:25:00Z",
+        )
+        self.assertEqual(rejected_repair.returncode, 20)
+        self.assertEqual(
+            rejected_envelope["classification"], "contract_invalid"
+        )
+        self.assertIn(
+            "advance", rejected_envelope["data"]["message"].lower()
+        )
+        repaired_main = next(
+            item
+            for item in generations["artifacts"]
+            if item["logical_id"] == "integrated_main_tex"
+        )
+        repaired_main["generation"] += 1
+        repaired_main["sha256"] = "c" * 64
+        generations["generation_set_id"] = "integrated-draft-8-repaired"
+        generations["producer_ids"] = ["repair-writer-attempt-8"]
+        generations["generation_set_sha256"] = canonical_sha(
+            {
+                key: value
+                for key, value in generations.items()
+                if key != "generation_set_sha256"
+            }
+        )
+        repaired_inventory = json.loads(
+            (workspace / "reader-facing-text-inventory.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        repaired_inventory["inventory_id"] = "inventory-8-repaired"
+        repaired_inventory["generation_set_sha256"] = generations[
+            "generation_set_sha256"
+        ]
+        for item in repaired_inventory["items"]:
+            if item["source_artifact_logical_id"] == "integrated_main_tex":
+                item["source_generation"] = repaired_main["generation"]
+                item["source_sha256"] = repaired_main["sha256"]
+            item["item_sha256"] = canonical_sha(
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key != "item_sha256"
+                }
+            )
+        repaired_inventory["inventory_sha256"] = canonical_sha(
+            {
+                key: value
+                for key, value in repaired_inventory.items()
+                if key != "inventory_sha256"
+            }
+        )
+        repair_root = workspace.parent / "repair-attempt-2"
+        repaired_generation_path = write_json(
+            workspace.parent / "repaired-generations.json", generations
+        )
+        repaired_inventory_path = write_json(
+            workspace.parent / "repaired-inventory.json", repaired_inventory
+        )
+        prepared, _ = run_cli(
+            "delivery-quality-precompile-repair-prepare",
+            "--predecessor-workspace-root",
+            str(workspace),
+            "--workspace-root",
+            str(repair_root),
+            "--inventory",
+            str(repaired_inventory_path),
+            "--artifact-generations",
+            str(repaired_generation_path),
+            "--semantic-dependencies",
+            str(workspace / "semantic-dependencies.json"),
+            "--repair-attempt-number",
+            "2",
+            "--prepared-at",
+            "2026-07-30T15:30:00Z",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        repair_attempt = json.loads(
+            (repair_root / "repair-attempt.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(repair_attempt["repair_attempt_number"], 2)
+        self.assertEqual(
+            repair_attempt["predecessor_report_sha256"],
+            failed_report["report_sha256"],
+        )
+        self.assertEqual(
+            repair_attempt["advanced_logical_ids"], ["integrated_main_tex"]
+        )
+        for owner in (
+            "source-faithfulness-reviewer",
+            "writing-quality-reviewer",
+            "pyramid-reviewer",
+        ):
+            committed, _ = self.commit_patch(
+                repair_root,
+                owner,
+                reviewer_id=f"repair-reviewer-{owner}",
+            )
+            self.assertEqual(committed.returncode, 0, committed.stderr)
+        passed, _ = run_cli(
+            "delivery-quality-precompile-materialize",
+            "--workspace-root",
+            str(repair_root),
+            "--provider-id",
+            "precompile-quality-provider",
+            "--provider-version",
+            "1.0.0",
+            "--materialized-at",
+            "2026-07-30T15:40:00Z",
+        )
+        self.assertEqual(passed.returncode, 0, passed.stderr)
+        passed_report = json.loads(
+            (repair_root / "precompile-quality-report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(passed_report["overall_decision"], "pass")
+        self.assertNotEqual(
+            passed_report["generation_set_sha256"],
+            failed_report["generation_set_sha256"],
+        )
+        self.assertTrue(
+            set(item["task_id"] for item in failed_report["owner_reports"])
+            .isdisjoint(
+                item["task_id"] for item in passed_report["owner_reports"]
+            )
+        )
+
     def test_semantic_dependency_mutation_invalidates_prepared_reviewer(
         self,
     ) -> None:
@@ -756,6 +973,181 @@ class PrecompileQualityCliTests(unittest.TestCase):
             "source-faithfulness-reviewer",
         )
         self.assertEqual(rejected.returncode, 20)
+        self.assertEqual(envelope["classification"], "contract_invalid")
+        self.assertIn("stale", envelope["data"]["message"].lower())
+
+    def test_reviewer_identity_must_be_distinct_and_outside_generation_producers(
+        self,
+    ) -> None:
+        workspace, completed, _ = self.prepare_case()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        committed, _ = self.commit_patch(
+            workspace,
+            "source-faithfulness-reviewer",
+            reviewer_id="shared-reviewer",
+        )
+        self.assertEqual(committed.returncode, 0, committed.stderr)
+        duplicate, duplicate_envelope = self.commit_patch(
+            workspace,
+            "writing-quality-reviewer",
+            reviewer_id="shared-reviewer",
+        )
+        self.assertEqual(duplicate.returncode, 20)
+        self.assertEqual(
+            duplicate_envelope["classification"], "contract_invalid"
+        )
+        producer, producer_envelope = self.commit_patch(
+            workspace,
+            "pyramid-reviewer",
+            reviewer_id="writer-attempt-7",
+        )
+        self.assertEqual(producer.returncode, 20)
+        self.assertEqual(producer_envelope["classification"], "contract_invalid")
+
+    def test_successor_inputs_mutated_after_equivalence_cannot_be_sealed(
+        self,
+    ) -> None:
+        workspace = self.create_passing_seal()
+        generations_path, inventory_path = self.successor_inputs(workspace)
+        proved, _ = run_cli(
+            "delivery-quality-text-equivalence",
+            "--workspace-root",
+            str(workspace),
+            "--successor-inventory",
+            str(inventory_path),
+            "--successor-artifact-generations",
+            str(generations_path),
+            "--mutation-class",
+            "presentation_only",
+            "--proved-at",
+            "2026-07-30T16:00:00Z",
+        )
+        self.assertEqual(proved.returncode, 0, proved.stderr)
+        successor_path = workspace / "successor" / "artifact-generations.json"
+        generations = json.loads(successor_path.read_text(encoding="utf-8"))
+        generations["artifacts"][0]["sha256"] = "e" * 64
+        generations["generation_set_sha256"] = canonical_sha(
+            {
+                key: value
+                for key, value in generations.items()
+                if key != "generation_set_sha256"
+            }
+        )
+        write_json(successor_path, generations)
+
+        blocked, envelope = run_cli(
+            "delivery-quality-seal",
+            "--workspace-root",
+            str(workspace),
+            "--sealed-at",
+            "2026-07-30T16:01:00Z",
+        )
+        self.assertEqual(blocked.returncode, 20)
+        self.assertEqual(envelope["classification"], "contract_invalid")
+        self.assertIn("successor", envelope["data"]["message"].lower())
+
+    def test_each_successor_advances_from_the_immediate_predecessor_seal(
+        self,
+    ) -> None:
+        workspace = self.create_passing_seal()
+        first_generations, first_inventory = self.successor_inputs(workspace)
+        first_proof, _ = run_cli(
+            "delivery-quality-text-equivalence",
+            "--workspace-root",
+            str(workspace),
+            "--successor-inventory",
+            str(first_inventory),
+            "--successor-artifact-generations",
+            str(first_generations),
+            "--mutation-class",
+            "presentation_only",
+            "--proved-at",
+            "2026-07-30T16:10:00Z",
+        )
+        self.assertEqual(first_proof.returncode, 0, first_proof.stderr)
+        first_seal, _ = run_cli(
+            "delivery-quality-seal",
+            "--workspace-root",
+            str(workspace),
+            "--sealed-at",
+            "2026-07-30T16:11:00Z",
+        )
+        self.assertEqual(first_seal.returncode, 0, first_seal.stderr)
+        first = json.loads(
+            (workspace / "precompile-text-seal.json").read_text(encoding="utf-8")
+        )
+
+        second_generations, second_inventory = self.successor_inputs(workspace)
+        second_proof, _ = run_cli(
+            "delivery-quality-text-equivalence",
+            "--workspace-root",
+            str(workspace),
+            "--successor-inventory",
+            str(second_inventory),
+            "--successor-artifact-generations",
+            str(second_generations),
+            "--mutation-class",
+            "presentation_only",
+            "--proved-at",
+            "2026-07-30T16:20:00Z",
+        )
+        self.assertEqual(second_proof.returncode, 0, second_proof.stderr)
+        second_seal, _ = run_cli(
+            "delivery-quality-seal",
+            "--workspace-root",
+            str(workspace),
+            "--sealed-at",
+            "2026-07-30T16:21:00Z",
+        )
+        self.assertEqual(second_seal.returncode, 0, second_seal.stderr)
+        second = json.loads(
+            (workspace / "precompile-text-seal.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(second["predecessor_seal_sha256"], first["seal_sha256"])
+        self.assertNotEqual(
+            second["generation_set_sha256"], first["generation_set_sha256"]
+        )
+
+    def test_materialized_report_provider_mutation_invalidates_seal(
+        self,
+    ) -> None:
+        workspace, completed, _ = self.prepare_case()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for owner in (
+            "source-faithfulness-reviewer",
+            "writing-quality-reviewer",
+            "pyramid-reviewer",
+        ):
+            committed, _ = self.commit_patch(workspace, owner)
+            self.assertEqual(committed.returncode, 0, committed.stderr)
+        materialized, _ = run_cli(
+            "delivery-quality-precompile-materialize",
+            "--workspace-root",
+            str(workspace),
+            "--provider-id",
+            "precompile-quality-provider",
+            "--provider-version",
+            "1.0.0",
+            "--materialized-at",
+            "2026-07-30T16:30:00Z",
+        )
+        self.assertEqual(materialized.returncode, 0, materialized.stderr)
+        report_path = workspace / "precompile-quality-report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["provider"]["provider_sha256"] = "f" * 64
+        report["report_sha256"] = canonical_sha(
+            {key: value for key, value in report.items() if key != "report_sha256"}
+        )
+        write_json(report_path, report)
+
+        blocked, envelope = run_cli(
+            "delivery-quality-seal",
+            "--workspace-root",
+            str(workspace),
+            "--sealed-at",
+            "2026-07-30T16:31:00Z",
+        )
+        self.assertEqual(blocked.returncode, 20)
         self.assertEqual(envelope["classification"], "contract_invalid")
         self.assertIn("stale", envelope["data"]["message"].lower())
 

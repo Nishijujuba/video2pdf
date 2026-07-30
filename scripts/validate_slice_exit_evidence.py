@@ -76,6 +76,15 @@ from slice7_exit_evidence_contract import (
     RESULTS as SLICE7_RESULTS,
     SLICE_BASE_COMMIT as SLICE7_BASE_COMMIT,
 )
+from slice8_exit_evidence_contract import (
+    COMMANDS as SLICE8_COMMANDS,
+    EVIDENCE_PREFIX as SLICE8_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as SLICE8_EXPECTED_CHECKPOINTS,
+    FIXTURE_SPECS as SLICE8_FIXTURE_SPECS,
+    RESULT_BINDINGS as SLICE8_RESULT_BINDINGS,
+    RESULTS as SLICE8_RESULTS,
+    SLICE_BASE_COMMIT as SLICE8_BASE_COMMIT,
+)
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
@@ -209,6 +218,24 @@ SLICE_CONFIGS = {
         "results": SLICE7_RESULTS,
         "result_bindings": SLICE7_RESULT_BINDINGS,
         "fixture_specs": SLICE7_FIXTURE_SPECS,
+    },
+    8: {
+        "base_commit": SLICE8_BASE_COMMIT,
+        "evidence_prefix": SLICE8_EVIDENCE_PREFIX,
+        "checkpoints": SLICE8_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _, _ in SLICE8_COMMANDS],
+        "commands": [
+            {
+                "test_id": test_id,
+                "command": list(command),
+                "expected_exit_code": expected_exit_code,
+            }
+            for test_id, command, expected_exit_code in SLICE8_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "recovery"],
+        "results": SLICE8_RESULTS,
+        "result_bindings": SLICE8_RESULT_BINDINGS,
+        "fixture_specs": SLICE8_FIXTURE_SPECS,
     },
 }
 

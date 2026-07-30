@@ -84,6 +84,29 @@ def _parser() -> argparse.ArgumentParser:
         "--fault-point", choices=sorted(PREPARE_FAULT_POINTS)
     )
 
+    precompile_repair_prepare = commands.add_parser(
+        "delivery-quality-precompile-repair-prepare"
+    )
+    precompile_repair_prepare.add_argument(
+        "--predecessor-workspace-root", required=True, type=Path
+    )
+    precompile_repair_prepare.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    precompile_repair_prepare.add_argument(
+        "--inventory", required=True, type=Path
+    )
+    precompile_repair_prepare.add_argument(
+        "--artifact-generations", required=True, type=Path
+    )
+    precompile_repair_prepare.add_argument(
+        "--semantic-dependencies", required=True, type=Path
+    )
+    precompile_repair_prepare.add_argument(
+        "--repair-attempt-number", required=True, type=int
+    )
+    precompile_repair_prepare.add_argument("--prepared-at", required=True)
+
     precompile_patch_commit = commands.add_parser(
         "delivery-quality-precompile-patch-commit"
     )
@@ -423,7 +446,23 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             command,
             "precompile_review_tasks_prepared",
             result,
-            str(args.workspace_root.resolve() / "skeletons"),
+            str(args.workspace_root.resolve() / "reviewers"),
+        )
+    if command == "delivery-quality-precompile-repair-prepare":
+        result = PrecompileQualityProvider(project_root).prepare_repair(
+            predecessor_workspace_root=args.predecessor_workspace_root,
+            workspace_root=args.workspace_root,
+            inventory_path=args.inventory,
+            artifact_generations_path=args.artifact_generations,
+            semantic_dependencies_path=args.semantic_dependencies,
+            repair_attempt_number=args.repair_attempt_number,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(
+            command,
+            "precompile_repair_attempt_prepared",
+            result,
+            result["repair_attempt_path"],
         )
     if command == "delivery-quality-precompile-patch-commit":
         result = PrecompileQualityProvider(project_root).commit_patch(
@@ -439,8 +478,10 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             result,
             str(
                 args.workspace_root.resolve()
-                / "patches"
-                / f"{args.owner}.commit.json"
+                / "reviewers"
+                / args.owner
+                / "commit"
+                / "patch-commit.json"
             ),
         )
     if command == "delivery-quality-precompile-materialize":

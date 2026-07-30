@@ -79,7 +79,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/precompile-artifact-generation-set.example.v1.json",
-      "canonical_sha256": "df97f21e4b9af005ee45b6ec3e45c9c0884c3a01c269c49b458f1e6c9f87802e",
+      "canonical_sha256": "b0d55229c01fa641b72976c6017f20bde2c861a583a429bb6dd7aef38b990c02",
       "positive_example": "delivery-quality/v1/precompile-artifact-generation-set.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-artifact-generation-set.invalid.json"
     },

@@ -52,6 +52,10 @@ The provider-materialized aggregate of independent Source-Faithfulness, Writing 
 
 The immutable binding between a passing Precompile Quality Report, its complete inventory, current policy and projection identities, Language Profile, optional Delivery Glossary, semantic dependencies, providers, and Artifact Generations. A successor Seal may reuse prior judgment only through a passing deterministic Text Equivalence Report.
 
+Each Seal owns immutable inventory and Artifact Generation snapshots. Successor
+lineage always starts from the current Seal snapshots, and successor inputs are
+fingerprinted again when the new Seal is materialized.
+
 ## Text Equivalence Report
 
 The deterministic proof for a classified presentation-only mutation. It requires a bijection over stable item identities and unchanged text, declared surface, policy, Language Profile, Delivery Glossary, and semantic dependencies. It performs no semantic interpretation.

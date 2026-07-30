@@ -38,6 +38,22 @@ def _task_id(owner: str, generation_set_sha256: str, inventory_sha256: str) -> s
     ).hexdigest()[:32]
 
 
+def _reviewer_root(root: Path, owner: str) -> Path:
+    return root / "reviewers" / owner
+
+
+def _skeleton_path(root: Path, owner: str) -> Path:
+    return _reviewer_root(root, owner) / "input" / "review-skeleton.json"
+
+
+def _patch_path(root: Path, owner: str) -> Path:
+    return _reviewer_root(root, owner) / "output" / "judgment-patch.json"
+
+
+def _commit_path(root: Path, owner: str) -> Path:
+    return _reviewer_root(root, owner) / "commit" / "patch-commit.json"
+
+
 class PrecompileQualityProvider:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
@@ -76,21 +92,17 @@ class PrecompileQualityProvider:
         }
         skeletons: list[tuple[str, dict[str, Any]]] = []
         for owner in PRECOMPILE_OWNERS:
+            projection = self._owner_projection(
+                owner,
+                writing_projection,
+                catalog_sha256,
+                projection_sha256,
+                dependencies,
+            )
             if owner == "writing-quality-reviewer":
-                projection = {
-                    "projection_id": writing_projection["projection_id"],
-                    "projection_sha256": projection_sha256,
-                    "catalog_sha256": catalog_sha256,
-                }
                 owner_required_results = required_results
             else:
                 dependency = dependency_by_owner[owner]
-                projection = {
-                    "projection_id": dependency["projection_id"],
-                    "projection_sha256": dependency["projection_sha256"],
-                    "provider_id": dependency["provider_id"],
-                    "provider_sha256": dependency["provider_sha256"],
-                }
                 owner_required_results = [
                     {
                         "scope_id": scope_id,
@@ -132,8 +144,7 @@ class PrecompileQualityProvider:
             skeletons.append((owner, skeleton))
 
         root = workspace_root.resolve()
-        skeleton_root = root / "skeletons"
-        skeleton_root.mkdir(parents=True, exist_ok=True)
+        root.mkdir(parents=True, exist_ok=True)
         _write_immutable_or_same(root / "artifact-generations.json", generations)
         _write_immutable_or_same(
             root / "reader-facing-text-inventory.json", inventory
@@ -143,7 +154,7 @@ class PrecompileQualityProvider:
         )
         paths = []
         for index, (owner, skeleton) in enumerate(skeletons):
-            path = skeleton_root / f"{owner}.skeleton.json"
+            path = _skeleton_path(root, owner)
             _write_immutable_or_same(path, skeleton)
             paths.append(str(path))
             if index == 0 and fault_point == "after_first_skeleton_write":
@@ -155,6 +166,128 @@ class PrecompileQualityProvider:
             "inventory_sha256": inventory["inventory_sha256"],
             "skeleton_paths": paths,
             "activation_status": "target_only",
+        }
+
+    def prepare_repair(
+        self,
+        *,
+        predecessor_workspace_root: Path,
+        workspace_root: Path,
+        inventory_path: Path,
+        artifact_generations_path: Path,
+        semantic_dependencies_path: Path,
+        repair_attempt_number: int,
+        prepared_at: str,
+    ) -> dict[str, Any]:
+        if repair_attempt_number not in {1, 2, 3}:
+            raise ContractError("repair attempt number must be within 1..3")
+        predecessor_root = predecessor_workspace_root.resolve()
+        report = read_json(predecessor_root / "precompile-quality-report.json")
+        _require_fingerprint(report, "report_sha256", "Precompile Quality Report")
+        if (
+            report.get("overall_decision") != "fail"
+            or not report.get("failure_set")
+            or report.get("contract_gaps")
+            or report.get("semantic_attempt_budget_consumed") is not True
+        ):
+            raise ContractError(
+                "repair preparation requires a materialized semantic failure"
+            )
+        routing = report.get("repair_routing")
+        if not isinstance(routing, dict):
+            raise ContractError("failed report lacks deterministic repair routing")
+        routed_keys = {
+            key
+            for group_name in (
+                "parallel_repair_tasks",
+                "integration_repair_tasks",
+            )
+            for task in routing.get(group_name, [])
+            for key in task.get("failure_keys", [])
+        }
+        expected_keys = {
+            f"{item['owner']}:{item['result_key']}"
+            for item in report["failure_set"]
+        }
+        if routed_keys != expected_keys:
+            raise ContractError("deterministic repair routing is incomplete")
+
+        predecessor_generations = read_json(
+            predecessor_root / "artifact-generations.json"
+        )
+        repaired_generations = read_json(artifact_generations_path.resolve())
+        self._validate_generation_set(predecessor_generations)
+        self._validate_generation_set(repaired_generations)
+        predecessor_by_id = {
+            item["logical_id"]: item
+            for item in predecessor_generations["artifacts"]
+        }
+        repaired_by_id = {
+            item["logical_id"]: item for item in repaired_generations["artifacts"]
+        }
+        if set(predecessor_by_id) != set(repaired_by_id):
+            raise ContractError(
+                "repair must preserve the Artifact Generation logical set"
+            )
+        advanced = []
+        for logical_id in sorted(predecessor_by_id):
+            prior = predecessor_by_id[logical_id]
+            current = repaired_by_id[logical_id]
+            if current["generation"] < prior["generation"]:
+                raise ContractError("repair cannot regress an Artifact Generation")
+            if current["generation"] == prior["generation"]:
+                if current["sha256"] != prior["sha256"]:
+                    raise ContractError(
+                        "repair changed bytes without advancing the generation"
+                    )
+                continue
+            if current["sha256"] == prior["sha256"]:
+                raise ContractError(
+                    "repair advanced a generation without changing its bytes"
+                )
+            advanced.append(logical_id)
+        if not advanced:
+            raise ContractError("repair must advance at least one Artifact Generation")
+
+        prepared = self.prepare(
+            workspace_root=workspace_root,
+            inventory_path=inventory_path,
+            artifact_generations_path=artifact_generations_path,
+            semantic_dependencies_path=semantic_dependencies_path,
+            prepared_at=prepared_at,
+        )
+        ledger = {
+            "schema_name": "precompile-repair-attempt",
+            "schema_version": "1.0.0",
+            "activation_status": "target_only",
+            "repair_attempt_number": repair_attempt_number,
+            "prepared_at": prepared_at,
+            "predecessor_report_sha256": report["report_sha256"],
+            "predecessor_generation_set_sha256": predecessor_generations[
+                "generation_set_sha256"
+            ],
+            "repaired_generation_set_sha256": repaired_generations[
+                "generation_set_sha256"
+            ],
+            "repaired_inventory_sha256": prepared["inventory_sha256"],
+            "advanced_logical_ids": advanced,
+            "repair_routing": routing,
+            "fresh_reviewer_task_ids": [
+                read_json(Path(path))["task_id"]
+                for path in prepared["skeleton_paths"]
+            ],
+        }
+        ledger["attempt_sha256"] = hashlib.sha256(
+            canonical_json_bytes(ledger)
+        ).hexdigest()
+        ledger_path = workspace_root.resolve() / "repair-attempt.json"
+        _write_immutable_or_same(ledger_path, ledger)
+        return {
+            **prepared,
+            "repair_attempt_number": repair_attempt_number,
+            "repair_attempt_sha256": ledger["attempt_sha256"],
+            "repair_attempt_path": str(ledger_path),
+            "advanced_logical_ids": advanced,
         }
 
     def commit_patch(
@@ -169,7 +302,7 @@ class PrecompileQualityProvider:
         if owner not in PRECOMPILE_OWNERS:
             raise ContractError("unknown precompile Reviewer owner")
         root = workspace_root.resolve()
-        skeleton_path = root / "skeletons" / f"{owner}.skeleton.json"
+        skeleton_path = _skeleton_path(root, owner)
         if not skeleton_path.is_file():
             raise ContractError("fixed Reviewer Skeleton is missing")
         skeleton = read_json(skeleton_path)
@@ -179,9 +312,24 @@ class PrecompileQualityProvider:
         self.registry.validate("precompile-review-skeleton", skeleton)
         self.registry.validate("precompile-judgment-patch", patch)
         self._validate_patch(patch, skeleton, owner)
-        patch_root = root / "patches"
-        destination = patch_root / f"{owner}.patch.json"
-        commit_path = patch_root / f"{owner}.commit.json"
+        generations = read_json(root / "artifact-generations.json")
+        reviewer_id = patch["reviewer"]["reviewer_id"]
+        if reviewer_id in generations["producer_ids"]:
+            raise ContractError(
+                "Reviewer identity overlaps an Artifact Generation producer"
+            )
+        for peer_owner in PRECOMPILE_OWNERS:
+            if peer_owner == owner:
+                continue
+            peer_path = _patch_path(root, peer_owner)
+            if peer_path.is_file():
+                peer = read_json(peer_path)
+                if peer.get("reviewer", {}).get("reviewer_id") == reviewer_id:
+                    raise ContractError(
+                        "Reviewer identities must be distinct across isolated tasks"
+                    )
+        destination = _patch_path(root, owner)
+        commit_path = _commit_path(root, owner)
         if destination.exists():
             if destination.read_bytes() != canonical_json_bytes(patch):
                 raise ContractError("Reviewer Patch is already committed immutably")
@@ -207,7 +355,7 @@ class PrecompileQualityProvider:
             recovered_partial_commit = True
         else:
             recovered_partial_commit = False
-            patch_root.mkdir(parents=True, exist_ok=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             write_json_atomic(destination, patch)
             if fault_point == "after_patch_write":
                 raise PrecompileFault(fault_point)
@@ -225,6 +373,7 @@ class PrecompileQualityProvider:
         commit["commit_sha256"] = hashlib.sha256(
             canonical_json_bytes(commit)
         ).hexdigest()
+        commit_path.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(commit_path, commit)
         return {
             "task_id": patch["task_id"],
@@ -264,15 +413,24 @@ class PrecompileQualityProvider:
         owner_reports = []
         failures = []
         contract_gaps = []
+        reviewer_ids: set[str] = set()
         for owner in PRECOMPILE_OWNERS:
-            skeleton = read_json(
-                root / "skeletons" / f"{owner}.skeleton.json"
-            )
-            patch = read_json(root / "patches" / f"{owner}.patch.json")
-            commit = read_json(root / "patches" / f"{owner}.commit.json")
+            skeleton = read_json(_skeleton_path(root, owner))
+            patch = read_json(_patch_path(root, owner))
+            commit = read_json(_commit_path(root, owner))
             _require_fingerprint(skeleton, "skeleton_sha256", "Reviewer Skeleton")
             self._validate_skeleton_current(root, skeleton, owner)
             self._validate_patch(patch, skeleton, owner)
+            reviewer_id = patch["reviewer"]["reviewer_id"]
+            if reviewer_id in generations["producer_ids"]:
+                raise ContractError(
+                    "Reviewer identity overlaps an Artifact Generation producer"
+                )
+            if reviewer_id in reviewer_ids:
+                raise ContractError(
+                    "Reviewer identities must be distinct across isolated tasks"
+                )
+            reviewer_ids.add(reviewer_id)
             _require_fingerprint(commit, "commit_sha256", "Patch commit")
             if (
                 commit.get("state") != "committed"
@@ -389,6 +547,7 @@ class PrecompileQualityProvider:
         workspace_root: Path,
         sealed_at: str,
     ) -> dict[str, Any]:
+        self.registry.check()
         root = workspace_root.resolve()
         report = read_json(root / "precompile-quality-report.json")
         _require_fingerprint(report, "report_sha256", "Precompile Quality Report")
@@ -420,11 +579,51 @@ class PrecompileQualityProvider:
             inventory = read_json(
                 root / "successor/reader-facing-text-inventory.json"
             )
+            if (
+                equivalence.get("successor_generation_set_sha256")
+                != generations.get("generation_set_sha256")
+                or equivalence.get("successor_inventory_sha256")
+                != inventory.get("inventory_sha256")
+            ):
+                raise ContractError(
+                    "Text Equivalence Report successor bindings are stale"
+                )
             decision_origin = "reused_after_text_equivalence"
             predecessor_sha256 = prior["seal_sha256"]
             equivalence_sha256 = equivalence["report_sha256"]
         dependencies = read_json(root / "semantic-dependencies.json")
         self._validate_generation_set(generations)
+        self._validate_dependencies(dependencies)
+        writing_projection, catalog_sha256, projections_sha256 = (
+            self._writing_projection()
+        )
+        self._validate_inventory(inventory, generations, writing_projection)
+        provider = report.get("provider")
+        current_provider_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        report_by_owner = {
+            item.get("owner"): item for item in report.get("owner_reports", [])
+        }
+        if set(report_by_owner) != set(PRECOMPILE_OWNERS):
+            raise ContractError("Precompile Quality Report owner set is stale")
+        for owner in PRECOMPILE_OWNERS:
+            skeleton = read_json(_skeleton_path(root, owner))
+            patch = read_json(_patch_path(root, owner))
+            commit = read_json(_commit_path(root, owner))
+            _require_fingerprint(skeleton, "skeleton_sha256", "Reviewer Skeleton")
+            self._validate_skeleton_current(root, skeleton, owner)
+            self._validate_patch(patch, skeleton, owner)
+            _require_fingerprint(commit, "commit_sha256", "Patch commit")
+            owner_report = report_by_owner[owner]
+            if (
+                owner_report.get("skeleton_sha256")
+                != skeleton["skeleton_sha256"]
+                or owner_report.get("patch_sha256") != patch["patch_sha256"]
+                or owner_report.get("commit_sha256") != commit["commit_sha256"]
+                or commit.get("state") != "committed"
+            ):
+                raise ContractError(
+                    "Precompile Quality Report Reviewer inputs are stale"
+                )
         if (
             (
                 equivalence is None
@@ -436,6 +635,18 @@ class PrecompileQualityProvider:
             )
             or report["semantic_dependencies_sha256"]
             != dependencies["dependencies_sha256"]
+            or report.get("catalog_sha256") != catalog_sha256
+            or report.get("role_projections_sha256") != projections_sha256
+            or report.get("language_profile_id")
+            != inventory.get("language_profile_id")
+            or report.get("delivery_glossary")
+            != inventory.get("delivery_glossary")
+            or provider
+            != {
+                "provider_id": PRECOMPILE_PROVIDER_ID,
+                "provider_version": PRECOMPILE_PROVIDER_VERSION,
+                "provider_sha256": current_provider_sha256,
+            }
         ):
             raise ContractError("Precompile Quality Report is stale")
         seal = {
@@ -484,6 +695,13 @@ class PrecompileQualityProvider:
             write_json_atomic(current_archive, current)
         write_json_atomic(path, seal)
         write_json_atomic(archive_root / f"{seal['seal_sha256']}.json", seal)
+        binding_root = root / "seal-bindings" / seal["seal_sha256"]
+        _write_immutable_or_same(
+            binding_root / "artifact-generations.json", generations
+        )
+        _write_immutable_or_same(
+            binding_root / "reader-facing-text-inventory.json", inventory
+        )
         return {
             "seal_id": seal["seal_id"],
             "seal_sha256": seal["seal_sha256"],
@@ -509,8 +727,20 @@ class PrecompileQualityProvider:
         root = workspace_root.resolve()
         prior_seal = read_json(root / "precompile-text-seal.json")
         _require_fingerprint(prior_seal, "seal_sha256", "predecessor Seal")
-        prior_inventory = read_json(root / "reader-facing-text-inventory.json")
-        prior_generations = read_json(root / "artifact-generations.json")
+        prior_binding_root = root / "seal-bindings" / prior_seal["seal_sha256"]
+        prior_inventory = read_json(
+            prior_binding_root / "reader-facing-text-inventory.json"
+        )
+        prior_generations = read_json(
+            prior_binding_root / "artifact-generations.json"
+        )
+        if (
+            prior_inventory.get("inventory_sha256")
+            != prior_seal.get("inventory_sha256")
+            or prior_generations.get("generation_set_sha256")
+            != prior_seal.get("generation_set_sha256")
+        ):
+            raise ContractError("predecessor Seal binding snapshot is stale")
         successor_inventory = read_json(successor_inventory_path.resolve())
         successor_generations = read_json(
             successor_artifact_generations_path.resolve()
@@ -735,6 +965,16 @@ class PrecompileQualityProvider:
         artifacts = value.get("artifacts")
         if not isinstance(artifacts, list) or not artifacts:
             raise ContractError("Artifact Generation set must be non-empty")
+        producer_ids = value.get("producer_ids")
+        if (
+            not isinstance(producer_ids, list)
+            or not producer_ids
+            or any(not isinstance(item, str) or not item for item in producer_ids)
+            or len(producer_ids) != len(set(producer_ids))
+        ):
+            raise ContractError(
+                "Artifact Generation producer identities must be non-empty and unique"
+            )
         logical_ids = [item.get("logical_id") for item in artifacts]
         if len(logical_ids) != len(set(logical_ids)):
             raise ContractError("Artifact Generation logical identities must be unique")
@@ -966,28 +1206,43 @@ class PrecompileQualityProvider:
         projection = skeleton.get("projection")
         if not isinstance(projection, dict):
             raise ContractError("Reviewer Skeleton projection is stale")
-        if owner == "writing-quality-reviewer":
-            expected = {
-                "projection_id": writing_projection["projection_id"],
-                "projection_sha256": projections_sha256,
-                "catalog_sha256": catalog_sha256,
-            }
-        else:
-            dependency = next(
-                item
-                for item in dependencies["dependencies"]
-                if item["owner"] == owner
-            )
-            expected = {
-                "projection_id": dependency["projection_id"],
-                "projection_sha256": dependency["projection_sha256"],
-                "provider_id": dependency["provider_id"],
-                "provider_sha256": dependency["provider_sha256"],
-            }
+        expected = self._owner_projection(
+            owner,
+            writing_projection,
+            catalog_sha256,
+            projections_sha256,
+            dependencies,
+        )
         if projection != expected:
             raise ContractError(
                 "Reviewer Skeleton has stale policy, projection, or provider identity"
             )
+
+    @staticmethod
+    def _owner_projection(
+        owner: str,
+        writing_projection: dict[str, Any],
+        catalog_sha256: str,
+        projections_sha256: str,
+        dependencies: dict[str, Any],
+    ) -> dict[str, Any]:
+        if owner == "writing-quality-reviewer":
+            return {
+                "projection_id": writing_projection["projection_id"],
+                "projection_sha256": projections_sha256,
+                "catalog_sha256": catalog_sha256,
+            }
+        dependency = next(
+            item
+            for item in dependencies["dependencies"]
+            if item["owner"] == owner
+        )
+        return {
+            "projection_id": dependency["projection_id"],
+            "projection_sha256": dependency["projection_sha256"],
+            "provider_id": dependency["provider_id"],
+            "provider_sha256": dependency["provider_sha256"],
+        }
 
 
 def _is_sha256(value: Any) -> bool:
@@ -1002,6 +1257,7 @@ def _write_immutable_or_same(path: Path, value: Any) -> None:
         if path.read_bytes() != expected:
             raise ContractError(f"immutable precompile artifact drifted: {path.name}")
         return
+    path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(path, value)
 
 

@@ -168,7 +168,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "commit",
+        "reviewed_implementation_commit",
+        "execution_evidence_commit",
         "authority_sources",
         "registry_path",
         "registry_sha256",
@@ -178,7 +179,8 @@
         "scheduler_sha256"
       ],
       "properties": {
-        "commit": {"$ref": "#/$defs/commit"},
+        "reviewed_implementation_commit": {"$ref": "#/$defs/commit"},
+        "execution_evidence_commit": {"$ref": "#/$defs/commit"},
         "authority_sources": {
           "type": "array",
           "minItems": 19,

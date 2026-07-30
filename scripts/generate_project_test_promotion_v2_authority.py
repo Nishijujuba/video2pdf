@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 from typing import Any, Sequence
 
@@ -33,6 +34,7 @@ from scripts.validate_project_test_promotion import (
     FINAL_ISSUE9_DISCOVERY_SHA256,
     MIGRATION_REVIEW_RELATIVE_PATH,
     SUPERSET_AUTHORITY_RELATIVE_PATH,
+    _validate_evidence_only_commit_range,
     _test_module_inventory,
 )
 
@@ -286,34 +288,67 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--profile-result", type=Path, default=DEFAULT_PROFILE_RESULT
     )
-    parser.add_argument("--implementation-commit")
+    parser.add_argument("--reviewed-implementation-commit")
+    parser.add_argument("--execution-evidence-commit")
     args = parser.parse_args(argv)
     repo_root = REPO_ROOT.resolve(strict=True)
     safety_path = repo_root / SAFETY_RELATIVE_PATH
     existing_safety, _safety_sha256 = _load_snapshot(safety_path)
-    implementation_commit = (
-        args.implementation_commit
+    reviewed_implementation_commit = (
+        args.reviewed_implementation_commit
         or existing_safety.get("reviewed_source_commit")
     )
-    if not isinstance(implementation_commit, str):
+    execution_evidence_commit = (
+        args.execution_evidence_commit or reviewed_implementation_commit
+    )
+    if not isinstance(reviewed_implementation_commit, str):
         raise SystemExit("optimization safety reviewed_source_commit is invalid")
+    _validate_evidence_only_commit_range(
+        repo_root,
+        reviewed_implementation_commit,
+        execution_evidence_commit,
+        label="reviewed implementation to execution evidence",
+    )
+    live_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    _validate_evidence_only_commit_range(
+        repo_root,
+        execution_evidence_commit,
+        live_head,
+        label="execution evidence to generator-time live HEAD",
+    )
     live_authority_sources = {
         path: sha256_file(repo_root / path)
         for path in PROMOTION_AUTHORITY_SOURCE_PATHS
     }
     try:
-        committed_authority_sources = committed_source_fingerprints(
+        reviewed_authority_sources = committed_source_fingerprints(
             repo_root,
-            implementation_commit,
+            reviewed_implementation_commit,
+            PROMOTION_AUTHORITY_SOURCE_PATHS,
+        )
+        evidence_authority_sources = committed_source_fingerprints(
+            repo_root,
+            execution_evidence_commit,
             PROMOTION_AUTHORITY_SOURCE_PATHS,
         )
     except SourceProvenanceError as error:
         raise SystemExit(
             f"implementation commit source authority is invalid: {error}"
         ) from error
-    if committed_authority_sources != live_authority_sources:
+    if (
+        reviewed_authority_sources != live_authority_sources
+        or evidence_authority_sources != live_authority_sources
+    ):
         raise SystemExit(
-            "validator-time authority sources differ from implementation commit"
+            "validator-time authority sources differ from reviewed "
+            "implementation or execution evidence commit"
         )
     expected = {
         SUPERSET_AUTHORITY_RELATIVE_PATH: _artifact(
@@ -326,7 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.focused_run,
             args.profile_run,
             args.profile_result,
-            implementation_commit,
+            reviewed_implementation_commit,
         ),
     }
     fingerprints: dict[str, str] = {}

@@ -37,9 +37,8 @@ from scripts.project_test_external_root import (
     validate_owned_run_directory,
 )
 from scripts.project_test_source_provenance import (
-    SOURCE_MANIFEST_RELATIVE_PATH,
     SourceProvenanceError,
-    validate_execution_source_manifest,
+    validate_source_snapshot_binding,
 )
 from src.video2pdf_persisted_command.process_identity import (
     execution_identity_is_complete,
@@ -50,7 +49,7 @@ from src.video2pdf_persisted_command.process_identity import (
 MODULE_RESULT_SCHEMA_NAME = "video2pdf.project-test-module-result"
 SUMMARY_SCHEMA_NAME = "video2pdf.project-test-summary"
 TIMINGS_SCHEMA_NAME = "video2pdf.project-test-timings"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MODULE_KEY_PATTERN = re.compile(r"[0-9a-f]{12}\Z")
 
 
@@ -248,28 +247,8 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         execution_root = Path(
             assignment.get("execution_root", assignment["repo_root"])
         )
-        if assignment.get("source_manifest_sha256") is not None:
-            source_manifest_path = _safe_artifact_path(
-                run_dir,
-                run_dir / SOURCE_MANIFEST_RELATIVE_PATH,
-            )
-            source_manifest_bytes = source_manifest_path.read_bytes()
-            if (
-                hashlib.sha256(source_manifest_bytes).hexdigest()
-                != assignment["source_manifest_sha256"]
-            ):
-                raise SchedulerError(
-                    "worker execution source manifest fingerprint mismatch",
-                    failure_kind="result_integrity_failure",
-                )
-            source_manifest = json.loads(source_manifest_bytes.decode("utf-8"))
-            validate_execution_source_manifest(
-                repo_root,
-                source_manifest,
-                expected_test_module_paths=[],
-                require_worktree_match=False,
-                frozen_run_dir=run_dir,
-            )
+        if assignment.get("source_snapshot_id") is not None:
+            validate_source_snapshot_binding(run_dir, assignment)
         suite = _load_assigned_suite(
             execution_root,
             assignment["source_path"],
@@ -290,7 +269,7 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         failure_kind = (
             error.failure_kind
             if isinstance(error, SchedulerError)
-            else "result_integrity_failure"
+            else "source_binding_failure"
         )
         exit_code = 1
         detail = str(error)
@@ -312,6 +291,10 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         "worker_launch_nonce": assignment.get("worker_launch_nonce"),
         "source_manifest_sha256": assignment.get(
             "source_manifest_sha256"
+        ),
+        "source_snapshot_id": assignment.get("source_snapshot_id"),
+        "source_snapshot_sha256": assignment.get(
+            "source_snapshot_sha256"
         ),
         "worker_identity": {
             **(process_execution_identity(os.getpid()) or {
@@ -504,7 +487,7 @@ def _load_timing_durations(
     if (
         not isinstance(value, dict)
         or value.get("schema_name") != TIMINGS_SCHEMA_NAME
-        or value.get("schema_version") != SCHEMA_VERSION
+        or value.get("schema_version") not in (1, SCHEMA_VERSION)
         or value.get("project") != discovery.get("project")
         or value.get("suite_ids") != discovery.get("suite_ids")
         or not isinstance(value.get("modules"), list)
@@ -722,6 +705,10 @@ def _launch_module(
     stderr_lock: threading.Lock,
     child_environment: Mapping[str, str] | None,
     source_manifest_sha256: str | None,
+    source_snapshot_id: str | None,
+    source_snapshot_sha256: str | None,
+    module_inventory_sha256: str | None,
+    source_sha256: str | None,
 ) -> _ActiveModule:
     module_dir = _safe_artifact_path(run_dir, run_dir / "modules")
     logs_dir = _safe_artifact_path(run_dir, run_dir / "logs")
@@ -751,6 +738,10 @@ def _launch_module(
         "test_ids": module["test_ids"],
         "worker_launch_nonce": worker_launch_nonce,
         "source_manifest_sha256": source_manifest_sha256,
+        "source_snapshot_id": source_snapshot_id,
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "module_inventory_sha256": module_inventory_sha256,
+        "source_sha256": source_sha256,
     }
     assignment_path = _safe_artifact_path(run_dir, assignment_path)
     assignment_sha256 = write_json_exclusive(assignment_path, assignment)
@@ -888,6 +879,8 @@ def _validate_module_result(
     *,
     worker_launch_nonce: str,
     source_manifest_sha256: str | None,
+    source_snapshot_id: str | None,
+    source_snapshot_sha256: str | None,
 ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
     worker_identity = value.get("worker_identity")
     if (
@@ -899,6 +892,9 @@ def _validate_module_result(
         or value.get("assigned_test_ids") != module["test_ids"]
         or value.get("worker_launch_nonce") != worker_launch_nonce
         or value.get("source_manifest_sha256") != source_manifest_sha256
+        or value.get("source_snapshot_id") != source_snapshot_id
+        or value.get("source_snapshot_sha256")
+        != source_snapshot_sha256
         or not execution_identity_is_complete(worker_identity)
         or value.get("exit_code") != process_exit_code
         or not isinstance(value.get("executions"), list)
@@ -918,9 +914,14 @@ def _validate_module_result(
         "test_failure",
         "import_failure",
         "result_integrity_failure",
+        "source_binding_failure",
     ):
         raise ResultIntegrityError("unexpected terminal failure kind")
-    if failure_kind in ("import_failure", "result_integrity_failure"):
+    if failure_kind in (
+        "import_failure",
+        "result_integrity_failure",
+        "source_binding_failure",
+    ):
         if execution_ids:
             raise ResultIntegrityError(
                 "pre-execution failure reported executed tests"
@@ -942,6 +943,10 @@ def run_modules(
     stderr: BinaryIO | None = None,
     child_environment: Mapping[str, str] | None = None,
     source_manifest_sha256: str | None = None,
+    source_snapshot_id: str | None = None,
+    source_snapshot_sha256: str | None = None,
+    module_inventory_sha256: str | None = None,
+    source_sha256_by_path: Mapping[str, str] | None = None,
     execution_root: Path | None = None,
 ) -> dict[str, Any]:
     """Run every discovered module once and write immutable result artifacts."""
@@ -1006,6 +1011,14 @@ def run_modules(
                         stderr_lock=stderr_lock,
                         child_environment=child_environment,
                         source_manifest_sha256=source_manifest_sha256,
+                        source_snapshot_id=source_snapshot_id,
+                        source_snapshot_sha256=source_snapshot_sha256,
+                        module_inventory_sha256=module_inventory_sha256,
+                        source_sha256=(
+                            source_sha256_by_path.get(module["source_path"])
+                            if source_sha256_by_path is not None
+                            else None
+                        ),
                     )
                 except Exception as error:
                     assignment_path = (
@@ -1156,6 +1169,8 @@ def run_modules(
                         exit_code,
                         worker_launch_nonce=launched.worker_launch_nonce,
                         source_manifest_sha256=source_manifest_sha256,
+                        source_snapshot_id=source_snapshot_id,
+                        source_snapshot_sha256=source_snapshot_sha256,
                     )
                     launcher_identity = launched.worker_execution_identity
                     if (
@@ -1387,6 +1402,8 @@ def run_modules(
     }
     if "coordinator_failure" in failure_kinds:
         overall_failure = "coordinator_failure"
+    elif "source_binding_failure" in failure_kinds:
+        overall_failure = "source_binding_failure"
     elif "result_integrity_failure" in failure_kinds:
         overall_failure = "result_integrity_failure"
     elif "launch_failure" in failure_kinds:
@@ -1430,6 +1447,8 @@ def run_modules(
                 "stderr_sha256": outcome["stderr_sha256"],
                 "worker_launch_nonce": outcome["worker_launch_nonce"],
                 "source_manifest_sha256": source_manifest_sha256,
+                "source_snapshot_id": source_snapshot_id,
+                "source_snapshot_sha256": source_snapshot_sha256,
                 "worker_identity": outcome["worker_identity"],
                 "worker_launcher_identity": outcome[
                     "worker_launcher_identity"
@@ -1467,6 +1486,8 @@ def run_modules(
         "observed_peak_concurrency": peak,
         "failure_kind": overall_failure,
         "success": overall_failure is None,
+        "source_snapshot_id": source_snapshot_id,
+        "source_snapshot_sha256": source_snapshot_sha256,
         "coverage": coverage,
         "modules": module_summaries,
     }
@@ -1485,6 +1506,9 @@ def run_modules(
             for key in sorted(terminal)
         ],
     }
+    for event in events:
+        event["source_snapshot_id"] = source_snapshot_id
+        event["source_snapshot_sha256"] = source_snapshot_sha256
     # events.jsonl intentionally remains line-oriented JSON, one event per line.
     event_bytes = b"".join(canonical_json_bytes(event) for event in events)
     events_path = _safe_artifact_path(run_dir, run_dir / "events.jsonl")

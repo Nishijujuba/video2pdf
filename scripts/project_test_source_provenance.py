@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -16,11 +17,20 @@ from scripts.project_test_results import (
     read_file_snapshot,
     write_bytes_exclusive,
 )
+from src.video2pdf_persisted_command.process_identity import (
+    execution_identity_is_complete,
+)
 
 
 SOURCE_MANIFEST_SCHEMA_NAME = "video2pdf.project-test-execution-source"
 SOURCE_MANIFEST_SCHEMA_VERSION = 1
 SOURCE_MANIFEST_RELATIVE_PATH = Path("execution-source.json")
+SOURCE_SNAPSHOT_SCHEMA_NAME = "video2pdf.project-test-source-snapshot"
+SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
+SOURCE_SNAPSHOT_RELATIVE_PATH = Path("source-snapshot.json")
+RUN_FINALIZATION_SCHEMA_NAME = "video2pdf.project-test-run-finalization"
+RUN_FINALIZATION_SCHEMA_VERSION = 1
+RUN_FINALIZATION_RELATIVE_PATH = Path("run-finalization.json")
 ALLOWED_OUTPUT_PREFIXES = ("待删除/",)
 FIXED_EXECUTION_SOURCE_PATHS = (
     "config/test-suites.v1.json",
@@ -928,3 +938,327 @@ def validate_execution_source_manifest(
                     f"frozen execution source is not committed: {item['path']}"
                 )
     return hashlib.sha256(canonical_json_bytes(dict(manifest))).hexdigest()
+
+
+def create_source_snapshot(
+    repo_root: Path,
+    run_dir: Path,
+    execution_root: Path,
+    *,
+    source_manifest_path: Path,
+    source_manifest_sha256: str,
+    source_manifest: Mapping[str, Any],
+    expected_test_module_paths: Iterable[str],
+    project: Mapping[str, Any],
+    registry_sha256: str,
+    project_marker_sha256: str,
+    persisted_run_id: str | None,
+    persisted_run_nonce: str | None,
+    runner_identity: Mapping[str, Any],
+    modules: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], str]:
+    """Fully validate frozen source once and publish its scheduling authority."""
+
+    module_paths = tuple(sorted(set(expected_test_module_paths)))
+    validated_manifest_sha256 = validate_execution_source_manifest(
+        repo_root,
+        source_manifest,
+        expected_test_module_paths=module_paths,
+        require_worktree_match=True,
+        frozen_run_dir=run_dir,
+    )
+    if validated_manifest_sha256 != source_manifest_sha256:
+        raise SourceProvenanceError(
+            "execution source manifest fingerprint changed before scheduling"
+        )
+    entry_inventory = [
+        {
+            "path": item["path"],
+            "git_blob": item["git_blob"],
+            "runtime_sha256": item["runtime_sha256"],
+            "runtime_size": item["runtime_size"],
+        }
+        for item in source_manifest["entries"]
+    ]
+    module_inventory = [
+        {
+            "module_key": item["module_key"],
+            "suite_id": item["suite_id"],
+            "source_path": item["source_path"],
+            "test_count": item["test_count"],
+            "test_ids_sha256": hashlib.sha256(
+                canonical_json_bytes(sorted(item["test_ids"]))
+            ).hexdigest(),
+        }
+        for item in sorted(
+            modules,
+            key=lambda value: (
+                str(value["suite_id"]),
+                str(value["source_path"]),
+            ),
+        )
+    ]
+    payload = {
+        "schema_name": SOURCE_SNAPSHOT_SCHEMA_NAME,
+        "schema_version": SOURCE_SNAPSHOT_SCHEMA_VERSION,
+        "run_dir": str(run_dir.resolve(strict=True)),
+        "execution_root": str(execution_root.resolve(strict=True)),
+        "persisted_run_id": persisted_run_id,
+        "persisted_run_nonce": persisted_run_nonce,
+        "runner_identity": dict(runner_identity),
+        "project": dict(project),
+        "registry_sha256": registry_sha256,
+        "project_marker_sha256": project_marker_sha256,
+        "source_manifest_path": str(source_manifest_path.resolve(strict=True)),
+        "source_manifest_sha256": source_manifest_sha256,
+        "commit": source_manifest["commit"],
+        "git_tree": source_manifest["git_tree"],
+        "entry_inventory": {
+            "count": len(entry_inventory),
+            "sha256": hashlib.sha256(
+                canonical_json_bytes(entry_inventory)
+            ).hexdigest(),
+        },
+        "module_inventory": {
+            "count": len(module_inventory),
+            "sha256": hashlib.sha256(
+                canonical_json_bytes(module_inventory)
+            ).hexdigest(),
+        },
+        "prevalidation": {
+            "result": "passed",
+            "source_manifest_sha256": validated_manifest_sha256,
+        },
+    }
+    source_snapshot_id = hashlib.sha256(
+        canonical_json_bytes(payload)
+    ).hexdigest()
+    snapshot = {
+        **payload,
+        "source_snapshot_id": source_snapshot_id,
+    }
+    snapshot_sha256 = write_bytes_exclusive(
+        run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH,
+        canonical_json_bytes(snapshot),
+    )
+    return snapshot, snapshot_sha256
+
+
+def validate_source_snapshot_binding(
+    run_dir: Path,
+    assignment: Mapping[str, Any],
+) -> tuple[str, str]:
+    """Validate one immutable snapshot record and one assigned frozen module."""
+
+    try:
+        _, snapshot_content, _ = read_file_snapshot(
+            run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
+        )
+        snapshot = json.loads(snapshot_content.decode("utf-8"))
+    except (ResultIntegrityError, OSError, UnicodeError, ValueError) as error:
+        raise SourceProvenanceError(
+            "worker source snapshot is unreadable"
+        ) from error
+    if (
+        not isinstance(snapshot, dict)
+        or set(snapshot)
+        != {
+            "schema_name",
+            "schema_version",
+            "run_dir",
+            "execution_root",
+            "persisted_run_id",
+            "persisted_run_nonce",
+            "runner_identity",
+            "project",
+            "registry_sha256",
+            "project_marker_sha256",
+            "source_manifest_path",
+            "source_manifest_sha256",
+            "commit",
+            "git_tree",
+            "entry_inventory",
+            "module_inventory",
+            "prevalidation",
+            "source_snapshot_id",
+        }
+        or canonical_json_bytes(snapshot) != snapshot_content
+        or snapshot.get("schema_name") != SOURCE_SNAPSHOT_SCHEMA_NAME
+        or snapshot.get("schema_version") != SOURCE_SNAPSHOT_SCHEMA_VERSION
+    ):
+        raise SourceProvenanceError("worker source snapshot is invalid")
+    snapshot_sha256 = hashlib.sha256(snapshot_content).hexdigest()
+    source_snapshot_id = snapshot.get("source_snapshot_id")
+    payload = {
+        key: value
+        for key, value in snapshot.items()
+        if key != "source_snapshot_id"
+    }
+    if (
+        not isinstance(source_snapshot_id, str)
+        or _SHA256.fullmatch(source_snapshot_id) is None
+        or hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+        != source_snapshot_id
+        or assignment.get("source_snapshot_id") != source_snapshot_id
+        or assignment.get("source_snapshot_sha256") != snapshot_sha256
+    ):
+        raise SourceProvenanceError(
+            "worker source snapshot identity is invalid"
+        )
+    canonical_execution_root = (
+        run_dir / "execution-source-files"
+    ).resolve(strict=True)
+    if (
+        snapshot.get("run_dir") != str(run_dir.resolve(strict=True))
+        or snapshot.get("execution_root") != str(canonical_execution_root)
+        or assignment.get("execution_root") != str(canonical_execution_root)
+        or assignment.get("source_manifest_sha256")
+        not in (None, snapshot.get("source_manifest_sha256"))
+        or assignment.get("module_inventory_sha256")
+        != snapshot.get("module_inventory", {}).get("sha256")
+    ):
+        raise SourceProvenanceError(
+            "worker source snapshot binding is invalid"
+        )
+    runner_identity = snapshot.get("runner_identity")
+    project = snapshot.get("project")
+    entry_inventory = snapshot.get("entry_inventory")
+    module_inventory = snapshot.get("module_inventory")
+    prevalidation = snapshot.get("prevalidation")
+    if (
+        not execution_identity_is_complete(runner_identity)
+        or project
+        != {
+            "project_key": "video2pdf",
+            "repository": "Nishijujuba/video2pdf",
+        }
+        or not isinstance(entry_inventory, dict)
+        or set(entry_inventory) != {"count", "sha256"}
+        or type(entry_inventory.get("count")) is not int
+        or entry_inventory["count"] < 1
+        or not isinstance(entry_inventory.get("sha256"), str)
+        or _SHA256.fullmatch(entry_inventory["sha256"]) is None
+        or not isinstance(module_inventory, dict)
+        or set(module_inventory) != {"count", "sha256"}
+        or type(module_inventory.get("count")) is not int
+        or module_inventory["count"] < 1
+        or not isinstance(module_inventory.get("sha256"), str)
+        or _SHA256.fullmatch(module_inventory["sha256"]) is None
+        or not isinstance(prevalidation, dict)
+        or set(prevalidation) != {"result", "source_manifest_sha256"}
+        or prevalidation.get("result") != "passed"
+        or prevalidation.get("source_manifest_sha256")
+        != snapshot.get("source_manifest_sha256")
+        or any(
+            not isinstance(snapshot.get(field), str)
+            or _SHA256.fullmatch(snapshot[field]) is None
+            for field in (
+                "registry_sha256",
+                "project_marker_sha256",
+                "source_manifest_sha256",
+            )
+        )
+        or not isinstance(snapshot.get("commit"), str)
+        or _COMMIT.fullmatch(snapshot["commit"]) is None
+        or not isinstance(snapshot.get("git_tree"), str)
+        or _GIT_OBJECT.fullmatch(snapshot["git_tree"]) is None
+    ):
+        raise SourceProvenanceError(
+            "worker source snapshot nested authority is invalid"
+        )
+    source_path = assignment.get("source_path")
+    source_sha256 = assignment.get("source_sha256")
+    if (
+        not isinstance(source_path, str)
+        or not isinstance(source_sha256, str)
+        or _SHA256.fullmatch(source_sha256) is None
+    ):
+        raise SourceProvenanceError(
+            "worker assigned module binding is invalid"
+        )
+    source_path = _canonical_relative_path(source_path)
+    try:
+        _, source_content, _ = read_file_snapshot(
+            run_dir / "execution-source-files" / source_path
+        )
+    except ResultIntegrityError as error:
+        raise SourceProvenanceError(
+            "worker assigned module is unreadable"
+        ) from error
+    if hashlib.sha256(source_content).hexdigest() != source_sha256:
+        raise SourceProvenanceError(
+            "worker assigned module fingerprint mismatch"
+        )
+    return source_snapshot_id, snapshot_sha256
+
+
+def finalize_source_snapshot(
+    repo_root: Path,
+    run_dir: Path,
+    *,
+    source_snapshot: Mapping[str, Any],
+    source_snapshot_sha256: str,
+    source_manifest: Mapping[str, Any],
+    expected_test_module_paths: Iterable[str],
+    scheduler_success: bool,
+    scheduler_failure_kind: str | None,
+    summary_sha256: str,
+) -> tuple[dict[str, Any], str]:
+    """Revalidate the complete frozen authority before terminal success."""
+
+    postvalidation_detail = None
+    try:
+        postvalidated_manifest_sha256 = validate_execution_source_manifest(
+            repo_root,
+            source_manifest,
+            expected_test_module_paths=expected_test_module_paths,
+            require_worktree_match=True,
+            frozen_run_dir=run_dir,
+        )
+        if (
+            postvalidated_manifest_sha256
+            == source_snapshot["source_manifest_sha256"]
+        ):
+            postvalidation_result = "passed"
+        else:
+            postvalidation_result = "failed"
+            postvalidation_detail = (
+                "execution source manifest fingerprint changed after run"
+            )
+    except SourceProvenanceError as error:
+        postvalidated_manifest_sha256 = None
+        postvalidation_result = "failed"
+        postvalidation_detail = str(error)
+    success = (
+        scheduler_success
+        and postvalidation_result == "passed"
+        and postvalidated_manifest_sha256
+        == source_snapshot["source_manifest_sha256"]
+    )
+    failure_kind = (
+        "source_postrun_failure"
+        if postvalidation_result == "failed"
+        else scheduler_failure_kind if not scheduler_success else None
+    )
+    finalization = {
+        "schema_name": RUN_FINALIZATION_SCHEMA_NAME,
+        "schema_version": RUN_FINALIZATION_SCHEMA_VERSION,
+        "source_snapshot_id": source_snapshot["source_snapshot_id"],
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "source_manifest_sha256": source_snapshot["source_manifest_sha256"],
+        "summary_sha256": summary_sha256,
+        "scheduler_success": scheduler_success,
+        "scheduler_failure_kind": scheduler_failure_kind,
+        "postvalidation": {
+            "result": postvalidation_result,
+            "source_manifest_sha256": postvalidated_manifest_sha256,
+            "detail": postvalidation_detail,
+        },
+        "success": success,
+        "failure_kind": failure_kind,
+    }
+    finalization_sha256 = write_bytes_exclusive(
+        run_dir / RUN_FINALIZATION_RELATIVE_PATH,
+        canonical_json_bytes(finalization),
+    )
+    return finalization, finalization_sha256

@@ -20,6 +20,11 @@ from scripts.project_test_scheduler import (
     run_modules,
     validate_jobs,
 )
+from scripts.project_test_source_provenance import (
+    SourceProvenanceError,
+    finalize_source_snapshot,
+    validate_source_snapshot_binding,
+)
 from tests.project_test_runner._fixture_root import (
     committed_fixture_root,
     new_fixture_dir,
@@ -114,6 +119,242 @@ def discovery(*names: str) -> dict:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_postrun_source_drift_writes_blocking_finalization(self) -> None:
+        run_dir = run_directory("postrun-source-drift")
+        snapshot = {
+            "source_snapshot_id": "a" * 64,
+            "source_manifest_sha256": "b" * 64,
+        }
+        with mock.patch(
+            "scripts.project_test_source_provenance."
+            "validate_execution_source_manifest",
+            side_effect=SourceProvenanceError("frozen source drift"),
+        ):
+            finalization, finalization_sha256 = finalize_source_snapshot(
+                REPO_ROOT,
+                run_dir,
+                source_snapshot=snapshot,
+                source_snapshot_sha256="c" * 64,
+                source_manifest={},
+                expected_test_module_paths=[],
+                scheduler_success=True,
+                scheduler_failure_kind=None,
+                summary_sha256="d" * 64,
+            )
+
+        self.assertFalse(finalization["success"])
+        self.assertEqual(
+            finalization["failure_kind"],
+            "source_postrun_failure",
+        )
+        self.assertEqual(finalization["postvalidation"]["result"], "failed")
+        self.assertEqual(
+            hashlib.sha256(
+                (run_dir / "run-finalization.json").read_bytes()
+            ).hexdigest(),
+            finalization_sha256,
+        )
+
+    def test_worker_snapshot_binding_rejects_replay_and_assigned_module_drift(
+        self,
+    ) -> None:
+        run_dir = run_directory("worker-snapshot-binding")
+        frozen_source = run_dir / "execution-source-files" / "tests" / "case.py"
+        frozen_source.parent.mkdir(parents=True)
+        frozen_source.write_text("BOUND = True\n", encoding="utf-8")
+        source_sha256 = hashlib.sha256(frozen_source.read_bytes()).hexdigest()
+        payload = {
+            "schema_name": "video2pdf.project-test-source-snapshot",
+            "schema_version": 1,
+            "run_dir": str(run_dir.resolve(strict=True)),
+            "execution_root": str(
+                (run_dir / "execution-source-files").resolve(strict=True)
+            ),
+            "persisted_run_id": None,
+            "persisted_run_nonce": None,
+            "runner_identity": scheduler.process_execution_identity(
+                scheduler.os.getpid()
+            ),
+            "project": {
+                "project_key": "video2pdf",
+                "repository": "Nishijujuba/video2pdf",
+            },
+            "registry_sha256": "d" * 64,
+            "project_marker_sha256": "e" * 64,
+            "source_manifest_path": str(
+                (run_dir / "execution-source.json").resolve(strict=False)
+            ),
+            "source_manifest_sha256": "a" * 64,
+            "commit": "f" * 40,
+            "git_tree": "1" * 40,
+            "entry_inventory": {"count": 1, "sha256": "2" * 64},
+            "module_inventory": {"count": 1, "sha256": "b" * 64},
+            "prevalidation": {
+                "result": "passed",
+                "source_manifest_sha256": "a" * 64,
+            },
+        }
+        snapshot_id = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        ).hexdigest()
+        snapshot = {**payload, "source_snapshot_id": snapshot_id}
+        snapshot_path = run_dir / "source-snapshot.json"
+        snapshot_path.write_bytes(
+            (
+                json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        assignment = {
+            "execution_root": str(
+                (run_dir / "execution-source-files").resolve(strict=True)
+            ),
+            "source_manifest_sha256": "a" * 64,
+            "source_snapshot_id": snapshot_id,
+            "source_snapshot_sha256": hashlib.sha256(
+                snapshot_path.read_bytes()
+            ).hexdigest(),
+            "module_inventory_sha256": "b" * 64,
+            "source_path": "tests/case.py",
+            "source_sha256": source_sha256,
+        }
+
+        validate_source_snapshot_binding(run_dir, assignment)
+
+        replay = {**assignment, "source_snapshot_id": "c" * 64}
+        with self.assertRaisesRegex(SourceProvenanceError, "snapshot identity"):
+            validate_source_snapshot_binding(run_dir, replay)
+        with self.assertRaisesRegex(SourceProvenanceError, "snapshot binding"):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "execution_root": str(run_dir),
+                },
+            )
+        snapshot_with_unknown = {
+            **payload,
+            "unexpected": True,
+        }
+        unknown_id = hashlib.sha256(
+            (
+                json.dumps(
+                    snapshot_with_unknown,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest()
+        snapshot_path.write_bytes(
+            (
+                json.dumps(
+                    {
+                        **snapshot_with_unknown,
+                        "source_snapshot_id": unknown_id,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        with self.assertRaisesRegex(SourceProvenanceError, "snapshot is invalid"):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "source_snapshot_id": unknown_id,
+                    "source_snapshot_sha256": hashlib.sha256(
+                        snapshot_path.read_bytes()
+                    ).hexdigest(),
+                },
+            )
+        snapshot_path.write_bytes(
+            (
+                json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        nested_payload = {
+            **payload,
+            "prevalidation": {
+                **payload["prevalidation"],
+                "unexpected": True,
+            },
+        }
+        nested_id = hashlib.sha256(
+            (
+                json.dumps(
+                    nested_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest()
+        snapshot_path.write_bytes(
+            (
+                json.dumps(
+                    {
+                        **nested_payload,
+                        "source_snapshot_id": nested_id,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        with self.assertRaisesRegex(
+            SourceProvenanceError,
+            "nested authority",
+        ):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "source_snapshot_id": nested_id,
+                    "source_snapshot_sha256": hashlib.sha256(
+                        snapshot_path.read_bytes()
+                    ).hexdigest(),
+                },
+            )
+        snapshot_path.write_bytes(
+            (
+                json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        frozen_source.write_text("BOUND = False\n", encoding="utf-8")
+        with self.assertRaisesRegex(SourceProvenanceError, "assigned module"):
+            validate_source_snapshot_binding(run_dir, assignment)
+
     def test_worker_preserves_import_paths_added_by_test_module(self) -> None:
         fixture_repo = new_fixture_dir(
             "worker-path-lifecycle",

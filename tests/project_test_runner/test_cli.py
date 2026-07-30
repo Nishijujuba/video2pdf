@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -219,6 +220,34 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         )
         self.assertEqual(test_run["suite_ids"], ["alpha", "beta"])
         self.assertEqual(test_run["requested_jobs"], 2)
+        source_snapshot = json.loads(
+            (run_dir / "source-snapshot.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            test_run["source_snapshot_id"],
+            source_snapshot["source_snapshot_id"],
+        )
+        self.assertEqual(
+            test_run["source_snapshot_sha256"],
+            record["source_snapshot_sha256"],
+        )
+        self.assertEqual(source_snapshot["prevalidation"]["result"], "passed")
+        self.assertEqual(source_snapshot["module_inventory"]["count"], 2)
+        finalization = json.loads(
+            (run_dir / "run-finalization.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(finalization["success"])
+        self.assertEqual(finalization["postvalidation"]["result"], "passed")
+        self.assertEqual(
+            finalization["source_snapshot_id"],
+            source_snapshot["source_snapshot_id"],
+        )
+        self.assertEqual(
+            record["run_finalization_sha256"],
+            hashlib.sha256(
+                (run_dir / "run-finalization.json").read_bytes()
+            ).hexdigest(),
+        )
 
     def test_invalid_arguments_and_test_failure_return_one(self) -> None:
         repo, external = self.make_fixture_repo()
@@ -291,7 +320,7 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         record = self.final_record(completed)
         self.assertEqual(
             record["failure_kind"],
-            "source_provenance_failure",
+            "source_preflight_failure",
         )
         self.assertIn("clean Git worktree", record["detail"])
         self.assertFalse((external / "video2pdf").exists())

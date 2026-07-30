@@ -44,10 +44,14 @@ from scripts.project_test_scheduler import (  # noqa: E402
 )
 from scripts.project_test_source_provenance import (  # noqa: E402
     FIXED_EXECUTION_SOURCE_PATHS,
+    RUN_FINALIZATION_RELATIVE_PATH,
     SOURCE_MANIFEST_RELATIVE_PATH,
+    SOURCE_SNAPSHOT_RELATIVE_PATH,
     SourceProvenanceError,
     build_execution_source_manifest,
+    create_source_snapshot,
     create_frozen_git_authority,
+    finalize_source_snapshot,
     freeze_execution_source_files,
     planned_execution_source_paths,
 )
@@ -59,7 +63,7 @@ from src.video2pdf_persisted_command.process_identity import (  # noqa: E402
 
 REGISTRY_RELATIVE_PATH = Path("config/test-suites.v1.json")
 TEST_RUN_SCHEMA_NAME = "video2pdf.project-test-run"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _MODULE_KEY_BUDGET_COMPONENT = "0123456789ab"
 _RESERVED_RUN_ARTIFACT_PATHS = (
     "test-run.json",
@@ -68,6 +72,8 @@ _RESERVED_RUN_ARTIFACT_PATHS = (
     "summary.json",
     "timings.json",
     SOURCE_MANIFEST_RELATIVE_PATH.as_posix(),
+    SOURCE_SNAPSHOT_RELATIVE_PATH.as_posix(),
+    RUN_FINALIZATION_RELATIVE_PATH.as_posix(),
     f"modules/{_MODULE_KEY_BUDGET_COMPONENT}.assignment.json",
     f"modules/{_MODULE_KEY_BUDGET_COMPONENT}.result.json",
     f"logs/{_MODULE_KEY_BUDGET_COMPONENT}.stdout.log",
@@ -434,6 +440,28 @@ def _public_command(arguments: argparse.Namespace) -> int:
             "discovery registry fingerprint changed before scheduling",
             failure_kind="discovery_failure",
         )
+    runner_identity = process_execution_identity(os.getpid())
+    project_marker_sha256 = sha256_file(
+        run_dir.parent.parent / "project.json"
+    )
+    source_snapshot, source_snapshot_sha256 = create_source_snapshot(
+        repo_root,
+        run_dir,
+        execution_root,
+        source_manifest_path=source_manifest_path,
+        source_manifest_sha256=source_manifest_sha256,
+        source_manifest=source_manifest,
+        expected_test_module_paths=registered_test_files,
+        project=discovery["project"],
+        registry_sha256=registry.fingerprint,
+        project_marker_sha256=project_marker_sha256,
+        persisted_run_id=os.environ.get("VIDEO2PDF_PERSISTED_RUN_ID"),
+        persisted_run_nonce=os.environ.get(
+            "VIDEO2PDF_PERSISTED_RUN_NONCE"
+        ),
+        runner_identity=runner_identity,
+        modules=discovery["modules"],
+    )
     timings_from = (
         _validate_timings_path(arguments.timings_from)
         if arguments.command == "run"
@@ -449,11 +477,14 @@ def _public_command(arguments: argparse.Namespace) -> int:
         "discovery_sha256": discovery_sha256,
         "source_manifest_path": str(source_manifest_path),
         "source_manifest_sha256": source_manifest_sha256,
+        "source_snapshot_path": str(
+            run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
+        ),
+        "source_snapshot_id": source_snapshot["source_snapshot_id"],
+        "source_snapshot_sha256": source_snapshot_sha256,
         "suite_ids": selected_suite_ids,
         "run_dir": str(run_dir),
-        "project_marker_sha256": sha256_file(
-            run_dir.parent.parent / "project.json"
-        ),
+        "project_marker_sha256": project_marker_sha256,
         "persisted_run_id": os.environ.get("VIDEO2PDF_PERSISTED_RUN_ID"),
         "persisted_run_nonce": os.environ.get(
             "VIDEO2PDF_PERSISTED_RUN_NONCE"
@@ -472,7 +503,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
         if arguments.command == "run"
         else None,
         "timings_from": str(timings_from) if timings_from is not None else None,
-        "runner_identity": process_execution_identity(os.getpid()),
+        "runner_identity": runner_identity,
         "discovery_process": {
             **discovery_identity,
         },
@@ -514,20 +545,45 @@ def _public_command(arguments: argparse.Namespace) -> int:
         jobs=arguments.jobs,
         timings_from=timings_from,
         source_manifest_sha256=source_manifest_sha256,
+        source_snapshot_id=source_snapshot["source_snapshot_id"],
+        source_snapshot_sha256=source_snapshot_sha256,
+        module_inventory_sha256=source_snapshot["module_inventory"]["sha256"],
+        source_sha256_by_path={
+            item["path"]: item["runtime_sha256"]
+            for item in source_manifest["entries"]
+        },
         execution_root=execution_root,
+    )
+    summary_sha256 = sha256_file(run_dir / "summary.json")
+    finalization, finalization_sha256 = finalize_source_snapshot(
+        repo_root,
+        run_dir,
+        source_snapshot=source_snapshot,
+        source_snapshot_sha256=source_snapshot_sha256,
+        source_manifest=source_manifest,
+        expected_test_module_paths=registered_test_files,
+        scheduler_success=summary["success"],
+        scheduler_failure_kind=summary["failure_kind"],
+        summary_sha256=summary_sha256,
     )
     _emit(
         {
             "event": "project_test_run_complete",
-            "success": summary["success"],
-            "failure_kind": summary["failure_kind"],
+            "success": finalization["success"],
+            "failure_kind": finalization["failure_kind"],
             "run_dir": str(run_dir),
-            "summary_sha256": sha256_file(run_dir / "summary.json"),
+            "summary_sha256": summary_sha256,
             "discovery_sha256": discovery_sha256,
             "discovery_process": discovery_identity,
+            "source_snapshot_id": source_snapshot["source_snapshot_id"],
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "run_finalization_path": str(
+                run_dir / RUN_FINALIZATION_RELATIVE_PATH
+            ),
+            "run_finalization_sha256": finalization_sha256,
         }
     )
-    return 0 if summary["success"] else 1
+    return 0 if finalization["success"] else 1
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -580,7 +636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         failure_kind = "result_integrity_failure"
         detail = str(error)
     except SourceProvenanceError as error:
-        failure_kind = "source_provenance_failure"
+        failure_kind = "source_preflight_failure"
         detail = str(error)
     except (OSError, ValueError) as error:
         failure_kind = "runner_failure"

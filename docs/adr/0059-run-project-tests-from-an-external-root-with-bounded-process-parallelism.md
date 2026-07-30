@@ -21,9 +21,14 @@ Any baseline removal or rename, unauthorized addition, duplicate, reassigned
 ID, or mismatched inventory fails closed. Counts and summary booleans carry no
 authority without the bound, recomputed ID inventories.
 
-Version 2 also binds both runs to one implementation commit, Registry
-fingerprint, complete module assignment, and complete passed semantic-outcome
-inventory. Each run must use jobs four, observe peak concurrency four, finish
+Version 2 binds a reviewed implementation commit \(I\) and an execution
+evidence commit \(E\). \(I\) must be an ancestor of or equal to \(E\); every
+tracked change in \(I..E\) must belong to the validator-owned evidence-only
+allowlist. Both runs bind \(E\), while the optimization safety review binds
+\(I\). Validator-time `HEAD` may be an evidence-only descendant of \(E\).
+Registry, runner, scheduler, and Promotion authority blobs must be identical
+at \(I\), \(E\), validator-time `HEAD`, and both frozen execution sources.
+Each run must use jobs four, observe peak concurrency four, finish
 with exit code zero, remain `no_secret_detected` and acceptance-evidence
 eligible, and record persisted elapsed time at or below 1,800 seconds. The
 validator reads the original external-root `discovery.json` and `summary.json`
@@ -79,11 +84,28 @@ authority and the report implementation binding. It contains the fixed runner
 runtime sources, the v2 authority generator, both Option B test modules, and
 the affected `contracts.py` and `control_store.py` production sources. For
 every declared path, the validator requires equality across the
-`implementation.commit` Git blob, both execution-source manifests, both frozen
-files, the report authority fingerprint, and validator-time live bytes. The
-optimization safety review's `reviewed_source_commit` must equal
-`implementation.commit`, and its production-source fingerprints must equal
-the same closed-set entries.
+`implementation.reviewed_implementation_commit` and
+`implementation.execution_evidence_commit` Git blobs, both execution-source
+manifests, both frozen files, the report authority fingerprint, and
+validator-time live bytes. The optimization safety review's
+`reviewed_source_commit` must equal
+`implementation.reviewed_implementation_commit`, and its production-source
+fingerprints must equal the same closed-set entries.
+
+The runner writes one immutable `source-snapshot.json` after complete source
+validation and before scheduling. Its canonical payload SHA-256 is the
+`source_snapshot_id`; the payload binds the canonical run and execution roots,
+persisted run identity, runner identity, project and Registry fingerprints,
+source manifest, commit/tree, and entry/module inventories. Workers validate
+that constant-size snapshot record plus their assigned frozen module. They do
+not repeat complete source-manifest validation. Assignments, results, events,
+and summaries echo the snapshot identity.
+
+After all workers terminate, the CLI repeats complete source validation and
+writes immutable `run-finalization.json`. Success is emitted only after that
+artifact proves a passing post-run validation. Source failures are classified
+at the preflight, worker binding, or post-run boundary. Promotion validates the
+snapshot, finalization, and frozen source once per run.
 
 The clean-worktree exception is path- and authority-based. An unchanged copy
 of a tracked source inside an explicitly allowed evidence-output directory is

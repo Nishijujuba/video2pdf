@@ -27,6 +27,7 @@ from scripts.project_test_source_provenance import (
     _validate_frozen_git_config_entries,
     assert_clean_execution_worktree,
     build_execution_source_manifest,
+    create_source_snapshot,
     create_frozen_git_authority,
     freeze_execution_source_files,
 )
@@ -484,6 +485,16 @@ class PromotionReportV2Tests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("# Registry fixture.\n", encoding="utf-8")
         authority = json.loads((repo / AUTHORITY).read_text(encoding="utf-8"))
+        authority["authority_sources"] = [
+            {
+                "path": relative,
+                "sha256": hashlib.sha256(
+                    (repo / relative).read_bytes()
+                ).hexdigest(),
+            }
+            for relative in PROMOTION_AUTHORITY_SOURCE_PATHS
+        ]
+        write_json(repo / AUTHORITY, authority)
         baseline_ids = authority["baseline"]["test_ids"]
         delta_ids = authority["authorized_delta"]["test_ids"]
         current_ids = sorted(baseline_ids + delta_ids)
@@ -876,6 +887,26 @@ class PromotionReportV2Tests(unittest.TestCase):
                 "modules": modules,
                 "discovery_process": discovery_process,
             }
+            source_snapshot, source_snapshot_sha = create_source_snapshot(
+                repo,
+                run_dir,
+                run_dir / "execution-source-files",
+                source_manifest_path=source_manifest_path,
+                source_manifest_sha256=source_manifest_sha,
+                source_manifest=source_manifest,
+                expected_test_module_paths=[
+                    module["source_path"] for module in modules
+                ],
+                project=discovery["project"],
+                registry_sha256=registry_sha,
+                project_marker_sha256=hashlib.sha256(
+                    (project_root / "project.json").read_bytes()
+                ).hexdigest(),
+                persisted_run_id=run_id,
+                persisted_run_nonce=persisted_run_nonce,
+                runner_identity=runner_identity,
+                modules=modules,
+            )
             outcomes = [
                 {"test_id": test_id, "status": "passed"}
                 for test_id in current_ids
@@ -947,7 +978,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "schema_name": (
                         "video2pdf.project-test-module-assignment"
                     ),
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "repo_root": str(repo),
                     "execution_root": str(
                         run_dir / "execution-source-files"
@@ -958,6 +989,18 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "test_ids": module["test_ids"],
                     "worker_launch_nonce": worker_launch_nonce,
                     "source_manifest_sha256": source_manifest_sha,
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
+                    "module_inventory_sha256": source_snapshot[
+                        "module_inventory"
+                    ]["sha256"],
+                    "source_sha256": next(
+                        item["runtime_sha256"]
+                        for item in source_manifest["entries"]
+                        if item["path"] == module["source_path"]
+                    ),
                 }
                 summary_module["assignment_sha256"] = write_json(
                     run_dir / "modules" / f"{key}.assignment.json",
@@ -965,13 +1008,17 @@ class PromotionReportV2Tests(unittest.TestCase):
                 )
                 result = {
                     "schema_name": "video2pdf.project-test-module-result",
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "module_key": key,
                     "suite_id": module["suite_id"],
                     "source_path": module["source_path"],
                     "assigned_test_ids": module["test_ids"],
                     "worker_launch_nonce": worker_launch_nonce,
                     "source_manifest_sha256": source_manifest_sha,
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
                     "worker_identity": worker_identity,
                     "executions": [
                         {
@@ -1004,6 +1051,10 @@ class PromotionReportV2Tests(unittest.TestCase):
                 summary_module["source_manifest_sha256"] = (
                     source_manifest_sha
                 )
+                summary_module["source_snapshot_id"] = source_snapshot[
+                    "source_snapshot_id"
+                ]
+                summary_module["source_snapshot_sha256"] = source_snapshot_sha
                 summary_module["artifact_identities"] = {
                     "assignment": file_artifact_identity(
                         run_dir / "modules" / f"{key}.assignment.json"
@@ -1083,7 +1134,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     )
             summary = {
                 "schema_name": "video2pdf.project-test-summary",
-                "schema_version": 1,
+                "schema_version": 2,
                 "project": {
                     "project_key": "video2pdf",
                     "repository": "Nishijujuba/video2pdf",
@@ -1094,6 +1145,10 @@ class PromotionReportV2Tests(unittest.TestCase):
                 "observed_peak_concurrency": 4,
                 "success": True,
                 "failure_kind": None,
+                "source_snapshot_id": source_snapshot[
+                    "source_snapshot_id"
+                ],
+                "source_snapshot_sha256": source_snapshot_sha,
                 "coverage": {
                     "discovered": 499,
                     "assigned": 499,
@@ -1112,6 +1167,11 @@ class PromotionReportV2Tests(unittest.TestCase):
             summary_path = run_dir / "summary.json"
             discovery_sha = write_json(discovery_path, discovery)
             summary_sha = write_json(summary_path, summary)
+            for event in events:
+                event["source_snapshot_id"] = source_snapshot[
+                    "source_snapshot_id"
+                ]
+                event["source_snapshot_sha256"] = source_snapshot_sha
             events_bytes = b"".join(
                 canonical_json_bytes(event) for event in events
             )
@@ -1122,7 +1182,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                 run_dir / "timings.json",
                 {
                     "schema_name": "video2pdf.project-test-timings",
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "project": {
                         "project_key": "video2pdf",
                         "repository": "Nishijujuba/video2pdf",
@@ -1139,11 +1199,35 @@ class PromotionReportV2Tests(unittest.TestCase):
                     ],
                 },
             )
+            run_finalization_sha = write_json(
+                run_dir / "run-finalization.json",
+                {
+                    "schema_name": (
+                        "video2pdf.project-test-run-finalization"
+                    ),
+                    "schema_version": 1,
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
+                    "source_manifest_sha256": source_manifest_sha,
+                    "summary_sha256": summary_sha,
+                    "scheduler_success": True,
+                    "scheduler_failure_kind": None,
+                    "postvalidation": {
+                        "result": "passed",
+                        "source_manifest_sha256": source_manifest_sha,
+                        "detail": None,
+                    },
+                    "success": True,
+                    "failure_kind": None,
+                },
+            )
             test_run_sha = write_json(
                 run_dir / "test-run.json",
                 {
                     "schema_name": "video2pdf.project-test-run",
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "command": "run",
                     "project": {
                         "project_key": "video2pdf",
@@ -1154,6 +1238,13 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "discovery_sha256": discovery_sha,
                     "source_manifest_path": str(source_manifest_path),
                     "source_manifest_sha256": source_manifest_sha,
+                    "source_snapshot_path": str(
+                        run_dir / "source-snapshot.json"
+                    ),
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
                     "suite_ids": ["video-workflow"],
                     "run_dir": str(run_dir),
                     "project_marker_sha256": hashlib.sha256(
@@ -1349,6 +1440,11 @@ class PromotionReportV2Tests(unittest.TestCase):
                     ),
                     "persisted_run_nonce": persisted_run_nonce,
                     "source_manifest_sha256": source_manifest_sha,
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
+                    "run_finalization_sha256": run_finalization_sha,
                     "worker_identity_lineage_sha256": hashlib.sha256(
                         canonical_json_bytes(
                             [
@@ -1411,7 +1507,8 @@ class PromotionReportV2Tests(unittest.TestCase):
                 "sha256": authority_sha,
             },
             "implementation": {
-                "commit": implementation_commit,
+                "reviewed_implementation_commit": implementation_commit,
+                "execution_evidence_commit": implementation_commit,
                 "authority_sources": authority["authority_sources"],
                 "registry_path": "config/test-suites.v1.json",
                 "registry_sha256": registry_sha,
@@ -1486,7 +1583,8 @@ class PromotionReportV2Tests(unittest.TestCase):
                 {
                     "schema_version": 2,
                     "authorization_model": report["authorization_model"],
-                    "implementation_commit": implementation_commit,
+                    "reviewed_implementation_commit": implementation_commit,
+                    "execution_evidence_commit": implementation_commit,
                     "historical_baseline_commit": (
                         "18f78fad0be5a66d2da6250dc268bc8de81fdbcc"
                     ),
@@ -1597,6 +1695,90 @@ class PromotionReportV2Tests(unittest.TestCase):
         self.assertTrue(result["valid"])
         self.assertEqual(2, result["schema_version"])
         self.assertEqual(499, result["test_count"])
+
+    def test_dual_commit_range_allows_evidence_only_descendants(self) -> None:
+        repo = new_fixture_dir("promotion-dual-commit-range")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Dual Commit Fixture"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "dual@example.invalid"],
+            cwd=repo,
+            check=True,
+        )
+        implementation = repo / "implementation.py"
+        implementation.write_text("VALUE = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "implementation"],
+            cwd=repo,
+            check=True,
+        )
+        reviewed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        evidence = (
+            repo
+            / "evidence/project-test-runner/"
+            "optimization-safety-review.v1.json"
+        )
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("{}\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "evidence"],
+            cwd=repo,
+            check=True,
+        )
+        execution = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+
+        promotion_validator._validate_evidence_only_commit_range(
+            repo,
+            reviewed,
+            execution,
+            label="fixture",
+        )
+
+        implementation.write_text("VALUE = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "unreviewed source"],
+            cwd=repo,
+            check=True,
+        )
+        unreviewed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        with self.assertRaisesRegex(
+            PromotionValidationError,
+            "non-evidence paths",
+        ):
+            promotion_validator._validate_evidence_only_commit_range(
+                repo,
+                execution,
+                unreviewed,
+                label="fixture",
+            )
 
     def test_v2_rejects_each_missing_current_command_field(self) -> None:
         for field in ("created_at", "normalized_task_name", "task_name"):
@@ -1894,7 +2076,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                 repo,
                 run,
                 report["promotion_closed_set"],
-                report["implementation"]["commit"],
+                report["implementation"]["execution_evidence_commit"],
                 1800.0,
                 expected_test_ids=sorted(
                     report["final_issue9_closed_set"]["test_ids"]
@@ -1936,7 +2118,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     repo,
                     run,
                     report["promotion_closed_set"],
-                    report["implementation"]["commit"],
+                    report["implementation"]["execution_evidence_commit"],
                     1800.0,
                     expected_test_ids=expected_ids,
                     expected_registry_sha256=report["implementation"][
@@ -1995,7 +2177,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                         repo,
                         run,
                         report["promotion_closed_set"],
-                        report["implementation"]["commit"],
+                        report["implementation"]["execution_evidence_commit"],
                         1800.0,
                         expected_test_ids=expected_ids,
                         expected_registry_sha256=report["implementation"][
@@ -2126,7 +2308,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     repo,
                     run,
                     report["promotion_closed_set"],
-                    report["implementation"]["commit"],
+                    report["implementation"]["execution_evidence_commit"],
                     1800.0,
                     expected_test_ids=expected_ids,
                     expected_registry_sha256=report["implementation"][
@@ -2183,7 +2365,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     repo,
                     run,
                     report["promotion_closed_set"],
-                    report["implementation"]["commit"],
+                    report["implementation"]["execution_evidence_commit"],
                     1800.0,
                     expected_test_ids=expected_ids,
                     expected_registry_sha256=report["implementation"][
@@ -2263,7 +2445,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     repo,
                     run,
                     report["promotion_closed_set"],
-                    report["implementation"]["commit"],
+                    report["implementation"]["execution_evidence_commit"],
                     1800.0,
                     expected_test_ids=expected_ids,
                     expected_registry_sha256=report["implementation"][
@@ -2315,7 +2497,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     repo,
                     run,
                     report["promotion_closed_set"],
-                    report["implementation"]["commit"],
+                    report["implementation"]["execution_evidence_commit"],
                     1800.0,
                     expected_test_ids=expected_ids,
                     expected_registry_sha256=report["implementation"][
@@ -2350,7 +2532,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                 repo,
                 run,
                 report["promotion_closed_set"],
-                report["implementation"]["commit"],
+                report["implementation"]["execution_evidence_commit"],
                 1800.0,
                 expected_test_ids=sorted(
                     report["final_issue9_closed_set"]["test_ids"]

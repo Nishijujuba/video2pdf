@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -30,7 +31,9 @@ from scripts.project_test_results import (
 from scripts.project_test_registry import RegistryError, load_registry
 from scripts.project_test_source_provenance import (
     PROMOTION_AUTHORITY_SOURCE_PATHS,
+    RUN_FINALIZATION_RELATIVE_PATH,
     SOURCE_MANIFEST_RELATIVE_PATH,
+    SOURCE_SNAPSHOT_RELATIVE_PATH,
     SourceProvenanceError,
     committed_source_fingerprints,
     validate_execution_source_manifest,
@@ -225,6 +228,8 @@ SUMMARY_ALLOWED_FIELDS = frozenset(
         "requested_jobs",
         "schema_name",
         "schema_version",
+        "source_snapshot_id",
+        "source_snapshot_sha256",
         "success",
         "suite_ids",
     }
@@ -244,6 +249,55 @@ TRUSTED_PERSISTED_RUN_ROOT = (
 
 class PromotionValidationError(RuntimeError):
     """Promotion evidence does not prove the one-time cutover gate."""
+
+
+PROMOTION_EVIDENCE_ONLY_PATHS = frozenset(
+    {
+        "evidence/project-test-runner/optimization-safety-review.v1.json",
+        "evidence/project-test-runner/promotion-report.json",
+        "evidence/project-test-runner/promotion-superset-authority.v2.json",
+    }
+)
+
+
+def _validate_evidence_only_commit_range(
+    repo_root: Path,
+    ancestor: str,
+    descendant: str,
+    *,
+    label: str,
+) -> None:
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if ancestry.returncode != 0:
+        raise PromotionValidationError(
+            f"{label} must be an ancestor/equal commit relation"
+        )
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", "-z", ancestor, descendant],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if changed.returncode != 0:
+        raise PromotionValidationError(
+            f"{label} evidence-only diff cannot be inspected"
+        )
+    changed_paths = {
+        os.fsdecode(path).replace("\\", "/")
+        for path in changed.stdout.split(b"\0")
+        if path
+    }
+    unexpected = changed_paths - PROMOTION_EVIDENCE_ONLY_PATHS
+    if unexpected:
+        raise PromotionValidationError(
+            f"{label} contains non-evidence paths: "
+            + ", ".join(sorted(unexpected))
+        )
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -1804,32 +1858,40 @@ def _validate_runner_artifact_chain(
     test_run, test_run_sha256 = _canonical_json_artifact(
         run_dir / "test-run.json", "parallel test-run manifest"
     )
+    test_run_schema_version = test_run.get("schema_version")
+    test_run_fields = {
+        "schema_name",
+        "schema_version",
+        "command",
+        "project",
+        "commit",
+        "registry_sha256",
+        "discovery_sha256",
+        "source_manifest_path",
+        "source_manifest_sha256",
+        "suite_ids",
+        "run_dir",
+        "project_marker_sha256",
+        "persisted_run_id",
+        "persisted_run_nonce",
+        "persisted_target_identity",
+        "persisted_supervisor_identity",
+        "requested_jobs",
+        "timings_from",
+        "runner_identity",
+        "discovery_process",
+    }
+    if test_run_schema_version == 2:
+        test_run_fields.update(
+            {
+                "source_snapshot_path",
+                "source_snapshot_id",
+                "source_snapshot_sha256",
+            }
+        )
     _fields(
         test_run,
-        frozenset(
-            {
-                "schema_name",
-                "schema_version",
-                "command",
-                "project",
-                "commit",
-                "registry_sha256",
-                "discovery_sha256",
-                "source_manifest_path",
-                "source_manifest_sha256",
-                "suite_ids",
-                "run_dir",
-                "project_marker_sha256",
-                "persisted_run_id",
-                "persisted_run_nonce",
-                "persisted_target_identity",
-                "persisted_supervisor_identity",
-                "requested_jobs",
-                "timings_from",
-                "runner_identity",
-                "discovery_process",
-            }
-        ),
+        frozenset(test_run_fields),
         "parallel test-run manifest",
     )
     discovery_process = test_run["discovery_process"]
@@ -1897,7 +1959,7 @@ def _validate_runner_artifact_chain(
     )
     if (
         test_run["schema_name"] != "video2pdf.project-test-run"
-        or test_run["schema_version"] != 1
+        or test_run["schema_version"] not in (1, 2)
         or test_run["command"] != "run"
         or test_run["project"] != project
         or test_run["commit"] != implementation_commit
@@ -1993,6 +2055,124 @@ def _validate_runner_artifact_chain(
         raise PromotionValidationError(
             "execution source manifest differs from implementation commit"
         )
+    source_snapshot_id = None
+    source_snapshot_sha256 = None
+    run_finalization_sha256 = None
+    if test_run_schema_version == 2:
+        source_snapshot_path = run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
+        _require_canonical_declared_path(
+            test_run["source_snapshot_path"],
+            source_snapshot_path.resolve(strict=True),
+            "parallel source snapshot",
+        )
+        source_snapshot, source_snapshot_sha256 = _canonical_json_artifact(
+            source_snapshot_path,
+            "parallel source snapshot",
+        )
+        source_snapshot_id = source_snapshot.get("source_snapshot_id")
+        source_snapshot_payload = {
+            key: value
+            for key, value in source_snapshot.items()
+            if key != "source_snapshot_id"
+        }
+        expected_entry_inventory = [
+            {
+                "path": item["path"],
+                "git_blob": item["git_blob"],
+                "runtime_sha256": item["runtime_sha256"],
+                "runtime_size": item["runtime_size"],
+            }
+            for item in source_manifest["entries"]
+        ]
+        expected_module_inventory = [
+            {
+                "module_key": item["module_key"],
+                "suite_id": item["suite_id"],
+                "source_path": item["source_path"],
+                "test_count": item["test_count"],
+                "test_ids_sha256": hashlib.sha256(
+                    canonical_json_bytes(sorted(item["test_ids"]))
+                ).hexdigest(),
+            }
+            for item in sorted(
+                discovery["modules"],
+                key=lambda value: (
+                    value["suite_id"],
+                    value["source_path"],
+                ),
+            )
+        ]
+        if (
+            set(source_snapshot)
+            != {
+                "schema_name",
+                "schema_version",
+                "run_dir",
+                "execution_root",
+                "persisted_run_id",
+                "persisted_run_nonce",
+                "runner_identity",
+                "project",
+                "registry_sha256",
+                "project_marker_sha256",
+                "source_manifest_path",
+                "source_manifest_sha256",
+                "commit",
+                "git_tree",
+                "entry_inventory",
+                "module_inventory",
+                "prevalidation",
+                "source_snapshot_id",
+            }
+            or
+            source_snapshot.get("schema_name")
+            != "video2pdf.project-test-source-snapshot"
+            or source_snapshot.get("schema_version") != 1
+            or hashlib.sha256(
+                canonical_json_bytes(source_snapshot_payload)
+            ).hexdigest()
+            != source_snapshot_id
+            or test_run["source_snapshot_id"] != source_snapshot_id
+            or test_run["source_snapshot_sha256"] != source_snapshot_sha256
+            or source_snapshot.get("run_dir") != str(run_dir)
+            or source_snapshot.get("execution_root")
+            != str((run_dir / "execution-source-files").resolve(strict=True))
+            or source_snapshot.get("persisted_run_id") != persisted_run_id
+            or source_snapshot.get("persisted_run_nonce")
+            != persisted_run_nonce
+            or source_snapshot.get("runner_identity")
+            != test_run["runner_identity"]
+            or source_snapshot.get("project") != project
+            or source_snapshot.get("registry_sha256") != registry_sha256
+            or source_snapshot.get("project_marker_sha256") != marker_sha256
+            or source_snapshot.get("source_manifest_sha256")
+            != source_manifest_sha256
+            or source_snapshot.get("commit") != implementation_commit
+            or source_snapshot.get("git_tree")
+            != source_manifest.get("git_tree")
+            or source_snapshot.get("entry_inventory")
+            != {
+                "count": len(expected_entry_inventory),
+                "sha256": hashlib.sha256(
+                    canonical_json_bytes(expected_entry_inventory)
+                ).hexdigest(),
+            }
+            or source_snapshot.get("module_inventory")
+            != {
+                "count": len(expected_module_inventory),
+                "sha256": hashlib.sha256(
+                    canonical_json_bytes(expected_module_inventory)
+                ).hexdigest(),
+            }
+            or source_snapshot.get("prevalidation")
+            != {
+                "result": "passed",
+                "source_manifest_sha256": source_manifest_sha256,
+            }
+        ):
+            raise PromotionValidationError(
+                "parallel source snapshot binding is invalid"
+            )
     execution_source_bindings = {
         item["path"]: {
             "committed_sha256": item["committed_sha256"],
@@ -2114,29 +2294,32 @@ def _validate_runner_artifact_chain(
     worker_identities_by_key: dict[str, tuple[int, str, str]] = {}
     for module in summary_modules:
         item = _object(module, "parallel summary module")
+        summary_module_fields = {
+            "module_key",
+            "suite_id",
+            "source_path",
+            "test_ids",
+            "executions",
+            "failure_kind",
+            "detail",
+            "exit_code",
+            "assignment_sha256",
+            "result_sha256",
+            "stdout_sha256",
+            "stderr_sha256",
+            "worker_launch_nonce",
+            "worker_identity",
+            "worker_launcher_identity",
+            "source_manifest_sha256",
+            "artifact_identities",
+        }
+        if test_run_schema_version == 2:
+            summary_module_fields.update(
+                {"source_snapshot_id", "source_snapshot_sha256"}
+            )
         _fields(
             item,
-            frozenset(
-                {
-                    "module_key",
-                    "suite_id",
-                    "source_path",
-                    "test_ids",
-                    "executions",
-                    "failure_kind",
-                    "detail",
-                    "exit_code",
-                    "assignment_sha256",
-                    "result_sha256",
-                    "stdout_sha256",
-                    "stderr_sha256",
-                    "worker_launch_nonce",
-                    "worker_identity",
-                    "worker_launcher_identity",
-                    "source_manifest_sha256",
-                    "artifact_identities",
-                }
-            ),
+            frozenset(summary_module_fields),
             "parallel summary module",
         )
         key = item["module_key"]
@@ -2189,23 +2372,37 @@ def _validate_runner_artifact_chain(
             raise PromotionValidationError(
                 "parallel worker identity is invalid"
             )
+        expected_assignment = {
+            "schema_name": "video2pdf.project-test-module-assignment",
+            "schema_version": test_run_schema_version,
+            "repo_root": str(repo_root),
+            "execution_root": str(run_dir / "execution-source-files"),
+            "module_key": key,
+            "suite_id": discovered["suite_id"],
+            "source_path": discovered["source_path"],
+            "test_ids": discovered["test_ids"],
+            "worker_launch_nonce": worker_launch_nonce,
+            "source_manifest_sha256": source_manifest_sha256,
+        }
+        if test_run_schema_version == 2:
+            source_entry = next(
+                entry
+                for entry in source_manifest["entries"]
+                if entry["path"] == discovered["source_path"]
+            )
+            expected_assignment.update(
+                {
+                    "source_snapshot_id": source_snapshot_id,
+                    "source_snapshot_sha256": source_snapshot_sha256,
+                    "module_inventory_sha256": source_snapshot[
+                        "module_inventory"
+                    ]["sha256"],
+                    "source_sha256": source_entry["runtime_sha256"],
+                }
+            )
         if (
             assignment_fingerprint != item["assignment_sha256"]
-            or assignment
-            != {
-                "schema_name": "video2pdf.project-test-module-assignment",
-                "schema_version": 1,
-                "repo_root": str(repo_root),
-                "execution_root": str(
-                    run_dir / "execution-source-files"
-                ),
-                "module_key": key,
-                "suite_id": discovered["suite_id"],
-                "source_path": discovered["source_path"],
-                "test_ids": discovered["test_ids"],
-                "worker_launch_nonce": worker_launch_nonce,
-                "source_manifest_sha256": source_manifest_sha256,
-            }
+            or assignment != expected_assignment
         ):
             raise PromotionValidationError("parallel worker assignment is invalid")
         result, result_fingerprint = _canonical_json_artifact(
@@ -2214,32 +2411,47 @@ def _validate_runner_artifact_chain(
         )
         duration = result.get("duration_seconds")
         executions = result.get("executions")
+        result_fields = {
+            "schema_name",
+            "schema_version",
+            "module_key",
+            "suite_id",
+            "source_path",
+            "assigned_test_ids",
+            "executions",
+            "failure_kind",
+            "exit_code",
+            "duration_seconds",
+            "worker_launch_nonce",
+            "worker_identity",
+            "source_manifest_sha256",
+        }
+        if test_run_schema_version == 2:
+            result_fields.update(
+                {"source_snapshot_id", "source_snapshot_sha256"}
+            )
         if (
             result_fingerprint != item["result_sha256"]
-            or set(result)
-            != {
-                "schema_name",
-                "schema_version",
-                "module_key",
-                "suite_id",
-                "source_path",
-                "assigned_test_ids",
-                "executions",
-                "failure_kind",
-                "exit_code",
-                "duration_seconds",
-                "worker_launch_nonce",
-                "worker_identity",
-                "source_manifest_sha256",
-            }
+            or set(result) != result_fields
             or result["schema_name"] != "video2pdf.project-test-module-result"
-            or result["schema_version"] != 1
+            or result["schema_version"] != test_run_schema_version
             or result["module_key"] != key
             or result["suite_id"] != discovered["suite_id"]
             or result["source_path"] != discovered["source_path"]
             or result["assigned_test_ids"] != discovered["test_ids"]
             or result["worker_launch_nonce"] != worker_launch_nonce
             or result["source_manifest_sha256"] != source_manifest_sha256
+            or (
+                test_run_schema_version == 2
+                and (
+                    result["source_snapshot_id"] != source_snapshot_id
+                    or result["source_snapshot_sha256"]
+                    != source_snapshot_sha256
+                    or item["source_snapshot_id"] != source_snapshot_id
+                    or item["source_snapshot_sha256"]
+                    != source_snapshot_sha256
+                )
+            )
             or result["worker_identity"] != worker_identity
             or result["failure_kind"] is not None
             or result["exit_code"] != 0
@@ -2352,6 +2564,10 @@ def _validate_runner_artifact_chain(
             "source_path",
             "time_unix_ns",
         }
+        if test_run_schema_version == 2:
+            common.update(
+                {"source_snapshot_id", "source_snapshot_sha256"}
+            )
         expected_fields = (
             common
             if state == "queued"
@@ -2384,6 +2600,14 @@ def _validate_runner_artifact_chain(
             or type(event["time_unix_ns"]) is not int
             or event["time_unix_ns"] < 0
             or event["time_unix_ns"] < prior_time
+            or (
+                test_run_schema_version == 2
+                and (
+                    event["source_snapshot_id"] != source_snapshot_id
+                    or event["source_snapshot_sha256"]
+                    != source_snapshot_sha256
+                )
+            )
         ):
             raise PromotionValidationError("parallel event is invalid")
         prior_time = event["time_unix_ns"]
@@ -2462,7 +2686,7 @@ def _validate_runner_artifact_chain(
             "modules",
         }
         or timings["schema_name"] != "video2pdf.project-test-timings"
-        or timings["schema_version"] != 1
+        or timings["schema_version"] not in (1, 2)
         or timings["project"] != project
         or timings["commit"] != implementation_commit
         or timings["suite_ids"] != ["video-workflow"]
@@ -2483,6 +2707,35 @@ def _validate_runner_artifact_chain(
         )
     ):
         raise PromotionValidationError("parallel timings manifest is invalid")
+    if test_run_schema_version == 2:
+        _, _, summary_sha256 = _canonical_snapshot(
+            run_dir / "summary.json",
+            "parallel summary finalization binding",
+        )
+        finalization, run_finalization_sha256 = _canonical_json_artifact(
+            run_dir / RUN_FINALIZATION_RELATIVE_PATH,
+            "parallel run finalization",
+        )
+        if finalization != {
+            "schema_name": "video2pdf.project-test-run-finalization",
+            "schema_version": 1,
+            "source_snapshot_id": source_snapshot_id,
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "source_manifest_sha256": source_manifest_sha256,
+            "summary_sha256": summary_sha256,
+            "scheduler_success": True,
+            "scheduler_failure_kind": None,
+            "postvalidation": {
+                "result": "passed",
+                "source_manifest_sha256": source_manifest_sha256,
+                "detail": None,
+            },
+            "success": True,
+            "failure_kind": None,
+        }:
+            raise PromotionValidationError(
+                "parallel run finalization is invalid"
+            )
     return {
         "marker_sha256": marker_sha256,
         "test_run_sha256": test_run_sha256,
@@ -2491,6 +2744,9 @@ def _validate_runner_artifact_chain(
         "runner_pid": test_run["runner_identity"]["pid"],
         "discovery_pid": discovery_self_identity["pid"],
         "source_manifest_sha256": source_manifest_sha256,
+        "source_snapshot_id": source_snapshot_id,
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "run_finalization_sha256": run_finalization_sha256,
         "execution_source_bindings": execution_source_bindings,
         "worker_pids": sorted(worker_pids),
         "worker_identity_lineage_sha256": hashlib.sha256(
@@ -2972,12 +3228,21 @@ def _validate_parallel_run(
         )
     if (
         summary.get("schema_name") != "video2pdf.project-test-summary"
-        or summary.get("schema_version") != 1
+        or summary.get("schema_version") not in (1, 2)
         or summary.get("commit") != implementation_commit
         or summary.get("suite_ids") != promotion["suite_ids"]
         or summary.get("requested_jobs") != 4
         or summary.get("success") is not True
         or summary.get("failure_kind") is not None
+        or (
+            summary.get("schema_version") == 2
+            and (
+                not isinstance(summary.get("source_snapshot_id"), str)
+                or not isinstance(
+                    summary.get("source_snapshot_sha256"), str
+                )
+            )
+        )
         or not isinstance(coverage, dict)
         or (
             expected_test_ids is not None
@@ -3538,7 +3803,8 @@ def _validate_v2(
         implementation,
         frozenset(
             {
-                "commit",
+                "reviewed_implementation_commit",
+                "execution_evidence_commit",
                 "authority_sources",
                 "registry_path",
                 "registry_sha256",
@@ -3550,8 +3816,37 @@ def _validate_v2(
         ),
         "implementation",
     )
-    implementation_commit = _commit(
-        implementation["commit"], "implementation.commit"
+    reviewed_implementation_commit = _commit(
+        implementation["reviewed_implementation_commit"],
+        "implementation.reviewed_implementation_commit",
+    )
+    execution_evidence_commit = _commit(
+        implementation["execution_evidence_commit"],
+        "implementation.execution_evidence_commit",
+    )
+    _validate_evidence_only_commit_range(
+        repo_root,
+        reviewed_implementation_commit,
+        execution_evidence_commit,
+        label="reviewed implementation to execution evidence",
+    )
+    head_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    live_head = head_result.stdout.strip()
+    if head_result.returncode != 0:
+        raise PromotionValidationError("validator-time live HEAD is invalid")
+    _commit(live_head, "validator-time live HEAD")
+    _validate_evidence_only_commit_range(
+        repo_root,
+        execution_evidence_commit,
+        live_head,
+        label="execution evidence to validator-time live HEAD",
     )
     report_authority_sources = _source_fingerprint_map(
         implementation["authority_sources"],
@@ -3625,13 +3920,22 @@ def _validate_v2(
             repo_root,
             run,
             promotion,
-            implementation_commit,
+            execution_evidence_commit,
             1800,
             expected_test_ids=current_ids,
             expected_registry_sha256=implementation["registry_sha256"],
         )
         for run in runs
     ]
+    if any(
+        item["source_snapshot_id"] is None
+        or item["run_finalization_sha256"] is None
+        for item in validated_runs
+    ):
+        raise PromotionValidationError(
+            "Promotion v2 parallel runs require source snapshot and "
+            "run finalization authority"
+        )
     if (
         implementation["registry_sha256"]
         != authority_sources[implementation["registry_path"]]
@@ -3647,7 +3951,7 @@ def _validate_v2(
     try:
         committed_authority_sources = committed_source_fingerprints(
             repo_root,
-            implementation_commit,
+            reviewed_implementation_commit,
             authority_sources,
         )
     except SourceProvenanceError as error:
@@ -3657,6 +3961,21 @@ def _validate_v2(
     if committed_authority_sources != authority_sources:
         raise PromotionValidationError(
             "Promotion authority source differs from implementation commit"
+        )
+    try:
+        evidence_commit_authority_sources = committed_source_fingerprints(
+            repo_root,
+            execution_evidence_commit,
+            authority_sources,
+        )
+    except SourceProvenanceError as error:
+        raise PromotionValidationError(
+            f"Promotion evidence source commit is invalid: {error}"
+        ) from error
+    if evidence_commit_authority_sources != authority_sources:
+        raise PromotionValidationError(
+            "Promotion authority source differs between reviewed "
+            "implementation and execution evidence commits"
         )
     for relative_path, declared_sha256 in authority_sources.items():
         run_bindings = [
@@ -3752,13 +4071,14 @@ def _validate_v2(
             report["optimization_safety_review"],
             "optimization_safety_review",
         ),
-        implementation_commit,
+        reviewed_implementation_commit,
         authority_sources,
     )
     fingerprint_input = {
         "schema_version": 2,
         "authorization_model": authorization_model,
-        "implementation_commit": implementation_commit,
+        "reviewed_implementation_commit": reviewed_implementation_commit,
+        "execution_evidence_commit": execution_evidence_commit,
         "historical_baseline_commit": baseline["implementation_commit"],
         "historical_status_sha256": baseline["persisted_status_sha256"],
         "historical_exit_code_sha256": baseline[
@@ -3814,6 +4134,21 @@ def _validate_v2(
                 "source_manifest_sha256": validated_runs[index][
                     "source_manifest_sha256"
                 ],
+                **(
+                    {
+                        "source_snapshot_id": validated_runs[index][
+                            "source_snapshot_id"
+                        ],
+                        "source_snapshot_sha256": validated_runs[index][
+                            "source_snapshot_sha256"
+                        ],
+                        "run_finalization_sha256": validated_runs[index][
+                            "run_finalization_sha256"
+                        ],
+                    }
+                    if validated_runs[index]["source_snapshot_id"] is not None
+                    else {}
+                ),
             }
             for index, run in enumerate(runs)
         ],

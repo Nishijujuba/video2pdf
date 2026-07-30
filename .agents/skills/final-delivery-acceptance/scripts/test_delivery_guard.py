@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import shutil
 import subprocess
 import sys
 import unittest
@@ -21,7 +22,14 @@ SOURCE_REPO_ROOT = Path(__file__).resolve().parents[4]
 REPO_ROOT = SOURCE_REPO_ROOT
 CRITERIA_PATH = SOURCE_REPO_ROOT / "docs" / "acceptance" / "acceptance_criteria.v1.json"
 SCRIPT = SOURCE_REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "scripts" / "delivery_guard.py"
-WRAPPER_SCRIPT = SOURCE_REPO_ROOT / ".agents" / "skills" / "bilibili-render-pdf" / "scripts" / "compile_latex_ascii.py"
+SOURCE_WRAPPER_SCRIPT = (
+    SOURCE_REPO_ROOT
+    / ".agents"
+    / "skills"
+    / "bilibili-render-pdf"
+    / "scripts"
+    / "compile_latex_ascii.py"
+)
 TEXT_ARTIFACT_CATEGORIES = {"style", "logic_readability", "formula_information_gain"}
 VISUAL_CATEGORIES = {
     "figure_visual_integrity",
@@ -42,6 +50,16 @@ class DeliveryGuardTests(unittest.TestCase):
             expected_suite="skill-tests",
         )
         REPO_ROOT = self.project_root
+        self.wrapper_script = (
+            self.project_root
+            / ".agents"
+            / "skills"
+            / "bilibili-render-pdf"
+            / "scripts"
+            / "compile_latex_ascii.py"
+        )
+        self.wrapper_script.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SOURCE_WRAPPER_SCRIPT, self.wrapper_script)
         self.case_dir = self.project_root / "cases" / self._testMethodName
         self.video_dir = self.case_dir / "video"
         self.acceptance_dir = self.video_dir / "review" / "acceptance"
@@ -250,8 +268,8 @@ class DeliveryGuardTests(unittest.TestCase):
             "producer": "compile_latex_ascii.py",
             "producer_contract": "latex_compile_guard.v1",
             "producer_mode": "final",
-            "wrapper_script": str(WRAPPER_SCRIPT.resolve()),
-            "wrapper_script_fingerprint": self.compile_fingerprint(WRAPPER_SCRIPT),
+            "wrapper_script": str(self.wrapper_script.resolve()),
+            "wrapper_script_fingerprint": self.compile_fingerprint(self.wrapper_script),
             "argv": [
                 "--tex",
                 str(source_tex.resolve()),
@@ -282,8 +300,8 @@ class DeliveryGuardTests(unittest.TestCase):
             "producer": "compile_latex_ascii.py",
             "producer_contract": "latex_compile_guard.v1",
             "producer_mode": "final",
-            "wrapper_script": str(WRAPPER_SCRIPT.resolve()),
-            "wrapper_script_fingerprint": self.compile_fingerprint(WRAPPER_SCRIPT),
+            "wrapper_script": str(self.wrapper_script.resolve()),
+            "wrapper_script_fingerprint": self.compile_fingerprint(self.wrapper_script),
             "argv": [
                 "--tex",
                 str(source_tex.resolve()),

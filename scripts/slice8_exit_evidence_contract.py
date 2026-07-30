@@ -31,6 +31,20 @@ COMMANDS = (
         0,
     ),
     (
+        "slice8-public-prepare",
+        (
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            "-m",
+            "unittest",
+            "-v",
+            "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_prepare_creates_three_isolated_same_generation_fixed_skeletons",
+        ),
+        0,
+    ),
+    (
         "slice8-qualification-tests",
         (
             sys.executable,

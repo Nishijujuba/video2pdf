@@ -143,6 +143,7 @@ def new_state() -> dict[str, Any]:
         "writing_quality_report": None,
         "current_seal": None,
         "stale_seal": None,
+        "stale_inventory": None,
         "text_equivalence_report": None,
         "final_compile_admission": None,
         "last_event": "Initialized an unevaluated integrated draft.",
@@ -388,6 +389,7 @@ def run_writing_quality_gate(state: dict[str, Any]) -> None:
         return
     _create_seal(state, decision_origin="fresh_evaluation")
     state["stale_seal"] = None
+    state["stale_inventory"] = None
     state["text_equivalence_report"] = None
     state["final_compile_admission"] = None
     state["last_event"] = (
@@ -515,10 +517,12 @@ def _invalidate_after_mutation(
     prior_seal = state["current_seal"]
     if prior_seal:
         state["stale_seal"] = prior_seal
+        state["stale_inventory"] = copy.deepcopy(state["inventory"])
     state["current_seal"] = None
     if not keep_report_for_equivalence:
         state["writing_quality_report"] = None
         state["stale_seal"] = None
+        state["stale_inventory"] = None
     state["text_equivalence_report"] = None
     state["final_compile_admission"] = None
     refresh_inventory(state)
@@ -526,15 +530,44 @@ def _invalidate_after_mutation(
 
 def prove_text_equivalence_and_reseal(state: dict[str, Any]) -> None:
     stale = state["stale_seal"]
+    stale_inventory = state["stale_inventory"]
     report = state["writing_quality_report"]
     refresh_inventory(state)
-    if not stale or not report:
+    if not stale or not stale_inventory or not report:
         state["last_event"] = (
             "Equivalence unavailable: no stale seal and reusable prior judgment."
         )
         return
     inventory = state["inventory"]
+    prior_items = {
+        item["item_id"]: item for item in stale_inventory["items"]
+    }
+    current_items = {
+        item["item_id"]: item for item in inventory["items"]
+    }
+    item_mapping = [
+        {
+            "item_id": item_id,
+            "prior_locator": prior_items[item_id]["source_binding"]["locator"],
+            "current_locator": current_items[item_id]["source_binding"]["locator"],
+            "prior_text_sha256": prior_items[item_id]["text_sha256"],
+            "current_text_sha256": current_items[item_id]["text_sha256"],
+            "equivalent": (
+                prior_items[item_id]["kind"] == current_items[item_id]["kind"]
+                and prior_items[item_id]["representation"]
+                == current_items[item_id]["representation"]
+                and prior_items[item_id]["text_sha256"]
+                == current_items[item_id]["text_sha256"]
+            ),
+        }
+        for item_id in sorted(set(prior_items) & set(current_items))
+    ]
     checks = {
+        "stable_item_identity_bijection": (
+            set(prior_items) == set(current_items)
+            and len(item_mapping) == len(prior_items)
+            and all(item["equivalent"] for item in item_mapping)
+        ),
         "reader_text_set_unchanged": (
             stale["reader_text_set_sha256"] == inventory["reader_text_set_sha256"]
         ),
@@ -556,6 +589,7 @@ def prove_text_equivalence_and_reseal(state: dict[str, Any]) -> None:
         "prior_inventory_sha256": stale["inventory_sha256"],
         "current_inventory_sha256": inventory["inventory_sha256"],
         "current_artifact_generations": _current_source_bindings(state),
+        "item_mapping": item_mapping,
         "checks": checks,
         "overall_decision": "equivalent" if all(checks.values()) else "different",
     }

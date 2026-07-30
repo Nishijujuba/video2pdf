@@ -64,6 +64,8 @@ ledger, report, and current Artifact Generations. It is immutable. A
 presentation-only mutation makes the old seal stale. A deterministic
 `Text Equivalence Report` may then prove that the reader-text set, coverage
 surface, rule semantics, projection, and language profile are unchanged. The
+report also records a bijective old-to-new mapping for every stable item
+identity, including prior and current locators and text fingerprints. The
 provider creates a successor seal for the new Artifact Generations and cites
 the prior semantic judgment. A text change requires fresh semantic review.
 

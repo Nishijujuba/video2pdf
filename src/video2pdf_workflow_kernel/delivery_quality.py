@@ -95,8 +95,10 @@ class DeliveryQualityRegistry:
         if self._manifest["authority"] != SUPPORTED_AUTHORITY:
             raise ContractError("Delivery Quality registry would activate runtime authority")
         contracts = self._manifest["contracts"]
-        if not isinstance(contracts, list) or len(contracts) != 7:
-            raise ContractError("Delivery Quality registry must contain seven contracts")
+        if not isinstance(contracts, list) or len(contracts) != 15:
+            raise ContractError(
+                "Delivery Quality registry must contain fifteen contracts"
+            )
 
         expected_entry_fields = {
             "schema_name",
@@ -162,6 +164,14 @@ class DeliveryQualityRegistry:
             "delivery-quality-migration-ledger",
             "delivery-quality-conformance-corpus",
             "delivery-quality-conformance-report",
+            "precompile-artifact-generation-set",
+            "reader-facing-text-inventory",
+            "precompile-semantic-dependencies",
+            "precompile-review-skeleton",
+            "precompile-judgment-patch",
+            "precompile-quality-report",
+            "precompile-text-seal",
+            "text-equivalence-report",
         }
         if set(names) != expected_names:
             raise ContractError("Delivery Quality registry contract set is incomplete")

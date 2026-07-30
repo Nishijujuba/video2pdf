@@ -40,6 +40,22 @@ The provider-materialized implementation-qualification result bound to exact cat
 
 A blocking conformance result recorded when isolated attempts for the same case disagree on classification, violation, exception, or evidence locator.
 
+## Reader-Facing Text Inventory
+
+The complete fingerprinted declaration of visible text before Final Compile. It binds every declared region and item to current Artifact Generations, exact text identity, representation, Language Profile, applicable rules, and extractor provenance. Raster text requires an authoritative declared representation.
+
+## Precompile Quality Report
+
+The provider-materialized aggregate of independent Source-Faithfulness, Writing Quality, and Pyramid judgments over one current Artifact Generation set and Reader-Facing Text Inventory. It carries precompile semantic authority only when coverage is complete and no Delivery Quality Contract Gap exists.
+
+## Precompile Text Seal
+
+The immutable binding between a passing Precompile Quality Report, its complete inventory, current policy and projection identities, Language Profile, optional Delivery Glossary, semantic dependencies, providers, and Artifact Generations. A successor Seal may reuse prior judgment only through a passing deterministic Text Equivalence Report.
+
+## Text Equivalence Report
+
+The deterministic proof for a classified presentation-only mutation. It requires a bijection over stable item identities and unchanged text, declared surface, policy, Language Profile, Delivery Glossary, and semantic dependencies. It performs no semantic interpretation.
+
 ## Migration boundary
 
 The target migration ledger binds active Acceptance Criteria v1 identities to future canonical rule identities and decision owners. Its presence does not change active Legacy Final Acceptance authority. `Acceptance Report v2` remains the future sole final semantic delivery decision after the Global Gate Cutover.

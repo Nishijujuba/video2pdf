@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "generation_set_id", "artifacts", "generation_set_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-artifact-generation-set"},
+    "schema_version": {"const": "1.0.0"},
+    "generation_set_id": {"type": "string", "minLength": 1},
+    "artifacts": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

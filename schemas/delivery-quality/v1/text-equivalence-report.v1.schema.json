@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/text-equivalence-report.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "activation_status", "proved_at", "mutation_class", "prior_seal_sha256", "prior_inventory_sha256", "successor_inventory_sha256", "prior_generation_set_sha256", "successor_generation_set_sha256", "item_mapping", "checks", "contract_gaps", "overall_decision", "report_sha256"],
+  "properties": {
+    "schema_name": {"const": "text-equivalence-report"},
+    "schema_version": {"const": "1.0.0"},
+    "activation_status": {"const": "target_only"},
+    "proved_at": {"type": "string", "minLength": 1},
+    "mutation_class": {"const": "presentation_only"},
+    "prior_seal_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "prior_inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "successor_inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "prior_generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "successor_generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "item_mapping": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "checks": {"type": "object"},
+    "contract_gaps": {"type": "array", "maxItems": 0},
+    "overall_decision": {"enum": ["equivalent", "different"]},
+    "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

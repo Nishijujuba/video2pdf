@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "report_id", "activation_status", "materialized_at", "generation_set_sha256", "inventory_sha256", "reader_text_set_sha256", "language_profile_id", "delivery_glossary", "catalog_sha256", "role_projections_sha256", "semantic_dependencies_sha256", "provider", "owner_reports", "failure_set", "repair_routing", "contract_gaps", "semantic_attempt_budget_consumed", "overall_decision", "report_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-quality-report"},
+    "schema_version": {"const": "1.0.0"},
+    "report_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "activation_status": {"const": "target_only"},
+    "materialized_at": {"type": "string", "minLength": 1},
+    "generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reader_text_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "language_profile_id": {"type": "string", "minLength": 1},
+    "delivery_glossary": {"type": ["object", "null"]},
+    "catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "role_projections_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semantic_dependencies_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider": {"type": "object"},
+    "owner_reports": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "object"}},
+    "failure_set": {"type": "array", "items": {"type": "object"}},
+    "repair_routing": {"type": "object"},
+    "contract_gaps": {"type": "array", "maxItems": 0},
+    "semantic_attempt_budget_consumed": {"type": "boolean"},
+    "overall_decision": {"enum": ["pass", "fail"]},
+    "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

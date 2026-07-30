@@ -22,6 +22,22 @@ class DeliveryQualityConformanceFailed(KernelError):
     exit_code = 30
 
 
+class TextEquivalenceRejected(KernelError):
+    classification = "text_equivalence_rejected"
+    exit_code = 30
+
+
+class PrecompileFault(KernelError):
+    classification = "injected_precompile_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected precompile quality fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
 class UnknownContractVersion(ContractError):
     classification = "unknown_contract_version"
 

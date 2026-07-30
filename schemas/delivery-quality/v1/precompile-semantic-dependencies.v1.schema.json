@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-semantic-dependencies.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "dependencies", "dependencies_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-semantic-dependencies"},
+    "schema_version": {"const": "1.0.0"},
+    "dependencies": {"type": "array", "minItems": 2, "items": {"type": "object"}},
+    "dependencies_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

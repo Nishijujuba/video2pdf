@@ -72,6 +72,86 @@
       "canonical_sha256": "17d8e3520653c56f9ba1572f64b3581b9a5351e54384c883b1684344d51d4ce2",
       "positive_example": "delivery-quality/v1/conformance-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/conformance-report.invalid.json"
+    },
+    {
+      "schema_name": "precompile-artifact-generation-set",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-artifact-generation-set.example.v1.json",
+      "canonical_sha256": "df97f21e4b9af005ee45b6ec3e45c9c0884c3a01c269c49b458f1e6c9f87802e",
+      "positive_example": "delivery-quality/v1/precompile-artifact-generation-set.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-artifact-generation-set.invalid.json"
+    },
+    {
+      "schema_name": "reader-facing-text-inventory",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/reader-facing-text-inventory.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/reader-facing-text-inventory.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/reader-facing-text-inventory.example.v1.json",
+      "canonical_sha256": "4081c3a7c049a5e851145f8c51c3397a73968c2eb7b74249192c0297d382996d",
+      "positive_example": "delivery-quality/v1/reader-facing-text-inventory.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/reader-facing-text-inventory.invalid.json"
+    },
+    {
+      "schema_name": "precompile-semantic-dependencies",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-semantic-dependencies.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-semantic-dependencies.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-semantic-dependencies.example.v1.json",
+      "canonical_sha256": "8140a4a9897007b52946778cd938848be47b189e30ef4f6278ee3b101d267b30",
+      "positive_example": "delivery-quality/v1/precompile-semantic-dependencies.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-semantic-dependencies.invalid.json"
+    },
+    {
+      "schema_name": "precompile-review-skeleton",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-review-skeleton.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-review-skeleton.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-review-skeleton.example.v1.json",
+      "canonical_sha256": "4283f62c011311f359e384fd6d5b3983e53c58602aae57b6b90903a3c9bc7bb0",
+      "positive_example": "delivery-quality/v1/precompile-review-skeleton.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-review-skeleton.invalid.json"
+    },
+    {
+      "schema_name": "precompile-judgment-patch",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-judgment-patch.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-judgment-patch.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-judgment-patch.example.v1.json",
+      "canonical_sha256": "48d906d4e735fcbb9c19b11e963ec1a43a66a37b70c533f5ecc08e09ed12af72",
+      "positive_example": "delivery-quality/v1/precompile-judgment-patch.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-judgment-patch.invalid.json"
+    },
+    {
+      "schema_name": "precompile-quality-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-quality-report.example.v1.json",
+      "canonical_sha256": "5446d09cf3fb6841c91088cf56c36788133b70df2608c771ecf85b71e73bd830",
+      "positive_example": "delivery-quality/v1/precompile-quality-report.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-quality-report.invalid.json"
+    },
+    {
+      "schema_name": "precompile-text-seal",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-text-seal.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-text-seal.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-text-seal.example.v1.json",
+      "canonical_sha256": "fe60557d10982a2b88a6410e5d8a1d525b912c5f49e444309d169ed8319b1035",
+      "positive_example": "delivery-quality/v1/precompile-text-seal.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-text-seal.invalid.json"
+    },
+    {
+      "schema_name": "text-equivalence-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/text-equivalence-report.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/text-equivalence-report.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/text-equivalence-report.example.v1.json",
+      "canonical_sha256": "51100265813f9bcd6a074b24bc754f5ee4af46d8d4dd74b75a53f49344948254",
+      "positive_example": "delivery-quality/v1/text-equivalence-report.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/text-equivalence-report.invalid.json"
     }
   ]
 }

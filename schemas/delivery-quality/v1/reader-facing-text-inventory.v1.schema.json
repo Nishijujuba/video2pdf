@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/reader-facing-text-inventory.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "inventory_id", "language_profile_id", "delivery_glossary", "generation_set_sha256", "declared_surface", "items", "coverage_ledger", "extractors", "reader_text_set_sha256", "inventory_sha256"],
+  "properties": {
+    "schema_name": {"const": "reader-facing-text-inventory"},
+    "schema_version": {"const": "1.0.0"},
+    "inventory_id": {"type": "string", "minLength": 1},
+    "language_profile_id": {"type": "string", "minLength": 1},
+    "delivery_glossary": {"type": ["object", "null"]},
+    "generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "declared_surface": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "items": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "coverage_ledger": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "extractors": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "reader_text_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

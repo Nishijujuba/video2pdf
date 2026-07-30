@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-text-seal.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "seal_id", "activation_status", "sealed_at", "decision_origin", "generation_set_sha256", "catalog_sha256", "role_projections_sha256", "language_profile_id", "delivery_glossary", "semantic_dependencies_sha256", "inventory_sha256", "reader_text_set_sha256", "precompile_quality_report_sha256", "provider", "predecessor_seal_sha256", "text_equivalence_report_sha256", "seal_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-text-seal"},
+    "schema_version": {"const": "1.0.0"},
+    "seal_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "activation_status": {"const": "target_only"},
+    "sealed_at": {"type": "string", "minLength": 1},
+    "decision_origin": {"enum": ["fresh_evaluation", "reused_after_text_equivalence"]},
+    "generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "role_projections_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "language_profile_id": {"type": "string", "minLength": 1},
+    "delivery_glossary": {"type": ["object", "null"]},
+    "semantic_dependencies_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reader_text_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "precompile_quality_report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider": {"type": "object"},
+    "predecessor_seal_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "text_equivalence_report_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "seal_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

@@ -24,6 +24,12 @@ from .task_execution import (
 )
 from .content_production import PRODUCTION_FAULT_POINTS
 from .guarded_compile import GuardedCompileProvider
+from .precompile_quality import (
+    MATERIALIZE_FAULT_POINTS,
+    PATCH_COMMIT_FAULT_POINTS,
+    PREPARE_FAULT_POINTS,
+    PrecompileQualityProvider,
+)
 from .utils import read_json
 
 
@@ -61,6 +67,69 @@ def _parser() -> argparse.ArgumentParser:
     delivery_quality_conformance.add_argument(
         "--adapter-id", default="reviewer-subprocess-adapter"
     )
+
+    precompile_prepare = commands.add_parser(
+        "delivery-quality-precompile-prepare"
+    )
+    precompile_prepare.add_argument("--workspace-root", required=True, type=Path)
+    precompile_prepare.add_argument("--inventory", required=True, type=Path)
+    precompile_prepare.add_argument(
+        "--artifact-generations", required=True, type=Path
+    )
+    precompile_prepare.add_argument(
+        "--semantic-dependencies", required=True, type=Path
+    )
+    precompile_prepare.add_argument("--prepared-at", required=True)
+    precompile_prepare.add_argument(
+        "--fault-point", choices=sorted(PREPARE_FAULT_POINTS)
+    )
+
+    precompile_patch_commit = commands.add_parser(
+        "delivery-quality-precompile-patch-commit"
+    )
+    precompile_patch_commit.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    precompile_patch_commit.add_argument(
+        "--owner", required=True
+    )
+    precompile_patch_commit.add_argument("--patch", required=True, type=Path)
+    precompile_patch_commit.add_argument("--committed-at", required=True)
+    precompile_patch_commit.add_argument(
+        "--fault-point", choices=sorted(PATCH_COMMIT_FAULT_POINTS)
+    )
+
+    precompile_materialize = commands.add_parser(
+        "delivery-quality-precompile-materialize"
+    )
+    precompile_materialize.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    precompile_materialize.add_argument("--provider-id", required=True)
+    precompile_materialize.add_argument("--provider-version", required=True)
+    precompile_materialize.add_argument("--materialized-at", required=True)
+    precompile_materialize.add_argument(
+        "--fault-point", choices=sorted(MATERIALIZE_FAULT_POINTS)
+    )
+
+    precompile_seal = commands.add_parser("delivery-quality-seal")
+    precompile_seal.add_argument("--workspace-root", required=True, type=Path)
+    precompile_seal.add_argument("--sealed-at", required=True)
+
+    text_equivalence = commands.add_parser(
+        "delivery-quality-text-equivalence"
+    )
+    text_equivalence.add_argument("--workspace-root", required=True, type=Path)
+    text_equivalence.add_argument(
+        "--successor-inventory", required=True, type=Path
+    )
+    text_equivalence.add_argument(
+        "--successor-artifact-generations", required=True, type=Path
+    )
+    text_equivalence.add_argument(
+        "--mutation-class", required=True
+    )
+    text_equivalence.add_argument("--proved-at", required=True)
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -341,6 +410,90 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "delivery-quality-precompile-prepare":
+        result = PrecompileQualityProvider(project_root).prepare(
+            workspace_root=args.workspace_root,
+            inventory_path=args.inventory,
+            artifact_generations_path=args.artifact_generations,
+            semantic_dependencies_path=args.semantic_dependencies,
+            prepared_at=args.prepared_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "precompile_review_tasks_prepared",
+            result,
+            str(args.workspace_root.resolve() / "skeletons"),
+        )
+    if command == "delivery-quality-precompile-patch-commit":
+        result = PrecompileQualityProvider(project_root).commit_patch(
+            workspace_root=args.workspace_root,
+            owner=args.owner,
+            patch_path=args.patch,
+            committed_at=args.committed_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "precompile_judgment_patch_committed",
+            result,
+            str(
+                args.workspace_root.resolve()
+                / "patches"
+                / f"{args.owner}.commit.json"
+            ),
+        )
+    if command == "delivery-quality-precompile-materialize":
+        result = PrecompileQualityProvider(project_root).materialize(
+            workspace_root=args.workspace_root,
+            provider_id=args.provider_id,
+            provider_version=args.provider_version,
+            materialized_at=args.materialized_at,
+            fault_point=args.fault_point,
+        )
+        classification = (
+            "precompile_quality_report_passed"
+            if result["overall_decision"] == "pass"
+            else "precompile_quality_report_failed"
+        )
+        return _ok(
+            command,
+            classification,
+            result,
+            result["report_path"],
+        )
+    if command == "delivery-quality-seal":
+        result = PrecompileQualityProvider(project_root).seal(
+            workspace_root=args.workspace_root,
+            sealed_at=args.sealed_at,
+        )
+        classification = (
+            "precompile_text_successor_seal_created"
+            if result["decision_origin"] == "reused_after_text_equivalence"
+            else "precompile_text_seal_created"
+        )
+        return _ok(
+            command,
+            classification,
+            result,
+            result["seal_path"],
+        )
+    if command == "delivery-quality-text-equivalence":
+        result = PrecompileQualityProvider(project_root).prove_text_equivalence(
+            workspace_root=args.workspace_root,
+            successor_inventory_path=args.successor_inventory,
+            successor_artifact_generations_path=(
+                args.successor_artifact_generations
+            ),
+            mutation_class=args.mutation_class,
+            proved_at=args.proved_at,
+        )
+        return _ok(
+            command,
+            "text_equivalence_proved",
+            result,
+            result["report_path"],
+        )
     if command == "guarded-compile":
         run_dir = args.run_dir.resolve()
         manifest_path = args.manifest.resolve()

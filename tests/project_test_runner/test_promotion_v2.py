@@ -13,6 +13,7 @@ from unittest import mock
 
 from jsonschema import Draft202012Validator
 
+import scripts.generate_project_test_promotion_v2_authority as authority_generator
 import scripts.validate_project_test_promotion as promotion_validator
 from scripts.project_test_registry import load_registry
 from scripts.project_test_results import (
@@ -331,11 +332,36 @@ class PromotionReportV2Tests(unittest.TestCase):
             text=True,
             encoding="utf-8",
         )
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            ],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "execution evidence"],
+            cwd=repo,
+            check=True,
+        )
+        evidence_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
         verified = subprocess.run(
             [
                 *arguments,
                 "--execution-evidence-commit",
-                reviewed_commit,
+                evidence_commit,
             ],
             cwd=repo,
             check=False,
@@ -348,6 +374,51 @@ class PromotionReportV2Tests(unittest.TestCase):
         self.assertEqual(verified.returncode, 0, verified.stderr)
         self.assertEqual(json.loads(verified.stdout)["mode"], "verified")
         self.assertEqual(first_bytes, {path: path.read_bytes() for path in paths})
+
+    def test_authority_generator_quarantines_temp_when_replace_fails(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        original_bytes = {target: target.read_bytes() for target in targets}
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=OSError("injected replace failure"),
+            ),
+            self.assertRaisesRegex(
+                SystemExit,
+                "cannot atomically materialize authority artifact",
+            ),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        self.assertEqual(
+            original_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+        sibling_temps = [
+            temporary
+            for target in targets
+            for temporary in target.parent.glob(f".{target.name}.*.tmp")
+        ]
+        self.assertEqual(sibling_temps, [])
+        quarantined = list((repo / "待删除").glob("authority-materialization-*"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertTrue(quarantined[0].is_file())
 
     def test_authority_generator_rejects_unknown_output_argument(self) -> None:
         repo, _reviewed_commit, arguments = (
@@ -475,6 +546,63 @@ class PromotionReportV2Tests(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("contains non-evidence paths", rejected.stderr)
+
+    def test_authority_generator_verify_rejects_artifact_blob_drift_at_e(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        materialized = subprocess.run(
+            [*arguments, "--write"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(materialized.returncode, 0, materialized.stderr)
+        authority_path = repo / AUTHORITY
+        expected_live_bytes = authority_path.read_bytes()
+        authority_path.write_bytes(b'{"committed":"wrong authority bytes"}\n')
+        subprocess.run(
+            ["git", "add", AUTHORITY.as_posix()],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "wrong execution evidence"],
+            cwd=repo,
+            check=True,
+        )
+        evidence_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        authority_path.write_bytes(expected_live_bytes)
+
+        verified = subprocess.run(
+            [
+                *arguments,
+                "--execution-evidence-commit",
+                evidence_commit,
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertNotEqual(verified.returncode, 0)
+        self.assertIn(
+            "execution evidence commit authority artifact differs",
+            verified.stderr,
+        )
 
     def test_promotion_authority_source_closed_set_is_explicit_and_live(
         self,

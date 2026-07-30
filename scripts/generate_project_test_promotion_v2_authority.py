@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any, Sequence
+import uuid
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -300,6 +301,25 @@ def _git_stdout(repo_root: Path, arguments: Sequence[str]) -> str:
     return completed.stdout
 
 
+def _committed_artifact_bytes(
+    repo_root: Path,
+    commit: str,
+    relative_path: Path,
+) -> bytes:
+    completed = subprocess.run(
+        ["git", "show", f"{commit}:{relative_path.as_posix()}"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            "execution evidence commit authority artifact is missing: "
+            f"{relative_path}"
+        )
+    return completed.stdout
+
+
 def _changed_worktree_paths(repo_root: Path) -> frozenset[str]:
     raw = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -395,7 +415,49 @@ def _assert_safe_target(repo_root: Path, relative_path: Path) -> Path:
     return target
 
 
-def _atomic_replace(destination: Path, content: bytes) -> None:
+def _quarantine_materialization_temp(
+    repo_root: Path,
+    temporary: Path,
+    destination: Path,
+) -> Path:
+    quarantine = repo_root / "待删除"
+    try:
+        quarantine.mkdir(exist_ok=True)
+        quarantine_stat = quarantine.stat(follow_symlinks=False)
+        if (
+            not quarantine.is_dir()
+            or quarantine.is_symlink()
+            or getattr(
+                quarantine_stat,
+                "st_file_attributes",
+                0,
+            )
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            or quarantine.resolve(strict=True)
+            != (repo_root.resolve(strict=True) / "待删除")
+        ):
+            raise OSError("quarantine boundary is unsafe")
+        quarantined = quarantine / (
+            "authority-materialization-"
+            f"{destination.name}-{uuid.uuid4().hex}.tmp"
+        )
+        if quarantined.exists():
+            raise OSError("quarantine destination is not unique")
+        os.rename(temporary, quarantined)
+    except OSError as error:
+        raise SystemExit(
+            "cannot preserve failed authority materialization temp in "
+            f"repository quarantine: {temporary}"
+        ) from error
+    return quarantined
+
+
+def _atomic_replace(
+    repo_root: Path,
+    destination: Path,
+    content: bytes,
+) -> None:
+    temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb",
@@ -410,6 +472,12 @@ def _atomic_replace(destination: Path, content: bytes) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
     except OSError as error:
+        if temporary is not None and temporary.exists():
+            _quarantine_materialization_temp(
+                repo_root,
+                temporary,
+                destination,
+            )
         raise SystemExit(
             f"cannot atomically materialize authority artifact: {destination}"
         ) from error
@@ -436,7 +504,7 @@ def _materialize(
         target = targets[relative_path]
         content = encoded[relative_path]
         if not target.exists() or target.read_bytes() != content:
-            _atomic_replace(target, content)
+            _atomic_replace(repo_root, target, content)
     return {
         relative_path.as_posix(): hashlib.sha256(content).hexdigest()
         for relative_path, content in encoded.items()
@@ -578,9 +646,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(f"authority artifact is missing: {relative_path}") from error
         if actual_bytes != expected_bytes:
             raise SystemExit(f"authority artifact is stale: {relative_path}")
-        fingerprints[relative_path.as_posix()] = hashlib.sha256(
-            actual_bytes
-        ).hexdigest()
+        actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()
+        committed_bytes = _committed_artifact_bytes(
+            repo_root,
+            execution_evidence_commit,
+            relative_path,
+        )
+        if (
+            committed_bytes != expected_bytes
+            or hashlib.sha256(committed_bytes).hexdigest() != actual_sha256
+        ):
+            raise SystemExit(
+                "execution evidence commit authority artifact differs: "
+                f"{relative_path}"
+            )
+        fingerprints[relative_path.as_posix()] = actual_sha256
     print(
         json.dumps(
             {

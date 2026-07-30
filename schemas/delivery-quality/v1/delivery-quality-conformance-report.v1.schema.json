@@ -12,11 +12,12 @@
     "implementation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["track", "activation_status", "adapter_id", "commit"],
+      "required": ["track", "activation_status", "adapter_id", "adapter_sha256", "commit"],
       "properties": {
         "track": {"enum": ["kernel", "legacy"]},
         "activation_status": {"const": "target_only"},
         "adapter_id": {"type": "string", "minLength": 1},
+        "adapter_sha256": {"$ref": "#/$defs/sha256"},
         "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
       }
     },
@@ -50,9 +51,13 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["context_id", "provider", "model_revision", "sampling", "decision", "violation_id", "exception_id", "evidence_locator", "rationale"],
+              "required": ["context_id", "process_id", "task_id", "task_sha256", "result_sha256", "provider", "model_revision", "sampling", "decision", "violation_id", "exception_id", "evidence_locator", "rationale"],
               "properties": {
                 "context_id": {"type": "string", "minLength": 1},
+                "process_id": {"type": "integer", "minimum": 1},
+                "task_id": {"type": "string", "minLength": 1},
+                "task_sha256": {"$ref": "#/$defs/sha256"},
+                "result_sha256": {"$ref": "#/$defs/sha256"},
                 "provider": {"type": "string", "minLength": 1},
                 "model_revision": {"type": "string", "minLength": 1},
                 "sampling": {"type": "string", "minLength": 1},
@@ -76,12 +81,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["fixture_id", "entry_point", "expected", "actual", "conforms"],
+        "required": ["fixture_id", "entry_point", "expected", "actual", "exit_code", "stdout_sha256", "conforms"],
         "properties": {
           "fixture_id": {"type": "string", "minLength": 1},
           "entry_point": {"type": "string", "minLength": 1},
           "expected": {"enum": ["pass", "fail_closed"]},
           "actual": {"enum": ["pass", "fail_closed", "unexpected_error"]},
+          "exit_code": {"type": "integer"},
+          "stdout_sha256": {"$ref": "#/$defs/sha256"},
           "conforms": {"type": "boolean"}
         }
       }

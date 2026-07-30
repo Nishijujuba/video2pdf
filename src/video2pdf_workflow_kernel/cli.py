@@ -43,12 +43,13 @@ def _parser() -> argparse.ArgumentParser:
         "delivery-quality-contracts-check"
     )
     delivery_quality_contracts.add_argument("--registry", type=Path)
+    delivery_quality_contracts.add_argument("--mechanical-fixture")
 
     delivery_quality_conformance = commands.add_parser(
         "delivery-quality-conformance"
     )
     delivery_quality_conformance.add_argument(
-        "--semantic-results", required=True, type=Path
+        "--reviewer-adapter", required=True, type=Path
     )
     delivery_quality_conformance.add_argument("--output", required=True, type=Path)
     delivery_quality_conformance.add_argument(
@@ -58,7 +59,7 @@ def _parser() -> argparse.ArgumentParser:
         "--track", choices=("kernel", "legacy"), default="kernel"
     )
     delivery_quality_conformance.add_argument(
-        "--adapter-id", default="recorded-reviewer-fixture"
+        "--adapter-id", default="reviewer-subprocess-adapter"
     )
 
     store = commands.add_parser("control-store-check")
@@ -452,13 +453,13 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         return _ok(
             command,
             "delivery_quality_contracts_valid",
-            registry.check(),
+            registry.check(args.mechanical_fixture),
             str(registry.registry_path),
         )
     if command == "delivery-quality-conformance":
         registry = DeliveryQualityRegistry(project_root)
         report = registry.conformance(
-            semantic_results_path=args.semantic_results,
+            reviewer_adapter_path=args.reviewer_adapter,
             output_path=args.output,
             implementation_commit=args.implementation_commit,
             track=args.track,

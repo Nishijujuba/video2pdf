@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
+import uuid
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -42,14 +44,10 @@ class DeliveryQualityContractEntry:
     negative_example: Path
 
 
-def _without_fingerprint(value: dict[str, Any], field: str) -> dict[str, Any]:
-    result = dict(value)
-    result.pop(field, None)
-    return result
-
-
 def semantic_sha256(value: dict[str, Any], field: str = "semantic_sha256") -> str:
-    return sha256_bytes(canonical_json_bytes(_without_fingerprint(value, field)))
+    semantic_value = dict(value)
+    semantic_value.pop(field, None)
+    return sha256_bytes(canonical_json_bytes(semantic_value))
 
 
 def _require_unique(values: list[str], label: str) -> None:
@@ -58,15 +56,12 @@ def _require_unique(values: list[str], label: str) -> None:
 
 
 class DeliveryQualityRegistry:
-    """Target-only Delivery Quality structural and relational authority."""
+    """Target-only contract authority and implementation-qualification runner."""
 
     def __init__(self, project_root: Path, registry_path: Path | None = None) -> None:
         self.project_root = project_root.resolve()
         self.registry_path = (
             registry_path or self.project_root / DELIVERY_QUALITY_REGISTRY
-        ).resolve()
-        self._canonical_registry_path = (
-            self.project_root / DELIVERY_QUALITY_REGISTRY
         ).resolve()
         self._manifest = read_json(self.registry_path)
         self.entries = self._load_entries()
@@ -300,7 +295,6 @@ class DeliveryQualityRegistry:
         ]
         _require_unique(projection_ids, "projection")
         owners: dict[str, str] = {}
-        generated_prompts: list[str] = []
         generated_prompt_paths: list[str] = []
         prompt_checks: list[tuple[dict[str, Any], Path, bytes]] = []
         for projection in projections["projections"]:
@@ -350,7 +344,6 @@ class DeliveryQualityRegistry:
                     f"Delivery Quality generated prompt is stale: "
                     f"{projection['projection_id']}"
                 )
-            generated_prompts.append(str(prompt_path))
             generated_prompt_paths.append(str(prompt_path))
         _require_unique(generated_prompt_paths, "generated prompt path")
 
@@ -392,6 +385,12 @@ class DeliveryQualityRegistry:
         migration_targets = [entry["rule_id"] for entry in migration["entries"]]
         if not set(migration_targets) <= set(rule_ids):
             raise ContractError("Delivery Quality migration ledger has a dangling rule")
+        for entry in migration["entries"]:
+            if entry["primary_semantic_decision_owner"] != owners[entry["rule_id"]]:
+                raise ContractError(
+                    "Delivery Quality migration ledger assigns the wrong "
+                    f"Primary Semantic Decision Owner: {entry['rule_id']}"
+                )
         if migration["activation_status"] != SUPPORTED_AUTHORITY:
             raise ContractError("Delivery Quality migration ledger activates runtime authority")
 
@@ -455,7 +454,7 @@ class DeliveryQualityRegistry:
             "projection_count": len(projection_ids),
             "primary_semantic_owner_count": len(owners),
             "primary_semantic_ownership_complete": True,
-            "generated_prompt_paths": generated_prompts,
+            "generated_prompt_paths": generated_prompt_paths,
             "generated_prompts_current": True,
             "semantic_case_count": len(profile_ids) * len(template_ids),
             "semantic_attempt_count_required": len(profile_ids)
@@ -496,7 +495,7 @@ class DeliveryQualityRegistry:
         )
         return "\n".join(lines)
 
-    def check(self) -> dict[str, Any]:
+    def check(self, mechanical_fixture: str | None = None) -> dict[str, Any]:
         self._prepare_schemas()
         positive_count = 0
         negative_count = 0
@@ -512,7 +511,43 @@ class DeliveryQualityRegistry:
                     f"Delivery Quality negative example passed: "
                     f"{entry.negative_example}"
                 )
-        relation_data = self._validate_relations(self._instances())
+        instances = self._instances()
+        if mechanical_fixture == "projection-identity-rewrite":
+            instances["delivery-quality-role-projections"]["projections"][0][
+                "rules"
+            ][0]["requirement"] += " Rewritten."
+        elif mechanical_fixture == "reviewer-ownership-missing":
+            evaluation = next(
+                projection
+                for projection in instances[
+                    "delivery-quality-role-projections"
+                ]["projections"]
+                if projection["projection_kind"] == "evaluation"
+            )
+            evaluation["rules"] = evaluation["rules"][1:]
+        elif mechanical_fixture == "closed-contract-unregistered-violation":
+            target_rule = next(
+                rule
+                for rule in instances["delivery-quality-rule-catalog"]["rules"]
+                if rule["rule_id"] == "argument_chain_integrity"
+            )
+            self._validate_attempt_identities(
+                {
+                    "violation_id": "argument_chain_integrity.unregistered",
+                    "exception_id": None,
+                },
+                target_rule,
+            )
+        elif mechanical_fixture not in {
+            None,
+            "projection-identity-valid",
+            "reviewer-ownership-valid",
+            "closed-contract-valid",
+        }:
+            raise ContractError(
+                f"unknown Delivery Quality mechanical fixture: {mechanical_fixture}"
+            )
+        relation_data = self._validate_relations(instances)
         return {
             "authority": SUPPORTED_AUTHORITY,
             "registry_path": str(self.registry_path),
@@ -522,39 +557,6 @@ class DeliveryQualityRegistry:
             "registry_complete": True,
             **relation_data,
         }
-
-    def _validate_semantic_results_input(
-        self,
-        value: dict[str, Any],
-    ) -> tuple[dict[str, str], list[dict[str, Any]]]:
-        expected_root = {
-            "schema_name",
-            "schema_version",
-            "provider",
-            "case_results",
-        }
-        if not isinstance(value, dict) or set(value) != expected_root:
-            raise ContractError(
-                "Delivery Quality semantic results have unknown or missing fields"
-            )
-        if value["schema_name"] != "delivery-quality-semantic-results":
-            raise ContractError("Delivery Quality semantic results identity is invalid")
-        if value["schema_version"] != SUPPORTED_SCHEMA_VERSION:
-            raise UnknownContractVersion(
-                "unsupported Delivery Quality semantic results version"
-            )
-        provider = value["provider"]
-        provider_fields = {"name", "model_revision", "sampling"}
-        if (
-            not isinstance(provider, dict)
-            or set(provider) != provider_fields
-            or any(not isinstance(provider[field], str) or not provider[field] for field in provider_fields)
-        ):
-            raise ContractError("Delivery Quality Reviewer provider identity is invalid")
-        case_results = value["case_results"]
-        if not isinstance(case_results, list):
-            raise ContractError("Delivery Quality semantic case results must be an array")
-        return provider, case_results
 
     @staticmethod
     def _attempt_signature(attempt: dict[str, Any]) -> tuple[Any, ...]:
@@ -579,6 +581,13 @@ class DeliveryQualityRegistry:
     def _validate_attempt_shape(attempt: Any) -> None:
         fields = {
             "context_id",
+            "process_id",
+            "task_id",
+            "task_sha256",
+            "result_sha256",
+            "provider",
+            "model_revision",
+            "sampling",
             "decision",
             "violation_id",
             "exception_id",
@@ -591,10 +600,32 @@ class DeliveryQualityRegistry:
             )
         if attempt["decision"] not in {"pass", "fail", "pass_with_exception"}:
             raise ContractError("Delivery Quality semantic attempt decision is invalid")
-        for field in ("context_id", "evidence_locator", "rationale"):
+        if not isinstance(attempt["process_id"], int) or attempt["process_id"] <= 0:
+            raise ContractError(
+                "Delivery Quality semantic attempt process identity is invalid"
+            )
+        for field in (
+            "context_id",
+            "task_id",
+            "task_sha256",
+            "result_sha256",
+            "provider",
+            "model_revision",
+            "sampling",
+            "evidence_locator",
+            "rationale",
+        ):
             if not isinstance(attempt[field], str) or not attempt[field]:
                 raise ContractError(
                     f"Delivery Quality semantic attempt {field} is empty"
+                )
+        for field in ("task_sha256", "result_sha256"):
+            if len(attempt[field]) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in attempt[field]
+            ):
+                raise ContractError(
+                    f"Delivery Quality semantic attempt {field} is invalid"
                 )
         for field in ("violation_id", "exception_id"):
             if attempt[field] is not None and (
@@ -640,77 +671,188 @@ class DeliveryQualityRegistry:
             fixture["fixture_id"]: fixture
             for fixture in corpus["mechanical_fixtures"]
         }
-        actual: dict[str, str] = {
-            "projection-identity-valid": "pass",
-            "reviewer-ownership-valid": "pass",
-            "closed-contract-valid": "pass",
-        }
-
-        rewritten = copy.deepcopy(instances)
-        rewritten["delivery-quality-role-projections"]["projections"][0]["rules"][0][
-            "requirement"
-        ] += " Rewritten."
-        try:
-            self._validate_relations(rewritten)
-        except ContractError:
-            actual["projection-identity-rewrite"] = "fail_closed"
-        else:
-            actual["projection-identity-rewrite"] = "unexpected_error"
-
-        missing_owner = copy.deepcopy(instances)
-        evaluation = next(
-            projection
-            for projection in missing_owner[
-                "delivery-quality-role-projections"
-            ]["projections"]
-            if projection["projection_kind"] == "evaluation"
-        )
-        evaluation["rules"] = evaluation["rules"][1:]
-        try:
-            self._validate_relations(missing_owner)
-        except ContractError:
-            actual["reviewer-ownership-missing"] = "fail_closed"
-        else:
-            actual["reviewer-ownership-missing"] = "unexpected_error"
-
-        target_rule = next(
-            rule
-            for rule in instances["delivery-quality-rule-catalog"]["rules"]
-            if rule["rule_id"] == "argument_chain_integrity"
-        )
-        invalid_attempt = {
-            "violation_id": "argument_chain_integrity.unregistered",
-            "exception_id": None,
-        }
-        try:
-            self._validate_attempt_identities(invalid_attempt, target_rule)
-        except ContractError:
-            actual["closed-contract-unregistered-violation"] = "fail_closed"
-        else:
-            actual["closed-contract-unregistered-violation"] = "unexpected_error"
-
-        return [
-            {
+        results: list[dict[str, Any]] = []
+        cli_path = self.project_root / "scripts" / "video_workflow.py"
+        for fixture_id in (
+            "projection-identity-valid",
+            "projection-identity-rewrite",
+            "reviewer-ownership-valid",
+            "reviewer-ownership-missing",
+            "closed-contract-valid",
+            "closed-contract-unregistered-violation",
+        ):
+            command = [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(cli_path),
+                "delivery-quality-contracts-check",
+                "--mechanical-fixture",
+                fixture_id,
+            ]
+            completed = subprocess.run(
+                command,
+                cwd=self.project_root,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=False,
+                timeout=60,
+            )
+            if completed.returncode == 0:
+                actual = "pass"
+            elif completed.returncode == 20:
+                actual = "fail_closed"
+            else:
+                actual = "unexpected_error"
+            results.append({
                 "fixture_id": fixture_id,
                 "entry_point": "delivery-quality-contracts-check",
                 "expected": by_id[fixture_id]["expected"],
-                "actual": actual[fixture_id],
-                "conforms": actual[fixture_id] == by_id[fixture_id]["expected"],
-            }
-            for fixture_id in (
-                "projection-identity-valid",
-                "projection-identity-rewrite",
-                "reviewer-ownership-valid",
-                "reviewer-ownership-missing",
-                "closed-contract-valid",
-                "closed-contract-unregistered-violation",
-            )
+                "actual": actual,
+                "exit_code": completed.returncode,
+                "stdout_sha256": sha256_bytes(completed.stdout.encode("utf-8")),
+                "conforms": actual == by_id[fixture_id]["expected"],
+            })
+        return results
+
+    def _run_reviewer_attempt(
+        self,
+        *,
+        reviewer_adapter: Path,
+        case_id: str,
+        attempt_number: int,
+        profile: dict[str, Any],
+        template: dict[str, Any],
+        target_rule: dict[str, Any],
+        projection: dict[str, Any],
+        reviewer_prompt: str,
+    ) -> dict[str, Any]:
+        task_id = str(uuid.uuid4())
+        task = {
+            "schema_name": "delivery-quality-reviewer-task",
+            "schema_version": SUPPORTED_SCHEMA_VERSION,
+            "task_id": task_id,
+            "attempt_number": attempt_number,
+            "subject_id": sha256_bytes(case_id.encode("utf-8")),
+            "language_profile": profile,
+            "input_text": template["inputs_by_profile"][profile["profile_id"]],
+            "evidence_locator": template["evidence_locator"],
+            "target_rule": {
+                "rule_id": target_rule["rule_id"],
+                "requirement": target_rule["requirement"],
+                "violations": target_rule["violations"],
+                "exceptions": target_rule["exceptions"],
+            },
+            "projection": {
+                "projection_id": projection["projection_id"],
+                "prompt_sha256": projection["generated_prompt"]["sha256"],
+                "prompt": reviewer_prompt,
+            },
+        }
+        task_bytes = canonical_json_bytes(task)
+        command = [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            str(reviewer_adapter),
         ]
+        process = subprocess.Popen(
+            command,
+            cwd=self.project_root,
+            text=True,
+            encoding="utf-8",
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = process.communicate(
+                task_bytes.decode("utf-8"),
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            raise ContractError(
+                f"Delivery Quality Reviewer attempt timed out: {case_id}"
+            ) from exc
+        if process.returncode != 0 or stderr:
+            raise ContractError(
+                f"Delivery Quality Reviewer adapter failed: {case_id} "
+                f"(exit {process.returncode})"
+            )
+        try:
+            result = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise ContractError(
+                f"Delivery Quality Reviewer output is not JSON: {case_id}"
+            ) from exc
+        expected_root = {
+            "schema_name",
+            "schema_version",
+            "provider",
+            "assessment",
+        }
+        if not isinstance(result, dict) or set(result) != expected_root:
+            raise ContractError(
+                "Delivery Quality Reviewer output has unknown or missing fields"
+            )
+        if (
+            result["schema_name"] != "delivery-quality-reviewer-result"
+            or result["schema_version"] != SUPPORTED_SCHEMA_VERSION
+        ):
+            raise ContractError("Delivery Quality Reviewer result identity is invalid")
+        provider = result["provider"]
+        provider_fields = {"name", "model_revision", "sampling"}
+        if (
+            not isinstance(provider, dict)
+            or set(provider) != provider_fields
+            or any(
+                not isinstance(provider[field], str) or not provider[field]
+                for field in provider_fields
+            )
+        ):
+            raise ContractError("Delivery Quality Reviewer provider identity is invalid")
+        assessment = result["assessment"]
+        assessment_fields = {
+            "decision",
+            "violation_id",
+            "exception_id",
+            "evidence_locator",
+            "rationale",
+        }
+        if not isinstance(assessment, dict) or set(assessment) != assessment_fields:
+            raise ContractError(
+                "Delivery Quality Reviewer assessment has unknown or missing fields"
+            )
+        context_id = sha256_bytes(
+            canonical_json_bytes(
+                {
+                    "task_id": task_id,
+                    "process_id": process.pid,
+                    "task_sha256": sha256_bytes(task_bytes),
+                }
+            )
+        )
+        return {
+            "context_id": context_id,
+            "process_id": process.pid,
+            "task_id": task_id,
+            "task_sha256": sha256_bytes(task_bytes),
+            "result_sha256": sha256_bytes(stdout.encode("utf-8")),
+            "provider": provider["name"],
+            "model_revision": provider["model_revision"],
+            "sampling": provider["sampling"],
+            **assessment,
+        }
 
     def conformance(
         self,
         *,
-        semantic_results_path: Path,
+        reviewer_adapter_path: Path,
         output_path: Path,
         implementation_commit: str,
         track: str,
@@ -725,6 +867,9 @@ class DeliveryQualityRegistry:
             raise ContractError("Delivery Quality implementation track is invalid")
         if not adapter_id:
             raise ContractError("Delivery Quality adapter identity is empty")
+        reviewer_adapter = reviewer_adapter_path.resolve()
+        if not reviewer_adapter.is_file():
+            raise ContractError("Delivery Quality Reviewer adapter is missing")
         output = output_path.resolve()
         try:
             output.relative_to(self.project_root)
@@ -741,6 +886,12 @@ class DeliveryQualityRegistry:
         instances = self._instances()
         catalog = instances["delivery-quality-rule-catalog"]
         corpus = instances["delivery-quality-conformance-corpus"]
+        profiles_by_id = {
+            profile["profile_id"]: profile
+            for profile in instances["delivery-quality-language-profiles"][
+                "profiles"
+            ]
+        }
         rules = {rule["rule_id"]: rule for rule in catalog["rules"]}
         projections = instances["delivery-quality-role-projections"]
         evaluation_projection_by_rule: dict[str, dict[str, Any]] = {}
@@ -749,51 +900,33 @@ class DeliveryQualityRegistry:
                 continue
             for rule in projection["rules"]:
                 evaluation_projection_by_rule[rule["rule_id"]] = projection
-        provider, supplied_results = self._validate_semantic_results_input(
-            read_json(semantic_results_path.resolve())
-        )
-        supplied_by_case: dict[str, dict[str, Any]] = {}
-        for result in supplied_results:
-            fields = {"case_id", "profile_id", "template_id", "attempts"}
-            if not isinstance(result, dict) or set(result) != fields:
-                raise ContractError(
-                    "Delivery Quality semantic case result has unknown or missing fields"
-                )
-            case_id = result["case_id"]
-            if case_id in supplied_by_case:
-                raise ContractError("Delivery Quality semantic case identity is duplicated")
-            supplied_by_case[case_id] = result
-
         semantic_results: list[dict[str, Any]] = []
         failures: list[str] = []
         context_ids: set[str] = set()
-        required_case_ids: set[str] = set()
         for profile_id in corpus["applicable_language_profiles"]:
             for template in corpus["case_templates"]:
                 case_id = f"{profile_id}.{template['template_id']}"
-                required_case_ids.add(case_id)
-                result = supplied_by_case.get(case_id)
-                if result is None:
-                    failures.append(f"missing_case:{case_id}")
-                    continue
-                if (
-                    result["profile_id"] != profile_id
-                    or result["template_id"] != template["template_id"]
-                ):
-                    raise ContractError(
-                        f"Delivery Quality semantic case binding is invalid: {case_id}"
-                    )
-                attempts = result["attempts"]
-                if not isinstance(attempts, list) or len(attempts) != 3:
-                    failures.append(f"attempt_count:{case_id}")
-                    continue
                 target_rule = rules[template["target_rule_id"]]
                 evaluation_projection = evaluation_projection_by_rule[
                     template["target_rule_id"]
                 ]
                 signatures: list[tuple[Any, ...]] = []
                 materialized_attempts: list[dict[str, Any]] = []
-                for attempt in attempts:
+                prompt_path = self._resolve_project_path(
+                    evaluation_projection["generated_prompt"]["path"],
+                    "generated prompt",
+                )
+                for attempt_number in range(1, 4):
+                    attempt = self._run_reviewer_attempt(
+                        reviewer_adapter=reviewer_adapter,
+                        case_id=case_id,
+                        attempt_number=attempt_number,
+                        profile=profiles_by_id[profile_id],
+                        template=template,
+                        target_rule=target_rule,
+                        projection=evaluation_projection,
+                        reviewer_prompt=prompt_path.read_text(encoding="utf-8"),
+                    )
                     self._validate_attempt_shape(attempt)
                     self._validate_attempt_identities(attempt, target_rule)
                     if attempt["context_id"] in context_ids:
@@ -805,9 +938,13 @@ class DeliveryQualityRegistry:
                     materialized_attempts.append(
                         {
                             "context_id": attempt["context_id"],
-                            "provider": provider["name"],
-                            "model_revision": provider["model_revision"],
-                            "sampling": provider["sampling"],
+                            "process_id": attempt["process_id"],
+                            "task_id": attempt["task_id"],
+                            "task_sha256": attempt["task_sha256"],
+                            "result_sha256": attempt["result_sha256"],
+                            "provider": attempt["provider"],
+                            "model_revision": attempt["model_revision"],
+                            "sampling": attempt["sampling"],
                             "decision": attempt["decision"],
                             "violation_id": attempt["violation_id"],
                             "exception_id": attempt["exception_id"],
@@ -840,9 +977,6 @@ class DeliveryQualityRegistry:
                     }
                 )
 
-        for extra_case_id in sorted(set(supplied_by_case) - required_case_ids):
-            failures.append(f"unexpected_case:{extra_case_id}")
-
         mechanical_results = self._mechanical_results(instances)
         failures.extend(
             f"mechanical_failure:{result['fixture_id']}"
@@ -855,7 +989,7 @@ class DeliveryQualityRegistry:
         corpus_path = self._entry(
             "delivery-quality-conformance-corpus"
         ).canonical_instance
-        results_sha256 = sha256_file(semantic_results_path.resolve())
+        adapter_sha256 = sha256_file(reviewer_adapter)
         report = {
             "schema_name": "delivery-quality-conformance-report",
             "schema_version": SUPPORTED_SCHEMA_VERSION,
@@ -863,7 +997,7 @@ class DeliveryQualityRegistry:
                 canonical_json_bytes(
                     {
                         "implementation_commit": implementation_commit,
-                        "semantic_results_sha256": results_sha256,
+                        "reviewer_adapter_sha256": adapter_sha256,
                     }
                 )
             )[:24],
@@ -872,6 +1006,7 @@ class DeliveryQualityRegistry:
                 "track": track,
                 "activation_status": SUPPORTED_AUTHORITY,
                 "adapter_id": adapter_id,
+                "adapter_sha256": adapter_sha256,
                 "commit": implementation_commit,
             },
             "bindings": {

@@ -69,7 +69,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/conformance-report.example.v1.json",
-      "canonical_sha256": "2b5a5553a9b974d6de976b247a942c875ed3e5455cae84a498641dda722dfe82",
+      "canonical_sha256": "17d8e3520653c56f9ba1572f64b3581b9a5351e54384c883b1684344d51d4ce2",
       "positive_example": "delivery-quality/v1/conformance-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/conformance-report.invalid.json"
     }

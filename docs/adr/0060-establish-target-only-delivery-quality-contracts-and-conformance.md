@@ -31,7 +31,7 @@ The existing Kernel Schema Registry owns Video Workflow contracts. Delivery Qual
 ### Public verification
 
 - `delivery-quality-contracts-check` validates schemas, positive and negative fixtures, exact artifacts, closed identities, profile references, semantic fingerprints, projection identity, complete Primary Semantic Decision ownership, Waivers, migration entries, corpus completeness, and generated prompts.
-- `delivery-quality-conformance` consumes explicit semantic results from isolated Reviewer contexts, requires three distinct contexts for every case and applicable Language Profile, executes six mechanical fixtures, and materializes one Delivery Quality Conformance Report.
+- `delivery-quality-conformance` launches a fresh Reviewer-adapter process for every semantic attempt, requires three process-backed contexts for every case and applicable Language Profile, executes six mechanical fixtures through the public contracts command, and materializes one Delivery Quality Conformance Report.
 - Any decision, violation, exception, or evidence-locator disagreement across the three semantic attempts records blocking `semantic_variance`.
 - The Conformance Report has implementation-qualification authority only. It cannot authorize a video delivery, materialize an Acceptance Report, change activation status, or support a cutover by itself.
 

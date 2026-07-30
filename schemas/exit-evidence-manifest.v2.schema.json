@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -234,6 +234,20 @@
           "required": ["fencing", "restart", "recovery"],
           "properties": {"positive": {"contains": {"const": "deterministic_integration"}}}
         },
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 7},
+            "name": {"const": "delivery-quality-contracts-and-conformance"}
+          }
+        },
+        "slice_base_commit": {"const": "68189e7744e22c9ce78b3ee1a58def69d09e711a"},
         "fault_points": false,
         "platform_smokes": false
       }

@@ -7,6 +7,9 @@ import subprocess
 import sys
 import unittest
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+
 from tests.video_workflow._test_run import new_case_dir
 
 
@@ -68,46 +71,6 @@ def mutated_registry(
     return registry_path
 
 
-def valid_semantic_results(corpus: dict) -> dict:
-    results = {
-        "schema_name": "delivery-quality-semantic-results",
-        "schema_version": "1.0.0",
-        "provider": {
-            "name": "recorded-reviewer-fixture",
-            "model_revision": "reviewer-fixture-v1",
-            "sampling": "deterministic-fixture",
-        },
-        "case_results": [],
-    }
-    for profile_id in corpus["applicable_language_profiles"]:
-        for template in corpus["case_templates"]:
-            attempts = []
-            for attempt_number in range(1, 4):
-                attempts.append(
-                    {
-                        "context_id": (
-                            f"{profile_id}-{template['template_id']}-"
-                            f"{attempt_number}"
-                        ),
-                        **template["expected"],
-                        "evidence_locator": template["evidence_locator"],
-                        "rationale": (
-                            "Recorded isolated Reviewer result matches the "
-                            "structured oracle."
-                        ),
-                    }
-                )
-            results["case_results"].append(
-                {
-                    "case_id": f"{profile_id}.{template['template_id']}",
-                    "profile_id": profile_id,
-                    "template_id": template["template_id"],
-                    "attempts": attempts,
-                }
-            )
-    return results
-
-
 class DeliveryQualityContractsCliTests(unittest.TestCase):
     def test_public_contract_check_proves_closed_target_only_policy_surface(
         self,
@@ -155,6 +118,11 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             )
             evaluation["rules"] = evaluation["rules"][1:]
 
+        def assign_wrong_migration_owner(instance: dict) -> None:
+            instance["entries"][0][
+                "primary_semantic_decision_owner"
+            ] = "visual-quality-reviewer"
+
         cases = (
             (
                 "unknown-field",
@@ -180,6 +148,11 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
                 "incomplete-owner",
                 "delivery-quality-role-projections",
                 omit_owner,
+            ),
+            (
+                "wrong-migration-owner",
+                "delivery-quality-migration-ledger",
+                assign_wrong_migration_owner,
             ),
             (
                 "invalid-semantic-fingerprint",
@@ -228,24 +201,17 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
         self,
     ) -> None:
         run_root = new_case_dir(self.id(), label="delivery-quality-conformance")
-        corpus = json.loads(
-            (
-                PROJECT_ROOT
-                / "delivery-quality/v1/conformance-corpus.v1.json"
-            ).read_text(encoding="utf-8")
-        )
-        results = valid_semantic_results(corpus)
-        results_path = run_root / "semantic-results.json"
-        results_path.write_text(
-            json.dumps(results, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
         report_path = run_root / "conformance-report.json"
+        adapter = (
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/delivery-quality/"
+            "deterministic_reviewer_adapter.py"
+        )
 
         completed, envelope = run_cli(
             "delivery-quality-conformance",
-            "--semantic-results",
-            str(results_path),
+            "--reviewer-adapter",
+            str(adapter),
             "--output",
             str(report_path),
             "--implementation-commit",
@@ -265,6 +231,14 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             sum(len(item["attempts"]) for item in report["semantic_results"]),
             108,
         )
+        attempts = [
+            attempt
+            for item in report["semantic_results"]
+            for attempt in item["attempts"]
+        ]
+        self.assertEqual(len({item["context_id"] for item in attempts}), 108)
+        self.assertEqual(len({item["task_id"] for item in attempts}), 108)
+        self.assertTrue(all(item["process_id"] > 0 for item in attempts))
         self.assertTrue(
             all(not item["semantic_variance"] for item in report["semantic_results"])
         )
@@ -279,30 +253,17 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
         run_root = new_case_dir(
             self.id(), label="delivery-quality-semantic-variance"
         )
-        corpus = json.loads(
-            (
-                PROJECT_ROOT
-                / "delivery-quality/v1/conformance-corpus.v1.json"
-            ).read_text(encoding="utf-8")
-        )
-        results = valid_semantic_results(corpus)
-        target = next(
-            result
-            for result in results["case_results"]
-            if result["case_id"] == "en.predicate-object-compliant"
-        )
-        target["attempts"][2]["decision"] = "fail"
-        results_path = run_root / "semantic-results.json"
-        results_path.write_text(
-            json.dumps(results, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
         report_path = run_root / "conformance-report.json"
+        adapter = (
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/delivery-quality/"
+            "variance_reviewer_adapter.py"
+        )
 
         completed, envelope = run_cli(
             "delivery-quality-conformance",
-            "--semantic-results",
-            str(results_path),
+            "--reviewer-adapter",
+            str(adapter),
             "--output",
             str(report_path),
             "--implementation-commit",
@@ -328,6 +289,99 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             "semantic_variance:en.predicate-object-compliant",
             report["failures"],
         )
+
+    def test_slice7_exit_evidence_schema_proves_target_only_positive_and_negative_results(
+        self,
+    ) -> None:
+        schema = json.loads(
+            (
+                PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        manifest = {
+            "$schema": schema["$id"],
+            "schema_version": 2,
+            "kind": "video-workflow-exit-evidence",
+            "fingerprint_algorithm": "sha256-raw-v1",
+            "slice": {
+                "number": 7,
+                "name": "delivery-quality-contracts-and-conformance",
+            },
+            "slice_base_commit": "68189e7744e22c9ce78b3ee1a58def69d09e711a",
+            "implementation_commit": "1" * 40,
+            "evidence_paths": [
+                "evidence/slice-07/exit-evidence-manifest.json",
+                "evidence/slice-07/logs/contracts.log",
+            ],
+            "generated_at": "2026-07-30T00:00:00Z",
+            "activation_scope": {
+                "kind": "none",
+                "runtime_authority_change": False,
+                "components_activated": [],
+                "legacy_track_authority": "preserved",
+            },
+            "commands": [
+                {
+                    "test_id": f"slice7-command-{number}",
+                    "command": ["python", "-m", "unittest"],
+                    "expected_exit_code": 0,
+                    "actual_exit_code": 0,
+                    "log": {
+                        "role": "command_log",
+                        "path": f"evidence/slice-07/logs/{number}.log",
+                        "sha256": "2" * 64,
+                    },
+                    "conforms": True,
+                }
+                for number in range(1, 4)
+            ],
+            "expected_checkpoints": [
+                {"name": "delivery_quality_contracts_current", "status": "current"}
+            ],
+            "fixtures": [
+                {
+                    "role": "canonical_rule_catalog",
+                    "path": "delivery-quality/v1/rule-catalog.v1.json",
+                    "sha256": "3" * 64,
+                }
+            ],
+            "results": {
+                "positive": ["contracts_validate"],
+                "negative": ["rewrites_fail_closed"],
+                "recovery": ["legacy_authority_preserved"],
+            },
+            "result_bindings": [
+                {
+                    "result_id": result_id,
+                    "result_kind": result_kind,
+                    "command_id": "slice7-command-1",
+                    "test_target": (
+                        "tests.video_workflow.test_delivery_quality_contracts."
+                        "DeliveryQualityContractsCliTests."
+                        "test_public_contract_check_proves_closed_target_only_policy_surface"
+                    ),
+                }
+                for result_kind, result_id in (
+                    ("positive", "contracts_validate"),
+                    ("negative", "rewrites_fail_closed"),
+                    ("recovery", "legacy_authority_preserved"),
+                )
+            ],
+            "artifact_fingerprints": [
+                {
+                    "role": "implementation",
+                    "path": "src/video2pdf_workflow_kernel/delivery_quality.py",
+                    "sha256": "4" * 64,
+                }
+            ],
+            "unresolved_exceptions": [],
+            "overall_decision": "pass",
+        }
+        validator = Draft202012Validator(schema)
+        validator.validate(manifest)
+        manifest["activation_scope"]["runtime_authority_change"] = True
+        with self.assertRaises(ValidationError):
+            validator.validate(manifest)
 
 
 if __name__ == "__main__":

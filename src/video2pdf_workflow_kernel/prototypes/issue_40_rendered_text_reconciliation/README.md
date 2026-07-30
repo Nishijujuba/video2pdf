@@ -91,4 +91,3 @@ The report is mechanical evidence for
 [Prototype final quality materialization and evidence invalidation](https://github.com/Nishijujuba/video2pdf/issues/33).
 That materializer may validate freshness and aggregate the report's decision.
 It must not reinterpret text or turn a reconciliation failure into a pass.
-

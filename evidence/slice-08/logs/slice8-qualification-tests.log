@@ -1,0 +1,13 @@
+test_independent_complete_patches_materialize_pass_and_create_initial_seal (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_independent_complete_patches_materialize_pass_and_create_initial_seal) ... ok
+test_failed_generation_is_repaired_then_fresh_reviewers_pass_successor (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_failed_generation_is_repaired_then_fresh_reviewers_pass_successor) ... ok
+test_successor_inputs_mutated_after_equivalence_cannot_be_sealed (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_successor_inputs_mutated_after_equivalence_cannot_be_sealed) ... ok
+test_each_successor_advances_from_the_immediate_predecessor_seal (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_each_successor_advances_from_the_immediate_predecessor_seal) ... ok
+test_reviewer_identity_must_be_distinct_and_outside_generation_producers (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_reviewer_identity_must_be_distinct_and_outside_generation_producers) ... ok
+test_contract_gap_blocks_materialization_without_consuming_attempt (tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_contract_gap_blocks_materialization_without_consuming_attempt) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 593.281s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: c46845fdd82d0fda739e3047c145fd20e381975b

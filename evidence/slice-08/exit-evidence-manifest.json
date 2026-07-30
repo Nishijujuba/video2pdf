@@ -1,0 +1,371 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 8,
+    "name": "precompile-quality-and-text-seal"
+  },
+  "slice_base_commit": "bb18eb2112bd4d9f3403d46230dbee8131389eaf",
+  "implementation_commit": "c46845fdd82d0fda739e3047c145fd20e381975b",
+  "evidence_paths": [
+    "evidence/slice-08/exit-evidence-manifest.json",
+    "evidence/slice-08/logs/slice8-contracts.log",
+    "evidence/slice-08/logs/slice8-public-prepare.log",
+    "evidence/slice-08/logs/slice8-qualification-tests.log"
+  ],
+  "generated_at": "2026-07-30T16:59:24Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice8-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "delivery-quality-contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-08/logs/slice8-contracts.log",
+        "sha256": "0ff0dc827bb72f04b3bc97802f709268cde4c841a8c9f5cfb4d390e5962c7a14"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice8-public-prepare",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_prepare_creates_three_isolated_same_generation_fixed_skeletons"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-08/logs/slice8-public-prepare.log",
+        "sha256": "bd0d0d6564a4691f9efee1ba0b90c37d9362b90cf44bc4f1258c0af3609b55e4"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice8-qualification-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_independent_complete_patches_materialize_pass_and_create_initial_seal",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_failed_generation_is_repaired_then_fresh_reviewers_pass_successor",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_successor_inputs_mutated_after_equivalence_cannot_be_sealed",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_each_successor_advances_from_the_immediate_predecessor_seal",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_reviewer_identity_must_be_distinct_and_outside_generation_producers",
+        "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_contract_gap_blocks_materialization_without_consuming_attempt"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-08/logs/slice8-qualification-tests.log",
+        "sha256": "45bf5b232ae70ee555ffa29a8d7a20e4c710602f43e2ebfb0960f7de8a2b6aa9"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "precompile_quality_report_current",
+      "status": "current"
+    },
+    {
+      "name": "precompile_text_seal_current",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "artifact_generation_contract",
+      "path": "schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
+      "sha256": "44e8529dd827209e905ac2dede6be04cfd94b787a95b7ecd412b0a2673720a1d"
+    },
+    {
+      "role": "reader_text_inventory_contract",
+      "path": "schemas/delivery-quality/v1/reader-facing-text-inventory.v1.schema.json",
+      "sha256": "b4bef676fcd5a344598b7139b11f540e9714b0358162933595b33521238bf26f"
+    },
+    {
+      "role": "precompile_report_contract",
+      "path": "schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+      "sha256": "7bf19c8204041f91664f4358d9daea60932e4186c3f863f449204de6cacd6098"
+    },
+    {
+      "role": "text_seal_contract",
+      "path": "schemas/delivery-quality/v1/precompile-text-seal.v1.schema.json",
+      "sha256": "0a345d4d218d99e0f26dccb22e9582669189a19589db57d78838adf4d52c5ad4"
+    }
+  ],
+  "results": {
+    "positive": [
+      "passing_report_creates_seal",
+      "immediate_predecessor_lineage"
+    ],
+    "negative": [
+      "stale_successor_rejected",
+      "reviewer_isolation_enforced",
+      "contract_gap_preserves_budget"
+    ],
+    "recovery": [
+      "fail_repair_pass_advances_generation"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "passing_report_creates_seal",
+      "result_kind": "positive",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_independent_complete_patches_materialize_pass_and_create_initial_seal"
+    },
+    {
+      "result_id": "fail_repair_pass_advances_generation",
+      "result_kind": "recovery",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_failed_generation_is_repaired_then_fresh_reviewers_pass_successor"
+    },
+    {
+      "result_id": "stale_successor_rejected",
+      "result_kind": "negative",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_successor_inputs_mutated_after_equivalence_cannot_be_sealed"
+    },
+    {
+      "result_id": "immediate_predecessor_lineage",
+      "result_kind": "positive",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_each_successor_advances_from_the_immediate_predecessor_seal"
+    },
+    {
+      "result_id": "reviewer_isolation_enforced",
+      "result_kind": "negative",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_reviewer_identity_must_be_distinct_and_outside_generation_producers"
+    },
+    {
+      "result_id": "contract_gap_preserves_budget",
+      "result_kind": "negative",
+      "command_id": "slice8-qualification-tests",
+      "test_target": "tests.video_workflow.test_precompile_quality.PrecompileQualityCliTests.test_contract_gap_blocks_materialization_without_consuming_attempt"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-artifact-generation-set.example.v1.json",
+      "sha256": "b0d55229c01fa641b72976c6017f20bde2c861a583a429bb6dd7aef38b990c02"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-judgment-patch.example.v1.json",
+      "sha256": "48d906d4e735fcbb9c19b11e963ec1a43a66a37b70c533f5ecc08e09ed12af72"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-quality-report.example.v1.json",
+      "sha256": "5446d09cf3fb6841c91088cf56c36788133b70df2608c771ecf85b71e73bd830"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-review-skeleton.example.v1.json",
+      "sha256": "4283f62c011311f359e384fd6d5b3983e53c58602aae57b6b90903a3c9bc7bb0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-semantic-dependencies.example.v1.json",
+      "sha256": "8140a4a9897007b52946778cd938848be47b189e30ef4f6278ee3b101d267b30"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/precompile-text-seal.example.v1.json",
+      "sha256": "fe60557d10982a2b88a6410e5d8a1d525b912c5f49e444309d169ed8319b1035"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/reader-facing-text-inventory.example.v1.json",
+      "sha256": "4081c3a7c049a5e851145f8c51c3397a73968c2eb7b74249192c0297d382996d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/text-equivalence-report.example.v1.json",
+      "sha256": "51100265813f9bcd6a074b24bc754f5ee4af46d8d4dd74b75a53f49344948254"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/0061-materialize-precompile-quality-and-seal-reader-facing-text.md",
+      "sha256": "b704e6d979bdc7f763a48e4613d96d8fe36bc093f7d9b84fc596b2686fbd3b44"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "sha256": "c40a461aeb25deb8700de189aba3473bc9a2542a40a61adfe1f02602579e99e7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/contexts/delivery-quality/CONTEXT.md",
+      "sha256": "a2f06152f7c98f734207c01b5589c44811becffddc9751d93dbe6bc6874e3617"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/registry.v1.json",
+      "sha256": "97df989f23aac4813c7c48f4197807bfe575c12f81d2dba299a2a902b1e17a1f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-artifact-generation-set.v1.schema.json",
+      "sha256": "44e8529dd827209e905ac2dede6be04cfd94b787a95b7ecd412b0a2673720a1d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-judgment-patch.v1.schema.json",
+      "sha256": "a201b8f7283357b126182507de4ae585ce54331c0b579bc17d34288f06bce876"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+      "sha256": "7bf19c8204041f91664f4358d9daea60932e4186c3f863f449204de6cacd6098"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-review-skeleton.v1.schema.json",
+      "sha256": "72c309db851a5408cef75a7a349364edabcea314c164c475b59183939442162e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-semantic-dependencies.v1.schema.json",
+      "sha256": "5a6f2233f0bf372aa9dd83e33c97c89c64f3127378ef6b7a53e8bc79a001650c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/precompile-text-seal.v1.schema.json",
+      "sha256": "0a345d4d218d99e0f26dccb22e9582669189a19589db57d78838adf4d52c5ad4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/reader-facing-text-inventory.v1.schema.json",
+      "sha256": "b4bef676fcd5a344598b7139b11f540e9714b0358162933595b33521238bf26f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/text-equivalence-report.v1.schema.json",
+      "sha256": "23587e2ce45a589d2a6aa7e9794ad007abfe522a448f7749257327dcb8de3774"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "5b0c8b642557712a1e55adcf858d37ac87a585f7828a73c020877205287c7ee5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice8_exit_evidence.py",
+      "sha256": "2768e88dd852c2882d009e3e605bc0c7a65a30ed29a50e8a0587b7f75d90f336"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice8_exit_evidence_contract.py",
+      "sha256": "6d8b9881e82bfc5679262212d9f686c5cf86f1afb670c3508c120b8e9b3efd69"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "9838934df5faf76b2a63f29fa9a440e7f2e23dc98b32c6025246296402e360ec"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "f7d8f138ea02af2494aa48d460afce33bd9390b4324017c2283edeec1ac5851b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/delivery_quality.py",
+      "sha256": "83ef708192ee801ea1883525c667d937077e75db8f7af6cd3edaaad2fbc2801c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "8da455b50c92c3db973254578e6cac2057669513576a6a39e8c1acb608faa818"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/precompile_quality.py",
+      "sha256": "bc963d5c36759a3498dd3a58046e67f2ed851831e805dd849eea792efbf198d8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-artifact-generation-set.invalid.json",
+      "sha256": "3378c718843aa83f083c8e89b07cf22fdf697ae540d22a93710530182fb3de74"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-judgment-patch.invalid.json",
+      "sha256": "283d43749c374aa7dc54b96ff125edb541da58e2c07efef6d68da1103a3bacdf"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-quality-report.invalid.json",
+      "sha256": "6c122a41ca6d3cb1e50f2529773867042fb80432e8df9832431dd5ce34b86663"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-review-skeleton.invalid.json",
+      "sha256": "c07b1342abb88661ed87cd68bfc5804a59eef365825946eb165e87d836476784"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-semantic-dependencies.invalid.json",
+      "sha256": "2a815c0dd4d1a4b8316f401d70e1129d87dc09ccc6ceac13d8b30f13363ccf50"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/precompile-text-seal.invalid.json",
+      "sha256": "4ea050871ba8affb478a6a0ccb51d552b519d7c4bbb6cb69d448f765e30aae6f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/reader-facing-text-inventory.invalid.json",
+      "sha256": "d23991ebde822164d0df7230e60cbd4cb382d9d5784d25d8159fb38f2056afa4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/text-equivalence-report.invalid.json",
+      "sha256": "087485b4701b026ac41873b9f697b74d1a0d66fb31697c5b0178a17ebe350c86"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_delivery_quality_contracts.py",
+      "sha256": "8d4b9251ed513144afc0ba660ebdc5e24b38dfc856eb6eced6d2f3dc40446175"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_precompile_quality.py",
+      "sha256": "f3db12c0779aa277c9d6a5feac55bc14dfb94ea8bdd8240291d3073cb97703ec"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

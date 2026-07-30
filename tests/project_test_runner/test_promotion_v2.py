@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from contextlib import contextmanager
 from pathlib import Path
 import shutil
@@ -255,19 +256,12 @@ class PromotionReportV2Tests(unittest.TestCase):
             reviewed_commit,
         )
         self.assertEqual(result["evidence_parent_commit"], reviewed_commit)
-        changed = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout.splitlines()
+        changed = authority_generator._changed_worktree_paths(repo)
         self.assertEqual(
             {
-                line[3:].replace("\\", "/")
-                for line in changed
-                if line.strip()
+                path
+                for path in changed
+                if not path.startswith("待删除/authority-materialization-")
             },
             {
                 "evidence/project-test-runner/"
@@ -375,7 +369,7 @@ class PromotionReportV2Tests(unittest.TestCase):
         self.assertEqual(json.loads(verified.stdout)["mode"], "verified")
         self.assertEqual(first_bytes, {path: path.read_bytes() for path in paths})
 
-    def test_authority_generator_quarantines_temp_when_replace_fails(
+    def test_authority_generator_rolls_back_set_when_second_replace_fails(
         self,
     ) -> None:
         repo, _reviewed_commit, arguments = (
@@ -391,17 +385,27 @@ class PromotionReportV2Tests(unittest.TestCase):
             )
         ]
         original_bytes = {target: target.read_bytes() for target in targets}
+        real_replace = os.replace
+        publish_count = 0
+
+        def fail_second_publish(source: str | bytes, destination: str | bytes) -> None:
+            nonlocal publish_count
+            if Path(destination) in targets:
+                publish_count += 1
+                if publish_count == 2:
+                    raise OSError("injected second replace failure")
+            real_replace(source, destination)
 
         with (
             mock.patch.object(authority_generator, "REPO_ROOT", repo),
             mock.patch.object(
                 authority_generator.os,
                 "replace",
-                side_effect=OSError("injected replace failure"),
+                side_effect=fail_second_publish,
             ),
             self.assertRaisesRegex(
                 SystemExit,
-                "cannot atomically materialize authority artifact",
+                "cannot materialize authority artifact set",
             ),
         ):
             authority_generator.main([*arguments[5:], "--write"])
@@ -416,17 +420,73 @@ class PromotionReportV2Tests(unittest.TestCase):
             for temporary in target.parent.glob(f".{target.name}.*.tmp")
         ]
         self.assertEqual(sibling_temps, [])
+        self.assertFalse(
+            (
+                repo
+                / "evidence/project-test-runner/"
+                ".promotion-authority-transaction.json"
+            ).exists()
+        )
         quarantined = list((repo / "待删除").glob("authority-materialization-*"))
-        self.assertEqual(len(quarantined), 1)
-        self.assertTrue(quarantined[0].is_file())
+        self.assertGreaterEqual(len(quarantined), 4)
+        self.assertTrue(all(path.is_file() for path in quarantined))
+        quarantined_bytes = {path.read_bytes() for path in quarantined}
+        self.assertTrue(set(original_bytes.values()).issubset(quarantined_bytes))
+
+    def test_authority_generator_success_preserves_displaced_original_set(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        original_bytes = {target.read_bytes() for target in targets}
+
+        with mock.patch.object(authority_generator, "REPO_ROOT", repo):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        self.assertTrue(
+            all(
+                target.read_bytes() not in original_bytes
+                for target in targets
+            )
+        )
+        sibling_temps = [
+            temporary
+            for target in targets
+            for temporary in target.parent.glob(f".{target.name}.*.tmp")
+        ]
+        self.assertEqual(sibling_temps, [])
+        self.assertFalse(
+            (
+                repo
+                / "evidence/project-test-runner/"
+                ".promotion-authority-transaction.json"
+            ).exists()
+        )
+        quarantined = list((repo / "待删除").glob("authority-materialization-*"))
+        quarantined_bytes = {path.read_bytes() for path in quarantined}
+        self.assertTrue(original_bytes.issubset(quarantined_bytes))
 
     def test_authority_generator_rejects_unknown_output_argument(self) -> None:
         repo, _reviewed_commit, arguments = (
             self.make_authority_generator_cli_fixture()
         )
+        unexpected = (
+            new_fixture_dir("authority-generator-unknown-output")
+            / "unexpected.json"
+        )
 
         completed = subprocess.run(
-            [*arguments, "--write", "--output", "unexpected.json"],
+            [*arguments, "--write", "--output", str(unexpected)],
             cwd=repo,
             check=False,
             capture_output=True,
@@ -436,7 +496,7 @@ class PromotionReportV2Tests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("unrecognized arguments", completed.stderr)
-        self.assertFalse((repo / "unexpected.json").exists())
+        self.assertFalse(unexpected.exists())
 
     def test_authority_generator_rejects_unsafe_worktree_state(self) -> None:
         repo, _reviewed_commit, arguments = (
@@ -2143,6 +2203,48 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "authority source|implementation commit|reviewed source",
                 ):
                     validate_promotion_report(repo)
+
+    def test_v2_validator_itself_rejects_live_authority_artifact_drift_at_e(
+        self,
+    ) -> None:
+        repo, _report = self.make_report()
+        safety_path = (
+            repo
+            / "evidence/project-test-runner/"
+            "optimization-safety-review.v1.json"
+        )
+        original_safety = safety_path.read_bytes()
+        safety_path.write_bytes(original_safety + b"\n")
+
+        with (
+            mock.patch.object(
+                authority_generator,
+                "main",
+                side_effect=AssertionError(
+                    "standalone generator must not be invoked"
+                ),
+            ) as generator_main,
+            self.assertRaisesRegex(
+                PromotionValidationError,
+                "live Promotion authority artifacts differ from "
+                "execution evidence commit",
+            ),
+        ):
+            validate_promotion_report(repo)
+
+        generator_main.assert_not_called()
+        safety_path.write_bytes(original_safety)
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        marker.write_text("incomplete\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            PromotionValidationError,
+            "incomplete Promotion authority materialization transaction",
+        ):
+            validate_promotion_report(repo)
 
     def test_v2_rejects_safety_review_for_another_commit(self) -> None:
         repo, report = self.make_report()

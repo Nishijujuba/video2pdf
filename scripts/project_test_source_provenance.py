@@ -68,6 +68,13 @@ PROMOTION_EVIDENCE_ONLY_PATHS = frozenset(
         "evidence/project-test-runner/promotion-superset-authority.v2.json",
     }
 )
+PROMOTION_AUTHORITY_ARTIFACT_PATHS = (
+    "evidence/project-test-runner/optimization-safety-review.v1.json",
+    "evidence/project-test-runner/promotion-superset-authority.v2.json",
+)
+PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH = Path(
+    "evidence/project-test-runner/.promotion-authority-transaction.json"
+)
 EXECUTION_SOURCE_ROOTS = (
     ".agents",
     ".claude",
@@ -93,6 +100,53 @@ EXECUTION_SOURCE_ROOTS = (
     "pyproject.toml",
     "uv.lock",
 )
+
+
+def assert_no_incomplete_promotion_authority_transaction(
+    repo_root: Path,
+) -> None:
+    """Fail closed while the canonical Promotion authority set is in flight."""
+
+    marker = repo_root / PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH
+    if os.path.lexists(marker):
+        raise SourceProvenanceError(
+            "incomplete Promotion authority materialization transaction exists"
+        )
+
+
+def require_live_authority_artifacts_match_commit(
+    repo_root: Path,
+    commit: str,
+) -> dict[str, str]:
+    """Require both live authority artifacts to equal their Git blobs at E."""
+
+    assert_no_incomplete_promotion_authority_transaction(repo_root)
+    fingerprints: dict[str, str] = {}
+    for relative_path in PROMOTION_AUTHORITY_ARTIFACT_PATHS:
+        completed = _git(
+            repo_root,
+            ["show", f"{commit}:{relative_path}"],
+            text=False,
+        )
+        if completed.returncode != 0:
+            raise SourceProvenanceError(
+                "execution evidence commit Promotion authority artifact is "
+                f"missing: {relative_path}"
+            )
+        try:
+            live_bytes = (repo_root / relative_path).read_bytes()
+        except OSError as error:
+            raise SourceProvenanceError(
+                f"live Promotion authority artifact is unreadable: {relative_path}"
+            ) from error
+        if live_bytes != completed.stdout:
+            raise SourceProvenanceError(
+                "execution evidence commit authority artifact differs: live "
+                "Promotion authority artifacts differ from execution evidence "
+                f"commit: {relative_path}"
+            )
+        fingerprints[relative_path] = hashlib.sha256(live_bytes).hexdigest()
+    return fingerprints
 
 
 def _module_inventory_entry(module: Mapping[str, Any]) -> dict[str, Any]:

@@ -35,7 +35,9 @@ from scripts.project_test_source_provenance import (
     SOURCE_MANIFEST_RELATIVE_PATH,
     SOURCE_SNAPSHOT_RELATIVE_PATH,
     SourceProvenanceError,
+    assert_no_incomplete_promotion_authority_transaction,
     committed_source_fingerprints,
+    require_live_authority_artifacts_match_commit,
     validate_evidence_only_commit_range,
     validate_execution_source_manifest,
 )
@@ -3801,6 +3803,13 @@ def _validate_v2(
         "implementation.execution_evidence_commit",
     )
     try:
+        require_live_authority_artifacts_match_commit(
+            repo_root,
+            execution_evidence_commit,
+        )
+    except SourceProvenanceError as error:
+        raise PromotionValidationError(str(error)) from error
+    try:
         validate_evidence_only_commit_range(
             repo_root,
             reviewed_implementation_commit,
@@ -4171,6 +4180,10 @@ def validate_promotion_report(repo_root: Path) -> dict[str, Any]:
         )
     if version == 1:
         return _validate_v1(repo_root, report)
+    try:
+        assert_no_incomplete_promotion_authority_transaction(repo_root)
+    except SourceProvenanceError as error:
+        raise PromotionValidationError(str(error)) from error
     return _validate_v2(repo_root, report)
 
 

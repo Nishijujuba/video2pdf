@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -21,10 +22,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.project_test_results import canonical_json_bytes, sha256_file
 from scripts.project_test_source_provenance import (
+    PROMOTION_AUTHORITY_ARTIFACT_PATHS,
     PROMOTION_AUTHORITY_SOURCE_PATHS,
+    PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH,
     PROMOTION_EVIDENCE_ONLY_PATHS,
     SourceProvenanceError,
+    assert_no_incomplete_promotion_authority_transaction,
     committed_source_fingerprints,
+    require_live_authority_artifacts_match_commit,
     validate_evidence_only_commit_range,
 )
 from scripts.validate_project_test_promotion import (
@@ -63,10 +68,7 @@ SAFETY_RELATIVE_PATH = Path(
 )
 FINAL_ISSUE9_COMMIT = "5b4d76753da68713c8c2c009a77c4fa43b25373c"
 MATERIALIZED_AUTHORITY_PATHS = frozenset(
-    {
-        SUPERSET_AUTHORITY_RELATIVE_PATH.as_posix(),
-        SAFETY_RELATIVE_PATH.as_posix(),
-    }
+    PROMOTION_AUTHORITY_ARTIFACT_PATHS
 )
 
 
@@ -301,25 +303,6 @@ def _git_stdout(repo_root: Path, arguments: Sequence[str]) -> str:
     return completed.stdout
 
 
-def _committed_artifact_bytes(
-    repo_root: Path,
-    commit: str,
-    relative_path: Path,
-) -> bytes:
-    completed = subprocess.run(
-        ["git", "show", f"{commit}:{relative_path.as_posix()}"],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-    )
-    if completed.returncode != 0:
-        raise SystemExit(
-            "execution evidence commit authority artifact is missing: "
-            f"{relative_path}"
-        )
-    return completed.stdout
-
-
 def _changed_worktree_paths(repo_root: Path) -> frozenset[str]:
     raw = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -350,6 +333,10 @@ def _changed_worktree_paths(repo_root: Path) -> frozenset[str]:
 
 
 def _assert_materialization_boundary(repo_root: Path) -> None:
+    try:
+        assert_no_incomplete_promotion_authority_transaction(repo_root)
+    except SourceProvenanceError as error:
+        raise SystemExit(str(error)) from error
     if (
         not MATERIALIZED_AUTHORITY_PATHS
         or not MATERIALIZED_AUTHORITY_PATHS.issubset(
@@ -359,8 +346,11 @@ def _assert_materialization_boundary(repo_root: Path) -> None:
         in MATERIALIZED_AUTHORITY_PATHS
     ):
         raise SystemExit("materialization output allowlist is invalid")
-    unexpected = (
-        _changed_worktree_paths(repo_root) - MATERIALIZED_AUTHORITY_PATHS
+    unexpected = frozenset(
+        path
+        for path in _changed_worktree_paths(repo_root)
+        if path not in MATERIALIZED_AUTHORITY_PATHS
+        and not path.startswith("待删除/authority-materialization-")
     )
     if unexpected:
         raise SystemExit(
@@ -415,11 +405,7 @@ def _assert_safe_target(repo_root: Path, relative_path: Path) -> Path:
     return target
 
 
-def _quarantine_materialization_temp(
-    repo_root: Path,
-    temporary: Path,
-    destination: Path,
-) -> Path:
+def _materialization_quarantine(repo_root: Path) -> Path:
     quarantine = repo_root / "待删除"
     try:
         quarantine.mkdir(exist_ok=True)
@@ -437,26 +423,78 @@ def _quarantine_materialization_temp(
             != (repo_root.resolve(strict=True) / "待删除")
         ):
             raise OSError("quarantine boundary is unsafe")
-        quarantined = quarantine / (
-            "authority-materialization-"
-            f"{destination.name}-{uuid.uuid4().hex}.tmp"
-        )
-        if quarantined.exists():
-            raise OSError("quarantine destination is not unique")
-        os.rename(temporary, quarantined)
     except OSError as error:
         raise SystemExit(
-            "cannot preserve failed authority materialization temp in "
-            f"repository quarantine: {temporary}"
+            "cannot prove repository materialization quarantine boundary"
+        ) from error
+    return quarantine
+
+
+def _unique_quarantine_path(
+    repo_root: Path,
+    destination: Path,
+    kind: str,
+) -> Path:
+    quarantine = _materialization_quarantine(repo_root)
+    for _attempt in range(8):
+        quarantined = quarantine / (
+            "authority-materialization-"
+            f"{destination.name}-{uuid.uuid4().hex}.{kind}"
+        )
+        if not os.path.lexists(quarantined):
+            return quarantined
+    raise SystemExit("cannot allocate unique materialization quarantine path")
+
+
+def _move_to_quarantine(
+    repo_root: Path,
+    source: Path,
+    destination: Path,
+    kind: str,
+) -> Path:
+    quarantined = _unique_quarantine_path(
+        repo_root,
+        destination,
+        kind,
+    )
+    try:
+        os.rename(source, quarantined)
+    except OSError as error:
+        raise SystemExit(
+            "cannot preserve authority materialization artifact in repository "
+            f"quarantine: {source}"
         ) from error
     return quarantined
 
 
-def _atomic_replace(
+def _copy_to_quarantine(
+    repo_root: Path,
+    source: Path,
+    kind: str,
+) -> Path:
+    quarantined = _unique_quarantine_path(
+        repo_root,
+        source,
+        kind,
+    )
+    try:
+        with source.open("rb") as input_handle, quarantined.open("xb") as output:
+            shutil.copyfileobj(input_handle, output)
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError as error:
+        raise SystemExit(
+            "cannot preserve displaced authority artifact in repository "
+            f"quarantine: {source}"
+        ) from error
+    return quarantined
+
+
+def _stage_materialization(
     repo_root: Path,
     destination: Path,
     content: bytes,
-) -> None:
+) -> Path:
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -470,16 +508,84 @@ def _atomic_replace(
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, destination)
     except OSError as error:
-        if temporary is not None and temporary.exists():
-            _quarantine_materialization_temp(
+        if temporary is not None and os.path.lexists(temporary):
+            _move_to_quarantine(
                 repo_root,
                 temporary,
                 destination,
+                "temp",
             )
         raise SystemExit(
-            f"cannot atomically materialize authority artifact: {destination}"
+            f"cannot stage authority artifact: {destination}"
+        ) from error
+    return temporary
+
+
+def _acquire_materialization_marker(repo_root: Path) -> Path:
+    marker = (
+        repo_root / PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH
+    )
+    content = canonical_json_bytes(
+        {
+            "schema_name": (
+                "video2pdf.project-test-promotion-authority-transaction"
+            ),
+            "schema_version": 1,
+            "state": "publishing",
+            "transaction_id": uuid.uuid4().hex,
+            "artifacts": list(PROMOTION_AUTHORITY_ARTIFACT_PATHS),
+        }
+    )
+    try:
+        with marker.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as error:
+        raise SystemExit(
+            "cannot acquire Promotion authority materialization transaction"
+        ) from error
+    return marker
+
+
+def _restore_original(
+    repo_root: Path,
+    destination: Path,
+    backup: Path | None,
+) -> None:
+    if os.path.lexists(destination):
+        _move_to_quarantine(
+            repo_root,
+            destination,
+            destination,
+            "new",
+        )
+    if backup is None:
+        return
+    try:
+        original_bytes = backup.read_bytes()
+    except OSError as error:
+        raise SystemExit(
+            f"cannot read preserved authority artifact: {backup}"
+        ) from error
+    rollback_temp = _stage_materialization(
+        repo_root,
+        destination,
+        original_bytes,
+    )
+    try:
+        os.replace(rollback_temp, destination)
+    except OSError as error:
+        if os.path.lexists(rollback_temp):
+            _move_to_quarantine(
+                repo_root,
+                rollback_temp,
+                destination,
+                "rollback",
+            )
+        raise SystemExit(
+            f"cannot roll back authority artifact: {destination}"
         ) from error
 
 
@@ -500,11 +606,76 @@ def _materialize(
         relative_path: _assert_safe_target(repo_root, relative_path)
         for relative_path in encoded
     }
-    for relative_path in sorted(encoded, key=lambda value: value.as_posix()):
-        target = targets[relative_path]
-        content = encoded[relative_path]
-        if not target.exists() or target.read_bytes() != content:
-            _atomic_replace(repo_root, target, content)
+    transaction_paths = sorted(
+        encoded,
+        key=lambda value: value.as_posix(),
+    )
+    if all(
+        targets[relative_path].exists()
+        and targets[relative_path].read_bytes() == encoded[relative_path]
+        for relative_path in transaction_paths
+    ):
+        return {
+            relative_path.as_posix(): hashlib.sha256(content).hexdigest()
+            for relative_path, content in encoded.items()
+        }
+    marker = _acquire_materialization_marker(repo_root)
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path | None] = {}
+    published: list[Path] = []
+    try:
+        for relative_path in transaction_paths:
+            staged[relative_path] = _stage_materialization(
+                repo_root,
+                targets[relative_path],
+                encoded[relative_path],
+            )
+        for relative_path in transaction_paths:
+            target = targets[relative_path]
+            backups[relative_path] = (
+                _copy_to_quarantine(repo_root, target, "original")
+                if target.exists()
+                else None
+            )
+        for relative_path in transaction_paths:
+            os.replace(staged[relative_path], targets[relative_path])
+            published.append(relative_path)
+    except (OSError, SystemExit) as error:
+        rollback_error: SystemExit | None = None
+        try:
+            for relative_path in reversed(published):
+                _restore_original(
+                    repo_root,
+                    targets[relative_path],
+                    backups[relative_path],
+                )
+            for relative_path, temporary in staged.items():
+                if os.path.lexists(temporary):
+                    _move_to_quarantine(
+                        repo_root,
+                        temporary,
+                        targets[relative_path],
+                        "temp",
+                    )
+            if os.path.lexists(marker):
+                _move_to_quarantine(
+                    repo_root,
+                    marker,
+                    marker,
+                    "marker",
+                )
+        except SystemExit as rollback_failure:
+            rollback_error = rollback_failure
+        if rollback_error is not None:
+            raise SystemExit(
+                "authority artifact set transaction failed and rollback is "
+                f"incomplete: {rollback_error}"
+            ) from error
+        raise SystemExit(
+            "cannot materialize authority artifact set; canonical set was "
+            "rolled back"
+        ) from error
+    _move_to_quarantine(repo_root, marker, marker, "marker")
     return {
         relative_path.as_posix(): hashlib.sha256(content).hexdigest()
         for relative_path, content in encoded.items()
@@ -538,6 +709,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     repo_root = REPO_ROOT.resolve(strict=True)
+    try:
+        assert_no_incomplete_promotion_authority_transaction(repo_root)
+    except SourceProvenanceError as error:
+        raise SystemExit(str(error)) from error
     safety_path = repo_root / SAFETY_RELATIVE_PATH
     existing_safety, _safety_sha256 = _load_snapshot(safety_path)
     live_head = _git_stdout(repo_root, ["rev-parse", "HEAD"]).strip()
@@ -636,6 +811,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 0
+    try:
+        committed_fingerprints = require_live_authority_artifacts_match_commit(
+            repo_root,
+            execution_evidence_commit,
+        )
+    except SourceProvenanceError as error:
+        raise SystemExit(str(error)) from error
     fingerprints: dict[str, str] = {}
     for relative_path, value in expected.items():
         expected_bytes = canonical_json_bytes(value)
@@ -647,15 +829,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if actual_bytes != expected_bytes:
             raise SystemExit(f"authority artifact is stale: {relative_path}")
         actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()
-        committed_bytes = _committed_artifact_bytes(
-            repo_root,
-            execution_evidence_commit,
-            relative_path,
-        )
-        if (
-            committed_bytes != expected_bytes
-            or hashlib.sha256(committed_bytes).hexdigest() != actual_sha256
-        ):
+        if committed_fingerprints[relative_path.as_posix()] != actual_sha256:
             raise SystemExit(
                 "execution evidence commit authority artifact differs: "
                 f"{relative_path}"

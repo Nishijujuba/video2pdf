@@ -30,6 +30,7 @@ from scripts.project_test_source_provenance import (
     create_source_snapshot,
     create_frozen_git_authority,
     freeze_execution_source_files,
+    validate_evidence_only_commit_range,
 )
 from scripts.validate_project_test_promotion import (
     AUTHORIZED_DELTA_TEST_ID_SET_SHA256,
@@ -996,6 +997,26 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "module_inventory_sha256": source_snapshot[
                         "module_inventory"
                     ]["sha256"],
+                    "module_inventory": [
+                        {
+                            "module_key": item["module_key"],
+                            "suite_id": item["suite_id"],
+                            "source_path": item["source_path"],
+                            "test_count": item["test_count"],
+                            "test_ids_sha256": hashlib.sha256(
+                                canonical_json_bytes(
+                                    sorted(item["test_ids"])
+                                )
+                            ).hexdigest(),
+                        }
+                        for item in sorted(
+                            discovery["modules"],
+                            key=lambda value: (
+                                value["suite_id"],
+                                value["source_path"],
+                            ),
+                        )
+                    ],
                     "source_sha256": next(
                         item["runtime_sha256"]
                         for item in source_manifest["entries"]
@@ -1747,7 +1768,7 @@ class PromotionReportV2Tests(unittest.TestCase):
             encoding="utf-8",
         ).stdout.strip()
 
-        promotion_validator._validate_evidence_only_commit_range(
+        validate_evidence_only_commit_range(
             repo,
             reviewed,
             execution,
@@ -1770,13 +1791,79 @@ class PromotionReportV2Tests(unittest.TestCase):
             encoding="utf-8",
         ).stdout.strip()
         with self.assertRaisesRegex(
-            PromotionValidationError,
+            SourceProvenanceError,
             "non-evidence paths",
         ):
-            promotion_validator._validate_evidence_only_commit_range(
+            validate_evidence_only_commit_range(
                 repo,
                 execution,
                 unreviewed,
+                label="fixture",
+            )
+
+    def test_evidence_only_range_rejects_forbidden_change_then_revert(
+        self,
+    ) -> None:
+        repo = new_fixture_dir("promotion-range-revert")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Range Fixture"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "range@example.invalid"],
+            cwd=repo,
+            check=True,
+        )
+        source = repo / "implementation.py"
+        source.write_text("VALUE = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "reviewed"],
+            cwd=repo,
+            check=True,
+        )
+        reviewed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+
+        source.write_text("VALUE = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "forbidden"],
+            cwd=repo,
+            check=True,
+        )
+        source.write_text("VALUE = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "revert forbidden"],
+            cwd=repo,
+            check=True,
+        )
+        descendant = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+
+        with self.assertRaisesRegex(
+            SourceProvenanceError,
+            "non-evidence paths",
+        ):
+            validate_evidence_only_commit_range(
+                repo,
+                reviewed,
+                descendant,
                 label="fixture",
             )
 

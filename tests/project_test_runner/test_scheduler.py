@@ -163,6 +163,35 @@ class SchedulerTests(unittest.TestCase):
         frozen_source.parent.mkdir(parents=True)
         frozen_source.write_text("BOUND = True\n", encoding="utf-8")
         source_sha256 = hashlib.sha256(frozen_source.read_bytes()).hexdigest()
+        assigned_module = {
+            "module_key": "123456789abc",
+            "suite_id": "fixture",
+            "source_path": "tests/case.py",
+            "test_count": 1,
+            "test_ids_sha256": hashlib.sha256(
+                (
+                    json.dumps(
+                        ["case.CaseTests.test_bound"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+        module_inventory = [assigned_module]
+        module_inventory_sha256 = hashlib.sha256(
+            (
+                json.dumps(
+                    module_inventory,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest()
         payload = {
             "schema_name": "video2pdf.project-test-source-snapshot",
             "schema_version": 1,
@@ -188,7 +217,10 @@ class SchedulerTests(unittest.TestCase):
             "commit": "f" * 40,
             "git_tree": "1" * 40,
             "entry_inventory": {"count": 1, "sha256": "2" * 64},
-            "module_inventory": {"count": 1, "sha256": "b" * 64},
+            "module_inventory": {
+                "count": 1,
+                "sha256": module_inventory_sha256,
+            },
             "prevalidation": {
                 "result": "passed",
                 "source_manifest_sha256": "a" * 64,
@@ -225,12 +257,50 @@ class SchedulerTests(unittest.TestCase):
             "source_snapshot_sha256": hashlib.sha256(
                 snapshot_path.read_bytes()
             ).hexdigest(),
-            "module_inventory_sha256": "b" * 64,
+            "module_inventory_sha256": module_inventory_sha256,
+            "module_inventory": module_inventory,
+            "module_key": assigned_module["module_key"],
+            "suite_id": assigned_module["suite_id"],
             "source_path": "tests/case.py",
+            "test_ids": ["case.CaseTests.test_bound"],
             "source_sha256": source_sha256,
         }
 
         validate_source_snapshot_binding(run_dir, assignment)
+
+        with self.assertRaisesRegex(
+            SourceProvenanceError,
+            "module inventory membership",
+        ):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "module_key": "fedcba987654",
+                },
+            )
+        with self.assertRaisesRegex(
+            SourceProvenanceError,
+            "module inventory membership",
+        ):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "suite_id": "forged-suite",
+                },
+            )
+        with self.assertRaisesRegex(
+            SourceProvenanceError,
+            "module inventory membership",
+        ):
+            validate_source_snapshot_binding(
+                run_dir,
+                {
+                    **assignment,
+                    "test_ids": ["case.CaseTests.test_unknown"],
+                },
+            )
 
         replay = {**assignment, "source_snapshot_id": "c" * 64}
         with self.assertRaisesRegex(SourceProvenanceError, "snapshot identity"):

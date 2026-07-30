@@ -47,12 +47,14 @@ from scripts.project_test_source_provenance import (  # noqa: E402
     RUN_FINALIZATION_RELATIVE_PATH,
     SOURCE_MANIFEST_RELATIVE_PATH,
     SOURCE_SNAPSHOT_RELATIVE_PATH,
+    SourceBinding,
     SourceProvenanceError,
     build_execution_source_manifest,
     create_source_snapshot,
     create_frozen_git_authority,
     finalize_source_snapshot,
     freeze_execution_source_files,
+    module_inventory,
     planned_execution_source_paths,
 )
 from src.video2pdf_persisted_command.process_identity import (  # noqa: E402
@@ -358,6 +360,28 @@ def _validate_timings_path(value: Path | None) -> Path | None:
     return resolved
 
 
+def _post_snapshot_failure_kind(
+    error: BaseException,
+    *,
+    summary_exists: bool,
+) -> str:
+    if isinstance(error, CliError):
+        if error.failure_kind == "argument_failure":
+            return "scheduler_setup_failure"
+        return error.failure_kind
+    if isinstance(error, SchedulerError):
+        if not summary_exists:
+            return "scheduler_setup_failure"
+        return error.failure_kind
+    if isinstance(error, ResultIntegrityError):
+        return "result_integrity_failure"
+    if isinstance(error, SourceProvenanceError):
+        return "source_binding_failure"
+    if isinstance(error, (OSError, ValueError)):
+        return "scheduler_setup_failure"
+    return "coordinator_failure"
+
+
 def _public_command(arguments: argparse.Namespace) -> int:
     repo_root = REPO_ROOT.resolve(strict=True)
     registry = load_registry(repo_root, repo_root / REGISTRY_RELATIVE_PATH)
@@ -462,99 +486,149 @@ def _public_command(arguments: argparse.Namespace) -> int:
         runner_identity=runner_identity,
         modules=discovery["modules"],
     )
-    timings_from = (
-        _validate_timings_path(arguments.timings_from)
-        if arguments.command == "run"
-        else None
-    )
-    test_run = {
-        "schema_name": TEST_RUN_SCHEMA_NAME,
-        "schema_version": SCHEMA_VERSION,
-        "command": arguments.command,
-        "project": discovery.get("project"),
-        "commit": discovery.get("commit"),
-        "registry_sha256": registry.fingerprint,
-        "discovery_sha256": discovery_sha256,
-        "source_manifest_path": str(source_manifest_path),
-        "source_manifest_sha256": source_manifest_sha256,
-        "source_snapshot_path": str(
-            run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
-        ),
-        "source_snapshot_id": source_snapshot["source_snapshot_id"],
-        "source_snapshot_sha256": source_snapshot_sha256,
-        "suite_ids": selected_suite_ids,
-        "run_dir": str(run_dir),
-        "project_marker_sha256": project_marker_sha256,
-        "persisted_run_id": os.environ.get("VIDEO2PDF_PERSISTED_RUN_ID"),
-        "persisted_run_nonce": os.environ.get(
-            "VIDEO2PDF_PERSISTED_RUN_NONCE"
-        ),
-        "persisted_target_identity": (
-            persisted_launch["target_identity"]
-            if persisted_launch is not None
-            else None
-        ),
-        "persisted_supervisor_identity": (
-            persisted_launch["supervisor_identity"]
-            if persisted_launch is not None
-            else None
-        ),
-        "requested_jobs": arguments.jobs
-        if arguments.command == "run"
-        else None,
-        "timings_from": str(timings_from) if timings_from is not None else None,
-        "runner_identity": runner_identity,
-        "discovery_process": {
-            **discovery_identity,
-        },
-    }
-    write_json_exclusive(run_dir / "test-run.json", test_run)
-    if arguments.command == "discover":
-        _emit(
-            {
-                "event": "project_test_discovery_complete",
-                "success": True,
-                "failure_kind": None,
-                "run_dir": str(run_dir),
-                "suite_ids": selected_suite_ids,
-                "total_count": discovery.get("total_count"),
-                "discovery_sha256": discovery_sha256,
-                "discovery_process": discovery_identity,
-            }
-        )
-        return 0
-
-    if sha256_file(run_dir / "discovery.json") != discovery_sha256:
-        raise CliError(
-            "discovery manifest changed before scheduling",
-            failure_kind="discovery_failure",
-        )
-    _emit(
-        {
-            "event": "project_test_scheduling_started",
-            "run_dir": str(run_dir),
-            "discovery_sha256": discovery_sha256,
-            "total_count": discovery.get("total_count"),
-            "discovery_process": discovery_identity,
-        }
-    )
-    summary = run_modules(
-        repo_root=repo_root,
-        run_dir=run_dir,
-        discovery=discovery,
-        jobs=arguments.jobs,
-        timings_from=timings_from,
+    source_binding = SourceBinding(
+        execution_root=execution_root,
         source_manifest_sha256=source_manifest_sha256,
         source_snapshot_id=source_snapshot["source_snapshot_id"],
         source_snapshot_sha256=source_snapshot_sha256,
-        module_inventory_sha256=source_snapshot["module_inventory"]["sha256"],
+        module_inventory=module_inventory(discovery["modules"]),
         source_sha256_by_path={
             item["path"]: item["runtime_sha256"]
             for item in source_manifest["entries"]
         },
-        execution_root=execution_root,
     )
-    summary_sha256 = sha256_file(run_dir / "summary.json")
+    try:
+        timings_from = (
+            _validate_timings_path(arguments.timings_from)
+            if arguments.command == "run"
+            else None
+        )
+        test_run = {
+            "schema_name": TEST_RUN_SCHEMA_NAME,
+            "schema_version": SCHEMA_VERSION,
+            "command": arguments.command,
+            "project": discovery.get("project"),
+            "commit": discovery.get("commit"),
+            "registry_sha256": registry.fingerprint,
+            "discovery_sha256": discovery_sha256,
+            "source_manifest_path": str(source_manifest_path),
+            "source_manifest_sha256": source_manifest_sha256,
+            "source_snapshot_path": str(
+                run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
+            ),
+            "source_snapshot_id": source_snapshot["source_snapshot_id"],
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "suite_ids": selected_suite_ids,
+            "run_dir": str(run_dir),
+            "project_marker_sha256": project_marker_sha256,
+            "persisted_run_id": os.environ.get(
+                "VIDEO2PDF_PERSISTED_RUN_ID"
+            ),
+            "persisted_run_nonce": os.environ.get(
+                "VIDEO2PDF_PERSISTED_RUN_NONCE"
+            ),
+            "persisted_target_identity": (
+                persisted_launch["target_identity"]
+                if persisted_launch is not None
+                else None
+            ),
+            "persisted_supervisor_identity": (
+                persisted_launch["supervisor_identity"]
+                if persisted_launch is not None
+                else None
+            ),
+            "requested_jobs": (
+                arguments.jobs if arguments.command == "run" else None
+            ),
+            "timings_from": (
+                str(timings_from) if timings_from is not None else None
+            ),
+            "runner_identity": runner_identity,
+            "discovery_process": {
+                **discovery_identity,
+            },
+        }
+        write_json_exclusive(run_dir / "test-run.json", test_run)
+        if arguments.command == "discover":
+            _emit(
+                {
+                    "event": "project_test_discovery_complete",
+                    "success": True,
+                    "failure_kind": None,
+                    "run_dir": str(run_dir),
+                    "suite_ids": selected_suite_ids,
+                    "total_count": discovery.get("total_count"),
+                    "discovery_sha256": discovery_sha256,
+                    "discovery_process": discovery_identity,
+                }
+            )
+            return 0
+
+        if sha256_file(run_dir / "discovery.json") != discovery_sha256:
+            raise CliError(
+                "discovery manifest changed before scheduling",
+                failure_kind="discovery_failure",
+            )
+        _emit(
+            {
+                "event": "project_test_scheduling_started",
+                "run_dir": str(run_dir),
+                "discovery_sha256": discovery_sha256,
+                "total_count": discovery.get("total_count"),
+                "discovery_process": discovery_identity,
+            }
+        )
+        summary = run_modules(
+            repo_root=repo_root,
+            run_dir=run_dir,
+            discovery=discovery,
+            jobs=arguments.jobs,
+            timings_from=timings_from,
+            source_binding=source_binding,
+        )
+        summary_sha256 = sha256_file(run_dir / "summary.json")
+    except Exception as error:
+        summary_path = run_dir / "summary.json"
+        summary_exists = summary_path.is_file()
+        failure_kind = _post_snapshot_failure_kind(
+            error,
+            summary_exists=summary_exists,
+        )
+        failed_summary_sha256 = (
+            sha256_file(summary_path) if summary_exists else None
+        )
+        finalization, finalization_sha256 = finalize_source_snapshot(
+            repo_root,
+            run_dir,
+            source_snapshot=source_snapshot,
+            source_snapshot_sha256=source_snapshot_sha256,
+            source_manifest=source_manifest,
+            expected_test_module_paths=registered_test_files,
+            scheduler_success=False,
+            scheduler_failure_kind=failure_kind,
+            summary_sha256=failed_summary_sha256,
+        )
+        _emit(
+            {
+                "event": "project_test_run_complete",
+                "success": False,
+                "failure_kind": finalization["failure_kind"],
+                "detail": f"{type(error).__name__}: {error}",
+                "run_dir": str(run_dir),
+                "summary_sha256": failed_summary_sha256,
+                "discovery_sha256": discovery_sha256,
+                "discovery_process": discovery_identity,
+                "source_snapshot_id": source_snapshot[
+                    "source_snapshot_id"
+                ],
+                "source_snapshot_sha256": source_snapshot_sha256,
+                "run_finalization_path": str(
+                    run_dir / RUN_FINALIZATION_RELATIVE_PATH
+                ),
+                "run_finalization_sha256": finalization_sha256,
+            }
+        )
+        return 1
     finalization, finalization_sha256 = finalize_source_snapshot(
         repo_root,
         run_dir,

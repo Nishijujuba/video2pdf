@@ -233,6 +233,38 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         )
         self.assertEqual(source_snapshot["prevalidation"]["result"], "passed")
         self.assertEqual(source_snapshot["module_inventory"]["count"], 2)
+        assignments = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(
+                (run_dir / "modules").glob("*.assignment.json")
+            )
+        ]
+        self.assertEqual(len(assignments), 2)
+        for assignment in assignments:
+            inventory = assignment["module_inventory"]
+            self.assertEqual(len(inventory), 2)
+            self.assertEqual(
+                assignment["module_inventory_sha256"],
+                source_snapshot["module_inventory"]["sha256"],
+            )
+            assigned_member = {
+                "module_key": assignment["module_key"],
+                "suite_id": assignment["suite_id"],
+                "source_path": assignment["source_path"],
+                "test_count": len(assignment["test_ids"]),
+                "test_ids_sha256": hashlib.sha256(
+                    (
+                        json.dumps(
+                            sorted(assignment["test_ids"]),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            self.assertIn(assigned_member, inventory)
         finalization = json.loads(
             (run_dir / "run-finalization.json").read_text(encoding="utf-8")
         )
@@ -268,6 +300,42 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("{discover,run}", help_result.stdout)
         self.assertNotIn("_discover", help_result.stdout)
+
+    def test_post_snapshot_setup_failure_writes_failed_finalization(self) -> None:
+        repo, external = self.make_fixture_repo()
+        missing_timings = (external / "missing-timings.json").resolve()
+
+        completed = self.invoke(
+            repo,
+            "run",
+            "--test-root",
+            str(external),
+            "--timings-from",
+            str(missing_timings),
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        record = self.final_record(completed)
+        self.assertEqual(record["event"], "project_test_run_complete")
+        self.assertFalse(record["success"])
+        self.assertEqual(
+            record["failure_kind"],
+            "scheduler_setup_failure",
+        )
+        finalization_path = Path(record["run_finalization_path"])
+        finalization = json.loads(
+            finalization_path.read_text(encoding="utf-8")
+        )
+        self.assertFalse(finalization["success"])
+        self.assertEqual(
+            finalization["scheduler_failure_kind"],
+            "scheduler_setup_failure",
+        )
+        self.assertIsNone(finalization["summary_sha256"])
+        self.assertEqual(
+            record["run_finalization_sha256"],
+            hashlib.sha256(finalization_path.read_bytes()).hexdigest(),
+        )
 
     @unittest.skipUnless(os.name == "nt", "Windows path budget")
     def test_self_hosted_over_budget_root_fails_before_creating_project_or_worker(

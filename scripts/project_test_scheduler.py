@@ -37,6 +37,7 @@ from scripts.project_test_external_root import (
     validate_owned_run_directory,
 )
 from scripts.project_test_source_provenance import (
+    SourceBinding,
     SourceProvenanceError,
     validate_source_snapshot_binding,
 )
@@ -704,11 +705,7 @@ def _launch_module(
     stdout_lock: threading.Lock,
     stderr_lock: threading.Lock,
     child_environment: Mapping[str, str] | None,
-    source_manifest_sha256: str | None,
-    source_snapshot_id: str | None,
-    source_snapshot_sha256: str | None,
-    module_inventory_sha256: str | None,
-    source_sha256: str | None,
+    source_binding: SourceBinding | None,
 ) -> _ActiveModule:
     module_dir = _safe_artifact_path(run_dir, run_dir / "modules")
     logs_dir = _safe_artifact_path(run_dir, run_dir / "logs")
@@ -737,12 +734,19 @@ def _launch_module(
         "source_path": module["source_path"],
         "test_ids": module["test_ids"],
         "worker_launch_nonce": worker_launch_nonce,
-        "source_manifest_sha256": source_manifest_sha256,
-        "source_snapshot_id": source_snapshot_id,
-        "source_snapshot_sha256": source_snapshot_sha256,
-        "module_inventory_sha256": module_inventory_sha256,
-        "source_sha256": source_sha256,
     }
+    if source_binding is None:
+        assignment.update(
+            {
+                "source_manifest_sha256": None,
+                "source_snapshot_id": None,
+                "source_snapshot_sha256": None,
+                "module_inventory_sha256": None,
+                "source_sha256": None,
+            }
+        )
+    else:
+        assignment.update(source_binding.assignment_fields(module))
     assignment_path = _safe_artifact_path(run_dir, assignment_path)
     assignment_sha256 = write_json_exclusive(assignment_path, assignment)
     assignment_file_identity = file_artifact_identity(assignment_path)
@@ -878,10 +882,23 @@ def _validate_module_result(
     process_exit_code: int,
     *,
     worker_launch_nonce: str,
-    source_manifest_sha256: str | None,
-    source_snapshot_id: str | None,
-    source_snapshot_sha256: str | None,
+    source_binding: SourceBinding | None,
 ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+    source_manifest_sha256 = (
+        source_binding.source_manifest_sha256
+        if source_binding is not None
+        else None
+    )
+    source_snapshot_id = (
+        source_binding.source_snapshot_id
+        if source_binding is not None
+        else None
+    )
+    source_snapshot_sha256 = (
+        source_binding.source_snapshot_sha256
+        if source_binding is not None
+        else None
+    )
     worker_identity = value.get("worker_identity")
     if (
         value.get("schema_name") != MODULE_RESULT_SCHEMA_NAME
@@ -942,11 +959,7 @@ def run_modules(
     stdout: BinaryIO | None = None,
     stderr: BinaryIO | None = None,
     child_environment: Mapping[str, str] | None = None,
-    source_manifest_sha256: str | None = None,
-    source_snapshot_id: str | None = None,
-    source_snapshot_sha256: str | None = None,
-    module_inventory_sha256: str | None = None,
-    source_sha256_by_path: Mapping[str, str] | None = None,
+    source_binding: SourceBinding | None = None,
     execution_root: Path | None = None,
 ) -> dict[str, Any]:
     """Run every discovered module once and write immutable result artifacts."""
@@ -960,8 +973,39 @@ def run_modules(
             f"run directory ownership is invalid: {error}",
             failure_kind="coordinator_failure",
         ) from error
-    execution_root = (
-        repo_root if execution_root is None else execution_root.resolve(strict=True)
+    if source_binding is not None:
+        bound_execution_root = source_binding.execution_root.resolve(
+            strict=True
+        )
+        if (
+            execution_root is not None
+            and execution_root.resolve(strict=True) != bound_execution_root
+        ):
+            raise SchedulerError(
+                "execution root differs from the source binding",
+                failure_kind="source_binding_failure",
+            )
+        execution_root = bound_execution_root
+    else:
+        execution_root = (
+            repo_root
+            if execution_root is None
+            else execution_root.resolve(strict=True)
+        )
+    source_manifest_sha256 = (
+        source_binding.source_manifest_sha256
+        if source_binding is not None
+        else None
+    )
+    source_snapshot_id = (
+        source_binding.source_snapshot_id
+        if source_binding is not None
+        else None
+    )
+    source_snapshot_sha256 = (
+        source_binding.source_snapshot_sha256
+        if source_binding is not None
+        else None
     )
     modules = _validate_discovery(execution_root, discovery)
     durations = (
@@ -1010,15 +1054,7 @@ def run_modules(
                         stdout_lock=stdout_lock,
                         stderr_lock=stderr_lock,
                         child_environment=child_environment,
-                        source_manifest_sha256=source_manifest_sha256,
-                        source_snapshot_id=source_snapshot_id,
-                        source_snapshot_sha256=source_snapshot_sha256,
-                        module_inventory_sha256=module_inventory_sha256,
-                        source_sha256=(
-                            source_sha256_by_path.get(module["source_path"])
-                            if source_sha256_by_path is not None
-                            else None
-                        ),
+                        source_binding=source_binding,
                     )
                 except Exception as error:
                     assignment_path = (
@@ -1168,9 +1204,7 @@ def run_modules(
                         value,
                         exit_code,
                         worker_launch_nonce=launched.worker_launch_nonce,
-                        source_manifest_sha256=source_manifest_sha256,
-                        source_snapshot_id=source_snapshot_id,
-                        source_snapshot_sha256=source_snapshot_sha256,
+                        source_binding=source_binding,
                     )
                     launcher_identity = launched.worker_execution_identity
                     if (

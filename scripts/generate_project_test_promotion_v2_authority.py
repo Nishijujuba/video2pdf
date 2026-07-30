@@ -20,6 +20,7 @@ from scripts.project_test_source_provenance import (
     PROMOTION_AUTHORITY_SOURCE_PATHS,
     SourceProvenanceError,
     committed_source_fingerprints,
+    validate_evidence_only_commit_range,
 )
 from scripts.validate_project_test_promotion import (
     AUTHORIZED_DELTA_TEST_IDS,
@@ -34,7 +35,6 @@ from scripts.validate_project_test_promotion import (
     FINAL_ISSUE9_DISCOVERY_SHA256,
     MIGRATION_REVIEW_RELATIVE_PATH,
     SUPERSET_AUTHORITY_RELATIVE_PATH,
-    _validate_evidence_only_commit_range,
     _test_module_inventory,
 )
 
@@ -303,12 +303,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if not isinstance(reviewed_implementation_commit, str):
         raise SystemExit("optimization safety reviewed_source_commit is invalid")
-    _validate_evidence_only_commit_range(
-        repo_root,
-        reviewed_implementation_commit,
-        execution_evidence_commit,
-        label="reviewed implementation to execution evidence",
-    )
+    try:
+        validate_evidence_only_commit_range(
+            repo_root,
+            reviewed_implementation_commit,
+            execution_evidence_commit,
+            label="reviewed implementation to execution evidence",
+        )
+    except SourceProvenanceError as error:
+        raise SystemExit(str(error)) from error
     live_head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo_root,
@@ -317,12 +320,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         text=True,
         encoding="utf-8",
     ).stdout.strip()
-    _validate_evidence_only_commit_range(
-        repo_root,
-        execution_evidence_commit,
-        live_head,
-        label="execution evidence to generator-time live HEAD",
-    )
+    try:
+        validate_evidence_only_commit_range(
+            repo_root,
+            execution_evidence_commit,
+            live_head,
+            label="execution evidence to generator-time live HEAD",
+        )
+    except SourceProvenanceError as error:
+        raise SystemExit(str(error)) from error
     live_authority_sources = {
         path: sha256_file(repo_root / path)
         for path in PROMOTION_AUTHORITY_SOURCE_PATHS

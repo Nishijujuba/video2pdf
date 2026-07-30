@@ -23,9 +23,11 @@ authority without the bound, recomputed ID inventories.
 
 Version 2 binds a reviewed implementation commit \(I\) and an execution
 evidence commit \(E\). \(I\) must be an ancestor of or equal to \(E\); every
-tracked change in \(I..E\) must belong to the validator-owned evidence-only
-allowlist. Both runs bind \(E\), while the optimization safety review binds
-\(I\). Validator-time `HEAD` may be an evidence-only descendant of \(E\).
+tracked path touched by every commit in \(I..E\) must belong to the
+provenance-owned evidence-only allowlist. A forbidden change followed by a
+revert remains invalid even when the endpoint trees match. Both runs bind
+\(E\), while the optimization safety review binds \(I\). Validator-time `HEAD`
+may be an evidence-only descendant of \(E\).
 Registry, runner, scheduler, and Promotion authority blobs must be identical
 at \(I\), \(E\), validator-time `HEAD`, and both frozen execution sources.
 Each run must use jobs four, observe peak concurrency four, finish
@@ -98,14 +100,20 @@ validation and before scheduling. Its canonical payload SHA-256 is the
 persisted run identity, runner identity, project and Registry fingerprints,
 source manifest, commit/tree, and entry/module inventories. Workers validate
 that constant-size snapshot record plus their assigned frozen module. They do
-not repeat complete source-manifest validation. Assignments, results, events,
-and summaries echo the snapshot identity.
+not repeat complete source-manifest validation. Each assignment carries the
+canonical discovered-module inventory committed by the snapshot digest, so a
+worker can prove its module key, suite, source path, test count, and Test ID
+set are members without scanning the complete execution-source inventory.
+Assignments, results, events, and summaries echo the snapshot identity.
 
 After all workers terminate, the CLI repeats complete source validation and
 writes immutable `run-finalization.json`. Success is emitted only after that
 artifact proves a passing post-run validation. Source failures are classified
-at the preflight, worker binding, or post-run boundary. Promotion validates the
-snapshot, finalization, and frozen source once per run.
+at the preflight, worker binding, or post-run boundary. Every scheduler or
+setup outcome after snapshot publication, including timing/discovery
+validation and artifact-directory creation failure, writes a failed
+finalization before the CLI returns. Promotion validates the snapshot,
+finalization, and frozen source once per run.
 
 The clean-worktree exception is path- and authority-based. An unchanged copy
 of a tracked source inside an explicitly allowed evidence-output directory is

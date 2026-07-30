@@ -36,6 +36,7 @@ from scripts.project_test_source_provenance import (
     SOURCE_SNAPSHOT_RELATIVE_PATH,
     SourceProvenanceError,
     committed_source_fingerprints,
+    validate_evidence_only_commit_range,
     validate_execution_source_manifest,
 )
 
@@ -249,55 +250,6 @@ TRUSTED_PERSISTED_RUN_ROOT = (
 
 class PromotionValidationError(RuntimeError):
     """Promotion evidence does not prove the one-time cutover gate."""
-
-
-PROMOTION_EVIDENCE_ONLY_PATHS = frozenset(
-    {
-        "evidence/project-test-runner/optimization-safety-review.v1.json",
-        "evidence/project-test-runner/promotion-report.json",
-        "evidence/project-test-runner/promotion-superset-authority.v2.json",
-    }
-)
-
-
-def _validate_evidence_only_commit_range(
-    repo_root: Path,
-    ancestor: str,
-    descendant: str,
-    *,
-    label: str,
-) -> None:
-    ancestry = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-    )
-    if ancestry.returncode != 0:
-        raise PromotionValidationError(
-            f"{label} must be an ancestor/equal commit relation"
-        )
-    changed = subprocess.run(
-        ["git", "diff", "--name-only", "-z", ancestor, descendant],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-    )
-    if changed.returncode != 0:
-        raise PromotionValidationError(
-            f"{label} evidence-only diff cannot be inspected"
-        )
-    changed_paths = {
-        os.fsdecode(path).replace("\\", "/")
-        for path in changed.stdout.split(b"\0")
-        if path
-    }
-    unexpected = changed_paths - PROMOTION_EVIDENCE_ONLY_PATHS
-    if unexpected:
-        raise PromotionValidationError(
-            f"{label} contains non-evidence paths: "
-            + ", ".join(sorted(unexpected))
-        )
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -2397,6 +2349,7 @@ def _validate_runner_artifact_chain(
                     "module_inventory_sha256": source_snapshot[
                         "module_inventory"
                     ]["sha256"],
+                    "module_inventory": expected_module_inventory,
                     "source_sha256": source_entry["runtime_sha256"],
                 }
             )
@@ -3824,12 +3777,15 @@ def _validate_v2(
         implementation["execution_evidence_commit"],
         "implementation.execution_evidence_commit",
     )
-    _validate_evidence_only_commit_range(
-        repo_root,
-        reviewed_implementation_commit,
-        execution_evidence_commit,
-        label="reviewed implementation to execution evidence",
-    )
+    try:
+        validate_evidence_only_commit_range(
+            repo_root,
+            reviewed_implementation_commit,
+            execution_evidence_commit,
+            label="reviewed implementation to execution evidence",
+        )
+    except SourceProvenanceError as error:
+        raise PromotionValidationError(str(error)) from error
     head_result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo_root,
@@ -3842,12 +3798,15 @@ def _validate_v2(
     if head_result.returncode != 0:
         raise PromotionValidationError("validator-time live HEAD is invalid")
     _commit(live_head, "validator-time live HEAD")
-    _validate_evidence_only_commit_range(
-        repo_root,
-        execution_evidence_commit,
-        live_head,
-        label="execution evidence to validator-time live HEAD",
-    )
+    try:
+        validate_evidence_only_commit_range(
+            repo_root,
+            execution_evidence_commit,
+            live_head,
+            label="execution evidence to validator-time live HEAD",
+        )
+    except SourceProvenanceError as error:
+        raise PromotionValidationError(str(error)) from error
     report_authority_sources = _source_fingerprint_map(
         implementation["authority_sources"],
         expected_paths=PROMOTION_AUTHORITY_SOURCE_PATHS,

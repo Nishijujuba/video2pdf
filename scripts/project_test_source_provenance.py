@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -60,6 +61,13 @@ PROMOTION_AUTHORITY_SOURCE_PATHS = tuple(
         }
     )
 )
+PROMOTION_EVIDENCE_ONLY_PATHS = frozenset(
+    {
+        "evidence/project-test-runner/optimization-safety-review.v1.json",
+        "evidence/project-test-runner/promotion-report.json",
+        "evidence/project-test-runner/promotion-superset-authority.v2.json",
+    }
+)
 EXECUTION_SOURCE_ROOTS = (
     ".agents",
     ".claude",
@@ -85,6 +93,146 @@ EXECUTION_SOURCE_ROOTS = (
     "pyproject.toml",
     "uv.lock",
 )
+
+
+def _module_inventory_entry(module: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "module_key": module["module_key"],
+        "suite_id": module["suite_id"],
+        "source_path": module["source_path"],
+        "test_count": module["test_count"],
+        "test_ids_sha256": hashlib.sha256(
+            canonical_json_bytes(sorted(module["test_ids"]))
+        ).hexdigest(),
+    }
+
+
+def module_inventory(
+    modules: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Return the canonical discovered-module membership inventory."""
+
+    return tuple(
+        _module_inventory_entry(item)
+        for item in sorted(
+            modules,
+            key=lambda value: (
+                str(value["suite_id"]),
+                str(value["source_path"]),
+            ),
+        )
+    )
+
+
+@dataclass(frozen=True)
+class SourceBinding:
+    """Supervisor-owned source authority passed intact into scheduling."""
+
+    execution_root: Path
+    source_manifest_sha256: str
+    source_snapshot_id: str
+    source_snapshot_sha256: str
+    module_inventory: tuple[dict[str, Any], ...]
+    source_sha256_by_path: Mapping[str, str]
+
+    @property
+    def module_inventory_sha256(self) -> str:
+        return hashlib.sha256(
+            canonical_json_bytes(list(self.module_inventory))
+        ).hexdigest()
+
+    def assignment_fields(
+        self,
+        module: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        member = _module_inventory_entry(module)
+        if member not in self.module_inventory:
+            raise SourceProvenanceError(
+                "scheduler module is absent from frozen module inventory"
+            )
+        source_sha256 = self.source_sha256_by_path.get(
+            str(module["source_path"])
+        )
+        if source_sha256 is None:
+            raise SourceProvenanceError(
+                "scheduler module source fingerprint is missing"
+            )
+        return {
+            "execution_root": str(self.execution_root),
+            "source_manifest_sha256": self.source_manifest_sha256,
+            "source_snapshot_id": self.source_snapshot_id,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "module_inventory_sha256": self.module_inventory_sha256,
+            "module_inventory": list(self.module_inventory),
+            "source_sha256": source_sha256,
+        }
+
+
+def validate_evidence_only_commit_range(
+    repo_root: Path,
+    ancestor: str,
+    descendant: str,
+    *,
+    label: str,
+) -> None:
+    """Reject any non-evidence path touched by any commit in a range."""
+
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if ancestry.returncode != 0:
+        raise SourceProvenanceError(
+            f"{label} must be an ancestor/equal commit relation"
+        )
+    commits = subprocess.run(
+        ["git", "rev-list", "--reverse", f"{ancestor}..{descendant}"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if commits.returncode != 0:
+        raise SourceProvenanceError(
+            f"{label} evidence-only commit range cannot be inspected"
+        )
+    unexpected: set[str] = set()
+    for commit in commits.stdout.splitlines():
+        changed = subprocess.run(
+            [
+                "git",
+                "diff-tree",
+                "--root",
+                "-m",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                commit,
+            ],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+        )
+        if changed.returncode != 0:
+            raise SourceProvenanceError(
+                f"{label} evidence-only commit cannot be inspected: {commit}"
+            )
+        unexpected.update(
+            os.fsdecode(path).replace("\\", "/")
+            for path in changed.stdout.split(b"\0")
+            if path
+            and os.fsdecode(path).replace("\\", "/")
+            not in PROMOTION_EVIDENCE_ONLY_PATHS
+        )
+    if unexpected:
+        raise SourceProvenanceError(
+            f"{label} contains non-evidence paths: "
+            + ", ".join(sorted(unexpected))
+        )
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_OBJECT = re.compile(r"[0-9a-f]{40,64}\Z")
@@ -980,24 +1128,7 @@ def create_source_snapshot(
         }
         for item in source_manifest["entries"]
     ]
-    module_inventory = [
-        {
-            "module_key": item["module_key"],
-            "suite_id": item["suite_id"],
-            "source_path": item["source_path"],
-            "test_count": item["test_count"],
-            "test_ids_sha256": hashlib.sha256(
-                canonical_json_bytes(sorted(item["test_ids"]))
-            ).hexdigest(),
-        }
-        for item in sorted(
-            modules,
-            key=lambda value: (
-                str(value["suite_id"]),
-                str(value["source_path"]),
-            ),
-        )
-    ]
+    discovered_module_inventory = module_inventory(modules)
     payload = {
         "schema_name": SOURCE_SNAPSHOT_SCHEMA_NAME,
         "schema_version": SOURCE_SNAPSHOT_SCHEMA_VERSION,
@@ -1020,9 +1151,9 @@ def create_source_snapshot(
             ).hexdigest(),
         },
         "module_inventory": {
-            "count": len(module_inventory),
+            "count": len(discovered_module_inventory),
             "sha256": hashlib.sha256(
-                canonical_json_bytes(module_inventory)
+                canonical_json_bytes(list(discovered_module_inventory))
             ).hexdigest(),
         },
         "prevalidation": {
@@ -1168,13 +1299,41 @@ def validate_source_snapshot_binding(
         )
     source_path = assignment.get("source_path")
     source_sha256 = assignment.get("source_sha256")
+    assigned_test_ids = assignment.get("test_ids")
+    assigned_inventory = assignment.get("module_inventory")
     if (
         not isinstance(source_path, str)
         or not isinstance(source_sha256, str)
         or _SHA256.fullmatch(source_sha256) is None
+        or not isinstance(assigned_test_ids, list)
+        or any(not isinstance(test_id, str) for test_id in assigned_test_ids)
+        or not isinstance(assigned_inventory, list)
     ):
         raise SourceProvenanceError(
             "worker assigned module binding is invalid"
+        )
+    if (
+        len(assigned_inventory) != module_inventory["count"]
+        or hashlib.sha256(
+            canonical_json_bytes(assigned_inventory)
+        ).hexdigest()
+        != module_inventory["sha256"]
+    ):
+        raise SourceProvenanceError(
+            "worker module inventory membership proof is invalid"
+        )
+    assigned_member = {
+        "module_key": assignment.get("module_key"),
+        "suite_id": assignment.get("suite_id"),
+        "source_path": source_path,
+        "test_count": len(assigned_test_ids),
+        "test_ids_sha256": hashlib.sha256(
+            canonical_json_bytes(sorted(assigned_test_ids))
+        ).hexdigest(),
+    }
+    if assigned_member not in assigned_inventory:
+        raise SourceProvenanceError(
+            "worker module inventory membership proof is invalid"
         )
     source_path = _canonical_relative_path(source_path)
     try:
@@ -1202,7 +1361,7 @@ def finalize_source_snapshot(
     expected_test_module_paths: Iterable[str],
     scheduler_success: bool,
     scheduler_failure_kind: str | None,
-    summary_sha256: str,
+    summary_sha256: str | None,
 ) -> tuple[dict[str, Any], str]:
     """Revalidate the complete frozen authority before terminal success."""
 
@@ -1229,17 +1388,15 @@ def finalize_source_snapshot(
         postvalidated_manifest_sha256 = None
         postvalidation_result = "failed"
         postvalidation_detail = str(error)
-    success = (
-        scheduler_success
-        and postvalidation_result == "passed"
-        and postvalidated_manifest_sha256
-        == source_snapshot["source_manifest_sha256"]
-    )
-    failure_kind = (
-        "source_postrun_failure"
-        if postvalidation_result == "failed"
-        else scheduler_failure_kind if not scheduler_success else None
-    )
+    if postvalidation_result == "failed":
+        success = False
+        failure_kind = "source_postrun_failure"
+    elif not scheduler_success:
+        success = False
+        failure_kind = scheduler_failure_kind
+    else:
+        success = True
+        failure_kind = None
     finalization = {
         "schema_name": RUN_FINALIZATION_SCHEMA_NAME,
         "schema_version": RUN_FINALIZATION_SCHEMA_VERSION,

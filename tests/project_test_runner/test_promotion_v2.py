@@ -2213,6 +2213,72 @@ class PromotionReportV2Tests(unittest.TestCase):
                     ],
                 )
 
+    def test_v2_rejects_v1_summary_substituted_for_v2_test_run(self) -> None:
+        repo, report = self.make_report()
+        run = report["parallel_runs"][0]
+        summary_path = Path(run["summary_path"])
+        finalization_path = Path(run["run_dir"]) / "run-finalization.json"
+        stdout_path = Path(run["persisted_stdout_path"])
+        original_summary = json.loads(
+            summary_path.read_text(encoding="utf-8")
+        )
+        expected_ids = sorted(
+            report["final_issue9_closed_set"]["test_ids"]
+            + json.loads(
+                (repo / AUTHORITY).read_text(encoding="utf-8")
+            )["authorized_delta"]["test_ids"]
+        )
+        mutations = {
+            "schema-downgrade": lambda value: value.__setitem__(
+                "schema_version", 1
+            ),
+            "missing-snapshot-echo": lambda value: value.pop(
+                "source_snapshot_id"
+            ),
+            "substituted-snapshot-echo": lambda value: value.__setitem__(
+                "source_snapshot_id", "f" * 64
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(mutation=label):
+                summary = json.loads(json.dumps(original_summary))
+                mutate(summary)
+                run["summary_sha256"] = write_json(summary_path, summary)
+                finalization = json.loads(
+                    finalization_path.read_text(encoding="utf-8")
+                )
+                finalization["summary_sha256"] = run["summary_sha256"]
+                write_json(finalization_path, finalization)
+                stdout_records = read_stdout_records(stdout_path)
+                stdout_records[-1]["summary_sha256"] = run[
+                    "summary_sha256"
+                ]
+                run["persisted_stdout_sha256"] = write_stdout_records(
+                    stdout_path,
+                    stdout_records,
+                )
+                refresh_persisted_stdout_identity(run)
+
+                with self.assertRaisesRegex(
+                    PromotionValidationError,
+                    "schema version|fields differ|snapshot binding|"
+                    "complete closed-set success",
+                ):
+                    with trusted_fixture_roots(repo):
+                        promotion_validator._validate_parallel_run(
+                            repo,
+                            run,
+                            report["promotion_closed_set"],
+                            report["implementation"][
+                                "execution_evidence_commit"
+                            ],
+                            1800.0,
+                            expected_test_ids=expected_ids,
+                            expected_registry_sha256=report[
+                                "implementation"
+                            ]["registry_sha256"],
+                        )
+
     def test_v2_rejects_coherent_process_identity_replacements(
         self,
     ) -> None:

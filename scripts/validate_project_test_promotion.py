@@ -1811,6 +1811,21 @@ def _validate_runner_artifact_chain(
         run_dir / "test-run.json", "parallel test-run manifest"
     )
     test_run_schema_version = test_run.get("schema_version")
+    summary_schema_version = summary.get("schema_version")
+    if summary_schema_version != test_run_schema_version:
+        raise PromotionValidationError(
+            "parallel test-run and summary schema versions are incompatible"
+        )
+    summary_fields = set(SUMMARY_ALLOWED_FIELDS)
+    if test_run_schema_version == 1:
+        summary_fields.difference_update(
+            {"source_snapshot_id", "source_snapshot_sha256"}
+        )
+    _fields(
+        summary,
+        frozenset(summary_fields),
+        "parallel summary",
+    )
     test_run_fields = {
         "schema_name",
         "schema_version",
@@ -2124,6 +2139,14 @@ def _validate_runner_artifact_chain(
         ):
             raise PromotionValidationError(
                 "parallel source snapshot binding is invalid"
+            )
+        if (
+            summary.get("source_snapshot_id") != source_snapshot_id
+            or summary.get("source_snapshot_sha256")
+            != source_snapshot_sha256
+        ):
+            raise PromotionValidationError(
+                "parallel v2 summary source snapshot binding is invalid"
             )
     execution_source_bindings = {
         item["path"]: {

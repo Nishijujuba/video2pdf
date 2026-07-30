@@ -8,7 +8,9 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
+from scripts import run_project_tests as project_test_runner
 from scripts.project_test_source_provenance import (
     FIXED_EXECUTION_SOURCE_PATHS,
 )
@@ -336,6 +338,55 @@ class ProjectTestRunnerCliTests(unittest.TestCase):
             record["run_finalization_sha256"],
             hashlib.sha256(finalization_path.read_bytes()).hexdigest(),
         )
+
+    def test_persistent_summary_hash_failure_writes_failed_finalization(
+        self,
+    ) -> None:
+        repo, external = self.make_fixture_repo()
+        real_sha256_file = project_test_runner.sha256_file
+
+        def fail_summary_hash(path: Path) -> str:
+            if Path(path).name == "summary.json":
+                raise project_test_runner.ResultIntegrityError(
+                    "summary remains unreadable"
+                )
+            return real_sha256_file(path)
+
+        with (
+            mock.patch.object(project_test_runner, "REPO_ROOT", repo),
+            mock.patch.object(
+                project_test_runner,
+                "sha256_file",
+                side_effect=fail_summary_hash,
+            ),
+        ):
+            return_code = project_test_runner.main(
+                [
+                    "run",
+                    "--jobs",
+                    "2",
+                    "--test-root",
+                    str(external),
+                ]
+            )
+
+        self.assertEqual(return_code, 1)
+        run_directories = list(
+            (external / "video2pdf" / "all").iterdir()
+        )
+        self.assertEqual(len(run_directories), 1)
+        finalization_path = (
+            run_directories[0] / "run-finalization.json"
+        )
+        finalization = json.loads(
+            finalization_path.read_text(encoding="utf-8")
+        )
+        self.assertFalse(finalization["success"])
+        self.assertEqual(
+            finalization["scheduler_failure_kind"],
+            "result_integrity_failure",
+        )
+        self.assertIsNone(finalization["summary_sha256"])
 
     @unittest.skipUnless(os.name == "nt", "Windows path budget")
     def test_self_hosted_over_budget_root_fails_before_creating_project_or_worker(

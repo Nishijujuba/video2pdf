@@ -92,6 +92,7 @@ _SELF_HOSTED_RESERVED_ARTIFACT_PATHS = (
         for path in FIXED_EXECUTION_SOURCE_PATHS
     ),
 )
+_UNAVAILABLE_SUMMARY_SHA256: None = None
 
 
 class CliError(RuntimeError):
@@ -382,6 +383,17 @@ def _post_snapshot_failure_kind(
     return "coordinator_failure"
 
 
+def _failed_summary_binding(summary_path: Path) -> str | None:
+    """Return the summary hash or the canonical null failure sentinel."""
+
+    try:
+        if not summary_path.is_file():
+            return _UNAVAILABLE_SUMMARY_SHA256
+        return sha256_file(summary_path)
+    except (OSError, ResultIntegrityError, ValueError):
+        return _UNAVAILABLE_SUMMARY_SHA256
+
+
 def _public_command(arguments: argparse.Namespace) -> int:
     repo_root = REPO_ROOT.resolve(strict=True)
     registry = load_registry(repo_root, repo_root / REGISTRY_RELATIVE_PATH)
@@ -594,9 +606,7 @@ def _public_command(arguments: argparse.Namespace) -> int:
             error,
             summary_exists=summary_exists,
         )
-        failed_summary_sha256 = (
-            sha256_file(summary_path) if summary_exists else None
-        )
+        failed_summary_sha256 = _failed_summary_binding(summary_path)
         finalization, finalization_sha256 = finalize_source_snapshot(
             repo_root,
             run_dir,

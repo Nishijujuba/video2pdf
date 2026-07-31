@@ -28,6 +28,10 @@ from scripts.project_test_results import (
     read_file_snapshot,
     sha256_file,
 )
+from scripts.project_test_run_identity import (
+    TEST_RUN_V1_FIELDS,
+    TEST_RUN_V2_FIELDS,
+)
 from scripts.project_test_registry import RegistryError, load_registry
 from scripts.project_test_source_provenance import (
     PROMOTION_AUTHORITY_SOURCE_PATHS,
@@ -1828,39 +1832,14 @@ def _validate_runner_artifact_chain(
         frozenset(summary_fields),
         "parallel summary",
     )
-    test_run_fields = {
-        "schema_name",
-        "schema_version",
-        "command",
-        "project",
-        "commit",
-        "registry_sha256",
-        "discovery_sha256",
-        "source_manifest_path",
-        "source_manifest_sha256",
-        "suite_ids",
-        "run_dir",
-        "project_marker_sha256",
-        "persisted_run_id",
-        "persisted_run_nonce",
-        "persisted_target_identity",
-        "persisted_supervisor_identity",
-        "requested_jobs",
-        "timings_from",
-        "runner_identity",
-        "discovery_process",
-    }
-    if test_run_schema_version == 2:
-        test_run_fields.update(
-            {
-                "source_snapshot_path",
-                "source_snapshot_id",
-                "source_snapshot_sha256",
-            }
-        )
+    test_run_fields = (
+        TEST_RUN_V2_FIELDS
+        if test_run_schema_version == 2
+        else TEST_RUN_V1_FIELDS
+    )
     _fields(
         test_run,
-        frozenset(test_run_fields),
+        test_run_fields,
         "parallel test-run manifest",
     )
     discovery_process = test_run["discovery_process"]

@@ -22,6 +22,48 @@ from tests.project_test_runner._fixture_root import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = committed_fixture_root() / "cli_promotion"
 class ProjectTestRunnerCliTests(unittest.TestCase):
+    def test_run_contract_failure_is_machine_readable(self) -> None:
+        with self.assertRaises(
+            project_test_runner.ProjectTestRunContractError
+        ) as raised:
+            project_test_runner.build_project_test_run_v2({})
+        self.assertEqual(
+            project_test_runner._post_snapshot_failure_kind(
+                raised.exception,
+                summary_exists=False,
+            ),
+            "run_contract_failure",
+        )
+
+        def reject_invalid_fields(_arguments) -> int:
+            project_test_runner.build_project_test_run_v2({})
+            raise AssertionError("unreachable")
+
+        with (
+            mock.patch.object(
+                project_test_runner,
+                "_public_command",
+                side_effect=reject_invalid_fields,
+            ),
+            mock.patch.object(project_test_runner, "_emit") as emit,
+        ):
+            exit_code = project_test_runner.main(
+                ["discover", "--test-root", "D:\\tests"]
+            )
+
+        self.assertEqual(exit_code, 1)
+        emit.assert_called_once_with(
+            {
+                "command": "discover",
+                "detail": (
+                    "test-run v2 fields do not match the current contract"
+                ),
+                "event": "project_test_command_failed",
+                "failure_kind": "run_contract_failure",
+                "success": False,
+            },
+        )
+
     def make_fixture_repo(self) -> tuple[Path, Path]:
         fixture_root = new_fixture_dir("cli", suffix_hex_length=8)
         repo = fixture_root / "repo"

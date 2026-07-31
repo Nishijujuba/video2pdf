@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
@@ -30,6 +31,17 @@ from scripts.project_test_results import (
     canonical_json_bytes,
     write_json_exclusive,
 )
+from scripts.project_test_source_provenance import (
+    TEST_RUN_SCHEMA_NAME,
+    TEST_RUN_SCHEMA_VERSION,
+    TEST_RUN_V1_FIELDS,
+    TEST_RUN_V2_FIELDS,
+    SourceProvenanceError,
+    authority_assignment_projection,
+    create_synthetic_source_artifacts,
+    module_inventory,
+    validate_source_snapshot_binding,
+)
 
 
 RUN_DIR_ENV = "VIDEO2PDF_PROJECT_TEST_RUN_DIR"
@@ -42,16 +54,40 @@ PROJECT_IDENTITY = {
     "repository": "Nishijujuba/video2pdf",
 }
 REGISTRY_RELATIVE_PATH = Path("config/test-suites.v1.json")
-
 _SUITE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _MODULE_KEY = re.compile(r"[0-9a-f]{12}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_EXECUTABLE = shutil.which("git")
+MODULE_ASSIGNMENT_SCHEMA_NAME = "video2pdf.project-test-module-assignment"
+MODULE_ASSIGNMENT_SCHEMA_VERSION = 2
+MODULE_ASSIGNMENT_FIELDS = frozenset(
+    {
+        "schema_name",
+        "schema_version",
+        "repo_root",
+        "execution_root",
+        "module_key",
+        "suite_id",
+        "source_path",
+        "test_ids",
+        "worker_launch_nonce",
+        "source_manifest_sha256",
+        "source_snapshot_id",
+        "source_snapshot_sha256",
+        "module_inventory",
+        "module_inventory_sha256",
+        "source_sha256",
+    }
+)
 
 
 class ProjectTestRunIdentityError(RuntimeError):
     """The runner-provided worker identity is absent, unsafe, or inconsistent."""
+
+
+class ProjectTestRunContractError(ProjectTestRunIdentityError):
+    """The producer attempted to publish a structurally invalid run manifest."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +99,112 @@ class ActiveWorkerIdentity:
     module_key: str
     test_ids: tuple[str, ...]
     selected_suite_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ActiveWorkerIdentityCapability:
+    """Process-local proof installed after one complete worker validation."""
+
+    identity: ActiveWorkerIdentity
+    complete_assignment_sha256: str
+
+
+_ACTIVE_WORKER_IDENTITY_CAPABILITIES: dict[
+    tuple[object, ...],
+    _ActiveWorkerIdentityCapability,
+] = {}
+_ACTIVE_WORKER_IDENTITY_CAPABILITY_LOCK = threading.Lock()
+
+
+def _validate_complete_assignment(
+    assignment: Mapping[str, object],
+) -> None:
+    if (
+        frozenset(assignment) != MODULE_ASSIGNMENT_FIELDS
+        or assignment.get("schema_name") != MODULE_ASSIGNMENT_SCHEMA_NAME
+        or type(assignment.get("schema_version")) is not int
+        or assignment.get("schema_version")
+        != MODULE_ASSIGNMENT_SCHEMA_VERSION
+        or not isinstance(assignment.get("repo_root"), str)
+        or not isinstance(assignment.get("execution_root"), str)
+        or not isinstance(assignment.get("module_key"), str)
+        or _MODULE_KEY.fullmatch(assignment["module_key"]) is None
+        or not isinstance(assignment.get("suite_id"), str)
+        or _SUITE_ID.fullmatch(assignment["suite_id"]) is None
+        or not isinstance(assignment.get("source_path"), str)
+        or not isinstance(assignment.get("test_ids"), list)
+        or not assignment["test_ids"]
+        or any(
+            not isinstance(test_id, str) or not test_id
+            for test_id in assignment["test_ids"]
+        )
+        or not isinstance(assignment.get("worker_launch_nonce"), str)
+        or _SHA256.fullmatch(assignment["worker_launch_nonce"]) is None
+        or not isinstance(assignment.get("module_inventory"), list)
+        or any(
+            not isinstance(assignment.get(field), str)
+            or _SHA256.fullmatch(assignment[field]) is None
+            for field in (
+                "source_manifest_sha256",
+                "source_snapshot_id",
+                "source_snapshot_sha256",
+                "module_inventory_sha256",
+                "source_sha256",
+            )
+        )
+    ):
+        raise ProjectTestRunIdentityError(
+            "worker scheduler assignment schema is invalid"
+        )
+
+
+def _complete_assignment_sha256(
+    assignment: Mapping[str, object],
+) -> str:
+    _validate_complete_assignment(assignment)
+    return hashlib.sha256(
+        canonical_json_bytes(dict(assignment))
+    ).hexdigest()
+
+
+def _authority_projection_sha256(
+    assignment: Mapping[str, object],
+) -> str:
+    return hashlib.sha256(
+        canonical_json_bytes(authority_assignment_projection(assignment))
+    ).hexdigest()
+
+
+def _active_worker_capability_key(
+    environment: Mapping[str, str | None],
+    project_root: Path,
+) -> tuple[object, ...]:
+    return (
+        os.getpid(),
+        os.path.normcase(os.path.abspath(project_root)),
+        tuple((name, environment.get(name)) for name in WORKER_ENV_NAMES),
+    )
+
+
+def build_project_test_run_v2(
+    fields: Mapping[str, object],
+) -> dict[str, object]:
+    """Build the current run manifest through its exact shared field contract."""
+
+    if "schema_name" in fields or "schema_version" in fields:
+        raise ProjectTestRunContractError(
+            "test-run v2 identity fields are constructor-owned"
+        )
+    manifest = {
+        "schema_name": TEST_RUN_SCHEMA_NAME,
+        "schema_version": TEST_RUN_SCHEMA_VERSION,
+        **fields,
+    }
+    if frozenset(manifest) != TEST_RUN_V2_FIELDS:
+        raise ProjectTestRunContractError(
+            "test-run v2 fields do not match the current contract"
+        )
+    return manifest
 
 
 def freeze_worker_environment(
@@ -304,12 +446,13 @@ def _validate_discovery_closed_set(
         )
 
 
-def resolve_active_worker_identity(
+def _resolve_active_worker_identity_uncached(
     environment: Mapping[str, str | None],
     *,
     project_root: Path,
     expected_suite: str | None = None,
-) -> ActiveWorkerIdentity | None:
+    authority_assignment: Mapping[str, object] | None = None,
+) -> _ActiveWorkerIdentityCapability | None:
     """Validate one frozen worker snapshot, returning ``None`` for direct runs."""
 
     if expected_suite is not None and _SUITE_ID.fullmatch(expected_suite) is None:
@@ -349,9 +492,12 @@ def resolve_active_worker_identity(
     discovery, discovery_raw = _read_canonical_manifest(
         run_dir, "discovery.json"
     )
+    test_run_schema_version = test_run.get("schema_version")
     if (
-        test_run.get("schema_name") != "video2pdf.project-test-run"
-        or test_run.get("schema_version") != 1
+        test_run.get("schema_name") != TEST_RUN_SCHEMA_NAME
+        or type(test_run_schema_version) is not int
+        or test_run_schema_version != TEST_RUN_SCHEMA_VERSION
+        or frozenset(test_run) != TEST_RUN_V2_FIELDS
     ):
         raise ProjectTestRunIdentityError(
             "runner identity test-run.json schema is invalid"
@@ -412,13 +558,132 @@ def resolve_active_worker_identity(
     )
     _validate_discovery_closed_set(discovery, selected_suite_ids)
     test_ids = _active_module_test_ids(discovery, suite_id, module_key)
-    return ActiveWorkerIdentity(
-        run_dir=run_dir,
-        suite_id=suite_id,
-        module_key=module_key,
-        test_ids=test_ids,
-        selected_suite_ids=selected_suite_ids,
+    modules = discovery["modules"]
+    assert isinstance(modules, list)
+    active_module = next(
+        item
+        for item in modules
+        if isinstance(item, dict) and item.get("module_key") == module_key
     )
+    source_path = active_module["source_path"]
+    assert isinstance(source_path, str)
+    inventory = list(module_inventory(modules))
+    source_file = run_dir / "execution-source-files" / source_path
+    try:
+        source_sha256 = hashlib.sha256(source_file.read_bytes()).hexdigest()
+        reconstructed_assignment = {
+            "repo_root": str(absolute_project_root),
+            "execution_root": str(
+                (run_dir / "execution-source-files").resolve(strict=True)
+            ),
+            "module_key": module_key,
+            "suite_id": suite_id,
+            "source_path": source_path,
+            "test_ids": list(test_ids),
+            "source_manifest_sha256": test_run[
+                "source_manifest_sha256"
+            ],
+            "source_snapshot_id": test_run["source_snapshot_id"],
+            "source_snapshot_sha256": test_run[
+                "source_snapshot_sha256"
+            ],
+            "module_inventory": inventory,
+            "module_inventory_sha256": hashlib.sha256(
+                canonical_json_bytes(inventory)
+            ).hexdigest(),
+            "source_sha256": source_sha256,
+        }
+        reconstructed_projection_sha256 = _authority_projection_sha256(
+            reconstructed_assignment
+        )
+        if authority_assignment is None:
+            raise ProjectTestRunIdentityError(
+                "cold worker identity requires a complete scheduler assignment"
+            )
+        complete_assignment_sha256 = _complete_assignment_sha256(
+            authority_assignment
+        )
+        if (
+            _authority_projection_sha256(authority_assignment)
+            != reconstructed_projection_sha256
+        ):
+            raise SourceProvenanceError(
+                "scheduler assignment differs from resolved worker authority"
+            )
+        validate_source_snapshot_binding(
+            run_dir,
+            reconstructed_assignment,
+        )
+    except (OSError, SourceProvenanceError) as error:
+        raise ProjectTestRunIdentityError(
+            f"runner identity source authority is invalid: {error}"
+        ) from error
+    return _ActiveWorkerIdentityCapability(
+        identity=ActiveWorkerIdentity(
+            run_dir=run_dir,
+            suite_id=suite_id,
+            module_key=module_key,
+            test_ids=test_ids,
+            selected_suite_ids=selected_suite_ids,
+        ),
+        complete_assignment_sha256=complete_assignment_sha256,
+    )
+
+
+def resolve_active_worker_identity(
+    environment: Mapping[str, str | None],
+    *,
+    project_root: Path,
+    expected_suite: str | None = None,
+    authority_assignment: Mapping[str, object] | None = None,
+) -> ActiveWorkerIdentity | None:
+    """Reuse one frozen worker capability after its complete cold validation.
+
+    Safety assumption: the runner freezes authority artifacts after worker
+    startup. Mutation tests must clear this process-local capability before
+    exercising a new cold validation boundary.
+    """
+
+    if expected_suite is not None and _SUITE_ID.fullmatch(expected_suite) is None:
+        raise ProjectTestRunIdentityError(
+            f"invalid expected suite: {expected_suite}"
+        )
+    values = {name: environment.get(name) for name in WORKER_ENV_NAMES}
+    if not any(values.values()):
+        return None
+    capability_key = _active_worker_capability_key(environment, project_root)
+    with _ACTIVE_WORKER_IDENTITY_CAPABILITY_LOCK:
+        cached = _ACTIVE_WORKER_IDENTITY_CAPABILITIES.get(capability_key)
+        if cached is not None:
+            identity = cached.identity
+            if expected_suite is not None and identity.suite_id != expected_suite:
+                raise ProjectTestRunIdentityError(
+                    f"runner suite identity {identity.suite_id!r} does not "
+                    f"match expected suite {expected_suite!r}"
+                )
+            if (
+                authority_assignment is not None
+                and _complete_assignment_sha256(authority_assignment)
+                != cached.complete_assignment_sha256
+            ):
+                raise ProjectTestRunIdentityError(
+                    "cached worker capability differs from scheduler assignment"
+                )
+            return identity
+        if authority_assignment is None:
+            raise ProjectTestRunIdentityError(
+                "cold worker identity requires a complete scheduler assignment"
+            )
+        capability = _resolve_active_worker_identity_uncached(
+            environment,
+            project_root=project_root,
+            expected_suite=expected_suite,
+            authority_assignment=authority_assignment,
+        )
+        if capability is None:
+            return None
+        _ACTIVE_WORKER_IDENTITY_CAPABILITIES[capability_key] = capability
+        return capability.identity
 
 
 def create_synthetic_project_test_run(
@@ -492,7 +757,7 @@ def create_synthetic_project_test_run(
             {
                 "suite_id": suite_id,
                 "root_path": "synthetic",
-                "source_path": "synthetic.py",
+                "source_path": REGISTRY_RELATIVE_PATH.as_posix(),
                 "module_key": module_key,
                 "test_count": len(ordered_ids),
                 "test_ids": ordered_ids,
@@ -508,23 +773,53 @@ def create_synthetic_project_test_run(
         discovery_sha256 = write_json_exclusive(
             run_dir / "discovery.json", discovery
         )
+        (
+            source_manifest_path,
+            source_manifest_sha256,
+            source_snapshot_path,
+            source_snapshot,
+            source_snapshot_sha256,
+        ) = create_synthetic_source_artifacts(
+            absolute_project_root,
+            owned_project_root,
+            run_dir=run_dir,
+            registry_sha256=registry_sha256,
+            modules=discovery["modules"],
+        )
         write_json_exclusive(
             run_dir / "test-run.json",
-            {
-                "schema_name": "video2pdf.project-test-run",
-                "schema_version": 1,
-                "command": "run",
-                "project": PROJECT_IDENTITY,
-                "commit": commit,
-                "registry_sha256": registry_sha256,
-                "discovery_sha256": discovery_sha256,
-                "suite_ids": selected,
-                "run_dir": str(run_dir),
-                "requested_jobs": 1,
-                "timings_from": None,
-                "runner_pid": os.getpid(),
-                "discovery_process": {"pid": os.getpid(), "exit_code": 0},
-            },
+            build_project_test_run_v2(
+                {
+                    "command": "run",
+                    "project": PROJECT_IDENTITY,
+                    "commit": commit,
+                    "registry_sha256": registry_sha256,
+                    "discovery_sha256": discovery_sha256,
+                    "source_manifest_path": str(source_manifest_path),
+                    "source_manifest_sha256": source_manifest_sha256,
+                    "source_snapshot_path": str(source_snapshot_path),
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha256,
+                    "suite_ids": selected,
+                    "run_dir": str(run_dir),
+                    "project_marker_sha256": hashlib.sha256(
+                        (owned_project_root / "project.json").read_bytes()
+                    ).hexdigest(),
+                    "persisted_run_id": None,
+                    "persisted_run_nonce": None,
+                    "persisted_target_identity": None,
+                    "persisted_supervisor_identity": None,
+                    "requested_jobs": 1,
+                    "timings_from": None,
+                    "runner_identity": source_snapshot["runner_identity"],
+                    "discovery_process": {
+                        "pid": os.getpid(),
+                        "exit_code": 0,
+                    },
+                }
+            ),
         )
     except ResultIntegrityError as error:
         raise ProjectTestRunIdentityError(

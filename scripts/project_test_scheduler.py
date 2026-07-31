@@ -36,10 +36,13 @@ from scripts.project_test_external_root import (
     assert_safe_write_path,
     validate_owned_run_directory,
 )
+from scripts.project_test_run_identity import (
+    ProjectTestRunIdentityError,
+    resolve_active_worker_identity,
+)
 from scripts.project_test_source_provenance import (
     SourceBinding,
     SourceProvenanceError,
-    validate_source_snapshot_binding,
 )
 from src.video2pdf_persisted_command.process_identity import (
     execution_identity_is_complete,
@@ -249,7 +252,21 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
             assignment.get("execution_root", assignment["repo_root"])
         )
         if assignment.get("source_snapshot_id") is not None:
-            validate_source_snapshot_binding(run_dir, assignment)
+            active_identity = resolve_active_worker_identity(
+                os.environ,
+                project_root=repo_root,
+                expected_suite=assignment.get("suite_id"),
+                authority_assignment=assignment,
+            )
+            if (
+                active_identity is None
+                or active_identity.run_dir != run_dir
+                or active_identity.module_key
+                != assignment.get("module_key")
+            ):
+                raise SourceProvenanceError(
+                    "worker scheduler identity capability is invalid"
+                )
         suite = _load_assigned_suite(
             execution_root,
             assignment["source_path"],
@@ -265,7 +282,11 @@ def run_module_worker(assignment_path: Path, result_path: Path) -> int:
         failure_kind = None if recorded.wasSuccessful() else "test_failure"
         exit_code = 0 if failure_kind is None else 1
         detail = None
-    except (SchedulerError, SourceProvenanceError) as error:
+    except (
+        ProjectTestRunIdentityError,
+        SchedulerError,
+        SourceProvenanceError,
+    ) as error:
         executions = []
         failure_kind = (
             error.failure_kind

@@ -38,6 +38,10 @@ from scripts.project_test_results import (  # noqa: E402
     sha256_file,
     write_json_exclusive,
 )
+from scripts.project_test_run_identity import (  # noqa: E402
+    ProjectTestRunContractError,
+    build_project_test_run_v2,
+)
 from scripts.project_test_scheduler import (  # noqa: E402
     SchedulerError,
     run_modules,
@@ -64,8 +68,6 @@ from src.video2pdf_persisted_command.process_identity import (  # noqa: E402
 
 
 REGISTRY_RELATIVE_PATH = Path("config/test-suites.v1.json")
-TEST_RUN_SCHEMA_NAME = "video2pdf.project-test-run"
-SCHEMA_VERSION = 2
 _MODULE_KEY_BUDGET_COMPONENT = "0123456789ab"
 _RESERVED_RUN_ARTIFACT_PATHS = (
     "test-run.json",
@@ -378,6 +380,8 @@ def _post_snapshot_failure_kind(
         return "result_integrity_failure"
     if isinstance(error, SourceProvenanceError):
         return "source_binding_failure"
+    if isinstance(error, ProjectTestRunContractError):
+        return "run_contract_failure"
     if isinstance(error, (OSError, ValueError)):
         return "scheduler_setup_failure"
     return "coordinator_failure"
@@ -515,51 +519,53 @@ def _public_command(arguments: argparse.Namespace) -> int:
             if arguments.command == "run"
             else None
         )
-        test_run = {
-            "schema_name": TEST_RUN_SCHEMA_NAME,
-            "schema_version": SCHEMA_VERSION,
-            "command": arguments.command,
-            "project": discovery.get("project"),
-            "commit": discovery.get("commit"),
-            "registry_sha256": registry.fingerprint,
-            "discovery_sha256": discovery_sha256,
-            "source_manifest_path": str(source_manifest_path),
-            "source_manifest_sha256": source_manifest_sha256,
-            "source_snapshot_path": str(
-                run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
-            ),
-            "source_snapshot_id": source_snapshot["source_snapshot_id"],
-            "source_snapshot_sha256": source_snapshot_sha256,
-            "suite_ids": selected_suite_ids,
-            "run_dir": str(run_dir),
-            "project_marker_sha256": project_marker_sha256,
-            "persisted_run_id": os.environ.get(
-                "VIDEO2PDF_PERSISTED_RUN_ID"
-            ),
-            "persisted_run_nonce": os.environ.get(
-                "VIDEO2PDF_PERSISTED_RUN_NONCE"
-            ),
-            "persisted_target_identity": (
-                persisted_launch["target_identity"]
-                if persisted_launch is not None
-                else None
-            ),
-            "persisted_supervisor_identity": (
-                persisted_launch["supervisor_identity"]
-                if persisted_launch is not None
-                else None
-            ),
-            "requested_jobs": (
-                arguments.jobs if arguments.command == "run" else None
-            ),
-            "timings_from": (
-                str(timings_from) if timings_from is not None else None
-            ),
-            "runner_identity": runner_identity,
-            "discovery_process": {
-                **discovery_identity,
+        test_run = build_project_test_run_v2(
+            {
+                "command": arguments.command,
+                "project": discovery.get("project"),
+                "commit": discovery.get("commit"),
+                "registry_sha256": registry.fingerprint,
+                "discovery_sha256": discovery_sha256,
+                "source_manifest_path": str(source_manifest_path),
+                "source_manifest_sha256": source_manifest_sha256,
+                "source_snapshot_path": str(
+                    run_dir / SOURCE_SNAPSHOT_RELATIVE_PATH
+                ),
+                "source_snapshot_id": source_snapshot[
+                    "source_snapshot_id"
+                ],
+                "source_snapshot_sha256": source_snapshot_sha256,
+                "suite_ids": selected_suite_ids,
+                "run_dir": str(run_dir),
+                "project_marker_sha256": project_marker_sha256,
+                "persisted_run_id": os.environ.get(
+                    "VIDEO2PDF_PERSISTED_RUN_ID"
+                ),
+                "persisted_run_nonce": os.environ.get(
+                    "VIDEO2PDF_PERSISTED_RUN_NONCE"
+                ),
+                "persisted_target_identity": (
+                    persisted_launch["target_identity"]
+                    if persisted_launch is not None
+                    else None
+                ),
+                "persisted_supervisor_identity": (
+                    persisted_launch["supervisor_identity"]
+                    if persisted_launch is not None
+                    else None
+                ),
+                "requested_jobs": (
+                    arguments.jobs if arguments.command == "run" else None
+                ),
+                "timings_from": (
+                    str(timings_from) if timings_from is not None else None
+                ),
+                "runner_identity": runner_identity,
+                "discovery_process": {
+                    **discovery_identity,
+                },
             },
-        }
+        )
         write_json_exclusive(run_dir / "test-run.json", test_run)
         if arguments.command == "discover":
             _emit(
@@ -618,6 +624,8 @@ def _public_command(arguments: argparse.Namespace) -> int:
             scheduler_failure_kind=failure_kind,
             summary_sha256=failed_summary_sha256,
         )
+        if isinstance(error, ProjectTestRunContractError):
+            raise
         _emit(
             {
                 "event": "project_test_run_complete",
@@ -721,6 +729,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         detail = str(error)
     except SourceProvenanceError as error:
         failure_kind = "source_preflight_failure"
+        detail = str(error)
+    except ProjectTestRunContractError as error:
+        failure_kind = "run_contract_failure"
         detail = str(error)
     except (OSError, ValueError) as error:
         failure_kind = "runner_failure"

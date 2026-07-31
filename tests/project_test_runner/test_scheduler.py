@@ -4,12 +4,15 @@ from contextlib import nullcontext
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
 from unittest import mock
 
 import scripts.project_test_scheduler as scheduler
+import scripts.project_test_run_identity as run_identity
+import scripts.project_test_source_provenance as source_provenance
 
 from scripts.project_test_external_root import (
     create_unique_run_directory,
@@ -118,6 +121,81 @@ def discovery(*names: str) -> dict:
     }
 
 
+def synthetic_authority_case(
+    *,
+    suite_id: str = "fixture",
+    test_ids: list[str] | None = None,
+) -> tuple[Path, dict, dict]:
+    from scripts.project_test_run_identity import (
+        create_synthetic_project_test_run,
+    )
+    from scripts.project_test_results import canonical_json_bytes
+    from scripts.project_test_source_provenance import module_inventory
+
+    assigned_test_ids = test_ids or ["case.CaseTests.test_bound"]
+    run_dir = create_synthetic_project_test_run(
+        external_root=Path("D:/tests"),
+        project_root=REPO_ROOT,
+        suite_id=suite_id,
+        module_key="123456789abc",
+        test_ids=assigned_test_ids,
+    )
+    discovery_value = json.loads(
+        (run_dir / "discovery.json").read_text(encoding="utf-8")
+    )
+    test_run = json.loads(
+        (run_dir / "test-run.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (run_dir / "execution-source.json").read_text(encoding="utf-8")
+    )
+    module = discovery_value["modules"][0]
+    inventory = list(module_inventory(discovery_value["modules"]))
+    source_entry = next(
+        item for item in manifest["entries"]
+        if item["path"] == module["source_path"]
+    )
+    assignment = {
+        "repo_root": str(REPO_ROOT),
+        "execution_root": str(
+            (run_dir / "execution-source-files").resolve(strict=True)
+        ),
+        "source_manifest_sha256": test_run["source_manifest_sha256"],
+        "source_snapshot_id": test_run["source_snapshot_id"],
+        "source_snapshot_sha256": test_run["source_snapshot_sha256"],
+        "module_inventory_sha256": hashlib.sha256(
+            canonical_json_bytes(inventory)
+        ).hexdigest(),
+        "module_inventory": inventory,
+        "module_key": module["module_key"],
+        "suite_id": module["suite_id"],
+        "source_path": module["source_path"],
+        "test_ids": assigned_test_ids,
+        "source_sha256": source_entry["runtime_sha256"],
+    }
+    return run_dir, assignment, test_run
+
+
+def clear_worker_validation_caches() -> None:
+    with source_provenance._WORKER_AUTHORITY_CACHE_LOCK:
+        source_provenance._WORKER_AUTHORITY_CACHE.clear()
+    with run_identity._ACTIVE_WORKER_IDENTITY_CAPABILITY_LOCK:
+        run_identity._ACTIVE_WORKER_IDENTITY_CAPABILITIES.clear()
+
+
+def complete_worker_assignment(
+    authority_assignment: dict,
+    *,
+    nonce: str = "a" * 64,
+) -> dict:
+    return {
+        "schema_name": "video2pdf.project-test-module-assignment",
+        "schema_version": 2,
+        **authority_assignment,
+        "worker_launch_nonce": nonce,
+    }
+
+
 class SchedulerTests(unittest.TestCase):
     def test_postrun_source_drift_writes_blocking_finalization(self) -> None:
         run_dir = run_directory("postrun-source-drift")
@@ -158,112 +236,54 @@ class SchedulerTests(unittest.TestCase):
     def test_worker_snapshot_binding_rejects_replay_and_assigned_module_drift(
         self,
     ) -> None:
-        run_dir = run_directory("worker-snapshot-binding")
-        frozen_source = run_dir / "execution-source-files" / "tests" / "case.py"
-        frozen_source.parent.mkdir(parents=True)
-        frozen_source.write_text("BOUND = True\n", encoding="utf-8")
-        source_sha256 = hashlib.sha256(frozen_source.read_bytes()).hexdigest()
-        assigned_module = {
-            "module_key": "123456789abc",
-            "suite_id": "fixture",
-            "source_path": "tests/case.py",
-            "test_count": 1,
-            "test_ids_sha256": hashlib.sha256(
-                (
-                    json.dumps(
-                        ["case.CaseTests.test_bound"],
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    )
-                    + "\n"
-                ).encode("utf-8")
-            ).hexdigest(),
-        }
-        module_inventory = [assigned_module]
+        from scripts.project_test_run_identity import (
+            create_synthetic_project_test_run,
+        )
+        from scripts.project_test_results import canonical_json_bytes
+        from scripts.project_test_source_provenance import module_inventory
+
+        test_ids = ["case.CaseTests.test_bound"]
+        run_dir = create_synthetic_project_test_run(
+            external_root=Path("D:/tests"),
+            project_root=REPO_ROOT,
+            suite_id="fixture",
+            module_key="123456789abc",
+            test_ids=test_ids,
+        )
+        discovery = json.loads(
+            (run_dir / "discovery.json").read_text(encoding="utf-8")
+        )
+        test_run = json.loads(
+            (run_dir / "test-run.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (run_dir / "execution-source.json").read_text(encoding="utf-8")
+        )
+        module = discovery["modules"][0]
+        inventory = list(module_inventory(discovery["modules"]))
         module_inventory_sha256 = hashlib.sha256(
-            (
-                json.dumps(
-                    module_inventory,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
+            canonical_json_bytes(inventory)
         ).hexdigest()
-        payload = {
-            "schema_name": "video2pdf.project-test-source-snapshot",
-            "schema_version": 1,
-            "run_dir": str(run_dir.resolve(strict=True)),
-            "execution_root": str(
-                (run_dir / "execution-source-files").resolve(strict=True)
-            ),
-            "persisted_run_id": None,
-            "persisted_run_nonce": None,
-            "runner_identity": scheduler.process_execution_identity(
-                scheduler.os.getpid()
-            ),
-            "project": {
-                "project_key": "video2pdf",
-                "repository": "Nishijujuba/video2pdf",
-            },
-            "registry_sha256": "d" * 64,
-            "project_marker_sha256": "e" * 64,
-            "source_manifest_path": str(
-                (run_dir / "execution-source.json").resolve(strict=False)
-            ),
-            "source_manifest_sha256": "a" * 64,
-            "commit": "f" * 40,
-            "git_tree": "1" * 40,
-            "entry_inventory": {"count": 1, "sha256": "2" * 64},
-            "module_inventory": {
-                "count": 1,
-                "sha256": module_inventory_sha256,
-            },
-            "prevalidation": {
-                "result": "passed",
-                "source_manifest_sha256": "a" * 64,
-            },
-        }
-        snapshot_id = hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            + b"\n"
-        ).hexdigest()
-        snapshot = {**payload, "source_snapshot_id": snapshot_id}
-        snapshot_path = run_dir / "source-snapshot.json"
-        snapshot_path.write_bytes(
-            (
-                json.dumps(
-                snapshot,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
+        source_entry = next(
+            item
+            for item in manifest["entries"]
+            if item["path"] == module["source_path"]
         )
         assignment = {
+            "repo_root": str(REPO_ROOT),
             "execution_root": str(
                 (run_dir / "execution-source-files").resolve(strict=True)
             ),
-            "source_manifest_sha256": "a" * 64,
-            "source_snapshot_id": snapshot_id,
-            "source_snapshot_sha256": hashlib.sha256(
-                snapshot_path.read_bytes()
-            ).hexdigest(),
+            "source_manifest_sha256": test_run["source_manifest_sha256"],
+            "source_snapshot_id": test_run["source_snapshot_id"],
+            "source_snapshot_sha256": test_run["source_snapshot_sha256"],
             "module_inventory_sha256": module_inventory_sha256,
-            "module_inventory": module_inventory,
-            "module_key": assigned_module["module_key"],
-            "suite_id": assigned_module["suite_id"],
-            "source_path": "tests/case.py",
-            "test_ids": ["case.CaseTests.test_bound"],
-            "source_sha256": source_sha256,
+            "module_inventory": inventory,
+            "module_key": module["module_key"],
+            "suite_id": module["suite_id"],
+            "source_path": module["source_path"],
+            "test_ids": test_ids,
+            "source_sha256": source_entry["runtime_sha256"],
         }
 
         validate_source_snapshot_binding(run_dir, assignment)
@@ -279,150 +299,758 @@ class SchedulerTests(unittest.TestCase):
                     "module_key": "fedcba987654",
                 },
             )
-        with self.assertRaisesRegex(
-            SourceProvenanceError,
-            "module inventory membership",
-        ):
-            validate_source_snapshot_binding(
-                run_dir,
-                {
-                    **assignment,
-                    "suite_id": "forged-suite",
-                },
-            )
-        with self.assertRaisesRegex(
-            SourceProvenanceError,
-            "module inventory membership",
-        ):
-            validate_source_snapshot_binding(
-                run_dir,
-                {
-                    **assignment,
-                    "test_ids": ["case.CaseTests.test_unknown"],
-                },
-            )
-
         replay = {**assignment, "source_snapshot_id": "c" * 64}
         with self.assertRaisesRegex(SourceProvenanceError, "snapshot identity"):
             validate_source_snapshot_binding(run_dir, replay)
-        with self.assertRaisesRegex(SourceProvenanceError, "snapshot binding"):
-            validate_source_snapshot_binding(
+
+    def test_worker_snapshot_binding_caches_full_validation_by_artifact_identity(
+        self,
+    ) -> None:
+        from scripts.project_test_run_identity import (
+            create_synthetic_project_test_run,
+        )
+        from scripts.project_test_results import canonical_json_bytes
+        from scripts.project_test_source_provenance import module_inventory
+
+        test_ids = ["case.CaseTests.test_bound"]
+        run_dir = create_synthetic_project_test_run(
+            external_root=Path("D:/tests"),
+            project_root=REPO_ROOT,
+            suite_id="fixture",
+            module_key="123456789abc",
+            test_ids=test_ids,
+        )
+        discovery = json.loads(
+            (run_dir / "discovery.json").read_text(encoding="utf-8")
+        )
+        test_run = json.loads(
+            (run_dir / "test-run.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (run_dir / "execution-source.json").read_text(encoding="utf-8")
+        )
+        module = discovery["modules"][0]
+        inventory = list(module_inventory(discovery["modules"]))
+        source_entry = next(
+            item for item in manifest["entries"]
+            if item["path"] == module["source_path"]
+        )
+        assignment = {
+            "repo_root": str(REPO_ROOT),
+            "execution_root": str(
+                (run_dir / "execution-source-files").resolve(strict=True)
+            ),
+            "source_manifest_sha256": test_run["source_manifest_sha256"],
+            "source_snapshot_id": test_run["source_snapshot_id"],
+            "source_snapshot_sha256": test_run["source_snapshot_sha256"],
+            "module_inventory_sha256": hashlib.sha256(
+                canonical_json_bytes(inventory)
+            ).hexdigest(),
+            "module_inventory": inventory,
+            "module_key": module["module_key"],
+            "suite_id": module["suite_id"],
+            "source_path": module["source_path"],
+            "test_ids": test_ids,
+            "source_sha256": source_entry["runtime_sha256"],
+        }
+
+        clear_worker_validation_caches()
+        real_validate = (
+            source_provenance._validate_source_snapshot_binding_uncached
+        )
+        with mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            wraps=real_validate,
+        ) as full_validate:
+            validate_source_snapshot_binding(run_dir, assignment)
+            validate_source_snapshot_binding(run_dir, assignment)
+            self.assertEqual(full_validate.call_count, 1)
+
+            source_path = (
+                run_dir / "execution-source-files" / module["source_path"]
+            )
+            source_path.write_bytes(source_path.read_bytes() + b"\n")
+            with self.assertRaisesRegex(
+                SourceProvenanceError,
+                "fingerprint mismatch|not committed",
+            ):
+                validate_source_snapshot_binding(run_dir, assignment)
+            self.assertEqual(full_validate.call_count, 2)
+
+    def test_video_case_and_workspace_helpers_share_one_full_validation(
+        self,
+    ) -> None:
+        import tests.video_workflow._test_run as video_test_run
+        from scripts.project_test_run_identity import (
+            RUN_DIR_ENV,
+            SUITE_ID_ENV,
+            MODULE_KEY_ENV,
+            create_synthetic_project_test_run,
+        )
+
+        test_ids = [
+            "case.CaseTests.test_case",
+            "case.CaseTests.test_workspace",
+        ]
+        run_dir = create_synthetic_project_test_run(
+            external_root=Path("D:/tests"),
+            project_root=REPO_ROOT,
+            suite_id="video-workflow",
+            module_key="123456789abc",
+            test_ids=test_ids,
+        )
+        environment = {
+            RUN_DIR_ENV: str(run_dir),
+            SUITE_ID_ENV: "video-workflow",
+            MODULE_KEY_ENV: "123456789abc",
+        }
+        clear_worker_validation_caches()
+        video_test_run._recorded_paths.clear()
+        real_validate = (
+            source_provenance._validate_source_snapshot_binding_uncached
+        )
+        with mock.patch.object(
+            video_test_run,
+            "FROZEN_RUN_ENV",
+            environment,
+        ), mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            wraps=real_validate,
+        ) as full_validate:
+            case_dir = video_test_run.new_case_dir(
+                test_ids[0],
+                label="case",
+            )
+            workspace = video_test_run.new_workflow_workspace(
+                test_ids[1],
+                label="workspace",
+            )
+
+        self.assertTrue(case_dir.is_dir())
+        self.assertTrue(workspace.is_dir())
+        self.assertEqual(full_validate.call_count, 1)
+
+    def test_worker_scheduler_validation_and_fixture_helper_share_cache_key(
+        self,
+    ) -> None:
+        import tests.video_workflow._test_run as video_test_run
+        from scripts.project_test_run_identity import (
+            MODULE_KEY_ENV,
+            RUN_DIR_ENV,
+            SUITE_ID_ENV,
+        )
+        from scripts.project_test_results import canonical_json_bytes
+
+        test_ids = ["case.CaseTests.test_worker_lifecycle"]
+        run_dir, authority_assignment, _test_run = synthetic_authority_case(
+            suite_id="video-workflow",
+            test_ids=test_ids,
+        )
+        modules_dir = run_dir / "modules"
+        modules_dir.mkdir()
+        assignment = complete_worker_assignment(authority_assignment)
+        assignment_path = modules_dir / "123456789abc.assignment.json"
+        assignment_path.write_bytes(canonical_json_bytes(assignment))
+        result_path = modules_dir / "123456789abc.result.json"
+        environment = {
+            RUN_DIR_ENV: str(run_dir),
+            SUITE_ID_ENV: "video-workflow",
+            MODULE_KEY_ENV: "123456789abc",
+        }
+
+        class FixtureHelperCase(unittest.TestCase):
+            def runTest(self) -> None:
+                video_test_run.new_case_dir(
+                    test_ids[0],
+                    label="worker-lifecycle",
+                )
+                video_test_run.new_workflow_workspace(
+                    test_ids[0],
+                    label="worker-workspace",
+                )
+
+        clear_worker_validation_caches()
+        video_test_run._recorded_paths.clear()
+        real_validate = (
+            source_provenance._validate_source_snapshot_binding_uncached
+        )
+        real_resolve = run_identity._resolve_active_worker_identity_uncached
+        real_live_commit = run_identity._live_commit
+        real_live_registry = run_identity._live_registry_sha256
+        with mock.patch.dict(os.environ, environment), mock.patch.object(
+            video_test_run,
+            "FROZEN_RUN_ENV",
+            environment,
+        ), mock.patch.object(
+            scheduler,
+            "_load_assigned_suite",
+            return_value=unittest.TestSuite([FixtureHelperCase()]),
+        ), mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            wraps=real_validate,
+        ) as full_validate, mock.patch.object(
+            run_identity,
+            "_resolve_active_worker_identity_uncached",
+            wraps=real_resolve,
+        ) as full_resolve, mock.patch.object(
+            run_identity,
+            "_live_commit",
+            wraps=real_live_commit,
+        ) as live_commit, mock.patch.object(
+            run_identity,
+            "_live_registry_sha256",
+            wraps=real_live_registry,
+        ) as live_registry:
+            exit_code = scheduler.run_module_worker(
+                assignment_path,
+                result_path,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(full_validate.call_count, 1)
+        self.assertEqual(full_resolve.call_count, 1)
+        self.assertEqual(live_commit.call_count, 1)
+        self.assertEqual(live_registry.call_count, 1)
+
+    def test_worker_cache_live_inputs_invalidate_and_reject_drift(self) -> None:
+        run_dir, authority_assignment, _test_run = synthetic_authority_case()
+        assignment = complete_worker_assignment(authority_assignment)
+        clear_worker_validation_caches()
+        validate_source_snapshot_binding(run_dir, assignment)
+        real_validate = (
+            source_provenance._validate_source_snapshot_binding_uncached
+        )
+
+        with self.subTest(input="head"), mock.patch.object(
+            source_provenance,
+            "_commit_and_tree",
+            return_value=("0" * 40, "1" * 40),
+        ), mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            wraps=real_validate,
+        ) as full_validate:
+            with self.assertRaisesRegex(
+                SourceProvenanceError,
+                "authority binding",
+            ):
+                validate_source_snapshot_binding(run_dir, assignment)
+            self.assertEqual(full_validate.call_count, 1)
+
+        for label, target in (
+            ("registry", REPO_ROOT / "config/test-suites.v1.json"),
+            ("project-marker", run_dir.parent.parent / "project.json"),
+        ):
+            with self.subTest(input=label):
+                clear_worker_validation_caches()
+                validate_source_snapshot_binding(run_dir, assignment)
+                real_snapshot = source_provenance.read_file_snapshot
+
+                def drift_snapshot(path):
+                    resolved, content, identity = real_snapshot(path)
+                    if Path(path).resolve(strict=True) == target.resolve(
+                        strict=True
+                    ):
+                        return resolved, content + b"\n", identity
+                    return resolved, content, identity
+
+                with mock.patch.object(
+                    source_provenance,
+                    "read_file_snapshot",
+                    side_effect=drift_snapshot,
+                ), mock.patch.object(
+                    source_provenance,
+                    "_validate_source_snapshot_binding_uncached",
+                    wraps=real_validate,
+                ) as full_validate:
+                    with self.assertRaisesRegex(
+                        SourceProvenanceError,
+                        "authority binding",
+                    ):
+                        validate_source_snapshot_binding(run_dir, assignment)
+                    self.assertEqual(full_validate.call_count, 1)
+
+        clear_worker_validation_caches()
+        validate_source_snapshot_binding(run_dir, assignment)
+        with mock.patch.object(
+            source_provenance,
+            "process_execution_identity",
+            return_value=None,
+        ), mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            wraps=real_validate,
+        ) as full_validate:
+            with self.assertRaisesRegex(
+                SourceProvenanceError,
+                "authority binding",
+            ):
+                validate_source_snapshot_binding(run_dir, assignment)
+            self.assertEqual(full_validate.call_count, 1)
+
+    def test_worker_cache_cold_path_rejects_toctou_and_does_not_cache_aba(
+        self,
+    ) -> None:
+        run_dir, authority_assignment, _test_run = synthetic_authority_case()
+        assignment = complete_worker_assignment(authority_assignment)
+        clear_worker_validation_caches()
+        marker_path = run_dir.parent.parent / "project.json"
+        original = marker_path.read_bytes()
+        self.addCleanup(marker_path.write_bytes, original)
+        pre_validation_key = (
+            source_provenance._worker_authority_cache_key(
                 run_dir,
-                {
+                assignment,
+            )
+        )
+        self.assertNotIn(
+            pre_validation_key,
+            source_provenance._WORKER_AUTHORITY_CACHE,
+        )
+
+        def mutate_during_validation(*_args):
+            marker_path.write_bytes(original + b"\n")
+            return "a" * 64, "b" * 64
+
+        try:
+            with mock.patch.object(
+                source_provenance,
+                "_validate_source_snapshot_binding_uncached",
+                side_effect=mutate_during_validation,
+            ) as full_validate:
+                with self.assertRaisesRegex(
+                    SourceProvenanceError,
+                    "changed during validation",
+                ):
+                    validate_source_snapshot_binding(run_dir, assignment)
+                self.assertEqual(full_validate.call_count, 1)
+                self.assertNotIn(
+                    pre_validation_key,
+                    source_provenance._WORKER_AUTHORITY_CACHE,
+                )
+        finally:
+            marker_path.write_bytes(original)
+
+        with mock.patch.object(
+            source_provenance,
+            "_validate_source_snapshot_binding_uncached",
+            return_value=("a" * 64, "b" * 64),
+        ) as full_validate:
+            validate_source_snapshot_binding(run_dir, assignment)
+            self.assertEqual(full_validate.call_count, 1)
+
+    def test_worker_cache_warm_lookup_computes_one_key(self) -> None:
+        run_dir, assignment, _test_run = synthetic_authority_case()
+        clear_worker_validation_caches()
+        validate_source_snapshot_binding(run_dir, assignment)
+        real_key = source_provenance._worker_authority_cache_key
+        with mock.patch.object(
+            source_provenance,
+            "_worker_authority_cache_key",
+            wraps=real_key,
+        ) as cache_key:
+            validate_source_snapshot_binding(run_dir, assignment)
+        self.assertEqual(cache_key.call_count, 1)
+
+    def test_active_identity_capability_partitions_pid_environment_and_assignment(
+        self,
+    ) -> None:
+        from scripts.project_test_run_identity import (
+            MODULE_KEY_ENV,
+            RUN_DIR_ENV,
+            SUITE_ID_ENV,
+        )
+
+        run_dir, authority_assignment, _test_run = synthetic_authority_case()
+        assignment = complete_worker_assignment(authority_assignment)
+        environment = {
+            RUN_DIR_ENV: str(run_dir),
+            SUITE_ID_ENV: "fixture",
+            MODULE_KEY_ENV: "123456789abc",
+        }
+        clear_worker_validation_caches()
+        identity = run_identity.resolve_active_worker_identity(
+            environment,
+            project_root=REPO_ROOT,
+            expected_suite="fixture",
+            authority_assignment=assignment,
+        )
+        self.assertIsNotNone(identity)
+
+        with self.assertRaisesRegex(
+            run_identity.ProjectTestRunIdentityError,
+            "differs from scheduler assignment",
+        ):
+            run_identity.resolve_active_worker_identity(
+                environment,
+                project_root=REPO_ROOT,
+                expected_suite="fixture",
+                authority_assignment={
                     **assignment,
-                    "execution_root": str(run_dir),
+                    "source_sha256": "0" * 64,
                 },
             )
-        snapshot_with_unknown = {
-            **payload,
-            "unexpected": True,
-        }
-        unknown_id = hashlib.sha256(
-            (
-                json.dumps(
-                    snapshot_with_unknown,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
+
+        real_resolve = run_identity._resolve_active_worker_identity_uncached
+        with mock.patch.object(
+            run_identity.os,
+            "getpid",
+            return_value=os.getpid() + 1000,
+        ), mock.patch.object(
+            run_identity,
+            "_resolve_active_worker_identity_uncached",
+            wraps=real_resolve,
+        ) as full_resolve:
+            self.assertIsNotNone(
+                run_identity.resolve_active_worker_identity(
+                    environment,
+                    project_root=REPO_ROOT,
+                    expected_suite="fixture",
+                    authority_assignment=assignment,
                 )
-                + "\n"
-            ).encode("utf-8")
-        ).hexdigest()
-        snapshot_path.write_bytes(
-            (
-                json.dumps(
-                    {
-                        **snapshot_with_unknown,
-                        "source_snapshot_id": unknown_id,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
-        )
-        with self.assertRaisesRegex(SourceProvenanceError, "snapshot is invalid"):
-            validate_source_snapshot_binding(
-                run_dir,
-                {
-                    **assignment,
-                    "source_snapshot_id": unknown_id,
-                    "source_snapshot_sha256": hashlib.sha256(
-                        snapshot_path.read_bytes()
-                    ).hexdigest(),
-                },
             )
-        snapshot_path.write_bytes(
-            (
-                json.dumps(
-                    snapshot,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
-        )
-        nested_payload = {
-            **payload,
-            "prevalidation": {
-                **payload["prevalidation"],
-                "unexpected": True,
-            },
-        }
-        nested_id = hashlib.sha256(
-            (
-                json.dumps(
-                    nested_payload,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
-        ).hexdigest()
-        snapshot_path.write_bytes(
-            (
-                json.dumps(
+            self.assertEqual(full_resolve.call_count, 1)
+
+        for label, mutation in (
+            ("nonce", {"worker_launch_nonce": "b" * 64}),
+            ("schema", {"schema_version": 1}),
+            ("unknown", {"unknown": True}),
+        ):
+            with self.subTest(label=label):
+                invalid_assignment = {
+                    **assignment,
+                    **mutation,
+                }
+                with self.assertRaises(
+                    run_identity.ProjectTestRunIdentityError
+                ):
+                    run_identity.resolve_active_worker_identity(
+                        environment,
+                        project_root=REPO_ROOT,
+                        expected_suite="fixture",
+                        authority_assignment=invalid_assignment,
+                    )
+                if label != "nonce":
+                    clear_worker_validation_caches()
+                    with self.assertRaises(
+                        run_identity.ProjectTestRunIdentityError
+                    ):
+                        run_identity.resolve_active_worker_identity(
+                            environment,
+                            project_root=REPO_ROOT,
+                            expected_suite="fixture",
+                            authority_assignment=invalid_assignment,
+                        )
+                    self.assertIsNotNone(
+                        run_identity.resolve_active_worker_identity(
+                            environment,
+                            project_root=REPO_ROOT,
+                            expected_suite="fixture",
+                            authority_assignment=assignment,
+                        )
+                    )
+
+        with mock.patch.object(
+            run_identity,
+            "_resolve_active_worker_identity_uncached",
+            wraps=real_resolve,
+        ) as full_resolve:
+            with self.assertRaisesRegex(
+                run_identity.ProjectTestRunIdentityError,
+                "active module|module",
+            ):
+                run_identity.resolve_active_worker_identity(
                     {
-                        **nested_payload,
-                        "source_snapshot_id": nested_id,
+                        **environment,
+                        MODULE_KEY_ENV: "fedcba987654",
                     },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
+                    project_root=REPO_ROOT,
+                    expected_suite="fixture",
+                    authority_assignment=assignment,
                 )
-                + "\n"
-            ).encode("utf-8")
+            self.assertEqual(full_resolve.call_count, 1)
+
+    def test_worker_capability_assignment_mismatch_is_source_binding_failure(
+        self,
+    ) -> None:
+        from scripts.project_test_run_identity import (
+            MODULE_KEY_ENV,
+            RUN_DIR_ENV,
+            SUITE_ID_ENV,
         )
+        from scripts.project_test_results import canonical_json_bytes
+
+        run_dir, authority_assignment, _test_run = synthetic_authority_case()
+        environment = {
+            RUN_DIR_ENV: str(run_dir),
+            SUITE_ID_ENV: "fixture",
+            MODULE_KEY_ENV: "123456789abc",
+        }
+        installed_assignment = complete_worker_assignment(
+            authority_assignment,
+            nonce="a" * 64,
+        )
+        clear_worker_validation_caches()
+        self.assertIsNotNone(
+            run_identity.resolve_active_worker_identity(
+                environment,
+                project_root=REPO_ROOT,
+                expected_suite="fixture",
+                authority_assignment=installed_assignment,
+            )
+        )
+
+        modules_dir = run_dir / "modules"
+        modules_dir.mkdir()
+        drifted_assignment = {
+            **installed_assignment,
+            "worker_launch_nonce": "b" * 64,
+        }
+        assignment_path = modules_dir / "123456789abc.assignment.json"
+        assignment_path.write_bytes(
+            canonical_json_bytes(drifted_assignment)
+        )
+        result_path = modules_dir / "123456789abc.result.json"
+        with mock.patch.dict(os.environ, environment):
+            exit_code = scheduler.run_module_worker(
+                assignment_path,
+                result_path,
+            )
+
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            result["failure_kind"],
+            "source_binding_failure",
+        )
+
+    def test_worker_snapshot_binding_rejects_authority_mutation_matrix(
+        self,
+    ) -> None:
+        from scripts.project_test_run_identity import (
+            create_synthetic_project_test_run,
+        )
+        from scripts.project_test_results import canonical_json_bytes
+        from scripts.project_test_source_provenance import module_inventory
+
+        def make_case(label: str):
+            test_ids = [f"case.{label}.test_bound"]
+            run_dir = create_synthetic_project_test_run(
+                external_root=Path("D:/tests"),
+                project_root=REPO_ROOT,
+                suite_id="fixture",
+                module_key="123456789abc",
+                test_ids=test_ids,
+            )
+            discovery = json.loads(
+                (run_dir / "discovery.json").read_text(encoding="utf-8")
+            )
+            test_run = json.loads(
+                (run_dir / "test-run.json").read_text(encoding="utf-8")
+            )
+            manifest = json.loads(
+                (run_dir / "execution-source.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            snapshot = json.loads(
+                (run_dir / "source-snapshot.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            module = discovery["modules"][0]
+            inventory = list(module_inventory(discovery["modules"]))
+            source_entry = next(
+                item for item in manifest["entries"]
+                if item["path"] == module["source_path"]
+            )
+            assignment = {
+                "repo_root": str(REPO_ROOT),
+                "execution_root": str(
+                    (run_dir / "execution-source-files").resolve(strict=True)
+                ),
+                "source_manifest_sha256": test_run[
+                    "source_manifest_sha256"
+                ],
+                "source_snapshot_id": test_run["source_snapshot_id"],
+                "source_snapshot_sha256": test_run[
+                    "source_snapshot_sha256"
+                ],
+                "module_inventory_sha256": hashlib.sha256(
+                    canonical_json_bytes(inventory)
+                ).hexdigest(),
+                "module_inventory": inventory,
+                "module_key": module["module_key"],
+                "suite_id": module["suite_id"],
+                "source_path": module["source_path"],
+                "test_ids": test_ids,
+                "source_sha256": source_entry["runtime_sha256"],
+            }
+            return run_dir, test_run, manifest, snapshot, assignment
+
+        def resign(
+            run_dir: Path,
+            test_run: dict,
+            manifest: dict,
+            snapshot: dict,
+            assignment: dict,
+        ) -> None:
+            manifest_bytes = canonical_json_bytes(manifest)
+            (run_dir / "execution-source.json").write_bytes(manifest_bytes)
+            manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+            snapshot["source_manifest_sha256"] = manifest_sha
+            snapshot["prevalidation"]["source_manifest_sha256"] = manifest_sha
+            inventory = [
+                {
+                    "path": item["path"],
+                    "git_blob": item["git_blob"],
+                    "runtime_sha256": item["runtime_sha256"],
+                    "runtime_size": item["runtime_size"],
+                }
+                for item in manifest["entries"]
+            ]
+            snapshot["entry_inventory"] = {
+                "count": len(inventory),
+                "sha256": hashlib.sha256(
+                    canonical_json_bytes(inventory)
+                ).hexdigest(),
+            }
+            payload = {
+                key: value for key, value in snapshot.items()
+                if key != "source_snapshot_id"
+            }
+            snapshot["source_snapshot_id"] = hashlib.sha256(
+                canonical_json_bytes(payload)
+            ).hexdigest()
+            snapshot_bytes = canonical_json_bytes(snapshot)
+            (run_dir / "source-snapshot.json").write_bytes(snapshot_bytes)
+            test_run["source_manifest_sha256"] = manifest_sha
+            test_run["source_snapshot_id"] = snapshot["source_snapshot_id"]
+            test_run["source_snapshot_sha256"] = hashlib.sha256(
+                snapshot_bytes
+            ).hexdigest()
+            (run_dir / "test-run.json").write_bytes(
+                canonical_json_bytes(test_run)
+            )
+            assignment.update(
+                {
+                    "source_manifest_sha256": manifest_sha,
+                    "source_snapshot_id": snapshot["source_snapshot_id"],
+                    "source_snapshot_sha256": test_run[
+                        "source_snapshot_sha256"
+                    ],
+                }
+            )
+
+        assignment_mutations = (
+            ("suite-id", {"suite_id": "other"}, "membership"),
+            ("test-ids", {"test_ids": ["other.test"]}, "membership"),
+            (
+                "execution-root",
+                {"execution_root": str(REPO_ROOT)},
+                "snapshot binding",
+            ),
+        )
+        for label, mutation, message in assignment_mutations:
+            with self.subTest(label=label):
+                run_dir, _test_run, _manifest, _snapshot, assignment = (
+                    make_case(label)
+                )
+                with self.assertRaisesRegex(SourceProvenanceError, message):
+                    validate_source_snapshot_binding(
+                        run_dir,
+                        {**assignment, **mutation},
+                    )
+
+        for label, nested, message in (
+            ("snapshot-extra", False, "snapshot is invalid"),
+            ("prevalidation-extra", True, "nested authority"),
+        ):
+            with self.subTest(label=label):
+                run_dir, test_run, manifest, snapshot, assignment = (
+                    make_case(label)
+                )
+                if nested:
+                    snapshot["prevalidation"]["unknown"] = True
+                    resign(
+                        run_dir,
+                        test_run,
+                        manifest,
+                        snapshot,
+                        assignment,
+                    )
+                else:
+                    snapshot["unknown"] = True
+                    (run_dir / "source-snapshot.json").write_bytes(
+                        canonical_json_bytes(snapshot)
+                    )
+                with self.assertRaisesRegex(SourceProvenanceError, message):
+                    validate_source_snapshot_binding(run_dir, assignment)
+
+        run_dir, _test_run, _manifest, _snapshot, assignment = make_case(
+            "frozen-source-drift"
+        )
+        frozen_source = (
+            run_dir / "execution-source-files" / assignment["source_path"]
+        )
+        frozen_source.write_bytes(frozen_source.read_bytes() + b"\n")
         with self.assertRaisesRegex(
             SourceProvenanceError,
-            "nested authority",
+            "fingerprint mismatch|not committed",
         ):
-            validate_source_snapshot_binding(
-                run_dir,
-                {
-                    **assignment,
-                    "source_snapshot_id": nested_id,
-                    "source_snapshot_sha256": hashlib.sha256(
-                        snapshot_path.read_bytes()
-                    ).hexdigest(),
-                },
-            )
-        snapshot_path.write_bytes(
-            (
-                json.dumps(
-                    snapshot,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
+            validate_source_snapshot_binding(run_dir, assignment)
+
+        run_dir, test_run, manifest, snapshot, assignment = make_case(
+            "escaped-authority"
         )
-        frozen_source.write_text("BOUND = False\n", encoding="utf-8")
-        with self.assertRaisesRegex(SourceProvenanceError, "assigned module"):
+        manifest["git_authority"]["authority_path"] = "../execution-git"
+        resign(run_dir, test_run, manifest, snapshot, assignment)
+        with self.assertRaisesRegex(SourceProvenanceError, "frozen Git authority"):
+            validate_source_snapshot_binding(run_dir, assignment)
+
+        run_dir, _test_run, _manifest, _snapshot, assignment = make_case(
+            "authority-file-drift"
+        )
+        config_path = run_dir / "execution-git" / "config"
+        config_path.write_bytes(config_path.read_bytes() + b"\n")
+        with self.assertRaisesRegex(SourceProvenanceError, "frozen Git authority"):
+            validate_source_snapshot_binding(run_dir, assignment)
+
+        selected_entry_mutations = (
+            ("entry-type", {"runtime_size": "invalid"}),
+            ("entry-path", {"path": "../escaped"}),
+            ("entry-blob", {"git_blob": "0" * 40}),
+        )
+        for label, mutation in selected_entry_mutations:
+            with self.subTest(label=label):
+                run_dir, test_run, manifest, snapshot, assignment = make_case(
+                    label
+                )
+                entry = next(
+                    item for item in manifest["entries"]
+                    if item["path"] == assignment["source_path"]
+                )
+                entry.update(mutation)
+                resign(run_dir, test_run, manifest, snapshot, assignment)
+                with self.assertRaisesRegex(
+                    SourceProvenanceError,
+                    "source manifest|assigned module|inventory",
+                ):
+                    validate_source_snapshot_binding(run_dir, assignment)
+
+        run_dir, test_run, manifest, snapshot, assignment = make_case(
+            "self-consistent-resign"
+        )
+        forged_commit = "0" * 40
+        test_run["commit"] = forged_commit
+        manifest["commit"] = forged_commit
+        manifest["git_authority"]["head_commit"] = forged_commit
+        snapshot["commit"] = forged_commit
+        resign(run_dir, test_run, manifest, snapshot, assignment)
+        with self.assertRaisesRegex(SourceProvenanceError, "authority binding"):
             validate_source_snapshot_binding(run_dir, assignment)
 
     def test_worker_preserves_import_paths_added_by_test_module(self) -> None:

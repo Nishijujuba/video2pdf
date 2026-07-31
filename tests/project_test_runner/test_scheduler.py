@@ -386,20 +386,17 @@ class SchedulerTests(unittest.TestCase):
             RUN_DIR_ENV,
             SUITE_ID_ENV,
             MODULE_KEY_ENV,
-            create_synthetic_project_test_run,
         )
 
         test_ids = [
             "case.CaseTests.test_case",
             "case.CaseTests.test_workspace",
         ]
-        run_dir = create_synthetic_project_test_run(
-            external_root=Path("D:/tests"),
-            project_root=REPO_ROOT,
+        run_dir, authority_assignment, _test_run = synthetic_authority_case(
             suite_id="video-workflow",
-            module_key="123456789abc",
             test_ids=test_ids,
         )
+        assignment = complete_worker_assignment(authority_assignment)
         environment = {
             RUN_DIR_ENV: str(run_dir),
             SUITE_ID_ENV: "video-workflow",
@@ -415,10 +412,21 @@ class SchedulerTests(unittest.TestCase):
             "FROZEN_RUN_ENV",
             environment,
         ), mock.patch.object(
+            video_test_run,
+            "_PROJECT_ROOT",
+            Path(assignment["execution_root"]),
+        ), mock.patch.object(
             source_provenance,
             "_validate_source_snapshot_binding_uncached",
             wraps=real_validate,
         ) as full_validate:
+            installed = run_identity.resolve_active_worker_identity(
+                environment,
+                project_root=REPO_ROOT,
+                expected_suite="video-workflow",
+                authority_assignment=assignment,
+            )
+            self.assertIsNotNone(installed)
             case_dir = video_test_run.new_case_dir(
                 test_ids[0],
                 label="case",
@@ -484,6 +492,10 @@ class SchedulerTests(unittest.TestCase):
             "FROZEN_RUN_ENV",
             environment,
         ), mock.patch.object(
+            video_test_run,
+            "_PROJECT_ROOT",
+            Path(assignment["execution_root"]),
+        ), mock.patch.object(
             scheduler,
             "_load_assigned_suite",
             return_value=unittest.TestSuite([FixtureHelperCase()]),
@@ -514,6 +526,67 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(full_resolve.call_count, 1)
         self.assertEqual(live_commit.call_count, 1)
         self.assertEqual(live_registry.call_count, 1)
+
+    def test_active_identity_execution_root_alias_is_exact_and_run_scoped(
+        self,
+    ) -> None:
+        from scripts.project_test_run_identity import (
+            MODULE_KEY_ENV,
+            RUN_DIR_ENV,
+            SUITE_ID_ENV,
+        )
+
+        run_dir, authority_assignment, _test_run = synthetic_authority_case(
+            suite_id="video-workflow",
+        )
+        assignment = complete_worker_assignment(authority_assignment)
+        environment = {
+            RUN_DIR_ENV: str(run_dir),
+            SUITE_ID_ENV: "video-workflow",
+            MODULE_KEY_ENV: "123456789abc",
+        }
+        execution_root = Path(assignment["execution_root"])
+        clear_worker_validation_caches()
+        installed = run_identity.resolve_active_worker_identity(
+            environment,
+            project_root=REPO_ROOT,
+            expected_suite="video-workflow",
+            authority_assignment=assignment,
+        )
+        self.assertIsNotNone(installed)
+        aliased = run_identity.resolve_active_worker_identity(
+            environment,
+            project_root=execution_root,
+            expected_suite="video-workflow",
+        )
+        self.assertEqual(aliased, installed)
+
+        with self.assertRaisesRegex(
+            run_identity.ProjectTestRunIdentityError,
+            "commit|authority root",
+        ):
+            run_identity.resolve_active_worker_identity(
+                environment,
+                project_root=run_dir,
+                expected_suite="video-workflow",
+                authority_assignment=assignment,
+            )
+
+        other_run_dir, _other_assignment, _other_test_run = (
+            synthetic_authority_case(suite_id="video-workflow")
+        )
+        with self.assertRaisesRegex(
+            run_identity.ProjectTestRunIdentityError,
+            "complete scheduler assignment",
+        ):
+            run_identity.resolve_active_worker_identity(
+                {
+                    **environment,
+                    RUN_DIR_ENV: str(other_run_dir),
+                },
+                project_root=execution_root,
+                expected_suite="video-workflow",
+            )
 
     def test_worker_cache_live_inputs_invalidate_and_reject_drift(self) -> None:
         run_dir, authority_assignment, _test_run = synthetic_authority_case()

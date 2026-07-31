@@ -106,6 +106,8 @@ class _ActiveWorkerIdentityCapability:
     """Process-local proof installed after one complete worker validation."""
 
     identity: ActiveWorkerIdentity
+    authority_root: Path
+    execution_root: Path
     complete_assignment_sha256: str
 
 
@@ -181,9 +183,15 @@ def _active_worker_capability_key(
 ) -> tuple[object, ...]:
     return (
         os.getpid(),
-        os.path.normcase(os.path.abspath(project_root)),
+        _normalized_root(project_root),
         tuple((name, environment.get(name)) for name in WORKER_ENV_NAMES),
     )
+
+
+def _normalized_root(path: Path) -> str:
+    """Normalize an already-bound root without filesystem access."""
+
+    return os.path.normcase(os.path.abspath(path))
 
 
 def build_project_test_run_v2(
@@ -626,6 +634,10 @@ def _resolve_active_worker_identity_uncached(
             test_ids=test_ids,
             selected_suite_ids=selected_suite_ids,
         ),
+        authority_root=absolute_project_root,
+        execution_root=(
+            run_dir / "execution-source-files"
+        ).resolve(strict=True),
         complete_assignment_sha256=complete_assignment_sha256,
     )
 
@@ -656,6 +668,14 @@ def resolve_active_worker_identity(
         cached = _ACTIVE_WORKER_IDENTITY_CAPABILITIES.get(capability_key)
         if cached is not None:
             identity = cached.identity
+            requested_root = _normalized_root(project_root)
+            if requested_root not in {
+                _normalized_root(cached.authority_root),
+                _normalized_root(cached.execution_root),
+            }:
+                raise ProjectTestRunIdentityError(
+                    "cached worker capability root binding is invalid"
+                )
             if expected_suite is not None and identity.suite_id != expected_suite:
                 raise ProjectTestRunIdentityError(
                     f"runner suite identity {identity.suite_id!r} does not "
@@ -682,7 +702,26 @@ def resolve_active_worker_identity(
         )
         if capability is None:
             return None
-        _ACTIVE_WORKER_IDENTITY_CAPABILITIES[capability_key] = capability
+        authority_key = _active_worker_capability_key(
+            environment,
+            capability.authority_root,
+        )
+        execution_key = _active_worker_capability_key(
+            environment,
+            capability.execution_root,
+        )
+        if capability_key != authority_key:
+            raise ProjectTestRunIdentityError(
+                "cold worker validation must use the authority root"
+            )
+        for alias_key in {authority_key, execution_key}:
+            existing = _ACTIVE_WORKER_IDENTITY_CAPABILITIES.get(alias_key)
+            if existing is not None and existing != capability:
+                raise ProjectTestRunIdentityError(
+                    "worker capability root alias collision"
+                )
+        _ACTIVE_WORKER_IDENTITY_CAPABILITIES[authority_key] = capability
+        _ACTIVE_WORKER_IDENTITY_CAPABILITIES[execution_key] = capability
         return capability.identity
 
 

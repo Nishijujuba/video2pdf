@@ -9,6 +9,8 @@ SLICE_NAME = "final-compile-and-rendered-text-reconciliation"
 EVIDENCE_PREFIX = "evidence/slice-09/"
 
 QUALIFICATION_TEST_TARGETS = (
+    "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence",
+    "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_stale_precompile_seal_before_adapter",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_complete_current_final_compile_evidence_passes",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_omission_substitution_addition_and_generated_mismatch_are_failures",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_unmapped_unsupported_recipe_and_incomplete_coverage_block_as_contract_gaps",
@@ -38,19 +40,22 @@ EXPECTED_CHECKPOINTS = [
 RESULT_BINDINGS = [
     {"result_id": result_id, "result_kind": result_kind, "command_id": "slice9-qualification-tests", "test_target": test_target}
     for result_id, result_kind, test_target in (
-        ("complete_final_evidence_passes", "positive", QUALIFICATION_TEST_TARGETS[0]),
-        ("classified_fidelity_failures_block", "negative", QUALIFICATION_TEST_TARGETS[1]),
-        ("contract_gaps_fail_closed", "negative", QUALIFICATION_TEST_TARGETS[2]),
-        ("stale_precompile_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[3]),
-        ("stale_compile_report_rejected", "negative", QUALIFICATION_TEST_TARGETS[4]),
-        ("closure_and_coverage_gaps_rejected", "negative", QUALIFICATION_TEST_TARGETS[5]),
+        ("guarded_final_compile_produces_evidence", "positive", QUALIFICATION_TEST_TARGETS[0]),
+        ("final_compile_stale_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[1]),
+        ("complete_final_evidence_passes", "positive", QUALIFICATION_TEST_TARGETS[2]),
+        ("classified_fidelity_failures_block", "negative", QUALIFICATION_TEST_TARGETS[3]),
+        ("contract_gaps_fail_closed", "negative", QUALIFICATION_TEST_TARGETS[4]),
+        ("stale_precompile_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[5]),
+        ("stale_compile_report_rejected", "negative", QUALIFICATION_TEST_TARGETS[6]),
+        ("closure_and_coverage_gaps_rejected", "negative", QUALIFICATION_TEST_TARGETS[7]),
     )
 ]
 
 RESULTS = {
-    "positive": ["complete_final_evidence_passes"],
+    "positive": ["guarded_final_compile_produces_evidence", "complete_final_evidence_passes"],
     "negative": [
         "classified_fidelity_failures_block",
+        "final_compile_stale_seal_rejected",
         "contract_gaps_fail_closed",
         "stale_precompile_seal_rejected",
         "stale_compile_report_rejected",
@@ -59,6 +64,7 @@ RESULTS = {
 }
 
 FIXTURE_SPECS = (
+    ("final_compile_report_contract", "schemas/delivery-quality/v1/final-compile-report.v1.schema.json"),
     ("final_artifact_seal_contract", "schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json"),
     ("render_evidence_contract", "schemas/delivery-quality/v1/render-evidence-manifest.v1.schema.json"),
     ("rendered_text_inventory_contract", "schemas/delivery-quality/v1/rendered-text-object-inventory.v1.schema.json"),

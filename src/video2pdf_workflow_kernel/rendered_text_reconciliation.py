@@ -11,6 +11,7 @@ from .errors import (
     RenderedTextReconciliationContractGap,
     RenderedTextReconciliationFailed,
 )
+from .final_compile import final_compile_provider_identity
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
@@ -21,6 +22,13 @@ OBJECT_KINDS = (
     "form_xobject_text",
     "declared_raster_text",
 )
+REGISTERED_GENERATORS = {
+    "page-number-v1": {
+        "generator_id": "page-number-v1",
+        "generator_version": "1.0.0",
+        "kind": "page_number",
+    },
+}
 
 
 def _fingerprint_without(value: dict[str, Any], field: str) -> str:
@@ -47,6 +55,20 @@ def _normalize(text: str, recipe: str) -> str:
         )
         return "".join(normalized.split())
     raise ValueError(recipe)
+
+
+def guarded_compile_provider_identity(project_root: Path) -> dict[str, str]:
+    return final_compile_provider_identity(project_root)
+
+
+def registered_generator_identity(generator_id: str) -> dict[str, str]:
+    contract = REGISTERED_GENERATORS[generator_id]
+    return {
+        **contract,
+        "generator_sha256": hashlib.sha256(
+            canonical_json_bytes(contract)
+        ).hexdigest(),
+    }
 
 
 def _generated_text(generator: dict[str, Any]) -> str:
@@ -113,6 +135,7 @@ class RenderedTextReconciliationProvider:
         rendered = read_json(rendered_text_inventory_path.resolve())
         origins = read_json(text_origin_manifest_path.resolve())
         for schema_name, value in (
+            ("final-compile-report", compile_report),
             ("final-artifact-seal", final_seal),
             ("render-evidence-manifest", render_evidence),
             ("rendered-text-object-inventory", rendered),
@@ -131,17 +154,29 @@ class RenderedTextReconciliationProvider:
 
         pdf_path = final_pdf_path.resolve()
         pdf_sha256 = sha256_file(pdf_path)
+        compile_entry_list = compile_manifest.get("entries", [])
         compile_entries = {
             (entry.get("logical_id"), entry.get("generation"), entry.get("sha256"))
-            for entry in compile_manifest.get("entries", [])
+            for entry in compile_entry_list
         }
         sealed_entries = {
             (entry.get("logical_id"), entry.get("generation"), entry.get("sha256"))
             for entry in generations.get("artifacts", [])
         }
+        compile_entry_identities = [
+            entry.get("logical_id") for entry in compile_entry_list
+        ]
+        compile_closure_exact = (
+            len(compile_entry_list) == len(sealed_entries)
+            and len(compile_entry_identities) == len(set(compile_entry_identities))
+            and compile_entries == sealed_entries
+        )
+        registered_compile_provider = guarded_compile_provider_identity(
+            self.project_root
+        )
         input_checks = {
             "compile_manifest_mode_final": compile_manifest.get("mode") == "final",
-            "compile_input_closure_exact": compile_entries == sealed_entries,
+            "compile_input_closure_exact": compile_closure_exact,
             "compile_report_passed": compile_report.get("status") == "pass",
             "compile_dependency_closure_complete": compile_report.get("dependency_closure", {}).get("complete") is True,
             "compile_report_mode_final": compile_report.get("mode") == "final",
@@ -155,12 +190,17 @@ class RenderedTextReconciliationProvider:
             "compile_report_binds_final_seal": compile_report.get("final_artifact_seal_sha256") == final_seal["seal_sha256"],
             "compile_report_binds_manifest": compile_report.get("compile_manifest_sha256") == compile_manifest.get("manifest_sha256"),
             "compile_report_binds_pdf": compile_report.get("pdf", {}).get("sha256") == pdf_sha256,
+            "compile_provider_registered": final_seal.get("compile_provider") == registered_compile_provider,
+            "compile_report_binds_provider": compile_report.get("compiler_provider") == registered_compile_provider,
             "render_evidence_binds_pdf": render_evidence.get("final_pdf_sha256") == pdf_sha256,
             "rendered_inventory_binds_pdf": rendered.get("final_pdf_sha256") == pdf_sha256,
             "origin_manifest_binds_precompile_seal": origins.get("precompile_text_seal_sha256") == seal["seal_sha256"],
             "origin_manifest_binds_final_seal": origins.get("final_artifact_seal_sha256") == final_seal["seal_sha256"],
             "origin_manifest_binds_rendered_inventory": origins.get("rendered_text_inventory_sha256") == rendered["inventory_sha256"],
             "origin_manifest_binds_compiler_provider": origins.get("compiler_provider") == final_seal.get("compile_provider"),
+            "compile_report_binds_render_evidence": compile_report.get("render_evidence_manifest_sha256") == render_evidence.get("manifest_sha256"),
+            "compile_report_binds_rendered_inventory": compile_report.get("rendered_text_inventory_sha256") == rendered.get("inventory_sha256"),
+            "compile_report_binds_origin_manifest": compile_report.get("text_origin_manifest_sha256") == origins.get("manifest_sha256"),
         }
         contract_gaps = [
             {"code": "STALE_OR_MISMATCHED_INPUT", "check": check}
@@ -269,7 +309,24 @@ class RenderedTextReconciliationProvider:
                     contract_gaps.append({"code": "UNSUPPORTED_TRANSFORMATION_RECIPE", "edge_id": edge_id, "recipe": edge.get("recipe")})
                     continue
                 generator = edge.get("generator")
-                if not isinstance(generator, dict) or not generator.get("generator_id") or not isinstance(generator.get("generator_sha256"), str):
+                generator_id = (
+                    generator.get("generator_id")
+                    if isinstance(generator, dict)
+                    else None
+                )
+                expected_generator = (
+                    registered_generator_identity(generator_id)
+                    if generator_id in REGISTERED_GENERATORS
+                    else None
+                )
+                if (
+                    not isinstance(generator, dict)
+                    or expected_generator is None
+                    or {
+                        key: generator.get(key) for key in expected_generator
+                    }
+                    != expected_generator
+                ):
                     contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
                     continue
                 try:

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "mode", "status", "delivery_authority", "precompile_text_seal_sha256", "final_artifact_seal_sha256", "compile_manifest_sha256", "dependency_closure", "pdf", "compiler_provider", "compile_adapter", "text_origin_plan_sha256", "render_evidence_manifest_sha256", "rendered_text_inventory_sha256", "text_origin_manifest_sha256", "report_sha256"],
+  "properties": {
+    "schema_name": {"const": "final-compile-report"},
+    "schema_version": {"const": "1.0.0"},
+    "mode": {"const": "final"},
+    "status": {"const": "pass"},
+    "delivery_authority": {"const": false},
+    "precompile_text_seal_sha256": {"$ref": "#/$defs/sha256"},
+    "final_artifact_seal_sha256": {"$ref": "#/$defs/sha256"},
+    "compile_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "dependency_closure": {"type": "object", "additionalProperties": false, "required": ["complete"], "properties": {"complete": {"const": true}}},
+    "pdf": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 1}}},
+    "compiler_provider": {"type": "object", "additionalProperties": false, "required": ["provider_id", "provider_sha256"], "properties": {"provider_id": {"type": "string", "minLength": 1}, "provider_sha256": {"$ref": "#/$defs/sha256"}}},
+    "compile_adapter": {"type": "object", "additionalProperties": false, "required": ["adapter_path", "adapter_sha256", "protocol_version"], "properties": {"adapter_path": {"type": "string", "minLength": 1}, "adapter_sha256": {"$ref": "#/$defs/sha256"}, "protocol_version": {"const": "guarded-final-compile-v1"}}},
+    "text_origin_plan_sha256": {"$ref": "#/$defs/sha256"},
+    "render_evidence_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "rendered_text_inventory_sha256": {"$ref": "#/$defs/sha256"},
+    "text_origin_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "report_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -20,6 +20,14 @@ Cutover or change active Legacy Final Acceptance authority.
 
 ### Public operation
 
+`delivery-quality-final-compile` validates the current Precompile Text Seal,
+exact compile-input closure, and complete Text Origin Plan before invoking a
+fingerprinted compiler adapter. The adapter must produce the final PDF, compile
+provenance, every rendered page, the object-level rendered inventory, and a
+text-origin trace. The guarded provider validates and binds those outputs into
+the Final Artifact Seal, Render Evidence Manifest, compiler-produced Text
+Origin Manifest, and Final Compile Report.
+
 `delivery-quality-rendered-text-reconcile` validates the sealed precompile
 snapshot and the complete Final Compile evidence package before writing one
 immutable report. It accepts only a final compile report with complete recorder

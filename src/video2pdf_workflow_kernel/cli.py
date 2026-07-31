@@ -24,6 +24,7 @@ from .task_execution import (
 )
 from .content_production import PRODUCTION_FAULT_POINTS
 from .guarded_compile import GuardedCompileProvider
+from .final_compile import GuardedFinalCompileProvider
 from .precompile_quality import (
     MATERIALIZE_FAULT_POINTS,
     PATCH_COMMIT_FAULT_POINTS,
@@ -170,6 +171,14 @@ def _parser() -> argparse.ArgumentParser:
     rendered_text_reconcile.add_argument("--text-origin-manifest", required=True, type=Path)
     rendered_text_reconcile.add_argument("--output", required=True, type=Path)
     rendered_text_reconcile.add_argument("--reconciled-at", required=True)
+
+    final_compile = commands.add_parser("delivery-quality-final-compile")
+    final_compile.add_argument("--precompile-workspace-root", required=True, type=Path)
+    final_compile.add_argument("--compile-manifest", required=True, type=Path)
+    final_compile.add_argument("--text-origin-plan", required=True, type=Path)
+    final_compile.add_argument("--compiler-adapter", required=True, type=Path)
+    final_compile.add_argument("--workspace-root", required=True, type=Path)
+    final_compile.add_argument("--compiled-at", required=True)
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -450,6 +459,21 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "delivery-quality-final-compile":
+        result = GuardedFinalCompileProvider(project_root).compile(
+            precompile_workspace_root=args.precompile_workspace_root,
+            compile_manifest_path=args.compile_manifest,
+            text_origin_plan_path=args.text_origin_plan,
+            compiler_adapter_path=args.compiler_adapter,
+            workspace_root=args.workspace_root,
+            compiled_at=args.compiled_at,
+        )
+        return _ok(
+            command,
+            "guarded_final_compile_complete",
+            result,
+            result["final_compile_report_path"],
+        )
     if command == "delivery-quality-rendered-text-reconcile":
         result = RenderedTextReconciliationProvider(project_root).reconcile(
             precompile_workspace_root=args.precompile_workspace_root,

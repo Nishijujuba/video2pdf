@@ -202,6 +202,16 @@
       "canonical_sha256": "7118b9e335234c4a2caf0cbcce87b37a7dc36d17bf58d679c762ab6193c90312",
       "positive_example": "delivery-quality/v1/rendered-text-reconciliation-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/rendered-text-reconciliation-report.invalid.json"
+    },
+    {
+      "schema_name": "final-compile-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/final-compile-report.example.v1.json",
+      "canonical_sha256": "9d53af3986cbd3b8f79504c299182ea67d82e9a180755164ae6f07a3593265e9",
+      "positive_example": "delivery-quality/v1/final-compile-report.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/final-compile-report.invalid.json"
     }
   ]
 }

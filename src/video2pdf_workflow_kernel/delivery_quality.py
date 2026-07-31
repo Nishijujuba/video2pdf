@@ -95,9 +95,9 @@ class DeliveryQualityRegistry:
         if self._manifest["authority"] != SUPPORTED_AUTHORITY:
             raise ContractError("Delivery Quality registry would activate runtime authority")
         contracts = self._manifest["contracts"]
-        if not isinstance(contracts, list) or len(contracts) != 20:
+        if not isinstance(contracts, list) or len(contracts) != 21:
             raise ContractError(
-                "Delivery Quality registry must contain twenty contracts"
+                "Delivery Quality registry must contain twenty-one contracts"
             )
 
         expected_entry_fields = {
@@ -177,6 +177,7 @@ class DeliveryQualityRegistry:
             "rendered-text-object-inventory",
             "text-origin-manifest",
             "rendered-text-reconciliation-report",
+            "final-compile-report",
         }
         if set(names) != expected_names:
             raise ContractError("Delivery Quality registry contract set is incomplete")

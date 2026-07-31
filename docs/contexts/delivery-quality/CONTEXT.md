@@ -66,6 +66,10 @@ The immutable target-only binding between the current Precompile Text Seal,
 exact Compile Manifest, sealed Artifact Generations, guarded compiler provider,
 and final PDF identity.
 
+The target-only `delivery-quality-final-compile` boundary admits only a current
+Seal and exact compile-input closure, invokes a fingerprinted compiler adapter,
+and materializes the complete final evidence package before reconciliation.
+
 ## Rendered Text Object Inventory
 
 The complete object-level declaration of supported text-bearing PDF surfaces.

@@ -9,6 +9,7 @@ import sys
 import unittest
 
 from scripts.project_test_source_provenance import (
+    EXECUTION_SOURCE_ROOTS,
     FIXED_EXECUTION_SOURCE_PATHS,
 )
 from tests.project_test_runner._fixture_root import (
@@ -19,6 +20,9 @@ from tests.project_test_runner._fixture_root import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = committed_fixture_root() / "cli_promotion"
 class ProjectTestRunnerCliTests(unittest.TestCase):
+    def test_execution_source_roots_include_delivery_quality_authority(self):
+        self.assertIn("delivery-quality", EXECUTION_SOURCE_ROOTS)
+
     def make_fixture_repo(self) -> tuple[Path, Path]:
         fixture_root = new_fixture_dir("cli", suffix_hex_length=8)
         repo = fixture_root / "repo"

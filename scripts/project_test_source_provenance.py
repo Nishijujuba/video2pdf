@@ -56,6 +56,7 @@ EXECUTION_SOURCE_ROOTS = (
     ".codex",
     "agent_reports",
     "config",
+    "delivery-quality",
     "docs",
     "evidence",
     "move-repro-ascii",

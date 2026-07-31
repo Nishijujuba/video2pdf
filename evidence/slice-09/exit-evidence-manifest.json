@@ -1,0 +1,420 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 9,
+    "name": "final-compile-and-rendered-text-reconciliation"
+  },
+  "slice_base_commit": "abcf95744110070a435baebb7900393f6ffb75fd",
+  "implementation_commit": "2cfc6549b254a9c1cb70e8f0ae9176570209fbbb",
+  "evidence_paths": [
+    "evidence/slice-09/exit-evidence-manifest.json",
+    "evidence/slice-09/logs/slice9-contracts.log",
+    "evidence/slice-09/logs/slice9-final-compile-tests.log",
+    "evidence/slice-09/logs/slice9-reconciliation-tests.log"
+  ],
+  "generated_at": "2026-07-31T04:20:49Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice9-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "delivery-quality-contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-09/logs/slice9-contracts.log",
+        "sha256": "d528d2ec19c7ed6c18f46e16eeb8a607ab8bec418f7b2e0315a2d57fcd511f04"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice9-final-compile-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_stale_precompile_seal_before_adapter",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_origin_plan_before_adapter",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_compiler_evidence",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-09/logs/slice9-final-compile-tests.log",
+        "sha256": "1adc4cb6eb075422c8a8c4217662adffb7a05abd2ba5de81cd13dd8da64781ee"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice9-reconciliation-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_complete_current_final_compile_evidence_passes",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_omission_substitution_addition_and_generated_mismatch_are_failures",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_unmapped_unsupported_recipe_and_incomplete_coverage_block_as_contract_gaps",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_stale_seal_is_rejected_before_report_publication",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_stale_compile_report_is_rejected_before_report_publication",
+        "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_compile_closure_duplicate_origin_missing_page_and_unsupported_object_fail_closed"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-09/logs/slice9-reconciliation-tests.log",
+        "sha256": "db2a49984e42b3455080053469ff65c11111268ab1d6651e3fa830021d1287bc"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "final_artifact_seal_current",
+      "status": "current"
+    },
+    {
+      "name": "rendered_text_reconciliation_current",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "final_compile_manifest_contract",
+      "path": "schemas/delivery-quality/v1/final-compile-manifest.v1.schema.json",
+      "sha256": "88591013d989d706f423169867e703b07afeed3c31137fc77d830ad6780be681"
+    },
+    {
+      "role": "final_compile_report_contract",
+      "path": "schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
+      "sha256": "7dc756b05981ee78f1ee08d1b42efc129735177a605e2f5aa6966c09013949be"
+    },
+    {
+      "role": "final_artifact_seal_contract",
+      "path": "schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json",
+      "sha256": "d49af00242af44dbec929038155ff5e18852aa02e6f9f7c184d22ec9c0e3db08"
+    },
+    {
+      "role": "render_evidence_contract",
+      "path": "schemas/delivery-quality/v1/render-evidence-manifest.v1.schema.json",
+      "sha256": "32edd14d516b266e1cff0ceed432ff5aa4eaa20ade240eb52b51c6217a3758c5"
+    },
+    {
+      "role": "rendered_text_inventory_contract",
+      "path": "schemas/delivery-quality/v1/rendered-text-object-inventory.v1.schema.json",
+      "sha256": "6d57e184582e7041aacf2c07164a05205d34254af21f956bdcec23cb688d05db"
+    },
+    {
+      "role": "text_origin_manifest_contract",
+      "path": "schemas/delivery-quality/v1/text-origin-manifest.v1.schema.json",
+      "sha256": "c5f21e0e7bf73466800381c6170376e4b2652ae7ac11398dc8f6ad23ff7986f5"
+    },
+    {
+      "role": "rendered_text_report_contract",
+      "path": "schemas/delivery-quality/v1/rendered-text-reconciliation-report.v1.schema.json",
+      "sha256": "678bc73a9ad81387d8572922b9ab0d980ffcd54af9cdd70dde3412ed7ff4556e"
+    }
+  ],
+  "results": {
+    "positive": [
+      "guarded_final_compile_produces_evidence",
+      "complete_final_evidence_passes"
+    ],
+    "negative": [
+      "classified_fidelity_failures_block",
+      "final_compile_stale_seal_rejected",
+      "incomplete_origin_plan_rejected",
+      "incomplete_compiler_evidence_rejected",
+      "contract_gaps_fail_closed",
+      "stale_precompile_seal_rejected",
+      "stale_compile_report_rejected",
+      "closure_and_coverage_gaps_rejected"
+    ],
+    "recovery": [
+      "incomplete_evidence_repaired_then_passes"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "guarded_final_compile_produces_evidence",
+      "result_kind": "positive",
+      "command_id": "slice9-final-compile-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+    },
+    {
+      "result_id": "final_compile_stale_seal_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-final-compile-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_stale_precompile_seal_before_adapter"
+    },
+    {
+      "result_id": "incomplete_origin_plan_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-final-compile-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_origin_plan_before_adapter"
+    },
+    {
+      "result_id": "incomplete_compiler_evidence_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-final-compile-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_compiler_evidence"
+    },
+    {
+      "result_id": "incomplete_evidence_repaired_then_passes",
+      "result_kind": "recovery",
+      "command_id": "slice9-final-compile-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes"
+    },
+    {
+      "result_id": "complete_final_evidence_passes",
+      "result_kind": "positive",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_complete_current_final_compile_evidence_passes"
+    },
+    {
+      "result_id": "classified_fidelity_failures_block",
+      "result_kind": "negative",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_omission_substitution_addition_and_generated_mismatch_are_failures"
+    },
+    {
+      "result_id": "contract_gaps_fail_closed",
+      "result_kind": "negative",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_unmapped_unsupported_recipe_and_incomplete_coverage_block_as_contract_gaps"
+    },
+    {
+      "result_id": "stale_precompile_seal_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_stale_seal_is_rejected_before_report_publication"
+    },
+    {
+      "result_id": "stale_compile_report_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_stale_compile_report_is_rejected_before_report_publication"
+    },
+    {
+      "result_id": "closure_and_coverage_gaps_rejected",
+      "result_kind": "negative",
+      "command_id": "slice9-reconciliation-tests",
+      "test_target": "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_compile_closure_duplicate_origin_missing_page_and_unsupported_object_fail_closed"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/final-artifact-seal.example.v1.json",
+      "sha256": "37163f965e8fb7d535f3be3ced3cd06398b0ad99001dafd7c8be40f175044b27"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/final-compile-manifest.example.v1.json",
+      "sha256": "b1afa17b99fe898af9a25a9043b37fa41edbc624a7ebb9d34eb87c792156e1da"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/final-compile-report.example.v1.json",
+      "sha256": "f924f1598a789828f000c33e3aced1fc89ad6bfc2a1cc7f31976253594edcb01"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/render-evidence-manifest.example.v1.json",
+      "sha256": "85a7a3e244009c47b8d263eefd7bb1133cfe3237e38bf644535a3799fe588c7f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/rendered-text-object-inventory.example.v1.json",
+      "sha256": "ee8f2184526a7c71e7ef2e857fe944090570f13396a9f690f04b02f88997e1e6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/rendered-text-reconciliation-report.example.v1.json",
+      "sha256": "7118b9e335234c4a2caf0cbcce87b37a7dc36d17bf58d679c762ab6193c90312"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/text-origin-manifest.example.v1.json",
+      "sha256": "c673847770e097576aac5464af80d0127250e3beefe3636ccaa1cc189ffb991b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/0062-reconcile-sealed-text-with-guarded-final-compile-evidence.md",
+      "sha256": "e8056d627ffa0b49bccdeba6b055af4ae8adf049b39f48ebf295f6a68d9b94c8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "sha256": "39ee5030ac05637bd49b58b3ce45accb3d11c3b31ebef011e284e1e05c5415a4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/contexts/delivery-quality/CONTEXT.md",
+      "sha256": "39778f89088e6573660b8e42473848c7209256dd9a8137d33f7432bdf838f1b0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/registry.v1.json",
+      "sha256": "12fea9711e5c7e9d049026aece77cc88b86d1ca8a777968fec15319b115d97ed"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json",
+      "sha256": "d49af00242af44dbec929038155ff5e18852aa02e6f9f7c184d22ec9c0e3db08"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/final-compile-manifest.v1.schema.json",
+      "sha256": "88591013d989d706f423169867e703b07afeed3c31137fc77d830ad6780be681"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
+      "sha256": "7dc756b05981ee78f1ee08d1b42efc129735177a605e2f5aa6966c09013949be"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/render-evidence-manifest.v1.schema.json",
+      "sha256": "32edd14d516b266e1cff0ceed432ff5aa4eaa20ade240eb52b51c6217a3758c5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/rendered-text-object-inventory.v1.schema.json",
+      "sha256": "6d57e184582e7041aacf2c07164a05205d34254af21f956bdcec23cb688d05db"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/rendered-text-reconciliation-report.v1.schema.json",
+      "sha256": "678bc73a9ad81387d8572922b9ab0d980ffcd54af9cdd70dde3412ed7ff4556e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/text-origin-manifest.v1.schema.json",
+      "sha256": "c5f21e0e7bf73466800381c6170376e4b2652ae7ac11398dc8f6ad23ff7986f5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "74dcac3b5d3251b9651cd4e5220a794853af5e4dbfa68b335cf86a9792f2e3d9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice9_exit_evidence.py",
+      "sha256": "d5c90999b679cd2a174a614c3150cd280a5326426dab58189c6e044e8f0dccc0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice9_exit_evidence_contract.py",
+      "sha256": "0eba2e2eaed92618643d9b002f210764e99a78b64ae035e54f80df80e49b46a0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "0e05441dc10506f4ec06ee503bdebd3ebf246d7007c3317d26c0a0ad2d801568"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "e627d6a165daf86fcce1bd5aae3c0a0528d49456f4f2b070e14a8f63b886687d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/delivery_quality.py",
+      "sha256": "bf09f5e81985a956b7d01fdf7c993a2514a9855299aa8d25afade180286308e9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "9148ae6460e90e0f30b8a39438401eb1b4abc393763090e5a79a03338d762536"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/final_compile.py",
+      "sha256": "c2f221079408288104902b7859a6cd7eaa1b572676636c8ef2c3120c54cbdd73"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/rendered_text_reconciliation.py",
+      "sha256": "fe0b5a0143bb3550e8797cd44e415af8add9f820f004d36209da7d1b05fcd407"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/final-artifact-seal.invalid.json",
+      "sha256": "5d1bd8d347c7c1090507c7d496ca1b5b800aa0ccd67a9aadf983ebde3f989cd8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/final-compile-manifest.invalid.json",
+      "sha256": "caae5d695464d2406e5fb8e1d029cfb260b35d8897048dc0c6f9bf763b42b1e8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/final-compile-report.invalid.json",
+      "sha256": "6dd540955d758a920e85c99e994497e2e74c69d9b977bf90b090e3238a70d110"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py",
+      "sha256": "63efc5086369366bf564d72a02b75e7be303f84d60162d6bfc28cd71e2b407a6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/render-evidence-manifest.invalid.json",
+      "sha256": "770e54bb935b0f38ed045682a88387b6bab634e2058300aa91ec3caa3cb2d778"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/rendered-text-object-inventory.invalid.json",
+      "sha256": "d5eff755712058ba0de6e3b8d2536cf401bb2250bda13496b98ff90ea6d1b8fb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/rendered-text-reconciliation-report.invalid.json",
+      "sha256": "2771c069de4d0beb9d75b6f5f7bece02a59f8193b6d040f96f37b5426d7debdc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/text-origin-manifest.invalid.json",
+      "sha256": "63d825816d6c95e739b27503a35d0cc60341494221b9ddb520ead82a516459af"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_delivery_quality_contracts.py",
+      "sha256": "86c49077d1b74f0879183488142f620b363c1e1ebc86d61c5b088dccb6a6356c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_rendered_text_reconciliation.py",
+      "sha256": "2af3d1d4421562f46cfad6869c9ab67251a694fd47df7f734f8043ea3504bea3"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

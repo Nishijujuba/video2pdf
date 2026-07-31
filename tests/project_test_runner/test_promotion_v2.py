@@ -1960,6 +1960,45 @@ class PromotionReportV2Tests(unittest.TestCase):
             text=True,
             encoding="utf-8",
         ).stdout.strip()
+        safety = json.loads(safety_path.read_text(encoding="utf-8"))
+        safety["reviewed_source_commit"] = implementation_commit
+        safety_sha = write_json(safety_path, safety)
+        subprocess.run(
+            ["git", "add", safety_path.relative_to(repo).as_posix()],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "evidence authority"],
+            cwd=repo,
+            check=True,
+        )
+        evidence_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        evidence_paths = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--name-only",
+                implementation_commit,
+                evidence_commit,
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.splitlines()
+        self.assertEqual(
+            [safety_path.relative_to(repo).as_posix()],
+            evidence_paths,
+        )
         source_manifest = build_execution_source_manifest(
             repo,
             [
@@ -2104,7 +2143,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                 "--destination",
                 str(run_dir / "discovery.json"),
                 "--commit",
-                implementation_commit,
+                evidence_commit,
                 "--launcher-binding-stdin",
                 "--suite",
                 "video-workflow",
@@ -2122,7 +2161,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "project_key": "video2pdf",
                     "repository": "Nishijujuba/video2pdf",
                 },
-                "commit": implementation_commit,
+                "commit": evidence_commit,
                 "registry_path": "config/test-suites.v1.json",
                 "suite_ids": ["video-workflow"],
                 "discovery_arguments": {
@@ -2419,7 +2458,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "project_key": "video2pdf",
                     "repository": "Nishijujuba/video2pdf",
                 },
-                "commit": implementation_commit,
+                "commit": evidence_commit,
                 "suite_ids": ["video-workflow"],
                 "requested_jobs": 4,
                 "observed_peak_concurrency": 4,
@@ -2467,7 +2506,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                         "project_key": "video2pdf",
                         "repository": "Nishijujuba/video2pdf",
                     },
-                    "commit": implementation_commit,
+                    "commit": evidence_commit,
                     "suite_ids": ["video-workflow"],
                     "modules": [
                         {
@@ -2513,7 +2552,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                         "project_key": "video2pdf",
                         "repository": "Nishijujuba/video2pdf",
                     },
-                    "commit": implementation_commit,
+                    "commit": evidence_commit,
                     "registry_sha256": registry_sha,
                     "discovery_sha256": discovery_sha,
                     "source_manifest_path": str(source_manifest_path),
@@ -2757,9 +2796,6 @@ class PromotionReportV2Tests(unittest.TestCase):
                     ).hexdigest(),
                 }
             )
-        safety = json.loads(safety_path.read_text(encoding="utf-8"))
-        safety["reviewed_source_commit"] = implementation_commit
-        safety_sha = write_json(safety_path, safety)
         migration_sha = hashlib.sha256((repo / MIGRATION).read_bytes()).hexdigest()
         authority_sha = hashlib.sha256((repo / AUTHORITY).read_bytes()).hexdigest()
         report = {
@@ -2796,7 +2832,7 @@ class PromotionReportV2Tests(unittest.TestCase):
             },
             "implementation": {
                 "reviewed_implementation_commit": implementation_commit,
-                "execution_evidence_commit": implementation_commit,
+                "execution_evidence_commit": evidence_commit,
                 "authority_sources": authority["authority_sources"],
                 "registry_path": "config/test-suites.v1.json",
                 "registry_sha256": registry_sha,
@@ -2872,7 +2908,7 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "schema_version": 2,
                     "authorization_model": report["authorization_model"],
                     "reviewed_implementation_commit": implementation_commit,
-                    "execution_evidence_commit": implementation_commit,
+                    "execution_evidence_commit": evidence_commit,
                     "historical_baseline_commit": (
                         "18f78fad0be5a66d2da6250dc268bc8de81fdbcc"
                     ),

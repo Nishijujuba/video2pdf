@@ -356,6 +356,11 @@ class VideoWorkflowTestRunBoundaryTests(unittest.TestCase):
         cases = (
             {_test_run.RUN_DIR_ENV: "relative"},
             {
+                _test_run.RUN_DIR_ENV: "",
+                _test_run.SUITE_ID_ENV: "",
+                _test_run.MODULE_KEY_ENV: "",
+            },
+            {
                 _test_run.RUN_DIR_ENV: str(PROJECT_ROOT),
                 _test_run.SUITE_ID_ENV: "wrong-suite",
                 _test_run.MODULE_KEY_ENV: "0123456789ab",

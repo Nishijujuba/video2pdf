@@ -153,6 +153,16 @@ class FixtureRootBoundaryTests(unittest.TestCase):
         cases = (
             {_fixture_root.RUN_DIR_ENV: str(run_dir)},
             {
+                _fixture_root.RUN_DIR_ENV: "",
+                _fixture_root.SUITE_ID_ENV: "",
+                _fixture_root.MODULE_KEY_ENV: "",
+            },
+            {
+                _fixture_root.RUN_DIR_ENV: str(run_dir),
+                _fixture_root.SUITE_ID_ENV: "",
+                _fixture_root.MODULE_KEY_ENV: self.MODULE_KEY,
+            },
+            {
                 _fixture_root.RUN_DIR_ENV: str(run_dir),
                 _fixture_root.SUITE_ID_ENV: "project-test-runner",
                 _fixture_root.MODULE_KEY_ENV: "../escape",

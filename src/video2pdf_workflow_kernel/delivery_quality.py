@@ -66,18 +66,48 @@ class DeliveryQualityRegistry:
         self._manifest = read_json(self.registry_path)
         self.entries = self._load_entries()
         self.schemas: dict[str, dict[str, Any]] = {}
+        self._instance_fingerprints: dict[str, str] = {}
 
-    def _resolve_project_path(self, value: Any, label: str) -> Path:
+    def _resolve_project_path(
+        self,
+        value: Any,
+        label: str,
+        *,
+        allow_registry_root: bool = False,
+    ) -> Path:
         if not isinstance(value, str) or not value or "\\" in value:
             raise ContractError(f"Delivery Quality {label} path is invalid")
-        path = (self.project_root / value).resolve()
-        try:
-            path.relative_to(self.project_root)
-        except ValueError as exc:
+        locator = Path(value)
+        project_path = (self.project_root / locator).resolve()
+        registry_root = self.registry_path.parent.resolve()
+        registry_path = (registry_root / locator).resolve()
+        if locator.is_absolute():
+            if project_path.is_relative_to(self.project_root):
+                return project_path
+            if allow_registry_root and project_path.is_relative_to(registry_root):
+                return project_path
             raise ContractError(
-                f"Delivery Quality {label} path escapes the project"
-            ) from exc
-        return path
+                f"Delivery Quality {label} absolute path escapes allowed roots"
+            )
+        project_allowed = project_path.is_relative_to(self.project_root)
+        registry_allowed = (
+            allow_registry_root and registry_path.is_relative_to(registry_root)
+        )
+        if not project_allowed and not registry_allowed:
+            raise ContractError(
+                f"Delivery Quality {label} path escapes allowed roots"
+            )
+        project_exists = project_allowed and project_path.exists()
+        registry_exists = registry_allowed and registry_path.exists()
+        if project_exists and registry_exists and project_path != registry_path:
+            raise ContractError(
+                f"Delivery Quality {label} path is ambiguous across allowed roots"
+            )
+        if project_exists or (project_allowed and not registry_exists):
+            return project_path
+        if registry_allowed:
+            return registry_path
+        raise ContractError(f"Delivery Quality {label} path is unavailable")
 
     def _load_entries(self) -> tuple[DeliveryQualityContractEntry, ...]:
         expected_root_fields = {
@@ -132,7 +162,9 @@ class DeliveryQualityRegistry:
                 raise ContractError("Delivery Quality canonical SHA-256 is invalid")
             schema_path = self._resolve_project_path(raw["schema_path"], "schema")
             canonical_instance = self._resolve_project_path(
-                raw["canonical_instance"], "canonical instance"
+                raw["canonical_instance"],
+                "canonical instance",
+                allow_registry_root=True,
             )
             entry = DeliveryQualityContractEntry(
                 schema_name=raw["schema_name"],
@@ -142,10 +174,14 @@ class DeliveryQualityRegistry:
                 canonical_instance=canonical_instance,
                 canonical_sha256=raw["canonical_sha256"],
                 positive_example=self._resolve_project_path(
-                    raw["positive_example"], "positive example"
+                    raw["positive_example"],
+                    "positive example",
+                    allow_registry_root=True,
                 ),
                 negative_example=self._resolve_project_path(
-                    raw["negative_example"], "negative example"
+                    raw["negative_example"],
+                    "negative example",
+                    allow_registry_root=True,
                 ),
             )
             entries.append(entry)
@@ -183,6 +219,29 @@ class DeliveryQualityRegistry:
         if set(names) != expected_names:
             raise ContractError("Delivery Quality registry contract set is incomplete")
         return tuple(entries)
+
+    def _read_instance(self, path: Path) -> tuple[dict[str, Any], str]:
+        resolved = path.resolve()
+        registry_root = self.registry_path.parent.resolve()
+        if not (
+            resolved.is_relative_to(self.project_root)
+            or resolved.is_relative_to(registry_root)
+        ):
+            raise ContractError(
+                "Delivery Quality instance escaped its authorized root before read"
+            )
+        try:
+            raw = resolved.read_bytes()
+            instance = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ContractError(
+                f"Delivery Quality instance is unreadable: {resolved}"
+            ) from exc
+        if not isinstance(instance, dict):
+            raise ContractError(
+                f"Delivery Quality instance must be an object: {resolved}"
+            )
+        return instance, sha256_bytes(raw)
 
     def _prepare_schemas(self) -> None:
         self.schemas = {}
@@ -230,20 +289,25 @@ class DeliveryQualityRegistry:
 
     def _instances(self) -> dict[str, dict[str, Any]]:
         instances: dict[str, dict[str, Any]] = {}
+        fingerprints: dict[str, str] = {}
         for entry in self.entries:
             if not entry.canonical_instance.is_file():
                 raise ContractError(
                     f"Delivery Quality canonical instance is missing: "
                     f"{entry.canonical_instance}"
                 )
-            if sha256_file(entry.canonical_instance) != entry.canonical_sha256:
+            instance, instance_sha256 = self._read_instance(
+                entry.canonical_instance
+            )
+            if instance_sha256 != entry.canonical_sha256:
                 raise ContractError(
                     f"Delivery Quality canonical fingerprint mismatch: "
                     f"{entry.schema_name}"
                 )
-            instance = read_json(entry.canonical_instance)
             self.validate(entry.schema_name, instance)
             instances[entry.schema_name] = instance
+            fingerprints[entry.schema_name] = instance_sha256
+        self._instance_fingerprints = fingerprints
         return instances
 
     def _validate_relations(self, instances: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -303,9 +367,10 @@ class DeliveryQualityRegistry:
                 )
 
         projections = instances["delivery-quality-role-projections"]
-        if projections["source_catalog_sha256"] != sha256_file(
-            self._entry("delivery-quality-rule-catalog").canonical_instance
-        ):
+        catalog_sha256 = self._instance_fingerprints[
+            "delivery-quality-rule-catalog"
+        ]
+        if projections["source_catalog_sha256"] != catalog_sha256:
             raise ContractError("Delivery Quality projections bind a stale catalog")
         projection_ids = [
             projection["projection_id"] for projection in projections["projections"]
@@ -463,9 +528,7 @@ class DeliveryQualityRegistry:
                 )
 
         return {
-            "catalog_sha256": sha256_file(
-                self._entry("delivery-quality-rule-catalog").canonical_instance
-            ),
+            "catalog_sha256": catalog_sha256,
             "rule_count": len(rules),
             "language_profile_count": len(profile_ids),
             "projection_count": len(projection_ids),
@@ -517,10 +580,12 @@ class DeliveryQualityRegistry:
         positive_count = 0
         negative_count = 0
         for entry in self.entries:
-            self.validate(entry.schema_name, read_json(entry.positive_example))
+            positive, _ = self._read_instance(entry.positive_example)
+            self.validate(entry.schema_name, positive)
             positive_count += 1
             try:
-                self.validate(entry.schema_name, read_json(entry.negative_example))
+                negative, _ = self._read_instance(entry.negative_example)
+                self.validate(entry.schema_name, negative)
             except ContractError:
                 negative_count += 1
             else:
@@ -870,7 +935,7 @@ class DeliveryQualityRegistry:
         self,
         *,
         reviewer_adapter_path: Path,
-        output_path: Path,
+        output_path: Path | None,
         implementation_commit: str,
         track: str,
         adapter_id: str,
@@ -887,17 +952,16 @@ class DeliveryQualityRegistry:
         reviewer_adapter = reviewer_adapter_path.resolve()
         if not reviewer_adapter.is_file():
             raise ContractError("Delivery Quality Reviewer adapter is missing")
-        output = output_path.resolve()
-        try:
-            output.relative_to(self.project_root)
-        except ValueError as exc:
-            raise ContractError(
-                "Delivery Quality conformance output must stay inside the project"
-            ) from exc
-        if not output.parent.is_dir():
-            raise ContractError(
-                "Delivery Quality conformance output parent must already exist"
-            )
+        output = output_path.resolve() if output_path is not None else None
+        if output is not None:
+            if not output.is_relative_to(self.project_root):
+                raise ContractError(
+                    "Delivery Quality conformance output must stay inside the project"
+                )
+            if not output.parent.is_dir():
+                raise ContractError(
+                    "Delivery Quality conformance output parent must already exist"
+                )
 
         self.check()
         instances = self._instances()
@@ -1000,12 +1064,6 @@ class DeliveryQualityRegistry:
             for result in mechanical_results
             if not result["conforms"]
         )
-        projections_path = self._entry(
-            "delivery-quality-role-projections"
-        ).canonical_instance
-        corpus_path = self._entry(
-            "delivery-quality-conformance-corpus"
-        ).canonical_instance
         adapter_sha256 = sha256_file(reviewer_adapter)
         report = {
             "schema_name": "delivery-quality-conformance-report",
@@ -1027,13 +1085,15 @@ class DeliveryQualityRegistry:
                 "commit": implementation_commit,
             },
             "bindings": {
-                "catalog_sha256": sha256_file(
-                    self._entry(
-                        "delivery-quality-rule-catalog"
-                    ).canonical_instance
-                ),
-                "projections_sha256": sha256_file(projections_path),
-                "corpus_sha256": sha256_file(corpus_path),
+                "catalog_sha256": self._instance_fingerprints[
+                    "delivery-quality-rule-catalog"
+                ],
+                "projections_sha256": self._instance_fingerprints[
+                    "delivery-quality-role-projections"
+                ],
+                "corpus_sha256": self._instance_fingerprints[
+                    "delivery-quality-conformance-corpus"
+                ],
             },
             "semantic_results": semantic_results,
             "mechanical_results": mechanical_results,
@@ -1041,17 +1101,24 @@ class DeliveryQualityRegistry:
             "overall_decision": "pass" if not failures else "fail",
         }
         self.validate("delivery-quality-conformance-report", report)
-        write_json_atomic(output, report)
+        if output is not None:
+            final_output = output.resolve()
+            if not final_output.is_relative_to(self.project_root):
+                raise ContractError(
+                    "Delivery Quality conformance output escaped before write"
+                )
+            write_json_atomic(final_output, report)
         if failures:
             raise DeliveryQualityConformanceFailed(
                 "Delivery Quality conformance found blocking failures",
                 data={
-                    "evidence_path": str(output),
+                    "evidence_path": str(output) if output is not None else None,
                     "failure_count": len(failures),
                     "semantic_variance": any(
                         failure.startswith("semantic_variance:")
                         for failure in failures
                     ),
+                    **({"report": report} if output is None else {}),
                 },
             )
         return report

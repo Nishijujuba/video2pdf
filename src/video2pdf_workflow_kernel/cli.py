@@ -712,9 +712,10 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "delivery-quality-conformance":
         registry = DeliveryQualityRegistry(project_root)
+        output_path = None if str(args.output) == "-" else args.output
         report = registry.conformance(
             reviewer_adapter_path=args.reviewer_adapter,
-            output_path=args.output,
+            output_path=output_path,
             implementation_commit=args.implementation_commit,
             track=args.track,
             adapter_id=args.adapter_id,
@@ -734,8 +735,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "activation_status": report["implementation"][
                     "activation_status"
                 ],
+                **({"report": report} if output_path is None else {}),
             },
-            str(args.output.resolve()),
+            str(output_path.resolve()) if output_path is not None else None,
         )
     if command == "control-store-check":
         contracts = ContractRegistry(project_root)

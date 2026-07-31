@@ -317,9 +317,9 @@ def resolve_active_worker_identity(
             f"invalid expected suite: {expected_suite}"
         )
     values = {name: environment.get(name) for name in WORKER_ENV_NAMES}
-    if not any(values.values()):
+    if all(value is None for value in values.values()):
         return None
-    if not all(values.values()):
+    if any(value is None or value == "" for value in values.values()):
         raise ProjectTestRunIdentityError(
             "runner test identity environment is incomplete"
         )

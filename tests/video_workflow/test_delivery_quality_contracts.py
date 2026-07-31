@@ -10,10 +10,16 @@ import unittest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from tests.video_workflow._test_run import new_case_dir
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from tests.video_workflow._test_run import new_case_dir
+from video2pdf_workflow_kernel.delivery_quality import DeliveryQualityRegistry
+from video2pdf_workflow_kernel.errors import ContractError
+
+
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
 
 
@@ -59,9 +65,9 @@ def mutated_registry(
         json.dumps(instance, ensure_ascii=False, indent=2) + "\n"
     ).encode("utf-8")
     instance_path.write_bytes(instance_bytes)
-    relative = instance_path.relative_to(PROJECT_ROOT).as_posix()
-    entry["canonical_instance"] = relative
-    entry["positive_example"] = relative
+    instance_locator = instance_path.name
+    entry["canonical_instance"] = instance_locator
+    entry["positive_example"] = instance_locator
     entry["canonical_sha256"] = hashlib.sha256(instance_bytes).hexdigest()
     registry_path = run_root / "registry.json"
     registry_path.write_text(
@@ -72,6 +78,31 @@ def mutated_registry(
 
 
 class DeliveryQualityContractsCliTests(unittest.TestCase):
+    def test_registry_path_resolution_rejects_relative_escape_before_io(
+        self,
+    ) -> None:
+        registry = DeliveryQualityRegistry(PROJECT_ROOT)
+        for locator in ("../", "../missing-delivery-quality-instance.json"):
+            with self.subTest(locator=locator):
+                with self.assertRaises(ContractError):
+                    registry._resolve_project_path(
+                        locator,
+                        "adversarial fixture",
+                        allow_registry_root=True,
+                    )
+
+        catalog = (
+            PROJECT_ROOT / "delivery-quality/v1/rule-catalog.v1.json"
+        ).resolve()
+        self.assertEqual(
+            registry._resolve_project_path(
+                catalog.as_posix(),
+                "absolute project fixture",
+                allow_registry_root=True,
+            ),
+            catalog,
+        )
+
     def test_public_contract_check_proves_closed_target_only_policy_surface(
         self,
     ) -> None:
@@ -200,8 +231,6 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
     def test_public_conformance_runs_three_isolated_attempts_per_profile_case(
         self,
     ) -> None:
-        run_root = new_case_dir(self.id(), label="delivery-quality-conformance")
-        report_path = run_root / "conformance-report.json"
         adapter = (
             PROJECT_ROOT
             / "tests/video_workflow/fixtures/delivery-quality/"
@@ -213,7 +242,7 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             "--reviewer-adapter",
             str(adapter),
             "--output",
-            str(report_path),
+            "-",
             "--implementation-commit",
             "1" * 40,
         )
@@ -222,7 +251,7 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
         self.assertEqual(
             envelope["classification"], "delivery_quality_conformance_passed"
         )
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = envelope["data"]["report"]
         self.assertEqual(report["authority"], "implementation_qualification_only")
         self.assertEqual(report["implementation"]["activation_status"], "target_only")
         self.assertEqual(report["overall_decision"], "pass")
@@ -250,10 +279,6 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
     def test_conformance_reports_semantic_variance_without_hiding_other_results(
         self,
     ) -> None:
-        run_root = new_case_dir(
-            self.id(), label="delivery-quality-semantic-variance"
-        )
-        report_path = run_root / "conformance-report.json"
         adapter = (
             PROJECT_ROOT
             / "tests/video_workflow/fixtures/delivery-quality/"
@@ -265,7 +290,7 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             "--reviewer-adapter",
             str(adapter),
             "--output",
-            str(report_path),
+            "-",
             "--implementation-commit",
             "2" * 40,
         )
@@ -275,7 +300,7 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             envelope["classification"], "delivery_quality_conformance_failed"
         )
         self.assertTrue(envelope["data"]["semantic_variance"])
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = envelope["data"]["report"]
         self.assertEqual(report["overall_decision"], "fail")
         self.assertEqual(len(report["semantic_results"]), 36)
         varied = [

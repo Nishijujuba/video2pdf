@@ -60,6 +60,31 @@ fingerprinted again when the new Seal is materialized.
 
 The deterministic proof for a classified presentation-only mutation. It requires a bijection over stable item identities and unchanged text, declared surface, policy, Language Profile, Delivery Glossary, and semantic dependencies. It performs no semantic interpretation.
 
+## Final Artifact Seal
+
+The immutable target-only binding between the current Precompile Text Seal,
+exact Compile Manifest, sealed Artifact Generations, guarded compiler provider,
+and final PDF identity.
+
+## Rendered Text Object Inventory
+
+The complete object-level declaration of supported text-bearing PDF surfaces.
+It covers every page content stream, text annotation, Form XObject, and declared
+raster-text representation with extractor and evidence identities.
+
+## Text Origin Manifest
+
+The compiler-produced provenance graph assigning every rendered text object
+exactly one `sealed_origin`, `generated`, or `unexpected_addition` disposition.
+It is authoritative provenance input; the reconciliation provider never guesses
+origin from similarity.
+
+## Rendered Text Reconciliation Report
+
+The deterministic, fail-closed proof that current sealed text and declared
+generated text reconcile with every rendered text object. It distinguishes
+fidelity failures from Contract Gaps and performs no semantic reinterpretation.
+
 ## Migration boundary
 
 The target migration ledger binds active Acceptance Criteria v1 identities to future canonical rule identities and decision owners. Its presence does not change active Legacy Final Acceptance authority. `Acceptance Report v2` remains the future sole final semantic delivery decision after the Global Gate Cutover.

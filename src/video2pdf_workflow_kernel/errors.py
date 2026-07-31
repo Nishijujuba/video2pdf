@@ -27,6 +27,15 @@ class TextEquivalenceRejected(KernelError):
     exit_code = 30
 
 
+class RenderedTextReconciliationFailed(KernelError):
+    classification = "rendered_text_reconciliation_failed"
+    exit_code = 30
+
+
+class RenderedTextReconciliationContractGap(ContractError):
+    classification = "rendered_text_reconciliation_contract_gap"
+
+
 class PrecompileFault(KernelError):
     classification = "injected_precompile_fault"
     exit_code = 60

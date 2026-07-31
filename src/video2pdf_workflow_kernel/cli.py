@@ -30,6 +30,7 @@ from .precompile_quality import (
     PREPARE_FAULT_POINTS,
     PrecompileQualityProvider,
 )
+from .rendered_text_reconciliation import RenderedTextReconciliationProvider
 from .utils import read_json
 
 
@@ -153,6 +154,22 @@ def _parser() -> argparse.ArgumentParser:
         "--mutation-class", required=True
     )
     text_equivalence.add_argument("--proved-at", required=True)
+
+    rendered_text_reconcile = commands.add_parser(
+        "delivery-quality-rendered-text-reconcile"
+    )
+    rendered_text_reconcile.add_argument(
+        "--precompile-workspace-root", required=True, type=Path
+    )
+    rendered_text_reconcile.add_argument("--compile-manifest", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--compile-report", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--final-artifact-seal", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--final-pdf", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--render-evidence-manifest", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--rendered-text-inventory", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--text-origin-manifest", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--output", required=True, type=Path)
+    rendered_text_reconcile.add_argument("--reconciled-at", required=True)
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -433,6 +450,25 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "delivery-quality-rendered-text-reconcile":
+        result = RenderedTextReconciliationProvider(project_root).reconcile(
+            precompile_workspace_root=args.precompile_workspace_root,
+            compile_manifest_path=args.compile_manifest,
+            compile_report_path=args.compile_report,
+            final_artifact_seal_path=args.final_artifact_seal,
+            final_pdf_path=args.final_pdf,
+            render_evidence_manifest_path=args.render_evidence_manifest,
+            rendered_text_inventory_path=args.rendered_text_inventory,
+            text_origin_manifest_path=args.text_origin_manifest,
+            output_path=args.output,
+            reconciled_at=args.reconciled_at,
+        )
+        return _ok(
+            command,
+            "rendered_text_reconciliation_passed",
+            result,
+            result["report_path"],
+        )
     if command == "delivery-quality-precompile-prepare":
         result = PrecompileQualityProvider(project_root).prepare(
             workspace_root=args.workspace_root,

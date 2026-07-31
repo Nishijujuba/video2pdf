@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/rendered-text-reconciliation-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "activation_status", "reconciled_at", "provider", "decision_policy", "precompile_text_seal_sha256", "final_artifact_seal_sha256", "final_pdf_sha256", "render_evidence_manifest_sha256", "rendered_text_inventory_sha256", "text_origin_manifest_sha256", "recipe_registry", "input_checks", "extraction_checks", "coverage_proof", "edge_results", "findings", "contract_gaps", "overall_decision", "semantic_reinterpretation_performed", "report_sha256"],
+  "properties": {
+    "schema_name": {"const": "rendered-text-reconciliation-report"}, "schema_version": {"const": "1.0.0"}, "activation_status": {"const": "target_only"}, "reconciled_at": {"type": "string", "minLength": 1}, "provider": {"type": "object"}, "decision_policy": {"const": "fail_closed"},
+    "precompile_text_seal_sha256": {"$ref": "#/$defs/sha256"}, "final_artifact_seal_sha256": {"$ref": "#/$defs/sha256"}, "final_pdf_sha256": {"$ref": "#/$defs/sha256"}, "render_evidence_manifest_sha256": {"$ref": "#/$defs/sha256"}, "rendered_text_inventory_sha256": {"$ref": "#/$defs/sha256"}, "text_origin_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "recipe_registry": {"type": "object"}, "input_checks": {"type": "object", "additionalProperties": {"type": "boolean"}}, "extraction_checks": {"type": "object", "additionalProperties": {"type": "boolean"}}, "coverage_proof": {"type": "object"}, "edge_results": {"type": "array"}, "findings": {"type": "array"}, "contract_gaps": {"type": "array"}, "overall_decision": {"enum": ["pass", "fail", "blocked_contract_gap"]}, "semantic_reinterpretation_performed": {"const": false}, "report_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -152,6 +152,56 @@
       "canonical_sha256": "51100265813f9bcd6a074b24bc754f5ee4af46d8d4dd74b75a53f49344948254",
       "positive_example": "delivery-quality/v1/text-equivalence-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/text-equivalence-report.invalid.json"
+    },
+    {
+      "schema_name": "final-artifact-seal",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/final-artifact-seal.example.v1.json",
+      "canonical_sha256": "37163f965e8fb7d535f3be3ced3cd06398b0ad99001dafd7c8be40f175044b27",
+      "positive_example": "delivery-quality/v1/final-artifact-seal.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/final-artifact-seal.invalid.json"
+    },
+    {
+      "schema_name": "render-evidence-manifest",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/render-evidence-manifest.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/render-evidence-manifest.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/render-evidence-manifest.example.v1.json",
+      "canonical_sha256": "85a7a3e244009c47b8d263eefd7bb1133cfe3237e38bf644535a3799fe588c7f",
+      "positive_example": "delivery-quality/v1/render-evidence-manifest.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/render-evidence-manifest.invalid.json"
+    },
+    {
+      "schema_name": "rendered-text-object-inventory",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/rendered-text-object-inventory.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/rendered-text-object-inventory.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/rendered-text-object-inventory.example.v1.json",
+      "canonical_sha256": "ee8f2184526a7c71e7ef2e857fe944090570f13396a9f690f04b02f88997e1e6",
+      "positive_example": "delivery-quality/v1/rendered-text-object-inventory.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/rendered-text-object-inventory.invalid.json"
+    },
+    {
+      "schema_name": "text-origin-manifest",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/text-origin-manifest.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/text-origin-manifest.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/text-origin-manifest.example.v1.json",
+      "canonical_sha256": "c673847770e097576aac5464af80d0127250e3beefe3636ccaa1cc189ffb991b",
+      "positive_example": "delivery-quality/v1/text-origin-manifest.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/text-origin-manifest.invalid.json"
+    },
+    {
+      "schema_name": "rendered-text-reconciliation-report",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/rendered-text-reconciliation-report.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/rendered-text-reconciliation-report.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/rendered-text-reconciliation-report.example.v1.json",
+      "canonical_sha256": "7118b9e335234c4a2caf0cbcce87b37a7dc36d17bf58d679c762ab6193c90312",
+      "positive_example": "delivery-quality/v1/rendered-text-reconciliation-report.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/rendered-text-reconciliation-report.invalid.json"
     }
   ]
 }

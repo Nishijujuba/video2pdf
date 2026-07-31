@@ -27,7 +27,7 @@ This table records current executable authority as of 2026-07-21. Status applies
 
 No component currently has `active_global_gate` or `active_kernel` status.
 
-Implemented Kernel Slice 6 adds target-only multi-section production, isolated chapter Attempts, bounded Figure waves, deterministic integration, generation-bound Pyramid Evaluation, and recorder-validated diagnostic compilation. Delivery Quality Slice A adds target-only canonical policy contracts and conformance. Delivery Quality Slice B adds target-only Reader-Facing Text Inventory, isolated precompile judgments, deterministic repair routing, Text Equivalence, and Precompile Text Seals. These executable contracts do not alter Legacy Track compilation or delivery authority.
+Implemented Kernel Slice 6 adds target-only multi-section production, isolated chapter Attempts, bounded Figure waves, deterministic integration, generation-bound Pyramid Evaluation, and recorder-validated diagnostic compilation. Delivery Quality Slice A adds target-only canonical policy contracts and conformance. Delivery Quality Slice B adds target-only Reader-Facing Text Inventory, isolated precompile judgments, deterministic repair routing, Text Equivalence, and Precompile Text Seals. Delivery Quality Slice C adds target-only Final Artifact Seals, complete rendered-page and text-object evidence, compiler-produced Text Origin Manifests, and deterministic rendered-text reconciliation. These executable contracts do not alter Legacy Track compilation or delivery authority.
 
 ```mermaid
 flowchart TD

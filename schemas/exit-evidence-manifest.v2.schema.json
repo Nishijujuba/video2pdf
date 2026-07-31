@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -262,6 +262,15 @@
           }
         },
         "slice_base_commit": {"const": "bb18eb2112bd4d9f3403d46230dbee8131389eaf"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 9}, "name": {"const": "final-compile-and-rendered-text-reconciliation"}}},
+        "slice_base_commit": {"const": "abcf95744110070a435baebb7900393f6ffb75fd"},
         "fault_points": false,
         "platform_smokes": false
       }

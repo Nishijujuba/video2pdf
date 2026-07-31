@@ -2301,6 +2301,14 @@ class PromotionReportV2Tests(unittest.TestCase):
                         **discovery_process,
                         "exit_code": 0,
                     },
+                    "source_snapshot_id": source_snapshot[
+                        "source_snapshot_id"
+                    ],
+                    "source_snapshot_sha256": source_snapshot_sha,
+                    "run_finalization_path": str(
+                        run_dir / "run-finalization.json"
+                    ),
+                    "run_finalization_sha256": run_finalization_sha,
             }
             stdout_bytes = (
                 canonical_json_bytes(scheduling_record)
@@ -3231,6 +3239,52 @@ class PromotionReportV2Tests(unittest.TestCase):
                 (repo / AUTHORITY).read_text(encoding="utf-8")
             )["authorized_delta"]["test_ids"]
         )
+        with trusted_fixture_roots(repo):
+            validated_run = promotion_validator._validate_parallel_run(
+                repo,
+                run,
+                report["promotion_closed_set"],
+                report["implementation"]["execution_evidence_commit"],
+                1800.0,
+                expected_test_ids=expected_ids,
+                expected_registry_sha256=report["implementation"][
+                    "registry_sha256"
+                ],
+            )
+        source_snapshot_path = Path(run["run_dir"]) / "source-snapshot.json"
+        source_snapshot = json.loads(
+            source_snapshot_path.read_text(encoding="utf-8")
+        )
+        completion = next(
+            record
+            for record in read_stdout_records(stdout_path)
+            if record.get("event") == "project_test_run_complete"
+        )
+        self.assertEqual(
+            {
+                "source_snapshot_id": source_snapshot["source_snapshot_id"],
+                "source_snapshot_sha256": hashlib.sha256(
+                    source_snapshot_path.read_bytes()
+                ).hexdigest(),
+                "run_finalization_path": str(finalization_path),
+                "run_finalization_sha256": hashlib.sha256(
+                    finalization_path.read_bytes()
+                ).hexdigest(),
+            },
+            {
+                field: completion[field]
+                for field in (
+                    "source_snapshot_id",
+                    "source_snapshot_sha256",
+                    "run_finalization_path",
+                    "run_finalization_sha256",
+                )
+            },
+        )
+        self.assertEqual(
+            completion["run_finalization_sha256"],
+            validated_run["run_finalization_sha256"],
+        )
         mutations = {
             "schema-downgrade": lambda value: value.__setitem__(
                 "schema_version", 1
@@ -3251,11 +3305,16 @@ class PromotionReportV2Tests(unittest.TestCase):
                     finalization_path.read_text(encoding="utf-8")
                 )
                 finalization["summary_sha256"] = run["summary_sha256"]
-                write_json(finalization_path, finalization)
+                run_finalization_sha = write_json(
+                    finalization_path, finalization
+                )
                 stdout_records = read_stdout_records(stdout_path)
                 stdout_records[-1]["summary_sha256"] = run[
                     "summary_sha256"
                 ]
+                stdout_records[-1][
+                    "run_finalization_sha256"
+                ] = run_finalization_sha
                 run["persisted_stdout_sha256"] = write_stdout_records(
                     stdout_path,
                     stdout_records,
@@ -3266,6 +3325,85 @@ class PromotionReportV2Tests(unittest.TestCase):
                     PromotionValidationError,
                     "schema version|fields differ|snapshot binding|"
                     "complete closed-set success",
+                ):
+                    with trusted_fixture_roots(repo):
+                        promotion_validator._validate_parallel_run(
+                            repo,
+                            run,
+                            report["promotion_closed_set"],
+                            report["implementation"][
+                                "execution_evidence_commit"
+                            ],
+                            1800.0,
+                            expected_test_ids=expected_ids,
+                            expected_registry_sha256=report[
+                                "implementation"
+                            ]["registry_sha256"],
+                        )
+
+        run["summary_sha256"] = write_json(summary_path, original_summary)
+        finalization = json.loads(
+            finalization_path.read_text(encoding="utf-8")
+        )
+        finalization["summary_sha256"] = run["summary_sha256"]
+        run_finalization_sha = write_json(finalization_path, finalization)
+        baseline_stdout_records = read_stdout_records(stdout_path)
+        baseline_completion = next(
+            record
+            for record in baseline_stdout_records
+            if record.get("event") == "project_test_run_complete"
+        )
+        baseline_completion["summary_sha256"] = run["summary_sha256"]
+        baseline_completion[
+            "run_finalization_sha256"
+        ] = run_finalization_sha
+        completion_mutations = {
+            "missing-source-snapshot-id": lambda value: value.pop(
+                "source_snapshot_id"
+            ),
+            "missing-source-snapshot-sha256": lambda value: value.pop(
+                "source_snapshot_sha256"
+            ),
+            "missing-run-finalization-path": lambda value: value.pop(
+                "run_finalization_path"
+            ),
+            "missing-run-finalization-sha256": lambda value: value.pop(
+                "run_finalization_sha256"
+            ),
+            "unknown": lambda value: value.__setitem__(
+                "unexpected", True
+            ),
+            "source-snapshot-id": lambda value: value.__setitem__(
+                "source_snapshot_id", "0" * 64
+            ),
+            "source-snapshot-sha256": lambda value: value.__setitem__(
+                "source_snapshot_sha256", "0" * 64
+            ),
+            "run-finalization-path": lambda value: value.__setitem__(
+                "run_finalization_path", str(summary_path)
+            ),
+            "run-finalization-sha256": lambda value: value.__setitem__(
+                "run_finalization_sha256", "0" * 64
+            ),
+        }
+        for label, mutate in completion_mutations.items():
+            with self.subTest(completion_mutation=label):
+                stdout_records = json.loads(
+                    json.dumps(baseline_stdout_records)
+                )
+                completion = next(
+                    record
+                    for record in stdout_records
+                    if record.get("event") == "project_test_run_complete"
+                )
+                mutate(completion)
+                run["persisted_stdout_sha256"] = write_stdout_records(
+                    stdout_path, stdout_records
+                )
+                refresh_persisted_stdout_identity(run)
+                with self.assertRaisesRegex(
+                    PromotionValidationError,
+                    "completion event (fields|artifact binding)",
                 ):
                     with trusted_fixture_roots(repo):
                         promotion_validator._validate_parallel_run(

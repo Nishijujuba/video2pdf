@@ -3066,11 +3066,15 @@ def _validate_parallel_run(
             "discovery_sha256",
             "summary_sha256",
             "discovery_process",
+            "source_snapshot_id",
+            "source_snapshot_sha256",
+            "run_finalization_path",
+            "run_finalization_sha256",
         }
         for record in matching_records
     ):
         raise PromotionValidationError(
-            "parallel persisted completion event has unknown fields"
+            "parallel persisted completion event fields are invalid"
         )
     scheduling_records = [
         record
@@ -3342,6 +3346,29 @@ def _validate_parallel_run(
         if expected_test_ids is not None
         else {}
     )
+    if expected_test_ids is not None:
+        completion_bindings = {
+            "source_snapshot_id": raw_chain["source_snapshot_id"],
+            "source_snapshot_sha256": raw_chain[
+                "source_snapshot_sha256"
+            ],
+            "run_finalization_path": str(
+                resolved_run_dir / RUN_FINALIZATION_RELATIVE_PATH
+            ),
+            "run_finalization_sha256": raw_chain[
+                "run_finalization_sha256"
+            ],
+        }
+        if any(
+            any(
+                record.get(field) != expected
+                for field, expected in completion_bindings.items()
+            )
+            for record in matching_records
+        ):
+            raise PromotionValidationError(
+                "parallel persisted completion event artifact binding is invalid"
+            )
     return {
         "discovery_sha256": run["discovery_sha256"],
         "summary_sha256": run["summary_sha256"],

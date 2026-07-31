@@ -515,27 +515,117 @@ def planned_execution_source_paths(
     return execution_source_paths(repo_root, commit, test_module_paths)
 
 
-def _commit_blob(
+def _commit_blobs(
     repo_root: Path,
     commit: str,
-    relative_path: str,
-) -> tuple[str, bytes]:
-    object_result = _git(
-        repo_root,
-        ["rev-parse", f"{commit}:{relative_path}"],
-        text=True,
+    relative_paths: Iterable[str],
+) -> dict[str, tuple[str, bytes]]:
+    """Read a closed path set with one tree walk and one batch object reader."""
+
+    planned_paths = tuple(
+        sorted({_canonical_relative_path(path) for path in relative_paths})
     )
-    object_id = object_result.stdout.strip()
-    if object_result.returncode != 0 or _GIT_OBJECT.fullmatch(object_id) is None:
+    if not planned_paths:
+        return {}
+    planned_path_set = frozenset(planned_paths)
+    tree_result = _git(
+        repo_root,
+        ["ls-tree", "-r", "-z", commit],
+    )
+    if tree_result.returncode != 0:
         raise SourceProvenanceError(
-            f"execution source is absent from commit: {relative_path}"
+            "cannot inspect committed execution sources"
         )
-    blob_result = _git(repo_root, ["cat-file", "blob", object_id])
-    if blob_result.returncode != 0:
+    object_ids: dict[str, str] = {}
+    for record in tree_result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, path_bytes = record.partition(b"\t")
+        fields = metadata.split()
+        try:
+            relative_path = os.fsdecode(path_bytes)
+            object_type = fields[1].decode("ascii")
+            object_id = fields[2].decode("ascii")
+        except (IndexError, UnicodeError):
+            separator = b""
+            relative_path = ""
+            object_type = ""
+            object_id = ""
+        if (
+            separator != b"\t"
+            or len(fields) != 3
+            or _GIT_OBJECT.fullmatch(object_id) is None
+        ):
+            raise SourceProvenanceError(
+                "Git returned an invalid execution source tree"
+            )
+        if relative_path not in planned_path_set:
+            continue
+        if relative_path in object_ids or object_type != "blob":
+            raise SourceProvenanceError(
+                "Git returned an invalid execution source tree"
+            )
+        object_ids[relative_path] = object_id
+    missing_paths = [
+        path for path in planned_paths if path not in object_ids
+    ]
+    if missing_paths:
         raise SourceProvenanceError(
-            f"cannot read committed execution source: {relative_path}"
+            "execution source is absent from commit: "
+            + ", ".join(missing_paths)
         )
-    return object_id, blob_result.stdout
+    batch_result = _git(
+        repo_root,
+        ["cat-file", "--batch"],
+        input_bytes=b"".join(
+            object_ids[path].encode("ascii") + b"\n"
+            for path in planned_paths
+        ),
+    )
+    if batch_result.returncode != 0:
+        raise SourceProvenanceError(
+            "cannot read committed execution sources"
+        )
+    contents: dict[str, tuple[str, bytes]] = {}
+    offset = 0
+    for relative_path in planned_paths:
+        header_end = batch_result.stdout.find(b"\n", offset)
+        if header_end < 0:
+            raise SourceProvenanceError(
+                "Git returned a truncated execution source batch"
+            )
+        header = batch_result.stdout[offset:header_end].split()
+        try:
+            returned_id = header[0].decode("ascii")
+            object_type = header[1].decode("ascii")
+            size = int(header[2])
+        except (IndexError, UnicodeError, ValueError) as error:
+            raise SourceProvenanceError(
+                "Git returned an invalid execution source batch"
+            ) from error
+        content_start = header_end + 1
+        content_end = content_start + size
+        if (
+            len(header) != 3
+            or returned_id != object_ids[relative_path]
+            or object_type != "blob"
+            or size < 0
+            or content_end >= len(batch_result.stdout)
+            or batch_result.stdout[content_end:content_end + 1] != b"\n"
+        ):
+            raise SourceProvenanceError(
+                "Git returned an invalid execution source batch"
+            )
+        contents[relative_path] = (
+            returned_id,
+            batch_result.stdout[content_start:content_end],
+        )
+        offset = content_end + 1
+    if offset != len(batch_result.stdout):
+        raise SourceProvenanceError(
+            "Git returned unexpected execution source batch data"
+        )
+    return contents
 
 
 def create_synthetic_source_artifacts(
@@ -645,20 +735,23 @@ def committed_source_fingerprints(
 
     if _COMMIT.fullmatch(commit) is None:
         raise SourceProvenanceError("source authority commit is invalid")
-    fingerprints: dict[str, str] = {}
+    canonical_paths = []
     for relative_path in sorted(relative_paths):
         canonical_path = _canonical_relative_path(relative_path)
-        if canonical_path in fingerprints:
+        if canonical_path in canonical_paths:
             raise SourceProvenanceError(
                 f"duplicate source authority path: {canonical_path}"
             )
-        _object_id, content = _commit_blob(
-            repo_root.resolve(strict=True),
-            commit,
-            canonical_path,
-        )
-        fingerprints[canonical_path] = hashlib.sha256(content).hexdigest()
-    return fingerprints
+        canonical_paths.append(canonical_path)
+    committed = _commit_blobs(
+        repo_root.resolve(strict=True),
+        commit,
+        canonical_paths,
+    )
+    return {
+        path: hashlib.sha256(committed[path][1]).hexdigest()
+        for path in canonical_paths
+    }
 
 
 def _filtered_blob_identity(
@@ -708,8 +801,9 @@ def _build_execution_source_manifest_for_paths(
     planned_paths = tuple(
         sorted({_canonical_relative_path(path) for path in source_paths})
     )
+    committed_sources = _commit_blobs(repo_root, commit, planned_paths)
     for relative_path in planned_paths:
-        object_id, committed = _commit_blob(repo_root, commit, relative_path)
+        object_id, committed = committed_sources[relative_path]
         try:
             _, working, _ = read_file_snapshot(repo_root / relative_path)
         except ResultIntegrityError as error:
@@ -1269,6 +1363,7 @@ def _validate_execution_source_manifest_for_paths(
         raise SourceProvenanceError(
             "execution source inventory is incomplete or reordered"
         )
+    committed_sources = _commit_blobs(repo_root, commit, expected_paths)
     for item in entries:
         if (
             not isinstance(item, dict)
@@ -1303,7 +1398,7 @@ def _validate_execution_source_manifest_for_paths(
             raise SourceProvenanceError(
                 "execution source inventory entry is invalid"
             )
-        object_id, committed = _commit_blob(repo_root, commit, item["path"])
+        object_id, committed = committed_sources[item["path"]]
         if (
             object_id != item["git_blob"]
             or hashlib.sha256(committed).hexdigest()

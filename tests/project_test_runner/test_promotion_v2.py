@@ -5,6 +5,7 @@ import json
 import math
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
@@ -32,6 +33,7 @@ from scripts.project_test_source_provenance import (
     create_source_snapshot,
     create_frozen_git_authority,
     freeze_execution_source_files,
+    validate_execution_source_manifest,
     validate_evidence_only_commit_range,
 )
 from scripts.validate_project_test_promotion import (
@@ -100,6 +102,271 @@ def write_bytes(path: Path, value: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(value)
     return hashlib.sha256(value).hexdigest()
+
+
+@dataclass(frozen=True)
+class _FilteredAuthorityFixture:
+    repo: Path
+    authority_path: Path
+    copy_path: Path
+    original_bytes: bytes
+    registered_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _FrozenAuthorityScenario:
+    manifest: dict
+    run_dir: Path
+    git_commands: tuple[tuple[str, ...], ...]
+    committed_authority: bytes
+
+
+@dataclass(frozen=True)
+class _LargeInventoryScenario:
+    created_paths: tuple[str, ...]
+    manifest_paths: frozenset[str]
+    git_commands: tuple[tuple[str, ...], ...]
+    path_argv_utf16_units: int
+    maximum_absolute_path_utf16_units: int
+
+
+def _utf16_units(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _git_start_commands(trace_path: Path) -> tuple[tuple[str, ...], ...]:
+    return tuple(
+        tuple(record["argv"][1:])
+        for record in (
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        )
+        if record.get("event") == "start"
+        and isinstance(record.get("argv"), list)
+        and record["argv"]
+        and record["argv"][0].lower() in {"git", "git.exe"}
+    )
+
+
+def _create_filtered_authority_fixture() -> _FilteredAuthorityFixture:
+    repo = new_fixture_dir("clean-gate-unchanged-copy")
+    for relative in FIXED_EXECUTION_SOURCE_PATHS:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if relative != "config/test-suites.v1.json":
+            shutil.copy2(PROJECT_ROOT / relative, target)
+    filter_driver = repo / "support/filter_driver.py"
+    filter_driver.parent.mkdir(parents=True)
+    filter_driver.write_text(
+        """from __future__ import annotations
+
+import sys
+
+content = sys.stdin.buffer.read()
+if sys.argv[1] == "clean":
+    content = content.replace(b"SMUDGED", b"CLEAN")
+elif sys.argv[1] == "smudge":
+    content = content.replace(b"CLEAN", b"SMUDGED")
+else:
+    raise SystemExit(2)
+sys.stdout.buffer.write(content)
+""",
+        encoding="utf-8",
+    )
+    (repo / ".gitattributes").write_text(
+        "tests/authority/test_authority.py filter=authority-fixture\n",
+        encoding="utf-8",
+    )
+    authority_path = repo / "tests/authority/test_authority.py"
+    authority_path.parent.mkdir(parents=True)
+    authority_path.write_text('AUTHORITY = "SMUDGED"\n', encoding="utf-8")
+    write_json(
+        repo / "config/test-suites.v1.json",
+        {
+            "schema_name": "video2pdf.project-test-suites",
+            "schema_version": 1,
+            "project": {
+                "project_key": "video2pdf",
+                "repository": "Nishijujuba/video2pdf",
+            },
+            "suites": [
+                {
+                    "suite_id": "authority",
+                    "suite_key": "authority",
+                    "roots": [
+                        {
+                            "path": "tests/authority",
+                            "pattern": "test_*.py",
+                        }
+                    ],
+                }
+            ],
+            "mirrors": [],
+        },
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    filter_command = f'"{sys.executable}" support/filter_driver.py'
+    for direction in ("clean", "smudge"):
+        subprocess.run(
+            [
+                "git",
+                "config",
+                f"filter.authority-fixture.{direction}",
+                f"{filter_command} {direction}",
+            ],
+            cwd=repo,
+            check=True,
+        )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    original_bytes = authority_path.read_bytes()
+    copy_path = repo / "待删除/test_authority.py"
+    copy_path.parent.mkdir()
+    shutil.copy2(authority_path, copy_path)
+    registered_paths = load_registry(
+        repo,
+        Path("config/test-suites.v1.json"),
+    ).registered_test_files()
+    return _FilteredAuthorityFixture(
+        repo=repo,
+        authority_path=authority_path,
+        copy_path=copy_path,
+        original_bytes=original_bytes,
+        registered_paths=registered_paths,
+    )
+
+
+def _build_frozen_authority_scenario(
+    fixture: _FilteredAuthorityFixture,
+) -> _FrozenAuthorityScenario:
+    repo = fixture.repo
+    trace_path = repo / ".git/manifest-git-commands.log"
+    trace_path.touch()
+    run_dir = repo / "待删除/frozen-run"
+    with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace_path)}):
+        manifest = build_execution_source_manifest(
+            repo,
+            fixture.registered_paths,
+        )
+        freeze_execution_source_files(repo, run_dir, manifest)
+        git_dir = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--absolute-git-dir"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout.strip()
+        )
+        create_frozen_git_authority(
+            repo,
+            run_dir,
+            run_dir / "execution-source-files",
+            git_dir,
+            manifest,
+        )
+        validate_execution_source_manifest(
+            repo,
+            manifest,
+            expected_test_module_paths=fixture.registered_paths,
+            require_worktree_match=True,
+            frozen_run_dir=run_dir,
+        )
+    committed_authority = subprocess.run(
+        ["git", "show", "HEAD:tests/authority/test_authority.py"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    return _FrozenAuthorityScenario(
+        manifest=manifest,
+        run_dir=run_dir,
+        git_commands=_git_start_commands(trace_path),
+        committed_authority=committed_authority,
+    )
+
+
+def _build_large_inventory_scenario(repo: Path) -> _LargeInventoryScenario:
+    authority_dir = repo / "tests/authority"
+    filename_shell = "test_batch_0000_.py"
+    maximum_fixture_path_units = 232
+    fill_length = (
+        maximum_fixture_path_units
+        - _utf16_units(str(authority_dir.resolve()))
+        - 1
+        - _utf16_units(filename_shell)
+    )
+    if fill_length < 8:
+        raise AssertionError("fixture root leaves no safe filename budget")
+    prototype = (
+        f"tests/authority/test_batch_0000_{'x' * fill_length}.py"
+    )
+    per_path_argv_units = _utf16_units(prototype) + 1
+    file_count = (32 * 1024) // per_path_argv_units + 1
+    created_paths = []
+    for index in range(file_count):
+        path = authority_dir / (
+            f"test_batch_{index:04d}_{'x' * fill_length}.py"
+        )
+        path.write_text("# Batch authority fixture.\n", encoding="utf-8")
+        created_paths.append(path.relative_to(repo).as_posix())
+    subprocess.run(
+        ["git", "add", "tests/authority"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "large source inventory",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    registered_paths = load_registry(
+        repo,
+        Path("config/test-suites.v1.json"),
+    ).registered_test_files()
+    trace_path = repo / ".git/large-manifest-git.log"
+    trace_path.touch()
+    with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace_path)}):
+        manifest = build_execution_source_manifest(repo, registered_paths)
+    return _LargeInventoryScenario(
+        created_paths=tuple(created_paths),
+        manifest_paths=frozenset(
+            entry["path"] for entry in manifest["entries"]
+        ),
+        git_commands=_git_start_commands(trace_path),
+        path_argv_utf16_units=sum(
+            _utf16_units(path) + 1 for path in created_paths
+        ),
+        maximum_absolute_path_utf16_units=max(
+            _utf16_units(str((repo / path).resolve()))
+            for path in created_paths
+        ),
+    )
 
 
 def refresh_persisted_stdout_identity(run: dict) -> None:
@@ -1218,94 +1485,125 @@ class PromotionReportV2Tests(unittest.TestCase):
     def test_clean_gate_accepts_unchanged_authority_copy_inside_allowed_output(
         self,
     ) -> None:
-        repo = new_fixture_dir("clean-gate-unchanged-copy")
-        for relative in FIXED_EXECUTION_SOURCE_PATHS:
-            target = repo / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if relative == "config/test-suites.v1.json":
-                continue
-            shutil.copy2(PROJECT_ROOT / relative, target)
-        authority_path = repo / "tests/authority/test_authority.py"
-        authority_path.parent.mkdir(parents=True)
-        authority_path.write_text("AUTHORITY = True\n", encoding="utf-8")
-        write_json(
-            repo / "config/test-suites.v1.json",
-            {
-                "schema_name": "video2pdf.project-test-suites",
-                "schema_version": 1,
-                "project": {
-                    "project_key": "video2pdf",
-                    "repository": "Nishijujuba/video2pdf",
-                },
-                "suites": [
-                    {
-                        "suite_id": "authority",
-                        "suite_key": "authority",
-                        "roots": [
-                            {
-                                "path": "tests/authority",
-                                "pattern": "test_*.py",
-                            }
-                        ],
-                    }
+        fixture = _create_filtered_authority_fixture()
+        with self.subTest("clean gate accepts unchanged output copy"):
+            assert_clean_execution_worktree(fixture.repo)
+            self.assertEqual(
+                fixture.original_bytes,
+                fixture.authority_path.read_bytes(),
+            )
+            self.assertEqual(
+                fixture.original_bytes,
+                fixture.copy_path.read_bytes(),
+            )
+            self.assertEqual(
+                ("tests/authority/test_authority.py",),
+                fixture.registered_paths,
+            )
+            self.assertNotIn(str(fixture.copy_path.parent), sys.path)
+
+        frozen = _build_frozen_authority_scenario(fixture)
+        authority_entry = next(
+            entry
+            for entry in frozen.manifest["entries"]
+            if entry["path"] == "tests/authority/test_authority.py"
+        )
+        with self.subTest("filter semantics and batch Git authority"):
+            self.assertIn(b"CLEAN", frozen.committed_authority)
+            self.assertNotIn(b"SMUDGED", frozen.committed_authority)
+            self.assertEqual(
+                hashlib.sha256(frozen.committed_authority).hexdigest(),
+                authority_entry["committed_sha256"],
+            )
+            self.assertEqual(
+                hashlib.sha256(fixture.original_bytes).hexdigest(),
+                authority_entry["runtime_sha256"],
+            )
+            self.assertEqual(
+                2,
+                sum(
+                    command[:2] == ("cat-file", "--batch")
+                    for command in frozen.git_commands
+                ),
+            )
+            self.assertEqual(
+                2,
+                sum(
+                    command[:3] == ("ls-tree", "-r", "-z")
+                    and len(command) == 4
+                    for command in frozen.git_commands
+                ),
+            )
+            self.assertFalse(
+                any(
+                    command[:2] == ("cat-file", "blob")
+                    for command in frozen.git_commands
+                )
+            )
+            self.assertFalse(
+                any(
+                    command[:1] == ("rev-parse",)
+                    and ":" in command[-1]
+                    for command in frozen.git_commands
+                )
+            )
+            self.assertEqual(
+                ["tests/authority/test_authority.py"],
+                [
+                    entry["path"]
+                    for entry in frozen.manifest["entries"]
+                    if entry["path"].endswith("test_authority.py")
                 ],
-                "mirrors": [],
-            },
-        )
-        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-        subprocess.run(["git", "add", "."], cwd=repo, check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "commit",
-                "-q",
-                "-m",
-                "fixture",
-            ],
-            cwd=repo,
-            check=True,
-        )
-        original_bytes = authority_path.read_bytes()
-        copy_path = repo / "待删除/test_authority.py"
-        copy_path.parent.mkdir()
-        shutil.copy2(authority_path, copy_path)
+            )
 
-        registry = load_registry(
-            repo,
-            Path("config/test-suites.v1.json"),
-        )
-        registered_paths = registry.registered_test_files()
-        assert_clean_execution_worktree(repo)
-        manifest = build_execution_source_manifest(repo, registered_paths)
-        manifest_paths = [entry["path"] for entry in manifest["entries"]]
+        large = _build_large_inventory_scenario(fixture.repo)
+        with self.subTest("Win32 command line bounded batch tree walk"):
+            self.assertGreater(large.path_argv_utf16_units, 32 * 1024)
+            self.assertLessEqual(
+                large.maximum_absolute_path_utf16_units,
+                240,
+            )
+            self.assertTrue(
+                set(large.created_paths).issubset(large.manifest_paths)
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    command[:3] == ("ls-tree", "-r", "-z")
+                    and len(command) == 4
+                    for command in large.git_commands
+                ),
+            )
 
-        self.assertEqual(original_bytes, authority_path.read_bytes())
-        self.assertEqual(original_bytes, copy_path.read_bytes())
-        self.assertEqual(
-            ("tests/authority/test_authority.py",),
-            registered_paths,
+        frozen_authority = (
+            frozen.run_dir
+            / "execution-source-files"
+            / "tests/authority/test_authority.py"
         )
-        self.assertNotIn(str(copy_path.parent), sys.path)
-        self.assertEqual(
-            ["tests/authority/test_authority.py"],
-            [
-                path
-                for path in manifest_paths
-                if path.endswith("test_authority.py")
-            ],
+        frozen_authority.write_bytes(
+            frozen_authority.read_bytes().replace(b"SMUDGED", b"TAMPERED")
         )
+        with self.subTest("frozen source tamper fails closed"):
+            with self.assertRaisesRegex(
+                SourceProvenanceError,
+                "frozen execution source is not committed",
+            ):
+                validate_execution_source_manifest(
+                    fixture.repo,
+                    frozen.manifest,
+                    expected_test_module_paths=fixture.registered_paths,
+                    require_worktree_match=True,
+                    frozen_run_dir=frozen.run_dir,
+                )
 
-        untracked_source = repo / "scripts/untracked_authority.py"
-        untracked_source.write_bytes(original_bytes)
-        with self.assertRaisesRegex(
-            SourceProvenanceError,
-            "clean Git worktree",
-        ):
-            assert_clean_execution_worktree(repo)
+        untracked_source = fixture.repo / "scripts/untracked_authority.py"
+        untracked_source.write_bytes(fixture.original_bytes)
+        with self.subTest("clean gate rejects source outside output"):
+            with self.assertRaisesRegex(
+                SourceProvenanceError,
+                "clean Git worktree",
+            ):
+                assert_clean_execution_worktree(fixture.repo)
 
     def test_frozen_git_config_rejects_each_seven_key_attack(self) -> None:
         fixture = new_fixture_dir("promotion-v2-git-config")

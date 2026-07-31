@@ -204,12 +204,22 @@
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/rendered-text-reconciliation-report.invalid.json"
     },
     {
+      "schema_name": "final-compile-manifest",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/final-compile-manifest.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/final-compile-manifest.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/final-compile-manifest.example.v1.json",
+      "canonical_sha256": "b1afa17b99fe898af9a25a9043b37fa41edbc624a7ebb9d34eb87c792156e1da",
+      "positive_example": "delivery-quality/v1/final-compile-manifest.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/final-compile-manifest.invalid.json"
+    },
+    {
       "schema_name": "final-compile-report",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/final-compile-report.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/final-compile-report.example.v1.json",
-      "canonical_sha256": "9d53af3986cbd3b8f79504c299182ea67d82e9a180755164ae6f07a3593265e9",
+      "canonical_sha256": "f924f1598a789828f000c33e3aced1fc89ad6bfc2a1cc7f31976253594edcb01",
       "positive_example": "delivery-quality/v1/final-compile-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/final-compile-report.invalid.json"
     }

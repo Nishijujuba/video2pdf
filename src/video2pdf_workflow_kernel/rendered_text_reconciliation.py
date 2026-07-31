@@ -11,7 +11,11 @@ from .errors import (
     RenderedTextReconciliationContractGap,
     RenderedTextReconciliationFailed,
 )
-from .final_compile import final_compile_provider_identity
+from .final_compile import (
+    REGISTERED_GENERATORS,
+    final_compile_provider_identity,
+    registered_generator_identity,
+)
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
@@ -22,13 +26,6 @@ OBJECT_KINDS = (
     "form_xobject_text",
     "declared_raster_text",
 )
-REGISTERED_GENERATORS = {
-    "page-number-v1": {
-        "generator_id": "page-number-v1",
-        "generator_version": "1.0.0",
-        "kind": "page_number",
-    },
-}
 
 
 def _fingerprint_without(value: dict[str, Any], field: str) -> str:
@@ -55,20 +52,6 @@ def _normalize(text: str, recipe: str) -> str:
         )
         return "".join(normalized.split())
     raise ValueError(recipe)
-
-
-def guarded_compile_provider_identity(project_root: Path) -> dict[str, str]:
-    return final_compile_provider_identity(project_root)
-
-
-def registered_generator_identity(generator_id: str) -> dict[str, str]:
-    contract = REGISTERED_GENERATORS[generator_id]
-    return {
-        **contract,
-        "generator_sha256": hashlib.sha256(
-            canonical_json_bytes(contract)
-        ).hexdigest(),
-    }
 
 
 def _generated_text(generator: dict[str, Any]) -> str:
@@ -113,12 +96,15 @@ class RenderedTextReconciliationProvider:
         self.registry.check()
         precompile_root = precompile_workspace_root.resolve()
         seal = read_json(precompile_root / "precompile-text-seal.json")
+        self.registry.validate("precompile-text-seal", seal)
         _require_fingerprint(seal, "seal_sha256", "Precompile Text Seal")
         if seal.get("activation_status") != "target_only":
             raise ContractError("Precompile Text Seal would change runtime authority")
         binding_root = precompile_root / "seal-bindings" / seal["seal_sha256"]
         inventory = read_json(binding_root / "reader-facing-text-inventory.json")
         generations = read_json(binding_root / "artifact-generations.json")
+        self.registry.validate("reader-facing-text-inventory", inventory)
+        self.registry.validate("precompile-artifact-generation-set", generations)
         _require_fingerprint(inventory, "inventory_sha256", "sealed inventory")
         _require_fingerprint(generations, "generation_set_sha256", "sealed generations")
         if (
@@ -135,6 +121,7 @@ class RenderedTextReconciliationProvider:
         rendered = read_json(rendered_text_inventory_path.resolve())
         origins = read_json(text_origin_manifest_path.resolve())
         for schema_name, value in (
+            ("final-compile-manifest", compile_manifest),
             ("final-compile-report", compile_report),
             ("final-artifact-seal", final_seal),
             ("render-evidence-manifest", render_evidence),
@@ -166,19 +153,91 @@ class RenderedTextReconciliationProvider:
         compile_entry_identities = [
             entry.get("logical_id") for entry in compile_entry_list
         ]
+        expected_closure_inputs = [
+            {
+                "logical_id": entry.get("logical_id"),
+                "generation": entry.get("generation"),
+                "sha256": entry.get("sha256"),
+            }
+            for entry in compile_entry_list
+        ]
+        reported_closure = compile_report.get("dependency_closure", {})
+        reported_closure_inputs = reported_closure.get("inputs", [])
+        reported_runtime_inputs = reported_closure.get("runtime_inputs", [])
+        reported_generated_inputs = reported_closure.get("generated_inputs", [])
         compile_closure_exact = (
             len(compile_entry_list) == len(sealed_entries)
             and len(compile_entry_identities) == len(set(compile_entry_identities))
             and compile_entries == sealed_entries
         )
-        registered_compile_provider = guarded_compile_provider_identity(
+        recorder_closure_exact = (
+            len(reported_closure_inputs) == len(expected_closure_inputs)
+            and sorted(reported_closure_inputs, key=lambda item: item.get("logical_id", ""))
+            == sorted(expected_closure_inputs, key=lambda item: item.get("logical_id", ""))
+        )
+        runtime_closure_exact = (
+            reported_runtime_inputs
+            == compile_manifest.get("approved_runtime_inputs", [])
+            and all(
+                Path(item.get("path", "")).is_file()
+                and sha256_file(Path(item["path"]).resolve()) == item.get("sha256")
+                for item in reported_runtime_inputs
+                if isinstance(item, dict)
+            )
+            and len(reported_runtime_inputs)
+            == sum(isinstance(item, dict) for item in reported_runtime_inputs)
+        )
+        generated_inputs_current = (
+            all(
+                Path(item.get("path", "")).is_file()
+                and sha256_file(Path(item["path"]).resolve()) == item.get("sha256")
+                and item.get("classification") == "attempt_generated_auxiliary"
+                for item in reported_generated_inputs
+                if isinstance(item, dict)
+            )
+            and len(reported_generated_inputs)
+            == sum(isinstance(item, dict) for item in reported_generated_inputs)
+        )
+        registered_compile_provider = final_compile_provider_identity(
             self.project_root
         )
+        adapter_identity = compile_report.get("compile_adapter", {})
+        adapter_path = Path(adapter_identity.get("adapter_path", "")).resolve()
+        try:
+            adapter_path.relative_to(self.project_root)
+            compile_adapter_current = (
+                adapter_path.is_file()
+                and sha256_file(adapter_path) == adapter_identity.get("adapter_sha256")
+            )
+        except ValueError:
+            compile_adapter_current = False
+        recorder_path_value = reported_closure.get("recorder_path")
+        compile_recorder_current = False
+        if (
+            isinstance(recorder_path_value, str)
+            and recorder_path_value
+            and "\\" not in recorder_path_value
+        ):
+            recorder_path = (compile_report_path.resolve().parent / recorder_path_value).resolve()
+            try:
+                recorder_path.relative_to(compile_report_path.resolve().parent)
+                compile_recorder_current = (
+                    recorder_path.is_file()
+                    and sha256_file(recorder_path)
+                    == reported_closure.get("recorder_sha256")
+                )
+            except ValueError:
+                compile_recorder_current = False
         input_checks = {
             "compile_manifest_mode_final": compile_manifest.get("mode") == "final",
             "compile_input_closure_exact": compile_closure_exact,
             "compile_report_passed": compile_report.get("status") == "pass",
-            "compile_dependency_closure_complete": compile_report.get("dependency_closure", {}).get("complete") is True,
+            "compile_dependency_closure_complete": reported_closure.get("complete") is True,
+            "compile_recorder_closure_exact": recorder_closure_exact,
+            "compile_runtime_closure_exact": runtime_closure_exact,
+            "compile_generated_inputs_current": generated_inputs_current,
+            "compile_recorder_current": compile_recorder_current,
+            "compile_adapter_current": compile_adapter_current,
             "compile_report_mode_final": compile_report.get("mode") == "final",
             "compile_report_target_only": compile_report.get("delivery_authority") is False,
             "final_seal_binds_precompile_seal": final_seal.get("precompile_text_seal_sha256") == seal["seal_sha256"],

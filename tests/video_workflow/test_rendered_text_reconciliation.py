@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import json
 from pathlib import Path
@@ -13,8 +14,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_case_dir
-from video2pdf_workflow_kernel.rendered_text_reconciliation import (
-    guarded_compile_provider_identity,
+from video2pdf_workflow_kernel.final_compile import (
+    final_compile_provider_identity,
     registered_generator_identity,
 )
 
@@ -68,6 +69,13 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         root = new_case_dir(self.id(), label="rendered-text-reconciliation")
         quality = root / "precompile"
         evidence = root / "final-evidence"
+        compile_input = root / "integrated-main.tex"
+        compile_input.write_text("guarded final compile fixture\n", encoding="utf-8")
+        compile_input_sha256 = hashlib.sha256(compile_input.read_bytes()).hexdigest()
+        recorder = root / "adapter-output" / "compile-recorder.fls"
+        recorder.parent.mkdir()
+        recorder.write_text(f"INPUT {compile_input}\n", encoding="utf-8")
+        recorder_sha256 = hashlib.sha256(recorder.read_bytes()).hexdigest()
         pdf = root / "final.pdf"
         pdf.write_bytes(b"%PDF-fixture\n")
         pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
@@ -78,7 +86,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "generation_set_id": "integrated-final-8",
             "producer_ids": ["integration-attempt-8"],
             "artifacts": [
-                {"logical_id": "integrated_main_tex", "generation": 8, "sha256": "1" * 64}
+                {"logical_id": "integrated_main_tex", "generation": 8, "sha256": compile_input_sha256}
             ],
         }
         generations["generation_set_sha256"] = canonical_sha(generations)
@@ -95,7 +103,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 "language_profile_id": "zh-hans",
                 "source_artifact_logical_id": "integrated_main_tex",
                 "source_generation": 8,
-                "source_sha256": "1" * 64,
+                "source_sha256": compile_input_sha256,
                 "locator": f"latex:{item_id}",
                 "representation": "structured_text",
                 "text_sha256": text_sha(text),
@@ -159,15 +167,24 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         write_json(binding / "artifact-generations.json", generations)
 
         compile_manifest = {
-            "schema_name": "compile-manifest",
+            "schema_name": "final-compile-manifest",
             "schema_version": "1.0.0",
+            "activation_status": "target_only",
             "mode": "final",
+            "precompile_text_seal_sha256": seal["seal_sha256"],
             "entries": [
-                {"logical_id": "integrated_main_tex", "generation": 8, "sha256": "1" * 64}
+                {
+                    "logical_id": "integrated_main_tex",
+                    "generation": 8,
+                    "sha256": compile_input_sha256,
+                    "source_path": str(compile_input),
+                    "staging_path": "main.tex",
+                }
             ],
+            "approved_runtime_inputs": [],
         }
         compile_manifest["manifest_sha256"] = canonical_sha(compile_manifest)
-        compiler_provider = guarded_compile_provider_identity(PROJECT_ROOT)
+        compiler_provider = final_compile_provider_identity(PROJECT_ROOT)
         final_seal = {
             "schema_name": "final-artifact-seal",
             "schema_version": "1.0.0",
@@ -189,7 +206,20 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "precompile_text_seal_sha256": seal["seal_sha256"],
             "final_artifact_seal_sha256": final_seal["seal_sha256"],
             "compile_manifest_sha256": compile_manifest["manifest_sha256"],
-            "dependency_closure": {"complete": True},
+            "dependency_closure": {
+                "complete": True,
+                "inputs": [
+                    {
+                        "logical_id": "integrated_main_tex",
+                        "generation": 8,
+                        "sha256": compile_input_sha256,
+                    }
+                ],
+                "runtime_inputs": [],
+                "generated_inputs": [],
+                "recorder_sha256": recorder_sha256,
+                "recorder_path": "adapter-output/compile-recorder.fls",
+            },
             "pdf": final_seal["final_pdf"],
             "compiler_provider": compiler_provider,
             "compile_adapter": {
@@ -347,7 +377,12 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         )
 
     def final_compile(
-        self, root: Path, paths: dict[str, Path]
+        self,
+        root: Path,
+        paths: dict[str, Path],
+        *,
+        plan_updates: dict | None = None,
+        plan_mutator: Callable[[dict], None] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
         origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
         rendered = json.loads(paths["rendered"].read_text(encoding="utf-8"))
@@ -380,6 +415,10 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             ],
             "edges": origins["edges"],
         }
+        if plan_updates:
+            plan.update(plan_updates)
+        if plan_mutator:
+            plan_mutator(plan)
         plan["plan_sha256"] = canonical_sha(plan)
         plan_path = write_json(root / "text-origin-plan.json", plan)
         workspace = root / "guarded-final-compile"
@@ -423,82 +462,47 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         self.assertEqual("contract_invalid", envelope["classification"])
         self.assertFalse((workspace / "adapter-output/final.pdf").exists())
 
-    def final_compile(
-        self, root: Path, paths: dict[str, Path]
-    ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
-        origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
-        rendered = json.loads(paths["rendered"].read_text(encoding="utf-8"))
-        seal = json.loads(
-            (paths["precompile_workspace"] / "precompile-text-seal.json").read_text(
-                encoding="utf-8"
-            )
+    def test_public_final_compile_rejects_incomplete_origin_plan_before_adapter(self) -> None:
+        invalid_updates = (
+            {"page_count": 0},
+            {
+                "edges": [
+                    {
+                        "edge_id": "dangling",
+                        "disposition": "sealed_origin",
+                        "sealed_item_id": "missing",
+                        "sealed_text_utf8": "missing",
+                        "rendered_object_ids": ["missing-object"],
+                        "recipe": "exact_utf8",
+                    }
+                ]
+            },
         )
-        plan = {
-            "schema_name": "text-origin-plan",
-            "schema_version": "1.0.0",
-            "precompile_text_seal_sha256": seal["seal_sha256"],
-            "sealed_items": [
-                {
-                    "item_id": edge["sealed_item_id"],
-                    "exact_utf8_text": edge["sealed_text_utf8"],
-                }
-                for edge in origins["edges"]
-                if edge["disposition"] == "sealed_origin"
-            ],
-            "page_count": rendered["coverage"]["page_count"],
-            "extractor_suite": rendered["extractor_suite"],
-            "rendered_objects": [
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key not in {"text_sha256", "object_sha256"}
-                }
-                for item in rendered["objects"]
-            ],
-            "edges": origins["edges"],
-        }
-        plan["plan_sha256"] = canonical_sha(plan)
-        plan_path = write_json(root / "text-origin-plan.json", plan)
-        workspace = root / "guarded-final-compile"
-        completed, envelope = run_cli(
-            "delivery-quality-final-compile",
-            "--precompile-workspace-root", str(paths["precompile_workspace"]),
-            "--compile-manifest", str(paths["compile_manifest"]),
-            "--text-origin-plan", str(plan_path),
-            "--compiler-adapter", str(self.FINAL_COMPILE_ADAPTER),
-            "--workspace-root", str(workspace),
-            "--compiled-at", "2026-07-31T01:15:00Z",
+        for updates in invalid_updates:
+            with self.subTest(updates=updates):
+                root, paths = self.fixture()
+                completed, envelope, workspace = self.final_compile(
+                    root, paths, plan_updates=updates
+                )
+                self.assertEqual(20, completed.returncode)
+                self.assertEqual("contract_invalid", envelope["classification"])
+                self.assertFalse((workspace / "adapter-output/final.pdf").exists())
+        invalid_edge_mutators = (
+            lambda plan: plan["edges"][-1].pop("recipe"),
+            lambda plan: plan["edges"][-1]["generator"].pop("generator_sha256"),
+            lambda plan: plan["edges"][0].update(
+                disposition="unexpected_addition", recipe=None
+            ),
         )
-        return completed, envelope, workspace
-
-    def test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence(self) -> None:
-        root, paths = self.fixture()
-        completed, envelope, workspace = self.final_compile(root, paths)
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("guarded_final_compile_complete", envelope["classification"])
-        paths.update({
-            "compile_report": workspace / "final-compile-report.json",
-            "final_seal": workspace / "final-artifact-seal.json",
-            "final_pdf": workspace / "adapter-output/final.pdf",
-            "render_evidence": workspace / "render-evidence-manifest.json",
-            "rendered": workspace / "adapter-output/rendered-text-object-inventory.json",
-            "origins": workspace / "text-origin-manifest.json",
-            "output": workspace / "rendered-text-reconciliation-report.json",
-        })
-        reconciled, result = self.reconcile(paths)
-        self.assertEqual(0, reconciled.returncode, reconciled.stderr)
-        self.assertEqual("rendered_text_reconciliation_passed", result["classification"])
-
-    def test_public_final_compile_rejects_stale_precompile_seal_before_adapter(self) -> None:
-        root, paths = self.fixture()
-        seal_path = paths["precompile_workspace"] / "precompile-text-seal.json"
-        seal = json.loads(seal_path.read_text(encoding="utf-8"))
-        seal["sealed_at"] = "2026-07-31T01:00:01Z"
-        write_json(seal_path, seal)
-        completed, envelope, workspace = self.final_compile(root, paths)
-        self.assertEqual(20, completed.returncode)
-        self.assertEqual("contract_invalid", envelope["classification"])
-        self.assertFalse((workspace / "adapter-output/final.pdf").exists())
+        for mutate in invalid_edge_mutators:
+            with self.subTest(mutate=mutate):
+                root, paths = self.fixture()
+                completed, envelope, workspace = self.final_compile(
+                    root, paths, plan_mutator=mutate
+                )
+                self.assertEqual(20, completed.returncode)
+                self.assertEqual("contract_invalid", envelope["classification"])
+                self.assertFalse((workspace / "adapter-output/final.pdf").exists())
 
     def test_complete_current_final_compile_evidence_passes(self) -> None:
         _, paths = self.fixture()
@@ -594,6 +598,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "INCOMPLETE_EXTRACTION_COVERAGE": self._omit_page_coverage,
             "UNSUPPORTED_RENDERED_OBJECT_KIND": self._unsupported_object_kind,
             "rendered_page_files_current": self._tamper_rendered_page,
+            "compile_recorder_current": self._tamper_compile_recorder,
         }
         for expected, mutate in mutations.items():
             with self.subTest(expected=expected):
@@ -699,6 +704,14 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         manifest = json.loads(paths["render_evidence"].read_text(encoding="utf-8"))
         page_path = paths["render_evidence"].parent / manifest["pages"][0]["path"]
         page_path.write_bytes(b"tampered-page")
+
+    @staticmethod
+    def _tamper_compile_recorder(paths: dict[str, Path]) -> None:
+        report = json.loads(paths["compile_report"].read_text(encoding="utf-8"))
+        recorder_path = paths["compile_report"].parent / report["dependency_closure"][
+            "recorder_path"
+        ]
+        recorder_path.write_text("INPUT undeclared.tex\n", encoding="utf-8")
 
     @staticmethod
     def _refresh_compile_output_bindings(paths: dict[str, Path]) -> None:

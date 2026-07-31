@@ -23,10 +23,30 @@ Cutover or change active Legacy Final Acceptance authority.
 `delivery-quality-final-compile` validates the current Precompile Text Seal,
 exact compile-input closure, and complete Text Origin Plan before invoking a
 fingerprinted compiler adapter. The adapter must produce the final PDF, compile
-provenance, every rendered page, the object-level rendered inventory, and a
-text-origin trace. The guarded provider validates and binds those outputs into
-the Final Artifact Seal, Render Evidence Manifest, compiler-produced Text
-Origin Manifest, and Final Compile Report.
+provenance with recorder inputs, every rendered page, the object-level rendered
+inventory, the Final Artifact Seal, and a text-origin trace bound to that seal.
+The guarded provider validates and publishes those outputs into the Render
+Evidence Manifest, compiler-produced Text Origin Manifest, and Final Compile
+Report. The Final Artifact Seal is formed after the PDF identity is known. The
+operation fails unless the adapter returns a current seal and both provenance
+and origin trace authenticate it.
+
+Recorder closure is evidence-backed rather than a provider assertion. The
+adapter returns its recorder file and fingerprint. The guarded provider parses
+every `INPUT` record, resolves it against the recorded compiler working
+directory, verifies each staged copy against the current Manifest `source_path`
+fingerprint, and requires the observed path set to equal the staged project
+inputs plus the Manifest's fingerprinted approved runtime inputs. Runtime
+dependencies and system fonts remain separate classifications; undeclared
+package, font, engine, or project input paths fail closure. Generated
+auxiliaries inside the recorder working directory are recorded with their own
+fingerprints and cannot authorize external inputs.
+
+Final Compile consumes the registered target-only `final-compile-manifest`
+contract. Its entries preserve the existing `source_path` plus relative
+`staging_path` semantics, while its fingerprinted `approved_runtime_inputs`
+form the final-mode projection of governed runtime dependencies. This avoids
+reinterpreting the active diagnostic v4 Compile Manifest as final authority.
 
 `delivery-quality-rendered-text-reconcile` validates the sealed precompile
 snapshot and the complete Final Compile evidence package before writing one

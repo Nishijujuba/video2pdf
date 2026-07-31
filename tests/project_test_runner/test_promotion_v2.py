@@ -433,6 +433,443 @@ class PromotionReportV2Tests(unittest.TestCase):
         quarantined_bytes = {path.read_bytes() for path in quarantined}
         self.assertTrue(set(original_bytes.values()).issubset(quarantined_bytes))
 
+    def test_authority_generator_recovers_process_loss_after_first_publish(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        original_bytes = {target: target.read_bytes() for target in targets}
+        real_replace = os.replace
+        publish_count = 0
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_process_after_first_publish(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            nonlocal publish_count
+            real_replace(source, destination)
+            if Path(destination) in targets:
+                publish_count += 1
+                if publish_count == 1:
+                    raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_process_after_first_publish,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        self.assertTrue(marker.is_file())
+        self.assertNotEqual(
+            original_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+
+        with mock.patch.object(authority_generator, "REPO_ROOT", repo):
+            self.assertEqual(authority_generator.main(["--recover"]), 0)
+
+        self.assertEqual(
+            original_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+        self.assertFalse(marker.exists())
+
+    def test_authority_generator_recovery_finishes_complete_new_set(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        original_bytes = {target: target.read_bytes() for target in targets}
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        real_quarantine = authority_generator._move_to_quarantine
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_process_before_marker_quarantine(
+            repo_root: Path,
+            source: Path,
+            destination: Path,
+            kind: str,
+        ) -> Path:
+            if source == marker and kind == "marker":
+                raise SimulatedProcessLoss
+            return real_quarantine(repo_root, source, destination, kind)
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator,
+                "_move_to_quarantine",
+                side_effect=lose_process_before_marker_quarantine,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        complete_new_bytes = {target: target.read_bytes() for target in targets}
+        self.assertTrue(marker.is_file())
+        self.assertNotEqual(original_bytes, complete_new_bytes)
+
+        with mock.patch.object(authority_generator, "REPO_ROOT", repo):
+            self.assertEqual(authority_generator.main(["--recover"]), 0)
+            self.assertEqual(authority_generator.main(["--recover"]), 0)
+
+        self.assertEqual(
+            complete_new_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+        self.assertFalse(marker.exists())
+
+    def test_authority_generator_recovery_is_idempotent_after_process_loss(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        original_bytes = {target: target.read_bytes() for target in targets}
+        real_replace = os.replace
+        publish_count = 0
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_initial_process(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            nonlocal publish_count
+            real_replace(source, destination)
+            if Path(destination) in targets:
+                publish_count += 1
+                if publish_count == 1:
+                    raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_initial_process,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        recovery_replace_count = 0
+
+        def lose_recovery_process(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            nonlocal recovery_replace_count
+            real_replace(source, destination)
+            if Path(destination) in targets:
+                recovery_replace_count += 1
+                if recovery_replace_count == 1:
+                    raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_recovery_process,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main(["--recover"])
+
+        with mock.patch.object(authority_generator, "REPO_ROOT", repo):
+            self.assertEqual(authority_generator.main(["--recover"]), 0)
+            self.assertEqual(authority_generator.main(["--recover"]), 0)
+
+        self.assertEqual(
+            original_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+
+    def test_authority_generator_recovery_rejects_corrupt_backup_fail_closed(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        real_replace = os.replace
+        publish_count = 0
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_process_after_first_publish(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            nonlocal publish_count
+            real_replace(source, destination)
+            if Path(destination) in targets:
+                publish_count += 1
+                if publish_count == 1:
+                    raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_process_after_first_publish,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        journal = json.loads(marker.read_text(encoding="utf-8"))
+        backup = repo / journal["artifacts"][0]["backup_path"]
+        backup.write_bytes(b"corrupt-backup")
+        mixed_bytes = {target: target.read_bytes() for target in targets}
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            self.assertRaisesRegex(SystemExit, "backup identity is invalid"),
+        ):
+            authority_generator.main(["--recover"])
+
+        self.assertEqual(
+            mixed_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+        self.assertTrue(marker.is_file())
+
+    def test_authority_generator_recovery_rejects_missing_backup_fail_closed(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        real_replace = os.replace
+        publish_count = 0
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_process_after_first_publish(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            nonlocal publish_count
+            real_replace(source, destination)
+            if Path(destination) in targets:
+                publish_count += 1
+                if publish_count == 1:
+                    raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_process_after_first_publish,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        journal = json.loads(marker.read_text(encoding="utf-8"))
+        backup = repo / journal["artifacts"][0]["backup_path"]
+        preserved_missing_backup = backup.with_name(
+            f"{backup.name}.missing-fixture"
+        )
+        os.rename(backup, preserved_missing_backup)
+        mixed_bytes = {target: target.read_bytes() for target in targets}
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            self.assertRaisesRegex(
+                SystemExit,
+                "backup is missing or unsafe",
+            ),
+        ):
+            authority_generator.main(["--recover"])
+
+        self.assertEqual(
+            mixed_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+        self.assertTrue(marker.is_file())
+        self.assertTrue(preserved_missing_backup.is_file())
+
+    def test_authority_generator_recovery_rejects_unsafe_journal_identities(
+        self,
+    ) -> None:
+        repo, _reviewed_commit, arguments = (
+            self.make_authority_generator_cli_fixture()
+        )
+        targets = [
+            repo / relative
+            for relative in (
+                "evidence/project-test-runner/"
+                "optimization-safety-review.v1.json",
+                "evidence/project-test-runner/"
+                "promotion-superset-authority.v2.json",
+            )
+        ]
+        real_replace = os.replace
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        def lose_process_after_first_publish(
+            source: str | bytes,
+            destination: str | bytes,
+        ) -> None:
+            real_replace(source, destination)
+            if Path(destination) == targets[0]:
+                raise SimulatedProcessLoss
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            mock.patch.object(
+                authority_generator.os,
+                "replace",
+                side_effect=lose_process_after_first_publish,
+            ),
+            self.assertRaises(SimulatedProcessLoss),
+        ):
+            authority_generator.main([*arguments[5:], "--write"])
+
+        marker = (
+            repo
+            / "evidence/project-test-runner/"
+            ".promotion-authority-transaction.json"
+        )
+        journal = json.loads(marker.read_text(encoding="utf-8"))
+        journal["unexpected"] = True
+        marker.write_bytes(canonical_json_bytes(journal))
+        mixed_bytes = {target: target.read_bytes() for target in targets}
+
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            self.assertRaisesRegex(SystemExit, "journal fields are invalid"),
+        ):
+            authority_generator.main(["--recover"])
+
+        self.assertEqual(
+            mixed_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+
+        journal.pop("unexpected")
+        journal["artifacts"][0]["canonical_path"] = "../escape.json"
+        marker.write_bytes(canonical_json_bytes(journal))
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            self.assertRaisesRegex(SystemExit, "canonical artifact path is invalid"),
+        ):
+            authority_generator.main(["--recover"])
+        self.assertEqual(
+            mixed_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+
+        journal["artifacts"][0]["canonical_path"] = (
+            "evidence/project-test-runner/"
+            "optimization-safety-review.v1.json"
+        )
+        backup = repo / journal["artifacts"][0]["backup_path"]
+        preserved_backup = backup.with_name(f"{backup.name}.symlink-target")
+        os.rename(backup, preserved_backup)
+        try:
+            os.symlink(preserved_backup.name, backup)
+        except OSError as error:
+            self.skipTest(f"file symlink unavailable: {error}")
+        marker.write_bytes(canonical_json_bytes(journal))
+        with (
+            mock.patch.object(authority_generator, "REPO_ROOT", repo),
+            self.assertRaisesRegex(
+                SystemExit,
+                "backup is missing or unsafe",
+            ),
+        ):
+            authority_generator.main(["--recover"])
+        self.assertEqual(
+            mixed_bytes,
+            {target: target.read_bytes() for target in targets},
+        )
+
     def test_authority_generator_success_preserves_displaced_original_set(
         self,
     ) -> None:

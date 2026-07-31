@@ -6,7 +6,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import stat
 import subprocess
@@ -522,71 +523,460 @@ def _stage_materialization(
     return temporary
 
 
-def _acquire_materialization_marker(repo_root: Path) -> Path:
+def _file_identity(path: Path) -> dict[str, Any]:
+    content = path.read_bytes()
+    return {
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+    }
+
+
+def _content_identity(content: bytes) -> dict[str, Any]:
+    return {
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size": len(content),
+    }
+
+
+def _relative_repo_path(repo_root: Path, path: Path) -> str:
+    return path.relative_to(repo_root).as_posix()
+
+
+def _acquire_materialization_marker(
+    repo_root: Path,
+    journal: dict[str, Any],
+) -> Path:
     marker = (
         repo_root / PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH
     )
-    content = canonical_json_bytes(
-        {
-            "schema_name": (
-                "video2pdf.project-test-promotion-authority-transaction"
-            ),
-            "schema_version": 1,
-            "state": "publishing",
-            "transaction_id": uuid.uuid4().hex,
-            "artifacts": list(PROMOTION_AUTHORITY_ARTIFACT_PATHS),
-        }
-    )
+    content = canonical_json_bytes(journal)
+    created = False
     try:
         with marker.open("xb") as handle:
+            created = True
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
     except OSError as error:
+        if created and os.path.lexists(marker):
+            _move_to_quarantine(
+                repo_root,
+                marker,
+                marker,
+                "invalid-marker",
+            )
         raise SystemExit(
             "cannot acquire Promotion authority materialization transaction"
         ) from error
     return marker
 
 
-def _restore_original(
+def _write_materialization_journal(
     repo_root: Path,
-    destination: Path,
-    backup: Path | None,
+    marker: Path,
+    journal: dict[str, Any],
 ) -> None:
-    if os.path.lexists(destination):
-        _move_to_quarantine(
-            repo_root,
-            destination,
-            destination,
-            "new",
-        )
-    if backup is None:
-        return
-    try:
-        original_bytes = backup.read_bytes()
-    except OSError as error:
-        raise SystemExit(
-            f"cannot read preserved authority artifact: {backup}"
-        ) from error
-    rollback_temp = _stage_materialization(
+    temporary = _stage_materialization(
         repo_root,
-        destination,
-        original_bytes,
+        marker,
+        canonical_json_bytes(journal),
     )
     try:
-        os.replace(rollback_temp, destination)
+        _copy_to_quarantine(repo_root, marker, "journal-version")
+        os.replace(temporary, marker)
     except OSError as error:
-        if os.path.lexists(rollback_temp):
+        if os.path.lexists(temporary):
             _move_to_quarantine(
                 repo_root,
-                rollback_temp,
-                destination,
-                "rollback",
+                temporary,
+                marker,
+                "journal-temp",
             )
         raise SystemExit(
-            f"cannot roll back authority artifact: {destination}"
+            "cannot durably update Promotion authority transaction journal"
         ) from error
+
+
+def _strict_json_object(path: Path) -> dict[str, Any]:
+    def reject_duplicate_pairs(
+        pairs: list[tuple[str, Any]],
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate journal field: {key}")
+            result[key] = value
+        return result
+
+    try:
+        raw = path.read_bytes()
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_pairs,
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        raise SystemExit(
+            "Promotion authority transaction journal is corrupt"
+        ) from error
+    if not isinstance(value, dict):
+        raise SystemExit("Promotion authority transaction journal is invalid")
+    return value
+
+
+def _require_fields(
+    value: dict[str, Any],
+    expected: frozenset[str],
+    label: str,
+) -> None:
+    if frozenset(value) != expected:
+        raise SystemExit(f"{label} fields are invalid")
+
+
+def _journal_path(
+    repo_root: Path,
+    declared: Any,
+    label: str,
+    *,
+    expected: Path | None = None,
+) -> Path:
+    if (
+        not isinstance(declared, str)
+        or "\\" in declared
+        or PurePosixPath(declared).is_absolute()
+        or any(part in {"", ".", ".."} for part in PurePosixPath(declared).parts)
+    ):
+        raise SystemExit(f"{label} path is invalid")
+    path = repo_root.joinpath(*PurePosixPath(declared).parts)
+    if expected is not None and path != expected:
+        raise SystemExit(f"{label} path identity is invalid")
+    try:
+        parent = path.parent.resolve(strict=True)
+        expected_parent = repo_root.joinpath(
+            *PurePosixPath(declared).parent.parts
+        ).resolve(strict=True)
+        if parent != expected_parent:
+            raise OSError("path parent identity mismatch")
+        for component in (path.parent, *path.parent.parents):
+            if component == repo_root.parent:
+                break
+            metadata = component.stat(follow_symlinks=False)
+            if component.is_symlink() or getattr(
+                metadata,
+                "st_file_attributes",
+                0,
+            ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                raise OSError("path contains reparse point")
+            if component == repo_root:
+                break
+    except OSError as error:
+        raise SystemExit(f"{label} path boundary is unproved") from error
+    return path
+
+
+def _ordinary_file_identity(
+    path: Path,
+    label: str,
+) -> dict[str, Any]:
+    try:
+        metadata = path.stat(follow_symlinks=False)
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or metadata.st_nlink != 1
+            or getattr(metadata, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise OSError("not an ordinary private file")
+        return _file_identity(path)
+    except OSError as error:
+        raise SystemExit(f"{label} is missing or unsafe") from error
+
+
+def _declared_identity(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} identity is invalid")
+    _require_fields(value, frozenset({"sha256", "size"}), label)
+    if (
+        not isinstance(value["sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None
+        or type(value["size"]) is not int
+        or value["size"] < 0
+    ):
+        raise SystemExit(f"{label} identity is invalid")
+    return value
+
+
+def _load_materialization_journal(
+    repo_root: Path,
+) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    marker = repo_root / PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH
+    _journal_path(
+        repo_root,
+        PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH.as_posix(),
+        "Promotion authority transaction journal",
+        expected=marker,
+    )
+    _ordinary_file_identity(marker, "Promotion authority transaction journal")
+    journal = _strict_json_object(marker)
+    _require_fields(
+        journal,
+        frozenset(
+            {
+                "schema_name",
+                "schema_version",
+                "transaction_id",
+                "phase",
+                "artifacts",
+            }
+        ),
+        "Promotion authority transaction journal",
+    )
+    if (
+        journal["schema_name"]
+        != "video2pdf.project-test-promotion-authority-transaction"
+        or journal["schema_version"] != 2
+        or not isinstance(journal["transaction_id"], str)
+        or re.fullmatch(r"[0-9a-f]{32}", journal["transaction_id"]) is None
+        or journal["phase"]
+        not in {"publishing", "published", "recovering"}
+        or not isinstance(journal["artifacts"], list)
+        or len(journal["artifacts"]) != len(PROMOTION_AUTHORITY_ARTIFACT_PATHS)
+    ):
+        raise SystemExit("Promotion authority transaction journal is invalid")
+    artifacts: list[dict[str, Any]] = []
+    for index, expected_relative in enumerate(
+        sorted(PROMOTION_AUTHORITY_ARTIFACT_PATHS)
+    ):
+        artifact = journal["artifacts"][index]
+        if not isinstance(artifact, dict):
+            raise SystemExit("Promotion authority journal artifact is invalid")
+        _require_fields(
+            artifact,
+            frozenset(
+                {
+                    "canonical_path",
+                    "staged_path",
+                    "backup_path",
+                    "recovery_stage_path",
+                    "old",
+                    "new",
+                    "publication_state",
+                }
+            ),
+            "Promotion authority journal artifact",
+        )
+        canonical = _journal_path(
+            repo_root,
+            artifact["canonical_path"],
+            "canonical artifact",
+            expected=repo_root / expected_relative,
+        )
+        staged = _journal_path(
+            repo_root,
+            artifact["staged_path"],
+            "staged artifact",
+        )
+        recovery_stage = _journal_path(
+            repo_root,
+            artifact["recovery_stage_path"],
+            "recovery staged artifact",
+        )
+        if (
+            staged.parent != canonical.parent
+            or not staged.name.startswith(f".{canonical.name}.")
+            or not staged.name.endswith(".tmp")
+            or recovery_stage.parent != canonical.parent
+            or recovery_stage.name
+            != f".{canonical.name}.{journal['transaction_id']}.recovery.tmp"
+        ):
+            raise SystemExit("Promotion authority staging identity is invalid")
+        old = artifact["old"]
+        if not isinstance(old, dict):
+            raise SystemExit("Promotion authority old identity is invalid")
+        _require_fields(
+            old,
+            frozenset({"exists", "sha256", "size"}),
+            "Promotion authority old identity",
+        )
+        if type(old["exists"]) is not bool:
+            raise SystemExit("Promotion authority old identity is invalid")
+        if old["exists"]:
+            _declared_identity(
+                {"sha256": old["sha256"], "size": old["size"]},
+                "Promotion authority old",
+            )
+            if not isinstance(artifact["backup_path"], str):
+                raise SystemExit("Promotion authority backup path is invalid")
+            backup = _journal_path(
+                repo_root,
+                artifact["backup_path"],
+                "backup artifact",
+            )
+            if backup.parent != _materialization_quarantine(repo_root):
+                raise SystemExit("Promotion authority backup boundary is invalid")
+            if _ordinary_file_identity(
+                backup, "Promotion authority backup"
+            ) != {"sha256": old["sha256"], "size": old["size"]}:
+                raise SystemExit("Promotion authority backup identity is invalid")
+        else:
+            if (
+                old["sha256"] is not None
+                or old["size"] is not None
+                or artifact["backup_path"] is not None
+            ):
+                raise SystemExit("Promotion authority absent-old identity is invalid")
+            backup = None
+        new = _declared_identity(
+            artifact["new"], "Promotion authority new"
+        )
+        if artifact["publication_state"] not in {"pending", "published"}:
+            raise SystemExit("Promotion authority publication state is invalid")
+        if os.path.lexists(staged):
+            if _ordinary_file_identity(
+                staged, "Promotion authority staged artifact"
+            ) != new:
+                raise SystemExit("Promotion authority staged identity is invalid")
+        if os.path.lexists(recovery_stage):
+            expected_old = (
+                {"sha256": old["sha256"], "size": old["size"]}
+                if old["exists"]
+                else None
+            )
+            if (
+                expected_old is None
+                or _ordinary_file_identity(
+                    recovery_stage,
+                    "Promotion authority recovery stage",
+                )
+                != expected_old
+            ):
+                raise SystemExit(
+                    "Promotion authority recovery stage identity is invalid"
+                )
+        artifacts.append(
+            {
+                "record": artifact,
+                "canonical": canonical,
+                "staged": staged,
+                "backup": backup,
+                "recovery_stage": recovery_stage,
+                "old": old,
+                "new": new,
+            }
+        )
+    return marker, journal, artifacts
+
+
+def _canonical_state(
+    artifact: dict[str, Any],
+    *,
+    recovering: bool,
+) -> str:
+    canonical = artifact["canonical"]
+    if not os.path.lexists(canonical):
+        if not artifact["old"]["exists"] or recovering:
+            return "absent"
+        raise SystemExit("Promotion authority canonical artifact is missing")
+    identity = _ordinary_file_identity(
+        canonical, "Promotion authority canonical artifact"
+    )
+    if identity == artifact["new"]:
+        return "new"
+    old = artifact["old"]
+    if old["exists"] and identity == {
+        "sha256": old["sha256"],
+        "size": old["size"],
+    }:
+        return "old"
+    raise SystemExit("Promotion authority canonical artifact identity is invalid")
+
+
+def _recover_materialization(repo_root: Path) -> str:
+    marker_path = (
+        repo_root / PROMOTION_AUTHORITY_TRANSACTION_MARKER_RELATIVE_PATH
+    )
+    if not os.path.lexists(marker_path):
+        return "no-transaction"
+    marker, journal, artifacts = _load_materialization_journal(repo_root)
+    states = [
+        _canonical_state(
+            artifact,
+            recovering=journal["phase"] == "recovering",
+        )
+        for artifact in artifacts
+    ]
+    if all(state == "new" for state in states):
+        journal["phase"] = "published"
+        for artifact in journal["artifacts"]:
+            artifact["publication_state"] = "published"
+        _write_materialization_journal(repo_root, marker, journal)
+        for artifact in artifacts:
+            if os.path.lexists(artifact["staged"]):
+                _move_to_quarantine(
+                    repo_root,
+                    artifact["staged"],
+                    artifact["canonical"],
+                    "stage",
+                )
+            if os.path.lexists(artifact["recovery_stage"]):
+                _move_to_quarantine(
+                    repo_root,
+                    artifact["recovery_stage"],
+                    artifact["canonical"],
+                    "recovery-stage",
+                )
+        _move_to_quarantine(repo_root, marker, marker, "marker")
+        return "finished-new-set"
+
+    journal["phase"] = "recovering"
+    _write_materialization_journal(repo_root, marker, journal)
+    for artifact, state in zip(artifacts, states, strict=True):
+        canonical = artifact["canonical"]
+        if state == "new":
+            _move_to_quarantine(repo_root, canonical, canonical, "new")
+        if artifact["old"]["exists"] and state != "old":
+            recovery_stage = artifact["recovery_stage"]
+            if not os.path.lexists(recovery_stage):
+                original_bytes = artifact["backup"].read_bytes()
+                try:
+                    with recovery_stage.open("xb") as handle:
+                        handle.write(original_bytes)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except OSError as error:
+                    raise SystemExit(
+                        "cannot stage verified Promotion authority backup"
+                    ) from error
+            os.replace(recovery_stage, canonical)
+    for artifact in artifacts:
+        expected_old = artifact["old"]
+        if expected_old["exists"]:
+            if _ordinary_file_identity(
+                artifact["canonical"],
+                "restored Promotion authority artifact",
+            ) != {
+                "sha256": expected_old["sha256"],
+                "size": expected_old["size"],
+            }:
+                raise SystemExit("Promotion authority old set restoration failed")
+        elif os.path.lexists(artifact["canonical"]):
+            raise SystemExit("Promotion authority absent old artifact was recreated")
+        if os.path.lexists(artifact["staged"]):
+            _move_to_quarantine(
+                repo_root,
+                artifact["staged"],
+                artifact["canonical"],
+                "stage",
+            )
+        if os.path.lexists(artifact["recovery_stage"]):
+            _move_to_quarantine(
+                repo_root,
+                artifact["recovery_stage"],
+                artifact["canonical"],
+                "recovery-stage",
+            )
+    _move_to_quarantine(repo_root, marker, marker, "marker")
+    return "restored-old-set"
 
 
 def _materialize(
@@ -619,10 +1009,10 @@ def _materialize(
             relative_path.as_posix(): hashlib.sha256(content).hexdigest()
             for relative_path, content in encoded.items()
         }
-    marker = _acquire_materialization_marker(repo_root)
     staged: dict[Path, Path] = {}
     backups: dict[Path, Path | None] = {}
-    published: list[Path] = []
+    transaction_id = uuid.uuid4().hex
+    marker: Path | None = None
     try:
         for relative_path in transaction_paths:
             staged[relative_path] = _stage_materialization(
@@ -637,44 +1027,84 @@ def _materialize(
                 if target.exists()
                 else None
             )
+        journal = {
+            "schema_name": (
+                "video2pdf.project-test-promotion-authority-transaction"
+            ),
+            "schema_version": 2,
+            "transaction_id": transaction_id,
+            "phase": "publishing",
+            "artifacts": [
+                {
+                    "canonical_path": relative_path.as_posix(),
+                    "staged_path": _relative_repo_path(
+                        repo_root, staged[relative_path]
+                    ),
+                    "backup_path": (
+                        _relative_repo_path(repo_root, backups[relative_path])
+                        if backups[relative_path] is not None
+                        else None
+                    ),
+                    "recovery_stage_path": _relative_repo_path(
+                        repo_root,
+                        targets[relative_path].parent
+                        / (
+                            f".{targets[relative_path].name}."
+                            f"{transaction_id}.recovery.tmp"
+                        ),
+                    ),
+                    "old": (
+                        {
+                            "exists": True,
+                            **_file_identity(targets[relative_path]),
+                        }
+                        if targets[relative_path].exists()
+                        else {
+                            "exists": False,
+                            "sha256": None,
+                            "size": None,
+                        }
+                    ),
+                    "new": _content_identity(encoded[relative_path]),
+                    "publication_state": "pending",
+                }
+                for relative_path in transaction_paths
+            ],
+        }
+        marker = _acquire_materialization_marker(repo_root, journal)
         for relative_path in transaction_paths:
             os.replace(staged[relative_path], targets[relative_path])
-            published.append(relative_path)
+            artifact = next(
+                item
+                for item in journal["artifacts"]
+                if item["canonical_path"] == relative_path.as_posix()
+            )
+            artifact["publication_state"] = "published"
+            _write_materialization_journal(repo_root, marker, journal)
     except (OSError, SystemExit) as error:
-        rollback_error: SystemExit | None = None
-        try:
-            for relative_path in reversed(published):
-                _restore_original(
-                    repo_root,
-                    targets[relative_path],
-                    backups[relative_path],
-                )
+        if marker is None:
             for relative_path, temporary in staged.items():
                 if os.path.lexists(temporary):
                     _move_to_quarantine(
                         repo_root,
                         temporary,
                         targets[relative_path],
-                        "temp",
+                        "stage",
                     )
-            if os.path.lexists(marker):
-                _move_to_quarantine(
-                    repo_root,
-                    marker,
-                    marker,
-                    "marker",
-                )
-        except SystemExit as rollback_failure:
-            rollback_error = rollback_failure
-        if rollback_error is not None:
-            raise SystemExit(
-                "authority artifact set transaction failed and rollback is "
-                f"incomplete: {rollback_error}"
-            ) from error
+        else:
+            try:
+                _recover_materialization(repo_root)
+            except SystemExit as recovery_error:
+                raise SystemExit(
+                    "authority artifact set transaction failed and rollback is "
+                    f"incomplete: {recovery_error}"
+                ) from error
         raise SystemExit(
             "cannot materialize authority artifact set; canonical set was "
             "rolled back"
         ) from error
+    journal["phase"] = "published"
+    _write_materialization_journal(repo_root, marker, journal)
     _move_to_quarantine(repo_root, marker, marker, "marker")
     return {
         relative_path.as_posix(): hashlib.sha256(content).hexdigest()
@@ -707,8 +1137,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             "parent of a future execution-evidence commit"
         ),
     )
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help=(
+            "recover the repository-owned incomplete authority transaction "
+            "without recomputing authority inputs"
+        ),
+    )
     args = parser.parse_args(argv)
     repo_root = REPO_ROOT.resolve(strict=True)
+    if args.write and args.recover:
+        raise SystemExit("--write and --recover are mutually exclusive")
+    if args.recover:
+        outcome = _recover_materialization(repo_root)
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "mode": "recovered",
+                    "outcome": outcome,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     try:
         assert_no_incomplete_promotion_authority_transaction(repo_root)
     except SourceProvenanceError as error:

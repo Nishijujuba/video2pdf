@@ -1726,23 +1726,14 @@ def _wait(
 ) -> dict[str, Any]:
     initial_snapshot = _inspect(run_dir, project_root)
     if initial_snapshot["status"]["state"] != "running":
-        return _wait_event(initial_snapshot, changed_fields=[])
+        return _wait_event(initial_snapshot)
 
     initial_signature = _meaningful_event_signature(initial_snapshot["status"])
     while True:
         snapshot = _inspect(run_dir, project_root)
         signature = _meaningful_event_signature(snapshot["status"])
-        changed_fields = [
-            field
-            for field, initial_value, current_value in zip(
-                ("state", "failure", "security"),
-                initial_signature,
-                signature,
-            )
-            if initial_value != current_value
-        ]
-        if changed_fields:
-            return _wait_event(snapshot, changed_fields=changed_fields)
+        if signature != initial_signature:
+            return _wait_event(snapshot)
         time.sleep(0.1)
 
 
@@ -1758,15 +1749,12 @@ def _meaningful_event_signature(
 
 def _wait_event(
     snapshot: Mapping[str, Any],
-    *,
-    changed_fields: list[str],
 ) -> dict[str, Any]:
     status = snapshot["status"]
     return {
         "run_id": snapshot["run_id"],
         "run_dir": snapshot["run_dir"],
         "state": status["state"],
-        "changed_fields": changed_fields,
         "exit_code": status.get("exit_code"),
         "failure": status.get("failure"),
         "security": status.get("security"),

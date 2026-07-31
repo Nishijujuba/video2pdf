@@ -1580,17 +1580,12 @@ class PersistedCommandCliTests(unittest.TestCase):
         waited_data = json.loads(waited.stdout)["data"]
         self.assertEqual(waited_data["state"], "succeeded")
         self.assertEqual(waited_data["exit_code"], 0)
-        self.assertIn(
-            waited_data["changed_fields"],
-            ([], ["state", "security"]),
-        )
         self.assertEqual(
             set(waited_data),
             {
                 "run_id",
                 "run_dir",
                 "state",
-                "changed_fields",
                 "exit_code",
                 "failure",
                 "security",

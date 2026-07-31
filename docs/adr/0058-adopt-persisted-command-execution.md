@@ -21,9 +21,9 @@ The runner uses a detached supervisor to separate command lifetime from agent-se
 
 Each run ID and directory form immutable history. Accepted exit codes are fixed before launch. Observation may reconcile persisted state against process identity, while it cannot restart, terminate, attach to, or take over the target. Every rerun creates a new identity and leaves earlier evidence unchanged.
 
-Persisted execution heartbeat and user-facing progress are separate projections. The heartbeat proves execution observability; it does not create a notification obligation. User-facing updates are event-driven and limited to terminal state, security eligibility changes, explicit target milestones, errors, blockers, and user decisions. Repeated `running` observations, log growth, heartbeat refreshes, and individual observation-window timeouts remain silent.
+Persisted execution heartbeat and user-facing progress are separate projections. The heartbeat proves execution observability; it does not create a notification obligation. User-facing updates are event-driven and limited to terminal state, security eligibility changes, explicit target milestones, errors, blockers, and user decisions. `wait` blocks until a meaningful persisted event and returns a compact diagnostic projection without raw log lines. Repeated `running` observations, log growth, and heartbeat refreshes remain internal telemetry.
 
-When a result blocks delivery, the initiating task may continue silent observation. When it does not block delivery, the task returns the immutable run directory and allows a later session to recover observation. A `wait` timeout with a current `running` state changes no command authority or failure classification.
+When a result blocks delivery, the initiating task may launch one `wait` process and silently observe that same process through the tool layer. Timer-based `wait` relaunches are excluded because they create redundant model wakeups and repeated payloads. When the result does not block delivery, the task returns the immutable run directory and allows a later session to recover observation.
 
 Retention is manual retention. The runner never truncates, rotates, overwrites, expires, or deletes a run. Repository operators may later move obsolete material within the deletion-staging policy, and permanent deletion remains outside automated execution.
 

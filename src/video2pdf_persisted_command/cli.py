@@ -135,12 +135,14 @@ def _parser() -> argparse.ArgumentParser:
 
     wait = commands.add_parser(
         "wait",
-        help="observe until terminal state or observation timeout",
-        description="Observe until terminal state or until the observation window ends.",
+        help="wait for a meaningful persisted-command event",
+        description=(
+            "Wait until state, failure, or security eligibility changes, then "
+            "return one compact event. Heartbeats and log growth do not return."
+        ),
         **help_options,
     )
     wait.add_argument("--run-dir", required=True, type=Path)
-    wait.add_argument("--timeout-seconds", type=float)
 
     commands.add_parser(
         "list",
@@ -1721,16 +1723,62 @@ def _reconcile_locked(snapshot: dict[str, Any]) -> dict[str, Any]:
 def _wait(
     run_dir: Path,
     project_root: Path,
-    timeout_seconds: float | None,
-) -> tuple[dict[str, Any], bool]:
-    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+) -> dict[str, Any]:
+    initial_snapshot = _inspect(run_dir, project_root)
+    if initial_snapshot["status"]["state"] != "running":
+        return _wait_event(initial_snapshot, changed_fields=[])
+
+    initial_signature = _meaningful_event_signature(initial_snapshot["status"])
     while True:
         snapshot = _inspect(run_dir, project_root)
-        if snapshot["status"]["state"] != "running":
-            return snapshot, False
-        if deadline is not None and time.monotonic() >= deadline:
-            return snapshot, True
+        signature = _meaningful_event_signature(snapshot["status"])
+        changed_fields = [
+            field
+            for field, initial_value, current_value in zip(
+                ("state", "failure", "security"),
+                initial_signature,
+                signature,
+            )
+            if initial_value != current_value
+        ]
+        if changed_fields:
+            return _wait_event(snapshot, changed_fields=changed_fields)
         time.sleep(0.1)
+
+
+def _meaningful_event_signature(
+    status: Mapping[str, Any],
+) -> tuple[Any, Any, Any]:
+    return (
+        status.get("state"),
+        status.get("failure"),
+        status.get("security"),
+    )
+
+
+def _wait_event(
+    snapshot: Mapping[str, Any],
+    *,
+    changed_fields: list[str],
+) -> dict[str, Any]:
+    status = snapshot["status"]
+    return {
+        "run_id": snapshot["run_id"],
+        "run_dir": snapshot["run_dir"],
+        "state": status["state"],
+        "changed_fields": changed_fields,
+        "exit_code": status.get("exit_code"),
+        "failure": status.get("failure"),
+        "security": status.get("security"),
+        "latest_output_at": status.get("latest_output_at"),
+        "log_sizes": status.get("log_sizes"),
+        "log_files": {
+            "stdout": "stdout.log",
+            "stderr": "stderr.log",
+            "merged": "command.log",
+            "status": "status.json",
+        },
+    }
 
 
 def _result(operation: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1748,7 +1796,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.operation == "_supervise":
         return _supervise(args.run_dir.resolve())
     project_root = Path(__file__).resolve().parents[2]
-    timed_out = False
     if args.operation == "start":
         data = _start(args, project_root)
     elif args.operation == "show":
@@ -1758,15 +1805,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.operation == "reconcile":
         data = _reconcile(args.run_dir, project_root)
     elif args.operation == "wait":
-        data, timed_out = _wait(
+        data = _wait(
             args.run_dir,
             project_root,
-            args.timeout_seconds,
         )
     else:
         raise AssertionError(f"unsupported parsed operation: {args.operation}")
     sys.stdout.write(json.dumps(_result(args.operation, data), ensure_ascii=False, sort_keys=True) + "\n")
-    return 124 if timed_out else 0
+    return 0
 
 
 if __name__ == "__main__":

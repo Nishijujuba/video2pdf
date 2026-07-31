@@ -44,10 +44,16 @@ def run_cli(
     )
 
 
+def show_data(run_dir: Path) -> dict[str, Any]:
+    shown = run_cli("show", "--run-dir", str(run_dir))
+    if shown.returncode != 0:
+        raise AssertionError(shown.stderr or shown.stdout)
+    return json.loads(shown.stdout)["data"]
+
+
 def run_to_terminal(
     *start_arguments: str,
     env: dict[str, str] | None = None,
-    timeout_seconds: float = 20,
 ) -> tuple[
     subprocess.CompletedProcess[str],
     subprocess.CompletedProcess[str],
@@ -62,12 +68,10 @@ def run_to_terminal(
         "wait",
         "--run-dir",
         str(run_dir),
-        "--timeout-seconds",
-        str(timeout_seconds),
     )
     if waited.returncode != 0:
         raise AssertionError(waited.stderr or waited.stdout)
-    return started, waited, run_dir, json.loads(waited.stdout)["data"]
+    return started, waited, run_dir, show_data(run_dir)
 
 
 def shareable_metadata(
@@ -390,7 +394,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             "-c",
             "print('must not launch')",
             env=env,
-            timeout_seconds=5,
         )
         self.assertEqual(data["status"]["state"], "launch_failed")
         self.assertEqual(
@@ -983,11 +986,11 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        event = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
+        self.assertEqual(event["state"], "succeeded")
         self.assertEqual(
             data["status"]["security"],
             {
@@ -1137,12 +1140,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "5",
         )
 
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["status"]["state"], "launch_failed")
         self.assertIsNone(data["status"]["exit_code"])
         self.assertEqual(
@@ -1193,11 +1194,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["status"]["state"], "launch_failed")
         self.assertEqual(
             data["status"]["failure"]["kind"],
@@ -1311,11 +1310,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         status = data["status"]
         self.assertEqual(status["state"], "launch_failed")
         self.assertIsNone(status["exit_code"])
@@ -1416,12 +1413,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "20",
         )
 
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["command"]["accepted_exit_codes"], [7])
         self.assertEqual(data["status"]["state"], "succeeded")
         self.assertEqual(data["status"]["exit_code"], 7)
@@ -1446,12 +1441,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "20",
         )
 
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        status = json.loads(waited.stdout)["data"]["status"]
+        status = show_data(run_dir)["status"]
         self.assertEqual(status["state"], "failed")
         self.assertEqual(status["exit_code"], 7)
         self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "7\n")
@@ -1582,13 +1575,41 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "20",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         waited_data = json.loads(waited.stdout)["data"]
-        self.assertEqual(waited_data["status"]["state"], "succeeded")
-        self.assertEqual(waited_data["status"]["exit_code"], 0)
+        self.assertEqual(waited_data["state"], "succeeded")
+        self.assertEqual(waited_data["exit_code"], 0)
+        self.assertIn(
+            waited_data["changed_fields"],
+            ([], ["state", "security"]),
+        )
+        self.assertEqual(
+            set(waited_data),
+            {
+                "run_id",
+                "run_dir",
+                "state",
+                "changed_fields",
+                "exit_code",
+                "failure",
+                "security",
+                "latest_output_at",
+                "log_sizes",
+                "log_files",
+            },
+        )
+        self.assertEqual(
+            waited_data["log_files"],
+            {
+                "stdout": "stdout.log",
+                "stderr": "stderr.log",
+                "merged": "command.log",
+                "status": "status.json",
+            },
+        )
+        self.assertNotIn("stdout-one", waited.stdout)
+        self.assertNotIn("stderr-one", waited.stdout)
         self.assertEqual((run_dir / "exit-code.txt").read_text(encoding="utf-8"), "0\n")
         self.assertEqual(
             (run_dir / "stdout.log").read_text(encoding="utf-8"),
@@ -1614,6 +1635,18 @@ class PersistedCommandCliTests(unittest.TestCase):
             for expected_stream, expected_payload in expected_entries
         ]
         self.assertEqual(positions, sorted(positions))
+
+    def test_wait_rejects_observation_timeout_windows(self) -> None:
+        result = run_cli(
+            "wait",
+            "--run-dir",
+            str(PROJECT_ROOT / "待删除" / "long-running" / "unused"),
+            "--timeout-seconds",
+            "55",
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unrecognized arguments: --timeout-seconds 55", result.stderr)
 
     def test_partial_stdout_is_persisted_with_telemetry_before_release(self) -> None:
         fixture_root = (
@@ -1697,12 +1730,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "10",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
-            json.loads(waited.stdout)["data"]["status"]["state"],
+            json.loads(waited.stdout)["data"]["state"],
             "succeeded",
         )
 
@@ -1787,8 +1818,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
@@ -1883,12 +1912,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
-            json.loads(waited.stdout)["data"]["status"]["state"],
+            json.loads(waited.stdout)["data"]["state"],
             "succeeded",
         )
 
@@ -1915,8 +1942,6 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "wait",
                 "--run-dir",
                 data["run_dir"],
-                "--timeout-seconds",
-                "10",
             )
             self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
             return data
@@ -2001,8 +2026,6 @@ class PersistedCommandCliTests(unittest.TestCase):
                 "wait",
                 "--run-dir",
                 item["run_dir"],
-                "--timeout-seconds",
-                "60",
             )
             self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
 
@@ -2127,8 +2150,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
 
@@ -2529,8 +2550,6 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
@@ -2648,11 +2667,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        final_status = json.loads(waited.stdout)["data"]["status"]
+        final_status = show_data(run_dir)["status"]
         self.assertEqual(final_status["state"], "succeeded")
         self.assertGreaterEqual(final_status["elapsed_seconds"], 25)
 
@@ -2749,7 +2766,7 @@ class PersistedCommandCliTests(unittest.TestCase):
 
         commands = (
             ("show", "--run-dir", str(run_dir)),
-            ("wait", "--run-dir", str(run_dir), "--timeout-seconds", "2"),
+            ("wait", "--run-dir", str(run_dir)),
             ("list",),
         )
         all_observers: list[subprocess.Popen[str]] = []
@@ -2807,7 +2824,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 observer.communicate(timeout=120) for observer in observers
             ]
             for observer, (stdout, stderr) in zip(observers, observer_results):
-                self.assertIn(observer.returncode, {0, 124}, stderr or stdout)
+                self.assertEqual(observer.returncode, 0, stderr or stdout)
 
         try:
             heartbeat_observers, heartbeat_release = start_observer_wave(
@@ -2822,7 +2839,6 @@ class PersistedCommandCliTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(heartbeat_status["state"], "running")
-            release_observer_wave(heartbeat_observers, heartbeat_release)
 
             terminal_observers, terminal_release = start_observer_wave(
                 "terminal"
@@ -2849,6 +2865,7 @@ class PersistedCommandCliTests(unittest.TestCase):
                 timeout_seconds=5,
             )
             self.assertEqual(terminal_status["state"], "succeeded")
+            release_observer_wave(heartbeat_observers, heartbeat_release)
             release_observer_wave(terminal_observers, terminal_release)
         finally:
             release_target.write_text("release\n", encoding="utf-8")
@@ -2862,11 +2879,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "30",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        final_status = json.loads(waited.stdout)["data"]["status"]
+        final_status = show_data(run_dir)["status"]
         self.assertEqual(final_status["state"], "succeeded")
         self.assertEqual(final_status["exit_code"], 0)
         self.assertNotEqual(
@@ -2908,11 +2923,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        status = json.loads(waited.stdout)["data"]["status"]
+        status = show_data(run_dir)["status"]
         self.assertEqual(status["state"], "succeeded")
         self.assertEqual(status["exit_code"], 0)
         self.assertEqual(attempts_path.read_text(encoding="utf-8"), "4")
@@ -2951,11 +2964,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["status"]["state"], "unknown")
         self.assertEqual(data["status"]["exit_code"], 0)
         self.assertEqual(
@@ -3059,12 +3070,10 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
         self.assertEqual(
-            json.loads(waited.stdout)["data"]["status"]["state"],
+            json.loads(waited.stdout)["data"]["state"],
             "unknown",
         )
 
@@ -3107,11 +3116,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "10",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["status"]["state"], "unknown")
         self.assertEqual(data["status"]["exit_code"], 0)
         self.assertEqual(
@@ -3162,11 +3169,9 @@ class PersistedCommandCliTests(unittest.TestCase):
             "wait",
             "--run-dir",
             str(run_dir),
-            "--timeout-seconds",
-            "60",
         )
         self.assertEqual(waited.returncode, 0, waited.stderr or waited.stdout)
-        data = json.loads(waited.stdout)["data"]
+        data = show_data(run_dir)
         self.assertEqual(data["status"]["state"], "unknown")
         self.assertIsNone(data["status"]["exit_code"])
         self.assertEqual(

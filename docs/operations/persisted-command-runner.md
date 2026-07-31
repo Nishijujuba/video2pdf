@@ -15,15 +15,15 @@ All examples run from the repository root with the project Python runtime:
 ```powershell
 $python = 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe'
 & $python -X utf8 -B scripts\persisted_command.py start --task-name "<task-name>" --cwd "<working-directory>" -- <command> <arguments>
-& $python -X utf8 -B scripts\persisted_command.py wait --run-dir "<run-dir>" --timeout-seconds 3600
+& $python -X utf8 -B scripts\persisted_command.py wait --run-dir "<run-dir>"
 & $python -X utf8 -B scripts\persisted_command.py list
 & $python -X utf8 -B scripts\persisted_command.py show --run-dir "<run-dir>"
 & $python -X utf8 -B scripts\persisted_command.py reconcile --run-dir "<run-dir>"
 ```
 
-`start` returns JSON containing `data.run_id` and `data.run_dir`. `wait` observes until a terminal state or the requested observation timeout. `list` discovers all retained runs. `show` reads one record. `reconcile` checks persisted process identity and may correct a stale non-terminal status without restarting, terminating, attaching to, or taking over the target.
+`start` returns JSON containing `data.run_id` and `data.run_dir`. `wait` blocks until state, structured failure, or security eligibility changes and then returns one compact event. An already-terminal run returns its current terminal event immediately. `list` discovers all retained runs. `show` reads one complete record. `reconcile` checks persisted process identity and may correct a stale non-terminal status without restarting, terminating, attaching to, or taking over the target.
 
-On Windows, persisted execution must not leave a visible PowerShell window open. Let `start` return immediately after it launches the detached supervisor, then observe the run later with non-blocking `show` or `reconcile` calls. Use a blocking `wait` only when the calling tool guarantees hidden-window execution.
+On Windows, persisted execution must not leave a visible PowerShell window open. Let `start` return immediately after it launches the detached supervisor, then observe the run later with non-blocking `show` or `reconcile` calls. Use `wait` only when the calling tool guarantees hidden-window execution. Launch one `wait` process and keep observing that same process through the tool layer; timed relaunches recreate model wakeups and JSON payloads. Set the calling tool's command timeout longer than the expected wait duration because a short command timeout terminates the observer.
 
 ## User-facing notification policy
 
@@ -34,9 +34,9 @@ Use one of two observation modes:
 - When the result blocks the requested delivery, keep the task active and inspect it silently with `show`, `reconcile`, or a hidden-window `wait`.
 - When the result does not block the current delivery, return control with `data.run_dir`; a later session can recover it through `list`, `show`, or `reconcile`.
 
-Emit a user-facing update only for a terminal state, a changed security classification or `acceptance_evidence_eligible` value, an explicit machine-readable milestone from the target, or an error, blocker, or user decision. Raw log growth, a newer `heartbeat_at`, an unchanged `running` state, and expiration of one `wait` observation window remain silent observations.
+Emit a user-facing update only for a terminal state, a changed security classification or `acceptance_evidence_eligible` value, an explicit machine-readable milestone from the target, or an error, blocker, or user decision. Raw log growth, a newer `heartbeat_at`, and an unchanged `running` state remain silent observations.
 
-`wait` timeout means only that the observation window ended. When the returned state remains `running`, observe again without calling the command failed, stalled, or at risk. Report `interrupted` and `unknown` immediately because continuity can no longer be proven. If a higher-priority runtime requires a chat heartbeat, use the longest permitted interval and emit only its minimal required text.
+`wait` does not accept an observation timeout. It emits a compact event containing state, exit code, structured failure and security fields, latest-output time, log sizes, and log filenames relative to `run_dir`. It never embeds raw log lines. Use `show` for the complete persisted snapshot, then read `stdout.log`, `stderr.log`, or `command.log` only when diagnosis requires them. Report `interrupted` and `unknown` immediately because continuity can no longer be proven. If a higher-priority runtime requires a chat heartbeat, use the longest permitted interval and emit only its minimal required text.
 
 At run creation, the runner also generates an independent 256-bit random
 `run_nonce`. It is recorded in `command.json` and every `status.json`, then
@@ -116,10 +116,10 @@ $python = 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe'
 & $python -X utf8 -B scripts\persisted_command.py list
 & $python -X utf8 -B scripts\persisted_command.py show --run-dir "<data.run_dir>"
 & $python -X utf8 -B scripts\persisted_command.py reconcile --run-dir "<data.run_dir>"
-& $python -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>" --timeout-seconds 60
+& $python -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>"
 ```
 
-A successful terminal response reports `status.state` as `succeeded` and `status.exit_code` as `0`. The run directory contains `command.json`, `status.json`, `stdout.log`, `stderr.log`, `command.log`, and `exit-code.txt`. `stdout.log` contains both controlled messages; `exit-code.txt` contains the terminal `0`. These persisted files are the terminal evidence located from another process.
+A successful `wait` event reports `data.state` as `succeeded` and `data.exit_code` as `0`. The run directory contains `command.json`, `status.json`, `stdout.log`, `stderr.log`, `command.log`, and `exit-code.txt`. `stdout.log` contains both controlled messages; `exit-code.txt` contains the terminal `0`. These persisted files are the terminal evidence located from another process.
 
 ## Recovery and evidence use
 

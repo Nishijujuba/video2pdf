@@ -28,7 +28,7 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_
 The accepted exit-code set defaults to `{0}`. When a command needs another set, declare every accepted code before launch by repeating `--accepted-exit-code <code>` before `--`, including `0` when it must remain accepted; accepted exit codes are immutable after launch. Use the same Python entrypoint for observation:
 
 ```powershell
-D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>" --timeout-seconds 3600
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>"
 D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py list
 D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py show --run-dir "<data.run_dir>"
 D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py reconcile --run-dir "<data.run_dir>"
@@ -36,7 +36,7 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_
 
 After session loss, a new session must run `list`, identify the immutable run directory, then use `show`, `reconcile`, or `wait`. `reconcile` only observes process identity and corrects persisted state; it never restarts, terminates, attaches to, or takes over a process. Terminal state `succeeded` or `failed` requires an actual exit code. `launch_failed` means no child was created, `interrupted` means the recorded live process is missing, and `unknown` means continuity cannot be proven. Accepted completion is proven by terminal `status.json` plus `exit-code.txt`, not by generated artifacts alone.
 
-On Windows, persisted execution must not leave a visible PowerShell window open. `start` returns immediately after launching the detached supervisor. Observe the run later with non-blocking `show` or `reconcile` calls. A blocking `wait` is allowed only when the calling tool guarantees hidden-window execution.
+On Windows, persisted execution must not leave a visible PowerShell window open. `start` returns immediately after launching the detached supervisor. Observe the run later with non-blocking `show` or `reconcile` calls. `wait` blocks until a meaningful event and is allowed only when the calling tool guarantees hidden-window execution. Start one `wait` process and keep observing that same process through the tool layer; do not relaunch `wait` on a timer. The calling tool's command timeout must cover the expected wait duration because a short command timeout terminates the observer.
 
 Every run is retained under `待删除/long-running/` with complete `stdout.log`, `stderr.log`, `command.log`, `command.json`, and `status.json`. The runner never truncates, rotates, overwrites, or automatically deletes history. Cleanup is manual and follows the repository rule that material marked for deletion remains staged under `待删除`.
 
@@ -44,7 +44,7 @@ Persisted metadata omits environment values and redacts recognized sensitive arg
 
 Persisted heartbeats are execution evidence, not user-facing progress events. After `start`, report the stable task name and returned `data.run_dir` once. If completion blocks the requested delivery, keep the task active and observe it silently; otherwise return control with the run directory so a later session can recover through `list`, `show`, or `reconcile`.
 
-User-facing updates are event-driven. Emit an update only when the persisted state becomes terminal, the security classification or `acceptance_evidence_eligible` changes, the target emits an explicit machine-readable milestone, or an error, blocker, or user decision appears. Log growth, `heartbeat_at` changes, an unchanged `running` state, and expiration of one `wait` observation window are not progress events. A `wait` timeout with state `running` must be observed again without describing the command as failed or at risk. Report `interrupted` or `unknown` immediately. When a higher-priority runtime rule mandates a heartbeat, use the longest permitted interval and emit only the required minimal heartbeat.
+User-facing updates are event-driven. Emit an update only when the persisted state becomes terminal, the security classification or `acceptance_evidence_eligible` changes, the target emits an explicit machine-readable milestone, or an error, blocker, or user decision appears. Log growth, `heartbeat_at` changes, and an unchanged `running` state are not progress events. `wait` emits one compact event containing state, exit code, structured failure and security fields, log telemetry, and log filenames relative to `run_dir`; it never embeds raw log lines. Use `show` for a complete persisted snapshot and read the retained logs only when diagnosis requires them. Report `interrupted` or `unknown` immediately. When a higher-priority runtime rule mandates a heartbeat, use the longest permitted interval and emit only the required minimal heartbeat.
 
 This runner does not activate Workflow Kernel 2.0 and does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records. Those authorities keep their existing validation and cutover rules. The complete operator walkthrough is in `docs/operations/persisted-command-runner.md`.
 

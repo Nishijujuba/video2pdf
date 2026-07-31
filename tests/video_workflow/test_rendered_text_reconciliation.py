@@ -504,6 +504,21 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 self.assertEqual("contract_invalid", envelope["classification"])
                 self.assertFalse((workspace / "adapter-output/final.pdf").exists())
 
+    def test_public_final_compile_rejects_incomplete_compiler_evidence(self) -> None:
+        for updates in (
+            {"fixture_incomplete_coverage": True},
+            {"fixture_incomplete_trace": True},
+            {"fixture_same_id_object_drift": True},
+        ):
+            with self.subTest(updates=updates):
+                root, paths = self.fixture()
+                completed, envelope, workspace = self.final_compile(
+                    root, paths, plan_updates=updates
+                )
+                self.assertEqual(40, completed.returncode)
+                self.assertEqual("compile_dependency_gap", envelope["classification"])
+                self.assertFalse((workspace / "final-compile-report.json").exists())
+
     def test_complete_current_final_compile_evidence_passes(self) -> None:
         _, paths = self.fixture()
         completed, envelope = self.reconcile(paths)

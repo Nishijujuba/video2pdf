@@ -478,10 +478,49 @@ class GuardedFinalCompileProvider:
             raise CompileDependencyGap("Rendered Text Object Inventory binds another PDF")
         _require_fingerprint(rendered, "inventory_sha256", "Rendered Text Object Inventory")
         self.registry.validate("rendered-text-object-inventory", rendered)
+        coverage = rendered["coverage"]
+        if any(
+            coverage.get(field) is not True
+            for field in (
+                "content_streams_complete",
+                "annotations_complete",
+                "form_xobjects_complete",
+                "declared_raster_text_complete",
+            )
+        ):
+            raise CompileDependencyGap("Rendered Text Object Inventory coverage is incomplete")
+        if rendered.get("extractor_suite") != plan["extractor_suite"]:
+            raise CompileDependencyGap("Rendered Text Object Inventory extractor suite drifted")
+        planned_object_ids = [item["object_id"] for item in plan["rendered_objects"]]
+        rendered_object_ids: list[str] = []
+        rendered_object_projection: list[dict[str, Any]] = []
+        for item in rendered["objects"]:
+            rendered_object_ids.append(item["object_id"])
+            rendered_object_projection.append(
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"text_sha256", "object_sha256"}
+                }
+            )
+            if (
+                item.get("text_sha256")
+                != hashlib.sha256(item["exact_utf8_text"].encode("utf-8")).hexdigest()
+                or item.get("object_sha256")
+                != _fingerprint_without(item, "object_sha256")
+            ):
+                raise CompileDependencyGap("Rendered Text Object Inventory object drifted")
+        if (
+            len(rendered_object_ids) != len(set(rendered_object_ids))
+            or sorted(rendered_object_ids) != sorted(planned_object_ids)
+            or rendered_object_projection != plan["rendered_objects"]
+        ):
+            raise CompileDependencyGap("Rendered Text Object Inventory object contract drifted")
         trace = read_json(trace_path)
         if (
             trace.get("text_origin_plan_sha256") != plan["plan_sha256"]
             or trace.get("final_artifact_seal_sha256") != final_seal["seal_sha256"]
+            or trace.get("edges") != plan["edges"]
         ):
             raise CompileDependencyGap("compiler Text Origin trace is stale")
 

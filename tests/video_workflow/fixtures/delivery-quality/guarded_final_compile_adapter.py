@@ -57,6 +57,8 @@ with fitz.open(pdf) as rendered_pdf:
     for page in range(1, plan["page_count"] + 1):
         rendered_pdf[page - 1].get_pixmap().save(pages / f"page_{page:03d}.png")
 objects = plan["rendered_objects"]
+if plan.get("fixture_same_id_object_drift", False):
+    objects[0]["exact_utf8_text"] = "same id, changed text"
 for item in objects:
     item["text_sha256"] = hashlib.sha256(item["exact_utf8_text"].encode("utf-8")).hexdigest()
     item["object_sha256"] = fingerprint(item)
@@ -69,7 +71,7 @@ rendered = {
     "coverage": {
         "page_count": plan["page_count"],
         "pages_scanned": list(range(1, plan["page_count"] + 1)),
-        "content_streams_complete": True,
+        "content_streams_complete": not plan.get("fixture_incomplete_coverage", False),
         "annotations_complete": True,
         "form_xobjects_complete": True,
         "declared_raster_text_complete": True,
@@ -83,7 +85,11 @@ write_json(
     {
         "text_origin_plan_sha256": plan["plan_sha256"],
         "final_artifact_seal_sha256": final_seal["seal_sha256"],
-        "edges": plan["edges"],
+        "edges": (
+            plan["edges"][:-1]
+            if plan.get("fixture_incomplete_trace", False)
+            else plan["edges"]
+        ),
     },
 )
 manifest = json.loads(Path(request["compile_manifest_path"]).read_text(encoding="utf-8"))

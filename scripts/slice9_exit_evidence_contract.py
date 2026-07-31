@@ -28,8 +28,19 @@ COMMANDS = (
         0,
     ),
     (
-        "slice9-qualification-tests",
-        (sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v", *QUALIFICATION_TEST_TARGETS),
+        "slice9-final-compile-tests",
+        (
+            sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v",
+            *QUALIFICATION_TEST_TARGETS[:4],
+        ),
+        0,
+    ),
+    (
+        "slice9-reconciliation-tests",
+        (
+            sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v",
+            *QUALIFICATION_TEST_TARGETS[4:],
+        ),
         0,
     ),
 )
@@ -40,7 +51,16 @@ EXPECTED_CHECKPOINTS = [
 ]
 
 RESULT_BINDINGS = [
-    {"result_id": result_id, "result_kind": result_kind, "command_id": "slice9-qualification-tests", "test_target": test_target}
+    {
+        "result_id": result_id,
+        "result_kind": result_kind,
+        "command_id": (
+            "slice9-final-compile-tests"
+            if test_target in QUALIFICATION_TEST_TARGETS[:4]
+            else "slice9-reconciliation-tests"
+        ),
+        "test_target": test_target,
+    }
     for result_id, result_kind, test_target in (
         ("guarded_final_compile_produces_evidence", "positive", QUALIFICATION_TEST_TARGETS[0]),
         ("final_compile_stale_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[1]),

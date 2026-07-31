@@ -13,6 +13,7 @@ QUALIFICATION_TEST_TARGETS = (
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_stale_precompile_seal_before_adapter",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_origin_plan_before_adapter",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_public_final_compile_rejects_incomplete_compiler_evidence",
+    "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_complete_current_final_compile_evidence_passes",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_omission_substitution_addition_and_generated_mismatch_are_failures",
     "tests.video_workflow.test_rendered_text_reconciliation.RenderedTextReconciliationCliTests.test_unmapped_unsupported_recipe_and_incomplete_coverage_block_as_contract_gaps",
@@ -31,7 +32,7 @@ COMMANDS = (
         "slice9-final-compile-tests",
         (
             sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v",
-            *QUALIFICATION_TEST_TARGETS[:4],
+            *QUALIFICATION_TEST_TARGETS[:5],
         ),
         0,
     ),
@@ -39,7 +40,7 @@ COMMANDS = (
         "slice9-reconciliation-tests",
         (
             sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v",
-            *QUALIFICATION_TEST_TARGETS[4:],
+            *QUALIFICATION_TEST_TARGETS[5:],
         ),
         0,
     ),
@@ -56,7 +57,7 @@ RESULT_BINDINGS = [
         "result_kind": result_kind,
         "command_id": (
             "slice9-final-compile-tests"
-            if test_target in QUALIFICATION_TEST_TARGETS[:4]
+            if test_target in QUALIFICATION_TEST_TARGETS[:5]
             else "slice9-reconciliation-tests"
         ),
         "test_target": test_target,
@@ -66,12 +67,13 @@ RESULT_BINDINGS = [
         ("final_compile_stale_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[1]),
         ("incomplete_origin_plan_rejected", "negative", QUALIFICATION_TEST_TARGETS[2]),
         ("incomplete_compiler_evidence_rejected", "negative", QUALIFICATION_TEST_TARGETS[3]),
-        ("complete_final_evidence_passes", "positive", QUALIFICATION_TEST_TARGETS[4]),
-        ("classified_fidelity_failures_block", "negative", QUALIFICATION_TEST_TARGETS[5]),
-        ("contract_gaps_fail_closed", "negative", QUALIFICATION_TEST_TARGETS[6]),
-        ("stale_precompile_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[7]),
-        ("stale_compile_report_rejected", "negative", QUALIFICATION_TEST_TARGETS[8]),
-        ("closure_and_coverage_gaps_rejected", "negative", QUALIFICATION_TEST_TARGETS[9]),
+        ("incomplete_evidence_repaired_then_passes", "recovery", QUALIFICATION_TEST_TARGETS[4]),
+        ("complete_final_evidence_passes", "positive", QUALIFICATION_TEST_TARGETS[5]),
+        ("classified_fidelity_failures_block", "negative", QUALIFICATION_TEST_TARGETS[6]),
+        ("contract_gaps_fail_closed", "negative", QUALIFICATION_TEST_TARGETS[7]),
+        ("stale_precompile_seal_rejected", "negative", QUALIFICATION_TEST_TARGETS[8]),
+        ("stale_compile_report_rejected", "negative", QUALIFICATION_TEST_TARGETS[9]),
+        ("closure_and_coverage_gaps_rejected", "negative", QUALIFICATION_TEST_TARGETS[10]),
     )
 ]
 
@@ -87,6 +89,7 @@ RESULTS = {
         "stale_compile_report_rejected",
         "closure_and_coverage_gaps_rejected",
     ],
+    "recovery": ["incomplete_evidence_repaired_then_passes"],
 }
 
 FIXTURE_SPECS = (

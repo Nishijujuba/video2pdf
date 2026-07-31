@@ -519,6 +519,42 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 self.assertEqual("compile_dependency_gap", envelope["classification"])
                 self.assertFalse((workspace / "final-compile-report.json").exists())
 
+    def test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes(self) -> None:
+        failed_root, failed_paths = self.fixture()
+        failed, _, failed_workspace = self.final_compile(
+            failed_root,
+            failed_paths,
+            plan_updates={"fixture_incomplete_trace": True},
+        )
+        self.assertEqual(40, failed.returncode)
+        self.assertFalse((failed_workspace / "final-compile-report.json").exists())
+
+        repaired_root, repaired_paths = self.fixture()
+        repaired, envelope, repaired_workspace = self.final_compile(
+            repaired_root, repaired_paths
+        )
+        self.assertEqual(0, repaired.returncode, repaired.stderr)
+        self.assertEqual("guarded_final_compile_complete", envelope["classification"])
+        self.assertTrue((repaired_workspace / "final-compile-report.json").is_file())
+
+    def test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes(self) -> None:
+        failed_root, failed_paths = self.fixture()
+        failed, _, failed_workspace = self.final_compile(
+            failed_root,
+            failed_paths,
+            plan_updates={"fixture_incomplete_trace": True},
+        )
+        self.assertEqual(40, failed.returncode)
+        self.assertFalse((failed_workspace / "final-compile-report.json").exists())
+
+        repaired_root, repaired_paths = self.fixture()
+        repaired, envelope, repaired_workspace = self.final_compile(
+            repaired_root, repaired_paths
+        )
+        self.assertEqual(0, repaired.returncode, repaired.stderr)
+        self.assertEqual("guarded_final_compile_complete", envelope["classification"])
+        self.assertTrue((repaired_workspace / "final-compile-report.json").is_file())
+
     def test_complete_current_final_compile_evidence_passes(self) -> None:
         _, paths = self.fixture()
         completed, envelope = self.reconcile(paths)

@@ -78,6 +78,38 @@ def mutated_registry(
 
 
 class DeliveryQualityContractsCliTests(unittest.TestCase):
+    def test_acceptance_v2_negative_fixtures_are_single_contradiction_valid_graphs(
+        self,
+    ) -> None:
+        scenarios = (
+            ("acceptance-v2-input-binding", "activation_status", "active"),
+            ("acceptance-v2-review-skeleton", "aggregation_policy", "unsupported"),
+            ("acceptance-v2-judgment-patch", "dimension", "text"),
+            ("acceptance-v2-execution-context", "state", "delivered"),
+            ("acceptance-report-v2", "overall_status", "unknown"),
+            ("acceptance-v2-attempt-record", "overall_status", "unknown"),
+            ("acceptance-v2-repair-ledger", "attempt_limit", 4),
+        )
+        registry = DeliveryQualityRegistry(PROJECT_ROOT)
+        entries = {entry.schema_name: entry for entry in registry.entries}
+        for schema_name, target_field, contradictory_value in scenarios:
+            with self.subTest(
+                scenario_id=f"{schema_name}-{target_field}",
+                expected_first_gate="delivery_quality_schema_validation",
+                expected_error_code="contract_invalid",
+            ):
+                entry = entries[schema_name]
+                positive = json.loads(entry.positive_example.read_text(encoding="utf-8"))
+                negative = json.loads(entry.negative_example.read_text(encoding="utf-8"))
+                expected = dict(positive)
+                expected[target_field] = contradictory_value
+                self.assertEqual(expected, negative)
+                with self.assertRaises(ContractError) as raised:
+                    registry.validate(schema_name, negative)
+                self.assertEqual("delivery_quality_schema_validation", raised.exception.data["first_failing_gate"])
+                self.assertEqual("contract_invalid", raised.exception.data["error_code"])
+                self.assertEqual(schema_name, raised.exception.data["schema_name"])
+
     def test_registry_path_resolution_rejects_relative_escape_before_io(
         self,
     ) -> None:
@@ -113,9 +145,9 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
         self.assertEqual(envelope["command"], "delivery-quality-contracts-check")
         self.assertEqual(envelope["classification"], "delivery_quality_contracts_valid")
         self.assertEqual(envelope["data"]["authority"], "target_only")
-        self.assertEqual(envelope["data"]["contract_count"], 22)
-        self.assertEqual(envelope["data"]["positive_examples_validated"], 22)
-        self.assertEqual(envelope["data"]["negative_examples_rejected"], 22)
+        self.assertEqual(envelope["data"]["contract_count"], 29)
+        self.assertEqual(envelope["data"]["positive_examples_validated"], 29)
+        self.assertEqual(envelope["data"]["negative_examples_rejected"], 29)
         self.assertTrue(envelope["data"]["registry_complete"])
         self.assertTrue(envelope["data"]["primary_semantic_ownership_complete"])
         self.assertTrue(envelope["data"]["generated_prompts_current"])

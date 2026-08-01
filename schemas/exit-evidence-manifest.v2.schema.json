@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -59,7 +59,7 @@
     },
     "commands": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 2,
       "items": {"$ref": "#/$defs/commandEvidence"}
     },
     "expected_checkpoints": {
@@ -72,7 +72,7 @@
         "required": ["name", "status"],
         "properties": {
           "name": {"type": "string", "minLength": 1},
-          "status": {"enum": ["current", "stale", "blocked"]}
+          "status": {"enum": ["current", "stale", "blocked", "preserved"]}
         }
       }
     },
@@ -271,6 +271,16 @@
       "properties": {
         "slice": {"properties": {"number": {"const": 9}, "name": {"const": "final-compile-and-rendered-text-reconciliation"}}},
         "slice_base_commit": {"const": "abcf95744110070a435baebb7900393f6ffb75fd"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 10}, "name": {"const": "acceptance-report-v2-and-bounded-repair"}}},
+        "slice_base_commit": {"const": "3fa54d09ab39349dd05bf225fefbc408046d4015"},
+        "results": {"required": ["fencing", "recovery"]},
         "fault_points": false,
         "platform_smokes": false
       }

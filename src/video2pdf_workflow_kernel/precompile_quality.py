@@ -411,12 +411,14 @@ class PrecompileQualityProvider:
         )
         self._validate_inventory(inventory, generations, writing_projection)
         owner_reports = []
+        committed_patches: dict[str, dict[str, Any]] = {}
         failures = []
         contract_gaps = []
         reviewer_ids: set[str] = set()
         for owner in PRECOMPILE_OWNERS:
             skeleton = read_json(_skeleton_path(root, owner))
             patch = read_json(_patch_path(root, owner))
+            committed_patches[owner] = patch
             commit = read_json(_commit_path(root, owner))
             _require_fingerprint(skeleton, "skeleton_sha256", "Reviewer Skeleton")
             self._validate_skeleton_current(root, skeleton, owner)
@@ -464,6 +466,40 @@ class PrecompileQualityProvider:
                     "reviewer": patch["reviewer"],
                     "result_count": len(patch["results"]),
                     "decision": "fail" if owner_failures else "pass",
+                }
+            )
+        writing_patch = committed_patches["writing-quality-reviewer"]
+        normalized_rule_results = []
+        for rule in writing_projection["rules"]:
+            records = [
+                {
+                    "result_key": item["result_key"],
+                    "decision": item["decision"],
+                    "evidence_locator": item["evidence_locator"],
+                    "violation_id": item.get("violation_id"),
+                    "repair_write_set": item["repair_write_set"],
+                }
+                for item in writing_patch["results"]
+                if item["result_key"].split(":", 1)[0] == rule["rule_id"]
+            ]
+            if not records:
+                records = [{
+                    "result_key": f"{rule['rule_id']}:inventory_not_applicable",
+                    "decision": "pass",
+                    "evidence_locator": f"inventory:{inventory['inventory_sha256']}/applicable_rule_ids:{rule['rule_id']}",
+                    "violation_id": None,
+                    "repair_write_set": [],
+                }]
+            normalized_rule_results.append(
+                {
+                    "rule_id": rule["rule_id"],
+                    "rule_semantic_sha256": rule["rule_semantic_sha256"],
+                    "primary_semantic_decision_owner": "writing-quality-reviewer",
+                    "source_patch_sha256": writing_patch["patch_sha256"],
+                    "decision": "fail" if any(item["decision"] == "fail" for item in records) else "pass",
+                    "evidence": records,
+                    "violations": sorted({item["violation_id"] for item in records if item["violation_id"]}),
+                    "exceptions": [],
                 }
             )
         if contract_gaps:
@@ -518,6 +554,7 @@ class PrecompileQualityProvider:
                 "provider_sha256": provider_sha256,
             },
             "owner_reports": owner_reports,
+            "normalized_rule_results": normalized_rule_results,
             "failure_set": failures,
             "repair_routing": _route_failures(failures),
             "contract_gaps": [],

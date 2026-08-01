@@ -18,7 +18,7 @@ This table records current executable authority as of 2026-07-21. Status applies
 | Legacy Final Acceptance and Acceptance Report v1 | `active_legacy` | Current Final Acceptance skill, criteria, report contract, and Delivery Guard integration | Global Gate Cutover |
 | Current Delivery Guard and session-scoped delivery targets | `active_legacy` | Current guard scripts, target records, hooks, and tests | Global Gate Cutover for v2 report consumption; later platform cutovers for Run ownership |
 | Delivery Quality Rule Catalog, Language Profiles, Role Projections, Waivers, migration ledger, conformance, precompile quality, and text sealing | `target_only` | ADRs 0060-0061, `schemas/delivery-quality/`, `delivery-quality/v1/`, generated Delivery Quality prompts, and the public Delivery Quality commands | Global Gate Cutover |
-| Acceptance Report v2 and dual Reviewer execution | `target_only` | ADRs 0028–0031, 0041, 0051, and 0056 | Global Gate Cutover |
+| Acceptance Report v2, precompile-owner aggregation, and independent Visual Quality review | `target_only` | ADRs 0028–0031, 0041, 0051, 0056, and 0063 | Global Gate Cutover |
 | Video Workflow Kernel core and Workflow CLI | `target_only` | `scripts/video_workflow.py`, `src/video2pdf_workflow_kernel/`, registered Kernel schemas, ADRs 0008–0027, and passed Slice Exit Evidence | First validated Platform Kernel Cutover |
 | Kernel Gate Provider adapters | `target_only` | Registered provider executable contracts, including Pyramid bindings and manifest-only diagnostic compile | Owning Global or Platform Cutover |
 | Bilibili Video Platform Adapter | `target_only` | ADRs 0008, 0011, 0018–0019, and 0040 | Bilibili Platform Kernel Cutover |
@@ -27,7 +27,7 @@ This table records current executable authority as of 2026-07-21. Status applies
 
 No component currently has `active_global_gate` or `active_kernel` status.
 
-Implemented Kernel Slice 6 adds target-only multi-section production, isolated chapter Attempts, bounded Figure waves, deterministic integration, generation-bound Pyramid Evaluation, and recorder-validated diagnostic compilation. Delivery Quality Slice A adds target-only canonical policy contracts and conformance. Delivery Quality Slice B adds target-only Reader-Facing Text Inventory, isolated precompile judgments, deterministic repair routing, Text Equivalence, and Precompile Text Seals. Delivery Quality Slice C adds target-only Final Artifact Seals, complete rendered-page and text-object evidence, compiler-produced Text Origin Manifests, and deterministic rendered-text reconciliation. These executable contracts do not alter Legacy Track compilation or delivery authority.
+Implemented Kernel Slice 6 adds target-only multi-section production, isolated chapter Attempts, bounded Figure waves, deterministic integration, generation-bound Pyramid Evaluation, and recorder-validated diagnostic compilation. Delivery Quality Slice A adds target-only canonical policy contracts and conformance. Delivery Quality Slice B adds target-only Reader-Facing Text Inventory, isolated precompile judgments, deterministic repair routing, Text Equivalence, and Precompile Text Seals. Delivery Quality Slice C adds target-only Final Artifact Seals, complete rendered-page and text-object evidence, compiler-produced Text Origin Manifests, and deterministic rendered-text reconciliation. Delivery Quality Slice D adds target-only aggregation of the three precompile owners with an independent Visual Quality Judgment Patch, Acceptance Report v2 materialization, bounded semantic repair, publication reconciliation, and mechanical Guard eligibility. These executable contracts do not alter Legacy Track compilation or delivery authority.
 
 ```mermaid
 flowchart TD
@@ -51,8 +51,8 @@ flowchart TD
     AR --> CP
     CAP -->|"yes"| FE["Final Artifact Seal, Final Compile, render evidence"]
     FE --> AX["Acceptance Execution Context"]
-    AX --> FA["Concurrent Text and Visual review"]
-    FA --> PC["Commit each Judgment Patch"]
+    AX --> FA["Aggregate precompile owners and run Visual Quality review"]
+    FA --> PC["Commit the Visual Judgment Patch"]
     PC --> AM["Provider materializes and publishes v2 report"]
     AM --> RP{"Materialized report passes?"}
     RP -->|"yes"| DG["Delivery Guard"]

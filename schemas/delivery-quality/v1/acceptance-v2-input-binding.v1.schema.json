@@ -1,0 +1,20 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["schema_name","schema_version","activation_status","input_track","binding_id","run","quality_inputs","artifacts","rendered_pages","binding_sha256"],
+  "properties":{
+    "schema_name":{"const":"acceptance-v2-input-binding"},
+    "schema_version":{"const":"1.0.0"},
+    "activation_status":{"const":"target_only"},
+    "input_track":{"const":"kernel"},
+    "binding_id":{"type":"string","minLength":1},
+    "run":{"type":"object","additionalProperties":false,"required":["run_id","coordination_revision","acceptance_revision","video_root","checkpoint","final_checkpoint","run_record_path","run_record_sha256","control_store_root","producer_ids","repairer_ids","predecessor_generation_set_sha256","changed_generation_ids"],"properties":{"run_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"coordination_revision":{"type":"integer","minimum":1},"acceptance_revision":{"type":"integer","minimum":1},"video_root":{"type":"string","minLength":1},"checkpoint":{"type":"object","additionalProperties":false,"required":["name","status","evidence_sha256"],"properties":{"name":{"const":"source_ready"},"status":{"const":"current"},"evidence_sha256":{"$ref":"#/$defs/sha256"}}},"final_checkpoint":{"type":"object","additionalProperties":false,"required":["name","status","authority_path","authority_sha256"],"properties":{"name":{"const":"final_quality_ready"},"status":{"const":"current"},"authority_path":{"type":"string","minLength":1},"authority_sha256":{"$ref":"#/$defs/sha256"}}},"run_record_path":{"type":"string","minLength":1},"run_record_sha256":{"$ref":"#/$defs/sha256"},"control_store_root":{"type":"string","minLength":1},"producer_ids":{"type":"array","items":{"type":"string","minLength":1},"uniqueItems":true},"repairer_ids":{"type":"array","items":{"type":"string","minLength":1},"uniqueItems":true},"predecessor_generation_set_sha256":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/sha256"}]},"changed_generation_ids":{"type":"array","items":{"type":"string","minLength":1},"uniqueItems":true}}},
+    "quality_inputs":{"type":"object","additionalProperties":false,"required":["precompile_quality_report","precompile_text_seal","rendered_text_reconciliation","final_artifact_seal","final_compile_manifest","render_evidence_manifest","rendered_text_object_inventory","text_origin_manifest"],"properties":{"precompile_quality_report":{"$ref":"#/$defs/artifact"},"precompile_text_seal":{"$ref":"#/$defs/artifact"},"rendered_text_reconciliation":{"$ref":"#/$defs/artifact"},"final_artifact_seal":{"$ref":"#/$defs/artifact"},"final_compile_manifest":{"$ref":"#/$defs/artifact"},"render_evidence_manifest":{"$ref":"#/$defs/artifact"},"rendered_text_object_inventory":{"$ref":"#/$defs/artifact"},"text_origin_manifest":{"$ref":"#/$defs/artifact"},"text_equivalence_report":{"$ref":"#/$defs/artifact"}}},
+    "artifacts":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["logical_id","path","sha256"],"properties":{"logical_id":{"type":"string","minLength":1},"path":{"type":"string","minLength":1},"sha256":{"$ref":"#/$defs/sha256"}}}},
+    "rendered_pages":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["page","path","sha256"],"properties":{"page":{"type":"integer","minimum":1},"path":{"type":"string","minLength":1},"sha256":{"$ref":"#/$defs/sha256"}}}},
+    "binding_sha256":{"$ref":"#/$defs/sha256"}
+  },
+  "$defs":{"artifact":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"type":"string","minLength":1},"sha256":{"$ref":"#/$defs/sha256"}}},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

@@ -501,6 +501,11 @@ class PrecompileQualityCliTests(unittest.TestCase):
             )
         )
         self.assertEqual(report["overall_decision"], "pass")
+        normalized = report["normalized_rule_results"]
+        self.assertEqual(6, len(normalized))
+        self.assertEqual(6, len({item["rule_id"] for item in normalized}))
+        self.assertTrue(all(item["source_patch_sha256"] for item in normalized))
+        self.assertTrue(all(item["evidence"] for item in normalized))
         self.assertEqual(
             {item["owner"] for item in report["owner_reports"]},
             {

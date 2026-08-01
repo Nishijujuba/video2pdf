@@ -125,9 +125,9 @@ class DeliveryQualityRegistry:
         if self._manifest["authority"] != SUPPORTED_AUTHORITY:
             raise ContractError("Delivery Quality registry would activate runtime authority")
         contracts = self._manifest["contracts"]
-        if not isinstance(contracts, list) or len(contracts) != 22:
+        if not isinstance(contracts, list) or len(contracts) != 29:
             raise ContractError(
-                "Delivery Quality registry must contain twenty-two contracts"
+                "Delivery Quality registry must contain twenty-nine contracts"
             )
 
         expected_entry_fields = {
@@ -215,6 +215,13 @@ class DeliveryQualityRegistry:
             "rendered-text-reconciliation-report",
             "final-compile-manifest",
             "final-compile-report",
+            "acceptance-v2-input-binding",
+            "acceptance-v2-review-skeleton",
+            "acceptance-v2-judgment-patch",
+            "acceptance-v2-execution-context",
+            "acceptance-report-v2",
+            "acceptance-v2-attempt-record",
+            "acceptance-v2-repair-ledger",
         }
         if set(names) != expected_names:
             raise ContractError("Delivery Quality registry contract set is incomplete")
@@ -284,7 +291,13 @@ class DeliveryQualityRegistry:
         except ValidationError as exc:
             path = ".".join(str(part) for part in exc.absolute_path) or "<root>"
             raise ContractError(
-                f"Delivery Quality {schema_name} invalid at {path}: {exc.message}"
+                f"Delivery Quality {schema_name} invalid at {path}: {exc.message}",
+                data={
+                    "first_failing_gate": "delivery_quality_schema_validation",
+                    "error_code": "contract_invalid",
+                    "schema_name": schema_name,
+                    "instance_path": path,
+                },
             ) from exc
 
     def _instances(self) -> dict[str, dict[str, Any]]:

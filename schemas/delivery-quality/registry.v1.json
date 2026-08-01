@@ -129,7 +129,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/precompile-quality-report.example.v1.json",
-      "canonical_sha256": "5446d09cf3fb6841c91088cf56c36788133b70df2608c771ecf85b71e73bd830",
+      "canonical_sha256": "46d50b736c79e703379b8c1edef8660425c26f7c1a697585af5541b14f327f93",
       "positive_example": "delivery-quality/v1/precompile-quality-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-quality-report.invalid.json"
     },
@@ -222,6 +222,76 @@
       "canonical_sha256": "f924f1598a789828f000c33e3aced1fc89ad6bfc2a1cc7f31976253594edcb01",
       "positive_example": "delivery-quality/v1/final-compile-report.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/final-compile-report.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-input-binding",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
+      "canonical_sha256": "e56ce0471f23ee858e0e676b5fc54a7b1b93d78d303228447f097fe9c34d1bac",
+      "positive_example": "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-input-binding.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-review-skeleton",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-review-skeleton.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-review-skeleton.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-review-skeleton.example.v1.json",
+      "canonical_sha256": "2a75bb46a454547f13f91322b12d70b1d1674a86785de97d180a0ebda507ae65",
+      "positive_example": "delivery-quality/v1/acceptance-v2-review-skeleton.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-review-skeleton.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-judgment-patch",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-judgment-patch.example.v1.json",
+      "canonical_sha256": "3efa49ee8506c1eb34d27967d1e98f0b4c2d8562a9ffe3a6eb08badb15a9b70f",
+      "positive_example": "delivery-quality/v1/acceptance-v2-judgment-patch.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-judgment-patch.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-execution-context",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-execution-context.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-execution-context.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-execution-context.example.v1.json",
+      "canonical_sha256": "9b60737ea93c47e8f4a5a3ebe71340cbf6a78ee8a4009bf00d526e0039dfc9c6",
+      "positive_example": "delivery-quality/v1/acceptance-v2-execution-context.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-execution-context.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-report-v2",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-report-v2.example.v1.json",
+      "canonical_sha256": "07321a2214e51759a53aed809e84dbe48172e15b01298a4b57da33b7548deb85",
+      "positive_example": "delivery-quality/v1/acceptance-report-v2.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-report-v2.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-attempt-record",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-attempt-record.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-attempt-record.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-attempt-record.example.v1.json",
+      "canonical_sha256": "3a6b54a6516e1062e9aaa8d3f9541824b352a6848b01cb3a8b743c34f858638e",
+      "positive_example": "delivery-quality/v1/acceptance-v2-attempt-record.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-attempt-record.invalid.json"
+    },
+    {
+      "schema_name": "acceptance-v2-repair-ledger",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-repair-ledger.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-repair-ledger.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-repair-ledger.example.v1.json",
+      "canonical_sha256": "23f3b9717daf82ac426e9006fd0bafeb7079dfd25ef9c17b93ac6cff99d54fef",
+      "positive_example": "delivery-quality/v1/acceptance-v2-repair-ledger.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-repair-ledger.invalid.json"
     }
   ]
 }

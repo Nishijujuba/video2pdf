@@ -32,6 +32,12 @@ from .precompile_quality import (
     PrecompileQualityProvider,
 )
 from .rendered_text_reconciliation import RenderedTextReconciliationProvider
+from .acceptance_v2 import (
+    MATERIALIZE_FAULT_POINTS as ACCEPTANCE_MATERIALIZE_FAULT_POINTS,
+    PATCH_FAULT_POINTS as ACCEPTANCE_PATCH_FAULT_POINTS,
+    PREPARE_FAULT_POINTS as ACCEPTANCE_PREPARE_FAULT_POINTS,
+    AcceptanceV2Provider,
+)
 from .utils import read_json
 
 
@@ -179,6 +185,41 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--compiler-adapter", required=True, type=Path)
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
+
+    acceptance_authority = commands.add_parser("acceptance-final-authority-publish")
+    acceptance_authority.add_argument("--input-binding", required=True, type=Path)
+
+    acceptance_prepare = commands.add_parser("acceptance-prepare")
+    acceptance_prepare.add_argument("--workspace-root", required=True, type=Path)
+    acceptance_prepare.add_argument("--input-binding", required=True, type=Path)
+    acceptance_prepare.add_argument("--attempt-number", required=True, type=int)
+    acceptance_prepare.add_argument("--prepared-at", required=True)
+    acceptance_prepare.add_argument("--fault-point", choices=sorted(ACCEPTANCE_PREPARE_FAULT_POINTS))
+
+    acceptance_patch = commands.add_parser("acceptance-patch-commit")
+    acceptance_patch.add_argument("--workspace-root", required=True, type=Path)
+    acceptance_patch.add_argument("--dimension", required=True, choices=("visual_quality",))
+    acceptance_patch.add_argument("--patch", required=True, type=Path)
+    acceptance_patch.add_argument("--committed-at", required=True)
+    acceptance_patch.add_argument("--fault-point", choices=sorted(ACCEPTANCE_PATCH_FAULT_POINTS))
+
+    acceptance_materialize = commands.add_parser("acceptance-materialize")
+    acceptance_materialize.add_argument("--workspace-root", required=True, type=Path)
+    acceptance_materialize.add_argument("--provider-id", required=True)
+    acceptance_materialize.add_argument("--provider-version", required=True)
+    acceptance_materialize.add_argument("--materialized-at", required=True)
+    acceptance_materialize.add_argument("--fault-point", choices=sorted(ACCEPTANCE_MATERIALIZE_FAULT_POINTS))
+
+    acceptance_repair = commands.add_parser("acceptance-repair-prepare")
+    acceptance_repair.add_argument("--workspace-root", required=True, type=Path)
+    acceptance_repair.add_argument("--input-binding", required=True, type=Path)
+    acceptance_repair.add_argument("--prepared-at", required=True)
+
+    acceptance_reconcile = commands.add_parser("acceptance-reconcile")
+    acceptance_reconcile.add_argument("--workspace-root", required=True, type=Path)
+
+    acceptance_guard = commands.add_parser("acceptance-guard-eligibility")
+    acceptance_guard.add_argument("--workspace-root", required=True, type=Path)
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -459,6 +500,54 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "acceptance-final-authority-publish":
+        result = AcceptanceV2Provider(project_root).publish_final_authority(input_binding_path=args.input_binding)
+        return _ok(command, "acceptance_v2_final_authority_published", result)
+    if command == "acceptance-prepare":
+        result = AcceptanceV2Provider(project_root).prepare(
+            workspace_root=args.workspace_root,
+            input_binding_path=args.input_binding,
+            attempt_number=args.attempt_number,
+            prepared_at=args.prepared_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(command, "acceptance_v2_prepared", result, result["skeleton_path"])
+    if command == "acceptance-patch-commit":
+        result = AcceptanceV2Provider(project_root).commit_patch(
+            workspace_root=args.workspace_root,
+            dimension=args.dimension,
+            patch_path=args.patch,
+            committed_at=args.committed_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(command, "acceptance_v2_patch_committed", result)
+    if command == "acceptance-materialize":
+        result = AcceptanceV2Provider(project_root).materialize(
+            workspace_root=args.workspace_root,
+            provider_id=args.provider_id,
+            provider_version=args.provider_version,
+            materialized_at=args.materialized_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(command, "acceptance_v2_materialized", result, result["report_path"])
+    if command == "acceptance-repair-prepare":
+        result = AcceptanceV2Provider(project_root).prepare_repair(
+            workspace_root=args.workspace_root,
+            input_binding_path=args.input_binding,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(command, "acceptance_v2_repair_prepared", result, result["skeleton_path"])
+    if command == "acceptance-reconcile":
+        result = AcceptanceV2Provider(project_root).reconcile(
+            workspace_root=args.workspace_root,
+        )
+        return _ok(command, "acceptance_v2_reconciled", result)
+    if command == "acceptance-guard-eligibility":
+        result = AcceptanceV2Provider(project_root).guard_eligibility(
+            workspace_root=args.workspace_root,
+        )
+        classification = "acceptance_v2_guard_eligible" if result["eligible"] else "acceptance_v2_guard_blocked"
+        return _ok(command, classification, result, str(args.workspace_root.resolve() / "acceptance_report.json"))
     if command == "delivery-quality-final-compile":
         result = GuardedFinalCompileProvider(project_root).compile(
             precompile_workspace_root=args.precompile_workspace_root,

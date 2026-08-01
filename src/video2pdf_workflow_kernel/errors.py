@@ -47,6 +47,22 @@ class PrecompileFault(KernelError):
         )
 
 
+class AcceptanceV2Rejected(KernelError):
+    classification = "acceptance_v2_rejected"
+    exit_code = 30
+
+
+class AcceptanceV2Fault(KernelError):
+    classification = "injected_acceptance_v2_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Acceptance v2 fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
 class UnknownContractVersion(ContractError):
     classification = "unknown_contract_version"
 

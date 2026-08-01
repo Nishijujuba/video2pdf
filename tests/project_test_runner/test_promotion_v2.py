@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -408,6 +409,289 @@ def module_assignment(discovery: dict) -> list[dict]:
     return result
 
 
+def refresh_cross_module_reassignment_chain(
+    run: dict, discovery: dict
+) -> str:
+    run_dir = Path(run["run_dir"])
+    inventory = [
+        {
+            "module_key": item["module_key"],
+            "suite_id": item["suite_id"],
+            "source_path": item["source_path"],
+            "test_count": item["test_count"],
+            "test_ids_sha256": hashlib.sha256(
+                canonical_json_bytes(sorted(item["test_ids"]))
+            ).hexdigest(),
+        }
+        for item in sorted(
+            discovery["modules"],
+            key=lambda value: (value["suite_id"], value["source_path"]),
+        )
+    ]
+    inventory_sha = hashlib.sha256(
+        canonical_json_bytes(inventory)
+    ).hexdigest()
+    snapshot_path = run_dir / "source-snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot["module_inventory"] = {
+        "count": len(inventory),
+        "sha256": inventory_sha,
+    }
+    snapshot_payload = {
+        key: value
+        for key, value in snapshot.items()
+        if key != "source_snapshot_id"
+    }
+    snapshot["source_snapshot_id"] = hashlib.sha256(
+        canonical_json_bytes(snapshot_payload)
+    ).hexdigest()
+    snapshot_sha = write_json(snapshot_path, snapshot)
+
+    discovered_by_key = {
+        item["module_key"]: item for item in discovery["modules"]
+    }
+    summary_path = Path(run["summary_path"])
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["source_snapshot_id"] = snapshot["source_snapshot_id"]
+    summary["source_snapshot_sha256"] = snapshot_sha
+    summary_by_key = {
+        item["module_key"]: item for item in summary["modules"]
+    }
+    for module_key, discovered in discovered_by_key.items():
+        assignment_path = (
+            run_dir / "modules" / f"{module_key}.assignment.json"
+        )
+        assignment = json.loads(
+            assignment_path.read_text(encoding="utf-8")
+        )
+        assignment["test_ids"] = discovered["test_ids"]
+        assignment["source_snapshot_id"] = snapshot["source_snapshot_id"]
+        assignment["source_snapshot_sha256"] = snapshot_sha
+        assignment["module_inventory_sha256"] = inventory_sha
+        assignment["module_inventory"] = inventory
+        assignment_sha = write_json(assignment_path, assignment)
+
+        result_path = run_dir / "modules" / f"{module_key}.result.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["assigned_test_ids"] = discovered["test_ids"]
+        result["executions"] = [
+            {
+                "test_id": test_id,
+                "status": "passed",
+                "duration_seconds": 0.001,
+            }
+            for test_id in discovered["test_ids"]
+        ]
+        result["source_snapshot_id"] = snapshot["source_snapshot_id"]
+        result["source_snapshot_sha256"] = snapshot_sha
+        result_sha = write_json(result_path, result)
+
+        summary_module = summary_by_key[module_key]
+        summary_module["test_ids"] = discovered["test_ids"]
+        summary_module["executions"] = [
+            {"test_id": test_id, "status": "passed"}
+            for test_id in discovered["test_ids"]
+        ]
+        summary_module["assignment_sha256"] = assignment_sha
+        summary_module["result_sha256"] = result_sha
+        summary_module["source_snapshot_id"] = snapshot[
+            "source_snapshot_id"
+        ]
+        summary_module["source_snapshot_sha256"] = snapshot_sha
+        summary_module["artifact_identities"]["assignment"] = (
+            file_artifact_identity(assignment_path)
+        )
+        summary_module["artifact_identities"]["result"] = (
+            file_artifact_identity(result_path)
+        )
+
+    run["summary_sha256"] = write_json(summary_path, summary)
+    events_path = run_dir / "events.jsonl"
+    events = read_stdout_records(events_path)
+    for event in events:
+        event["source_snapshot_id"] = snapshot["source_snapshot_id"]
+        event["source_snapshot_sha256"] = snapshot_sha
+        if event["event"] == "started":
+            event["artifact_identities"]["assignment"] = summary_by_key[
+                event["module_key"]
+            ]["artifact_identities"]["assignment"]
+        elif event["event"] == "completed":
+            event["artifact_identities"] = summary_by_key[
+                event["module_key"]
+            ]["artifact_identities"]
+    write_stdout_records(events_path, events)
+
+    finalization_path = run_dir / "run-finalization.json"
+    finalization = json.loads(
+        finalization_path.read_text(encoding="utf-8")
+    )
+    finalization["source_snapshot_id"] = snapshot["source_snapshot_id"]
+    finalization["source_snapshot_sha256"] = snapshot_sha
+    finalization["summary_sha256"] = run["summary_sha256"]
+    finalization_sha = write_json(finalization_path, finalization)
+
+    test_run_path = run_dir / "test-run.json"
+    test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+    test_run["discovery_sha256"] = run["discovery_sha256"]
+    test_run["source_snapshot_id"] = snapshot["source_snapshot_id"]
+    test_run["source_snapshot_sha256"] = snapshot_sha
+    write_json(test_run_path, test_run)
+
+    stdout_path = Path(run["persisted_stdout_path"])
+    stdout_records = read_stdout_records(stdout_path)
+    for record in stdout_records:
+        if "discovery_sha256" in record:
+            record["discovery_sha256"] = run["discovery_sha256"]
+    completion = stdout_records[-1]
+    completion["summary_sha256"] = run["summary_sha256"]
+    completion["source_snapshot_id"] = snapshot["source_snapshot_id"]
+    completion["source_snapshot_sha256"] = snapshot_sha
+    completion["run_finalization_sha256"] = finalization_sha
+    run["persisted_stdout_sha256"] = write_stdout_records(
+        stdout_path, stdout_records
+    )
+    refresh_persisted_stdout_identity(run)
+    assignment_sha = hashlib.sha256(
+        canonical_json_bytes(module_assignment(discovery))
+    ).hexdigest()
+    run["module_assignment_sha256"] = assignment_sha
+    return assignment_sha
+
+
+def promotion_v2_fingerprint(report: dict) -> str:
+    baseline = report["historical_performance_baseline"]
+    issue9 = report["final_issue9_closed_set"]
+    implementation = report["implementation"]
+    parallel_runs = []
+    for run in report["parallel_runs"]:
+        run_dir = Path(run["run_dir"])
+        test_run_path = run_dir / "test-run.json"
+        test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
+        summary = json.loads(
+            Path(run["summary_path"]).read_text(encoding="utf-8")
+        )
+        snapshot_path = run_dir / "source-snapshot.json"
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        parallel_runs.append(
+            {
+                **{
+                    key: run[key]
+                    for key in (
+                        "discovery_sha256",
+                        "summary_sha256",
+                        "persisted_status_sha256",
+                        "persisted_exit_code_sha256",
+                        "persisted_command_sha256",
+                        "persisted_stdout_sha256",
+                        "semantic_outcomes_sha256",
+                        "module_assignment_sha256",
+                    )
+                },
+                "marker_sha256": test_run["project_marker_sha256"],
+                "test_run_sha256": hashlib.sha256(
+                    test_run_path.read_bytes()
+                ).hexdigest(),
+                "events_sha256": hashlib.sha256(
+                    (run_dir / "events.jsonl").read_bytes()
+                ).hexdigest(),
+                "timings_sha256": hashlib.sha256(
+                    (run_dir / "timings.json").read_bytes()
+                ).hexdigest(),
+                "persisted_run_id": test_run["persisted_run_id"],
+                "target_process_identity": test_run["runner_identity"][
+                    "process_creation_identity"
+                ],
+                "persisted_run_nonce": test_run["persisted_run_nonce"],
+                "source_manifest_sha256": test_run[
+                    "source_manifest_sha256"
+                ],
+                "source_snapshot_id": snapshot["source_snapshot_id"],
+                "source_snapshot_sha256": hashlib.sha256(
+                    snapshot_path.read_bytes()
+                ).hexdigest(),
+                "run_finalization_sha256": hashlib.sha256(
+                    (run_dir / "run-finalization.json").read_bytes()
+                ).hexdigest(),
+                "worker_identity_lineage_sha256": hashlib.sha256(
+                    canonical_json_bytes(
+                        [
+                            {
+                                "module_key": item["module_key"],
+                                "worker_identity": item["worker_identity"],
+                                "worker_launcher_identity": item[
+                                    "worker_launcher_identity"
+                                ],
+                                "worker_launch_nonce": item[
+                                    "worker_launch_nonce"
+                                ],
+                            }
+                            for item in sorted(
+                                summary["modules"],
+                                key=lambda value: value["module_key"],
+                            )
+                        ]
+                    )
+                ).hexdigest(),
+            }
+        )
+    fingerprint_input = {
+        "schema_version": 2,
+        "authorization_model": report["authorization_model"],
+        "reviewed_implementation_commit": implementation[
+            "reviewed_implementation_commit"
+        ],
+        "execution_evidence_commit": implementation[
+            "execution_evidence_commit"
+        ],
+        "historical_baseline_commit": baseline["implementation_commit"],
+        "historical_status_sha256": baseline["persisted_status_sha256"],
+        "historical_exit_code_sha256": baseline[
+            "persisted_exit_code_sha256"
+        ],
+        "final_issue9_commit": issue9["commit"],
+        "final_issue9_inventory_sha256": issue9["inventory_sha256"],
+        "baseline_test_id_set_sha256": BASELINE_TEST_ID_SET_SHA256,
+        "authorized_delta_test_id_set_sha256": (
+            AUTHORIZED_DELTA_TEST_ID_SET_SHA256
+        ),
+        "current_test_id_set_sha256": CURRENT_TEST_ID_SET_SHA256,
+        "superset_authority_sha256": report["superset_authority"]["sha256"],
+        "authority_sources": sorted(
+            implementation["authority_sources"],
+            key=lambda item: item["path"],
+        ),
+        "registry_sha256": implementation["registry_sha256"],
+        "runner_sha256": implementation["runner_sha256"],
+        "scheduler_sha256": implementation["scheduler_sha256"],
+        "parallel_runs": parallel_runs,
+        "migration_review_sha256": report["migration_review"]["sha256"],
+        "optimization_safety_review_sha256": report[
+            "optimization_safety_review"
+        ]["sha256"],
+    }
+    return hashlib.sha256(
+        canonical_json_bytes(fingerprint_input)
+    ).hexdigest()
+
+
+def _set_safety_review_to_another_commit(
+    _repo: Path,
+    safety: dict,
+    _implementation_commit: str,
+) -> None:
+    safety["reviewed_source_commit"] = "d" * 40
+
+
+def _set_health_profile_memo_hit(
+    repo: Path,
+    safety: dict,
+) -> None:
+    profile_path = repo / "profile/result.json"
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    profile["control_store_check_classification"]["memo_hits"] = 1
+    safety["health_profile"]["sha256"] = write_json(profile_path, profile)
+
+
 class PromotionReportV2Tests(unittest.TestCase):
     def make_authority_generator_cli_fixture(
         self,
@@ -447,6 +731,14 @@ class PromotionReportV2Tests(unittest.TestCase):
                 review_root / f"stage95-{axis}-review.md",
                 f"{axis}: PASS\n".encode("utf-8"),
             )
+        for relative in (
+            "evidence/project-test-runner/"
+            "optimization-safety-review.v1.json",
+            AUTHORITY.as_posix(),
+        ):
+            previous = json.loads((repo / relative).read_text(encoding="utf-8"))
+            previous["fixture_previous_generation"] = True
+            write_json(repo / relative, previous)
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
         subprocess.run(
             ["git", "config", "user.name", "Authority Generator Fixture"],
@@ -1719,6 +2011,8 @@ class PromotionReportV2Tests(unittest.TestCase):
         self,
         *,
         commit_source_overrides: dict[str, bytes] | None = None,
+        safety_input_mutator: Callable[[Path, dict], None] | None = None,
+        safety_evidence_mutator: Callable[[Path, dict, str], None] | None = None,
     ) -> tuple[Path, dict]:
         repo = new_fixture_dir("promotion-v2")
         for relative in (
@@ -1862,9 +2156,7 @@ class PromotionReportV2Tests(unittest.TestCase):
             "evidence/project-test-runner/"
             "optimization-safety-review.v1.json"
         )
-        safety_sha = write_json(
-            safety_path,
-            {
+        safety = {
                 "schema_name": (
                     "video2pdf.project-test-optimization-safety-review"
                 ),
@@ -1905,8 +2197,10 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "persisted_exit_code_sha256": profile_exit_sha,
                 },
                 "independent_reviews": reviews,
-            },
-        )
+            }
+        if safety_input_mutator is not None:
+            safety_input_mutator(repo, safety)
+        safety_sha = write_json(safety_path, safety)
 
         registry_sha = hashlib.sha256(
             (repo / "config/test-suites.v1.json").read_bytes()
@@ -1962,6 +2256,8 @@ class PromotionReportV2Tests(unittest.TestCase):
         ).stdout.strip()
         safety = json.loads(safety_path.read_text(encoding="utf-8"))
         safety["reviewed_source_commit"] = implementation_commit
+        if safety_evidence_mutator is not None:
+            safety_evidence_mutator(repo, safety, implementation_commit)
         safety_sha = write_json(safety_path, safety)
         subprocess.run(
             ["git", "add", safety_path.relative_to(repo).as_posix()],
@@ -2041,7 +2337,6 @@ class PromotionReportV2Tests(unittest.TestCase):
             FINAL_ISSUE9_DISCOVERY_SHA256, baseline_inventory_sha
         )
         runs = []
-        run_fingerprint_inputs = []
         semantic_sha = ""
         assignment_sha = ""
         external_root = repo / "external"
@@ -2752,50 +3047,6 @@ class PromotionReportV2Tests(unittest.TestCase):
                     "registry_sha256": registry_sha,
                 }
             )
-            marker_sha = hashlib.sha256(
-                (project_root / "project.json").read_bytes()
-            ).hexdigest()
-            run_fingerprint_inputs.append(
-                {
-                    "marker_sha256": marker_sha,
-                    "test_run_sha256": test_run_sha,
-                    "events_sha256": events_sha,
-                    "timings_sha256": timings_sha,
-                    "persisted_run_id": run_id,
-                    "target_process_identity": (
-                        f"windows-filetime:13429688500000000{index}"
-                    ),
-                    "persisted_run_nonce": persisted_run_nonce,
-                    "source_manifest_sha256": source_manifest_sha,
-                    "source_snapshot_id": source_snapshot[
-                        "source_snapshot_id"
-                    ],
-                    "source_snapshot_sha256": source_snapshot_sha,
-                    "run_finalization_sha256": run_finalization_sha,
-                    "worker_identity_lineage_sha256": hashlib.sha256(
-                        canonical_json_bytes(
-                            [
-                                {
-                                    "module_key": item["module_key"],
-                                    "worker_identity": item[
-                                        "worker_identity"
-                                    ],
-                                    "worker_launcher_identity": item[
-                                        "worker_launcher_identity"
-                                    ],
-                                    "worker_launch_nonce": item[
-                                        "worker_launch_nonce"
-                                    ],
-                                }
-                                for item in sorted(
-                                    summary_modules,
-                                    key=lambda value: value["module_key"],
-                                )
-                            ]
-                        )
-                    ).hexdigest(),
-                }
-            )
         migration_sha = hashlib.sha256((repo / MIGRATION).read_bytes()).hexdigest()
         authority_sha = hashlib.sha256((repo / AUTHORITY).read_bytes()).hexdigest()
         report = {
@@ -2902,58 +3153,7 @@ class PromotionReportV2Tests(unittest.TestCase):
             },
             "cutover_authorized": True,
         }
-        report["promotion_fingerprint"] = hashlib.sha256(
-            canonical_json_bytes(
-                {
-                    "schema_version": 2,
-                    "authorization_model": report["authorization_model"],
-                    "reviewed_implementation_commit": implementation_commit,
-                    "execution_evidence_commit": evidence_commit,
-                    "historical_baseline_commit": (
-                        "18f78fad0be5a66d2da6250dc268bc8de81fdbcc"
-                    ),
-                    "historical_status_sha256": baseline_status_sha,
-                    "historical_exit_code_sha256": baseline_exit_sha,
-                    "final_issue9_commit": authority["baseline"]["commit"],
-                    "final_issue9_inventory_sha256": (
-                        baseline_inventory_sha
-                    ),
-                    "baseline_test_id_set_sha256": (
-                        BASELINE_TEST_ID_SET_SHA256
-                    ),
-                    "authorized_delta_test_id_set_sha256": (
-                        AUTHORIZED_DELTA_TEST_ID_SET_SHA256
-                    ),
-                    "current_test_id_set_sha256": CURRENT_TEST_ID_SET_SHA256,
-                    "superset_authority_sha256": authority_sha,
-                    "authority_sources": authority["authority_sources"],
-                    "registry_sha256": registry_sha,
-                    "runner_sha256": runner_sha,
-                    "scheduler_sha256": scheduler_sha,
-                    "parallel_runs": [
-                        {
-                            **{
-                                key: run[key]
-                                for key in (
-                                    "discovery_sha256",
-                                    "summary_sha256",
-                                    "persisted_status_sha256",
-                                    "persisted_exit_code_sha256",
-                                    "persisted_command_sha256",
-                                    "persisted_stdout_sha256",
-                                    "semantic_outcomes_sha256",
-                                    "module_assignment_sha256",
-                                )
-                            },
-                            **run_fingerprint_inputs[index],
-                        }
-                        for index, run in enumerate(runs)
-                    ],
-                    "migration_review_sha256": migration_sha,
-                    "optimization_safety_review_sha256": safety_sha,
-                }
-            )
-        ).hexdigest()
+        report["promotion_fingerprint"] = promotion_v2_fingerprint(report)
         for relative, content in restored_live_sources.items():
             (repo / relative).write_bytes(content)
         write_json(
@@ -3026,21 +3226,8 @@ class PromotionReportV2Tests(unittest.TestCase):
             validate_promotion_report(repo)
 
     def test_v2_rejects_safety_review_for_another_commit(self) -> None:
-        repo, report = self.make_report()
-        safety_path = (
-            repo
-            / "evidence/project-test-runner/"
-            "optimization-safety-review.v1.json"
-        )
-        safety = json.loads(safety_path.read_text(encoding="utf-8"))
-        safety["reviewed_source_commit"] = "d" * 40
-        report["optimization_safety_review"]["sha256"] = write_json(
-            safety_path,
-            safety,
-        )
-        write_json(
-            repo / "evidence/project-test-runner/promotion-report.json",
-            report,
+        repo, _report = self.make_report(
+            safety_evidence_mutator=_set_safety_review_to_another_commit,
         )
         with self.assertRaisesRegex(
             PromotionValidationError,
@@ -4392,43 +4579,17 @@ class PromotionReportV2Tests(unittest.TestCase):
             run["discovery_sha256"] = write_json(
                 discovery_path, discovery
             )
-            assignment_sha = hashlib.sha256(
-                canonical_json_bytes(module_assignment(discovery))
-            ).hexdigest()
-            run["module_assignment_sha256"] = assignment_sha
-            test_run_path = Path(run["run_dir"]) / "test-run.json"
-            test_run = json.loads(test_run_path.read_text(encoding="utf-8"))
-            test_run["discovery_sha256"] = run["discovery_sha256"]
-            write_json(test_run_path, test_run)
-            summary_path = Path(run["summary_path"])
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            by_key = {
-                item["module_key"]: item for item in summary["modules"]
-            }
-            for discovered in (first, second):
-                item = by_key[discovered["module_key"]]
-                item["test_ids"] = discovered["test_ids"]
-                item["executions"] = [
-                    {"test_id": test_id, "status": "passed"}
-                    for test_id in discovered["test_ids"]
-                ]
-            run["summary_sha256"] = write_json(summary_path, summary)
-            stdout_path = Path(run["persisted_stdout_path"])
-            stdout_records = read_stdout_records(stdout_path)
-            for stdout_record in stdout_records:
-                if "discovery_sha256" in stdout_record:
-                    stdout_record["discovery_sha256"] = run[
-                        "discovery_sha256"
-                    ]
-            stdout_records[-1]["summary_sha256"] = run["summary_sha256"]
-            run["persisted_stdout_sha256"] = write_stdout_records(
-                stdout_path,
-                stdout_records,
+            assignment_sha = refresh_cross_module_reassignment_chain(
+                run, discovery
             )
-            refresh_persisted_stdout_identity(run)
         report["semantic_parity"]["module_assignment_sha256"] = (
             assignment_sha
         )
+        recalculated_fingerprint = promotion_v2_fingerprint(report)
+        self.assertNotEqual(
+            report["promotion_fingerprint"], recalculated_fingerprint
+        )
+        report["promotion_fingerprint"] = recalculated_fingerprint
         write_json(
             repo / "evidence/project-test-runner/promotion-report.json",
             report,
@@ -4683,25 +4844,8 @@ class PromotionReportV2Tests(unittest.TestCase):
             validate_promotion_report(repo)
 
     def test_v2_health_memo_positive_profile_blocks_cutover(self) -> None:
-        repo, report = self.make_report()
-        safety_path = (
-            repo
-            / "evidence/project-test-runner/"
-            "optimization-safety-review.v1.json"
-        )
-        safety = json.loads(safety_path.read_text(encoding="utf-8"))
-        profile_path = repo / "profile/result.json"
-        profile = json.loads(profile_path.read_text(encoding="utf-8"))
-        profile["control_store_check_classification"]["memo_hits"] = 1
-        safety["health_profile"]["sha256"] = write_json(
-            profile_path, profile
-        )
-        report["optimization_safety_review"]["sha256"] = write_json(
-            safety_path, safety
-        )
-        write_json(
-            repo / "evidence/project-test-runner/promotion-report.json",
-            report,
+        repo, _report = self.make_report(
+            safety_input_mutator=_set_health_profile_memo_hit,
         )
         with self.assertRaisesRegex(PromotionValidationError, "memo"):
             validate_promotion_report(repo)

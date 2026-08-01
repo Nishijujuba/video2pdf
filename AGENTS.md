@@ -228,6 +228,10 @@ When an invented formula is still useful, label it as an interpretive teaching m
 
 A formula is allowed only when it earns its cognitive cost.
 
+## Validator Fixture Evolution
+
+Changes to multi-stage fail-closed validators, dependency-bound fixtures, negative validation scenarios, or validation-gate ordering must follow the [Validator Fixture Evolution Standard](docs/testing/validator-fixture-evolution.md). The standard governs fixture dependency graphs, single target contradictions, downstream rematerialization, first-failing-gate assertions, stable gate identities, migration impact lists, and the relationship between fast contract tests and complete acceptance runs.
+
 ## Agent skills
 
 ### Issue tracker

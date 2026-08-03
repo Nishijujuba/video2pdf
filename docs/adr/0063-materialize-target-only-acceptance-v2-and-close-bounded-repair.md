@@ -1,5 +1,8 @@
 # Materialize target-only Acceptance Report v2 and close bounded repair
 
+Status: target-only implementation completed here and activated globally by
+ADR 0064. Platform Kernel authority remains unchanged.
+
 ## Context
 
 Delivery Quality Slices 7-9 provide the canonical rule contracts, three precompile semantic-owner reports, current precompile evidence, final artifact sealing, and rendered-text reconciliation. The final decision still needs one provider-owned aggregation boundary that preserves those precompile decisions and adds an independent Visual Quality Judgment Patch, exact page coverage, crash recovery, and a finite semantic repair route.

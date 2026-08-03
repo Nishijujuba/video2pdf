@@ -7,16 +7,18 @@ description: Run the final, read-only delivery acceptance gate for rendered vide
 
 Use this skill after the final PDF has been rendered and before delivery of a `/bilibili-render-pdf` or `/youtube-render-pdf` result.
 
-The Acceptance Reviewer is an independent read-only reviewer. The reviewer evaluates the final delivered artifacts against `docs/acceptance/acceptance_criteria.v1.json`, using the allowed artifact boundary in `review/acceptance/allowed_artifacts_manifest.json` and the fail-closed report skeleton in `review/acceptance/acceptance_report.skeleton.json`.
+Global Gate status is `active_global_gate`. The Acceptance Reviewer is an independent read-only semantic actor working from provider-created Task Envelopes. Delivery Quality policy, Role Projections, the immutable input binding, and the Acceptance Report v2 Skeleton define the allowed evidence and decision ownership. Platform Kernel authority remains unchanged: Bilibili and YouTube still use their active Legacy coordination until their separate platform cutovers.
+
+Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, dual authority, and a synthetic Legacy Run are forbidden. A Legacy directory enters the active gate only through a fresh Run-record-free Legacy Acceptance Input Set created by `legacy-acceptance-adopt`; a Kernel input retains its real Run authority. Both tracks then use the same `acceptance-prepare`, `acceptance-patch-commit`, `acceptance-materialize`, `acceptance-reconcile`, and active Delivery Guard boundaries.
 
 ## Context Boundary
 
-Allowed inputs:
+Allowed inputs are the exact path-and-SHA read set in the provider-created Task Envelope, including:
 
 - final delivered artifacts listed in `review/acceptance/allowed_artifacts_manifest.json`
-- the criteria file `docs/acceptance/acceptance_criteria.v1.json`
+- current Delivery Quality policy and Role Projection bindings
 - rendered page evidence under `review/acceptance/rendered_pages/`
-- the fail-closed report skeleton `review/acceptance/acceptance_report.skeleton.json`
+- the fail-closed Acceptance Report v2 Skeleton `review/acceptance/acceptance_report.skeleton.json`
 - for non-English teaching PDFs, `review/acceptance/delivery_glossary.json` only when it is listed in `review/acceptance/allowed_artifacts_manifest.json`
 
 Forbidden context:
@@ -31,24 +33,24 @@ Forbidden context:
 - intermediate drafts
 - intermediate files outside the allowed manifest
 
-The reviewer may write only:
+The reviewer may write only its staged Judgment Patch inside the provider-created Attempt directory. Publication authority belongs to the provider:
 
-- `review/acceptance/acceptance_report.json`
-- `review/acceptance/acceptance_summary.md`
+- `acceptance-patch-commit` validates and commits the staged Judgment Patch
+- `acceptance-materialize` publishes canonical `review/acceptance/acceptance_report.json` and its immutable companion records
 
 The reviewer must not modify final artifacts, TeX source, figures, tables, criteria files, generated page images, subtitles, source materials, or intermediate files.
 
 ## Required Workflow
 
-1. Validate the criteria file with `scripts/validate_acceptance_criteria.py`.
-2. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `scripts/validate_acceptance_report.py manifest`. Preserve the default artifact set for ordinary outputs. For non-English teaching PDFs that have a valid delivery glossary contract, pass `--include-delivery-glossary` so the manifest includes `review/acceptance/delivery_glossary.json` with role `delivery_glossary`.
-3. Render the final PDF pages with `scripts/render_pdf_pages.py` so every page has a `review/acceptance/rendered_pages/page_0001.png` style image.
-4. Create or refresh `review/acceptance/acceptance_report.skeleton.json` with `scripts/validate_acceptance_report.py skeleton` so fixed JSON shape, artifact fingerprints, and rendered-page slots come from the validator contract.
-5. Launch the Acceptance Reviewer from a clean context containing only the allowed manifest, the criteria file, final delivered artifacts, rendered pages, and the fail-closed report skeleton.
-6. The Acceptance Reviewer must evaluate every criterion, replace all skeleton placeholders, and record one result for every rendered PDF page.
-7. Validate `review/acceptance/acceptance_report.json` with `scripts/validate_acceptance_report.py validate --enforce-decision`.
+1. For a Legacy directory, run `legacy-acceptance-adopt` with explicit final-artifact, compile-provenance, policy, manifest, and rendered-page paths. It creates a fresh immutable input set and never creates `workflow/run.json`.
+2. For a Kernel input, use the current committed final-quality input binding from the real Run and Control Store authority.
+3. Run `acceptance-prepare` to create the Acceptance Execution Context, fixed Skeleton, Task Envelopes, Claims, and exact allowed read sets.
+4. Launch the independent Reviewer named by each Task Envelope. Each Reviewer writes one bounded Judgment Patch and cannot publish the report.
+5. Run `acceptance-patch-commit` for every patch. The provider validates task identity, fencing, independence, exact reads, complete rule coverage, and current fingerprints before committing it.
+6. Run `acceptance-materialize` only after all required Patches are committed. Use `acceptance-reconcile` after an interrupted Patch or report publication.
+7. Bind the session-scoped delivery target to the canonical Acceptance Report v2 and its explicit Global Gate authority path and SHA, set routing to `ready_for_delivery`, then run `delivery_guard.py check`.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. An optional Markdown summary may explain the decision, and it cannot override the JSON result.
+`acceptance_report.json is the only machine-readable delivery decision source`. The active Guard accepts only a current passing Acceptance Report v2 with committed Patch, execution, report-publication, Global Gate, and fingerprint authority. An optional Markdown summary may explain the decision, and it cannot override the JSON result.
 
 ## Visual Input Scope
 
@@ -177,11 +179,10 @@ The delivered session target is moved under `<video-output-dir>\待删除\delive
 
 ## Scripts
 
-- `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`
 - `scripts/validate_delivery_glossary.py`: validates one standalone `delivery_glossary.v1` contract file for non-English teaching PDFs
 - `scripts/render_pdf_pages.py`: renders every final PDF page to `review/acceptance/rendered_pages/`
-- `scripts/validate_acceptance_report.py`: creates the allowed manifest, creates a fail-closed report skeleton, can include `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
-- `scripts/delivery_guard.py`: prepares bounded old-PDF repair, records failed attempts, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
+- `scripts/video_workflow.py`: exposes `legacy-acceptance-adopt` and the active `acceptance-*` provider operations
+- `scripts/delivery_guard.py`: consumes only current Acceptance Report v2 authority, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
 
 Use the project virtual environment:
 

@@ -16,18 +16,60 @@ def read(path: Path) -> str:
 
 
 class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
+    def test_global_gate_cutover_contract_and_mirrors_are_synchronized(self) -> None:
+        authoritative = {
+            "final-delivery-acceptance": REPO_ROOT / ".agents/skills/final-delivery-acceptance/SKILL.md",
+            "bilibili-render-pdf": REPO_ROOT / ".agents/skills/bilibili-render-pdf/SKILL.md",
+            "youtube-render-pdf": REPO_ROOT / ".agents/skills/youtube-render-pdf/SKILL.md",
+        }
+        required = (
+            "active_global_gate",
+            "Acceptance Report v2",
+            "acceptance-prepare",
+            "acceptance-patch-commit",
+            "acceptance-materialize",
+            "Acceptance Report v1 is rejected",
+            "synthetic Legacy Run",
+            "fallback",
+            "translation",
+            "dual authority",
+            "Platform Kernel authority remains unchanged",
+        )
+        for name, source in authoritative.items():
+            with self.subTest(skill=name):
+                source_text = read(source)
+                mirror_text = read(REPO_ROOT / ".claude/skills" / name / "SKILL.md")
+                self.assertEqual(source_text, mirror_text)
+                for phrase in required:
+                    self.assertIn(phrase, source_text)
+
+        for relative in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(instructions=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in required:
+                    self.assertIn(phrase, text)
+
+        final_context = read(REPO_ROOT / "docs/contexts/final-acceptance/CONTEXT.md")
+        delivery_context = read(REPO_ROOT / "docs/contexts/delivery-quality/CONTEXT.md")
+        decision_map = read(REPO_ROOT / "docs/adr/video-workflow-kernel-2.0-decision-map.md")
+        context_map = read(REPO_ROOT / "CONTEXT-MAP.md")
+        self.assertIn("Status: superseded", final_context)
+        self.assertIn("Status: active_global_gate", delivery_context)
+        self.assertIn("`active_global_gate`", decision_map)
+        self.assertIn("Platform Kernel authority remains unchanged", decision_map)
+        self.assertIn("active_global_gate", context_map)
+
     def test_reviewer_skill_defines_read_only_context_and_outputs(self) -> None:
         text = read(REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "SKILL.md")
 
         required = [
             "Acceptance Reviewer",
-            "docs/acceptance/acceptance_criteria.v1.json",
+            "Acceptance Report v2",
+            "Delivery Quality policy",
             "review/acceptance/allowed_artifacts_manifest.json",
             "review/acceptance/rendered_pages/",
             "review/acceptance/delivery_glossary.json",
-            "--include-delivery-glossary",
             "review/acceptance/acceptance_report.json",
-            "review/acceptance/acceptance_summary.md",
             "acceptance_report.json is the only machine-readable delivery decision source",
             "read-only",
             "final delivered artifacts",
@@ -38,7 +80,7 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "review/pyramid/",
             "review/consistency/",
             "evaluate every criterion",
-            "one result for every rendered PDF page",
+            "one `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page",
             "repair brief",
             "fresh Acceptance Reviewer run",
         ]
@@ -53,7 +95,7 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 self.assertIn("Independent review agent", text)
                 self.assertIn("Acceptance Reviewer", text)
                 self.assertIn("read-only", text)
-                self.assertIn("final delivered artifacts", text)
+                self.assertIn("exact path-and-SHA read set", text)
                 self.assertIn("repair subagents", text)
 
     def test_render_skills_place_acceptance_after_render_before_delivery(self) -> None:
@@ -77,12 +119,15 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 self.assertLess(acceptance, checklist)
                 self.assertLess(checklist, delivery)
                 required = [
-                    "docs/acceptance/acceptance_criteria.v1.json",
+                    "Acceptance Report v2",
+                    "acceptance-prepare",
+                    "acceptance-patch-commit",
+                    "acceptance-materialize",
                     "review/acceptance/allowed_artifacts_manifest.json",
                     "review/acceptance/rendered_pages/",
                     "review/acceptance/acceptance_report.json",
                     "acceptance_report.json is the only machine-readable",
-                    "missing, failed, malformed, stale, or forbidden-context report blocks final delivery",
+                    "non-v2 report blocks final delivery",
                     "Pyramid Gate and independent content review remain separate",
                     "repair subagents",
                     "session-scoped active target",
@@ -204,11 +249,12 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         ):
             with self.subTest(relative=relative):
                 text = read(REPO_ROOT / relative)
-                self.assertIn("review\\latex\\compile_report.json", text)
-                self.assertIn("compile provenance", text)
                 self.assertIn("compile report cannot replace acceptance_report.json", text)
                 self.assertIn("acceptance_report.json is the only machine-readable delivery decision source", text)
                 self.assertIn("The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation", text)
+
+        final_skill = read(REPO_ROOT / ".agents/skills/final-delivery-acceptance/SKILL.md")
+        self.assertIn("review\\latex\\compile_report.json", final_skill)
 
 
 if __name__ == "__main__":

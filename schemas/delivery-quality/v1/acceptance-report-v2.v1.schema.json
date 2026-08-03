@@ -2,9 +2,10 @@
   "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://video2pdf.local/schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json","type":"object","additionalProperties":false,
   "required":["schema_name","schema_version","activation_status","execution_id","execution_revision","materialized_at","provider","input_binding_sha256","run_binding","skeleton_sha256","patches","criterion_results","precompile_owner_reports","visual_scan_evidence","cross_phase_findings","contract_gaps","overall_status","routing_state","repair_budget","repair_ledger_sha256","attempt_record_sha256","semantic_reinterpretation_performed","report_sha256"],
   "properties":{
-    "schema_name":{"const":"acceptance-report-v2"},"schema_version":{"const":"2.0.0"},"activation_status":{"const":"target_only"},"execution_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"execution_revision":{"type":"integer","minimum":1},"materialized_at":{"type":"string","minLength":1},
+    "schema_name":{"const":"acceptance-report-v2"},"schema_version":{"const":"2.0.0"},"activation_status":{"enum":["target_only","active_global_gate"]},"execution_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"execution_revision":{"type":"integer","minimum":1},"materialized_at":{"type":"string","minLength":1},
     "provider":{"type":"object","additionalProperties":false,"required":["provider_id","provider_version"],"properties":{"provider_id":{"const":"acceptance-v2-provider"},"provider_version":{"const":"1.0.0"}}},
     "input_binding_sha256":{"$ref":"#/$defs/sha256"},"run_binding":{"$ref":"#/$defs/run_binding"},"skeleton_sha256":{"$ref":"#/$defs/sha256"},
+    "global_gate_authority":{"type":"object"},
     "patches":{"type":"object","additionalProperties":false,"required":["visual_quality"],"properties":{"visual_quality":{"type":"object","additionalProperties":false,"required":["patch_sha256","task_id","attempt_id"],"properties":{"patch_sha256":{"$ref":"#/$defs/sha256"},"task_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"attempt_id":{"type":"string","pattern":"^[0-9a-f]{32}$"}}}}},
     "criterion_results":{"type":"array","minItems":9,"maxItems":9,"items":{"$ref":"#/$defs/rule_result"}},
     "precompile_owner_reports":{"type":"array","minItems":3,"maxItems":3,"items":{"$ref":"#/$defs/owner_report"}},

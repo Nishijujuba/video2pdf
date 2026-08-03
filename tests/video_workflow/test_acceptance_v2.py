@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
@@ -54,7 +55,9 @@ class AcceptanceV2CliTests(unittest.TestCase):
 
     def ensure_run_authority(self, root: Path) -> tuple[dict, Path, Path]:
         run_path = root / "workflow" / "run.json"
-        control_root = root.parent
+        # Each scenario owns an isolated authority graph. Sharing root.parent
+        # lets the first Global Gate publication fence every later fixture.
+        control_root = root / "control-store"
         if not run_path.is_file():
             record = json.loads((PROJECT_ROOT / "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json").read_text(encoding="utf-8"))
             record["run_id"] = hashlib.md5(str(root).encode()).hexdigest()
@@ -272,10 +275,27 @@ class AcceptanceV2CliTests(unittest.TestCase):
         for logical_id, value in quality_values.items():
             path = write_json(quality_dir / f"{logical_id}.json", value)
             quality_inputs[logical_id] = {"path": str(path), "sha256": file_sha(path)}
+        mirror_source = control_store_root / "issue43-policy-source.txt"
+        mirror_target = control_store_root / "issue43-policy-mirror.txt"
+        mirror_source.write_bytes(b"active-global-gate")
+        mirror_target.write_bytes(b"active-global-gate")
+        gate_members = sorted({"catalogs", "projections", "criteria_migration", "schemas", "providers", "validators", "hooks", "skills", "project_instructions", "mirrors", "tests", "activation_documentation"})
+        gate_evidence = write_json(control_store_root / "issue43-global-gate-exit-evidence.json", {
+            "schema_name": "global-gate-exit-evidence", "schema_version": "1.0.0", "cutover": "global_acceptance_v2",
+            "overall_decision": "pass", "atomic_members": gate_members,
+            "atomic_member_status": {member: "active" for member in gate_members},
+            "mirror_checks": [{"source_path": str(mirror_source.resolve()), "mirror_path": str(mirror_target.resolve()),
+                               "source_sha256": file_sha(mirror_source), "mirror_sha256": file_sha(mirror_target), "status": "equal"}],
+            "policy_status": "active_global_gate",
+            "results": {"kernel_v2_pass": True, "legacy_v2_pass": True, "v1_rejected": True, "fallback_rejected": True, "translation_rejected": True, "dual_authority_rejected": True, "contract_gap_rejected": True, "unsupported_identity_rejected": True, "synthetic_legacy_run_rejected": True},
+        })
+        GlobalGatePublisher().activate(control_store_root=control_store_root, exit_evidence=gate_evidence, activated_at="2026-08-02T00:00:00Z")
+        global_gate_authority = GlobalGatePublisher().require_current(control_store_root=control_store_root)
         binding = {
             "schema_name": "acceptance-v2-input-binding", "schema_version": "1.0.0",
             "activation_status": "target_only", "input_track": "kernel",
             "binding_id": f"final-evidence-{generation}",
+            "global_gate_authority": global_gate_authority,
             "run": {"run_id": run_record["run_id"],
                     "coordination_revision": run_record["coordination_revision"], "acceptance_revision": generation, "video_root": str(root),
                     "checkpoint": {"name": "source_ready", "status": "current", "evidence_sha256": run_record["checkpoints"]["source_ready"]["evidence_sha256"]},
@@ -389,7 +409,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         guarded, guard = run_cli("acceptance-guard-eligibility", "--workspace-root", str(workspace))
         self.assertEqual(0, guarded.returncode, guarded.stderr)
         self.assertTrue(guard["data"]["eligible"])
-        self.assertFalse(guard["data"]["delivery_authority"])
+        self.assertTrue(guard["data"]["delivery_authority"])
 
     def test_visual_patch_missing_page_fails_at_visual_page_coverage_gate(self) -> None:
         workspace, _ = self.prepare()

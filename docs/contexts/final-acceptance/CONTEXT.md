@@ -1,6 +1,6 @@
 # Final Acceptance Context
 
-Status: active.
+Status: superseded at the Global Gate Cutover by the Delivery Quality Context and Acceptance Report v2. This file is historical vocabulary and grants no active delivery authority.
 
 This context owns final-artifact quality standards, reviewer partitions, semantic judgments, and the authoritative Acceptance Report. Video Workflow owns evidence production, Judgment Patch mechanics, compilation, delivery targets, Delivery Guard checks, lifecycle state, and actions taken from that report.
 

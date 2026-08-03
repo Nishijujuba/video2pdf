@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -47,16 +47,42 @@
     },
     "generated_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
     "activation_scope": {
+      "oneOf": [
+        {"$ref": "#/$defs/inactiveActivationScope"},
+        {"$ref": "#/$defs/globalGateActivationScope"}
+      ]
+    },
+    "atomic_members": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z_]{2,79}$"}
+    },
+    "atomic_member_status": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority"],
-      "properties": {
-        "kind": {"const": "none"},
-        "runtime_authority_change": {"const": false},
-        "components_activated": {"type": "array", "maxItems": 0},
-        "legacy_track_authority": {"const": "preserved"}
+      "minProperties": 12,
+      "maxProperties": 12,
+      "additionalProperties": {"const": "active"}
+    },
+    "mirror_checks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_path", "mirror_path", "source_sha256", "mirror_sha256", "status"],
+        "properties": {
+          "source_path": {"type": "string", "minLength": 1},
+          "mirror_path": {"type": "string", "minLength": 1},
+          "source_sha256": {"$ref": "#/$defs/sha256"},
+          "mirror_sha256": {"$ref": "#/$defs/sha256"},
+          "status": {"const": "equal"}
+        }
       }
     },
+    "policy_status": {"const": "active_global_gate"},
     "commands": {
       "type": "array",
       "minItems": 2,
@@ -72,7 +98,7 @@
         "required": ["name", "status"],
         "properties": {
           "name": {"type": "string", "minLength": 1},
-          "status": {"enum": ["current", "stale", "blocked", "preserved"]}
+          "status": {"enum": ["current", "stale", "blocked", "preserved", "retired"]}
         }
       }
     },
@@ -284,11 +310,57 @@
         "fault_points": false,
         "platform_smokes": false
       }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "mirror_checks", "policy_status"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 11}, "name": {"const": "global-acceptance-v2-gate"}}},
+        "slice_base_commit": {"const": "64f3fb1638f601b533cb0ee4dec908203c1bef71"},
+        "activation_scope": {"$ref": "#/$defs/globalGateActivationScope"},
+        "results": {"required": ["fencing", "recovery"]},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"slice": {"properties": {"number": {"maximum": 10}}}}
+      },
+      "then": {
+        "properties": {"activation_scope": {"$ref": "#/$defs/inactiveActivationScope"}}
+      }
     }
   ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "gitCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "inactiveActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority"],
+      "properties": {
+        "kind": {"const": "none"},
+        "runtime_authority_change": {"const": false},
+        "components_activated": {"type": "array", "maxItems": 0},
+        "legacy_track_authority": {"const": "preserved"}
+      }
+    },
+    "globalGateActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority", "platform_kernel_authority"],
+      "properties": {
+        "kind": {"const": "active_global_gate"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {
+          "const": ["acceptance_report_v2", "delivery_quality_context"]
+        },
+        "legacy_track_authority": {"const": "acceptance_report_v2"},
+        "platform_kernel_authority": {"const": "unchanged"}
+      }
+    },
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
     "fingerprintedArtifact": {
       "type": "object",

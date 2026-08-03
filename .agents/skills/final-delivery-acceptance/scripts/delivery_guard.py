@@ -14,6 +14,15 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+SRC_ROOT = Path(__file__).resolve().parents[4] / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
+from video2pdf_workflow_kernel.errors import KernelError
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+from video2pdf_workflow_kernel.utils import canonical_json_bytes
+
 from validate_acceptance_report import (
     GateBlockedError,
     ValidationError as AcceptanceReportValidationError,
@@ -43,6 +52,11 @@ EXIT_BLOCKED = 2
 class GuardError(Exception):
     """Raised when the delivery guard must block delivery."""
 
+    def __init__(self, message: str, *, first_failing_gate: str = "delivery_guard", error_code: str = "delivery_guard_failed") -> None:
+        super().__init__(message)
+        self.first_failing_gate = first_failing_gate
+        self.error_code = error_code
+
 
 class MissingTargetError(GuardError):
     """Raised when no active delivery target exists."""
@@ -62,6 +76,8 @@ class DeliveryTarget:
     acceptance_report_path: Path
     guard_report_path: Path
     compile_report_path: Path
+    global_gate_authority_path: Path
+    global_gate_authority_sha256: str
     attempt_limit: int
     stage: str
     final_pdf_relative: str
@@ -311,6 +327,7 @@ def resolve_delivery_target(
             "allowed_artifacts_manifest",
             "acceptance_report",
             "delivery_guard_report",
+            "global_gate_authority",
             "attempt_limit",
         },
         "delivery target",
@@ -349,6 +366,18 @@ def resolve_delivery_target(
         video_target.get("compile_report", "review/latex/compile_report.json"),
         "delivery_target.compile_report",
     )
+    gate_binding = _require_object(video_target["global_gate_authority"], "delivery_target.global_gate_authority")
+    _require_keys(gate_binding, {"path", "sha256"}, "delivery_target.global_gate_authority")
+    if set(gate_binding) != {"path", "sha256"}:
+        raise GuardError("delivery_target.global_gate_authority contains unsupported fields")
+    global_gate_authority_path = _resolve_project_path(
+        project_root, gate_binding["path"], "delivery_target.global_gate_authority.path"
+    )
+    global_gate_authority_sha256 = _require_string(
+        gate_binding["sha256"], "delivery_target.global_gate_authority.sha256"
+    )
+    if len(global_gate_authority_sha256) != 64 or any(character not in "0123456789abcdef" for character in global_gate_authority_sha256):
+        raise GuardError("delivery_target.global_gate_authority.sha256 must be a lowercase SHA-256")
     compile_provenance_required = _validate_optional_bool(
         video_target.get("compile_provenance_required"),
         "delivery_target.compile_provenance_required",
@@ -385,6 +414,8 @@ def resolve_delivery_target(
         acceptance_report_path=acceptance_report_path,
         guard_report_path=guard_report_path,
         compile_report_path=compile_report_path,
+        global_gate_authority_path=global_gate_authority_path,
+        global_gate_authority_sha256=global_gate_authority_sha256,
         attempt_limit=attempt_limit,
         stage=stage,
         final_pdf_relative=final_pdf_relative,
@@ -605,6 +636,9 @@ def guard_fingerprints(target: DeliveryTarget, manifest: dict[str, Any]) -> list
     current_target_relative = _repo_relative(target.project_root, target.current_target_path)
     fingerprints.append(_fingerprint_file(target.current_target_path, current_target_relative))
     seen.add(current_target_relative)
+    global_gate_relative = _repo_relative(target.project_root, target.global_gate_authority_path)
+    fingerprints.append(_fingerprint_file(target.global_gate_authority_path, global_gate_relative))
+    seen.add(global_gate_relative)
     for relative_path in ordered_paths:
         if relative_path in seen:
             continue
@@ -1367,6 +1401,8 @@ def _write_guard_report(
     fingerprints: list[dict[str, Any]],
     checked_conditions: list[dict[str, Any]],
     blocking_message: str | None,
+    first_failing_gate: str | None = None,
+    error_code: str | None = None,
 ) -> None:
     target.guard_report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {
@@ -1381,6 +1417,8 @@ def _write_guard_report(
         "artifact_fingerprints": fingerprints,
         "checked_conditions": checked_conditions,
         "blocking_message": blocking_message,
+        "first_failing_gate": first_failing_gate,
+        "error_code": error_code,
     }
     target.guard_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1392,6 +1430,71 @@ def _load_acceptance_status(path: Path) -> str | None:
         return None
     status = report.get("overall_status")
     return status if isinstance(status, str) else None
+
+
+def _validate_active_acceptance_authority(target: DeliveryTarget) -> dict[str, Any]:
+    """Require the complete provider-owned v2 publication and current Global Gate."""
+
+    if any(key in target.video_target for key in ("acceptance_report_v1", "legacy_acceptance_report", "acceptance_authorities")):
+        raise GuardError(
+            "Dual Acceptance Report authority cannot authorize the active delivery gate",
+            first_failing_gate="acceptance_authority",
+            error_code="acceptance_dual_authority_rejected",
+        )
+    report = _require_object(_load_json(target.acceptance_report_path, "acceptance report"), "acceptance report")
+    if report.get("schema_name") != "acceptance-report-v2" or report.get("schema_version") != "2.0.0":
+        raise GuardError(
+            "Acceptance Report v1 or an unsupported report version cannot authorize delivery",
+            first_failing_gate="acceptance_authority",
+            error_code="acceptance_report_v1_rejected",
+        )
+    if any(key in report for key in ("translated_from", "compatibility_translation", "source_schema_version")):
+        raise GuardError(
+            "Compatibility translation cannot authorize the active delivery gate",
+            first_failing_gate="acceptance_authority",
+            error_code="acceptance_compatibility_translation_rejected",
+        )
+    if not target.global_gate_authority_path.is_file() or _file_sha256(target.global_gate_authority_path) != target.global_gate_authority_sha256:
+        raise GuardError(
+            "delivery_target Global Gate authority binding is stale",
+            first_failing_gate="global_gate_authority",
+            error_code="global_gate_authority_stale",
+        )
+    try:
+        current_gate = GlobalGatePublisher().require_current(
+            control_store_root=target.global_gate_authority_path.parent
+        )
+        eligibility = AcceptanceV2Provider(SRC_ROOT.parent).guard_eligibility(
+            workspace_root=target.acceptance_report_path.parent
+        )
+    except KernelError as exc:
+        data = getattr(exc, "data", {}) or {}
+        raise GuardError(
+            str(exc),
+            first_failing_gate=data.get("first_failing_gate", "acceptance_v2_authority"),
+            error_code=data.get("error_code", "acceptance_v2_authority_stale"),
+        ) from exc
+    if (
+        Path(current_gate["path"]).resolve() != target.global_gate_authority_path
+        or current_gate["file_sha256"] != target.global_gate_authority_sha256
+    ):
+        raise GuardError(
+            "delivery_target Global Gate authority disagrees with committed control state",
+            first_failing_gate="global_gate_authority",
+            error_code="global_gate_authority_stale",
+        )
+    failed_check = next(
+        (name for name, passed in eligibility.get("mechanical_checks", {}).items() if not passed),
+        None,
+    )
+    if not eligibility.get("eligible") or failed_check is not None:
+        failed_check = failed_check or "acceptance_v2_authority"
+        raise GuardError(
+            f"Acceptance Report v2 authority is ineligible: {failed_check}",
+            first_failing_gate=failed_check,
+            error_code=f"acceptance_v2_{failed_check}_stale",
+        )
+    return eligibility
 
 
 def run_check(*, project_root: Path, current_target_path: Path, criteria_path: Path) -> tuple[int, str]:
@@ -1416,20 +1519,9 @@ def run_check(*, project_root: Path, current_target_path: Path, criteria_path: P
         _ensure_compile_provenance(target)
         checked_conditions.append(_condition("final_compile_provenance_current", "pass"))
 
-        try:
-            validate_acceptance_report(
-                target.acceptance_report_path,
-                criteria_path=criteria_path,
-                video_output_dir=target.video_output_dir,
-                manifest_path=target.manifest_path,
-                enforce_decision=True,
-            )
-        except GateBlockedError:
-            raise
-        except AcceptanceReportValidationError:
-            raise
+        _validate_active_acceptance_authority(target)
         acceptance_status = _load_acceptance_status(target.acceptance_report_path)
-        checked_conditions.append(_condition("acceptance_report_enforced", "pass"))
+        checked_conditions.append(_condition("acceptance_report_v2_authority_current", "pass"))
         _ensure_rendered_page_coverage(target)
         checked_conditions.append(_condition("rendered_page_evidence_current", "pass"))
         fingerprints = guard_fingerprints(target, manifest)
@@ -1456,6 +1548,8 @@ def run_check(*, project_root: Path, current_target_path: Path, criteria_path: P
                 fingerprints=fingerprints,
                 checked_conditions=checked_conditions,
                 blocking_message=message,
+                first_failing_gate=getattr(exc, "first_failing_gate", "delivery_guard"),
+                error_code=getattr(exc, "error_code", "delivery_guard_failed"),
             )
         return EXIT_BLOCKED, message
 

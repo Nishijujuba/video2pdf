@@ -1,0 +1,357 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import sqlite3
+from typing import Any
+
+from .errors import AcceptanceV2Rejected, ControlStoreUnavailable, GlobalGateFault
+from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
+
+
+GLOBAL_GATE_DB = "global-gate-control.sqlite3"
+GLOBAL_GATE_SCHEMA_VERSION = 1
+ATOMIC_MEMBERS = frozenset({
+    "catalogs", "projections", "criteria_migration", "schemas", "providers",
+    "validators", "hooks", "skills", "project_instructions", "mirrors", "tests",
+    "activation_documentation",
+})
+REQUIRED_RESULTS = frozenset({
+    "kernel_v2_pass", "legacy_v2_pass", "v1_rejected", "fallback_rejected",
+    "translation_rejected", "dual_authority_rejected", "contract_gap_rejected",
+    "unsupported_identity_rejected", "synthetic_legacy_run_rejected",
+})
+RESULT_ERROR_CODES = {
+    "kernel_v2_pass": "global_gate_kernel_v2_not_proven",
+    "legacy_v2_pass": "global_gate_legacy_v2_not_proven",
+    "v1_rejected": "global_gate_v1_not_rejected",
+    "fallback_rejected": "global_gate_fallback_not_rejected",
+    "translation_rejected": "global_gate_translation_not_rejected",
+    "dual_authority_rejected": "global_gate_dual_authority_not_rejected",
+    "contract_gap_rejected": "global_gate_contract_gap_not_rejected",
+    "unsupported_identity_rejected": "global_gate_unsupported_identity_not_rejected",
+    "synthetic_legacy_run_rejected": "global_gate_synthetic_legacy_run_not_rejected",
+}
+ACTIVATION_FAULT_POINTS = frozenset({"after_intent", "after_authority_write", "after_control_commit"})
+
+
+def _fingerprint(value: dict[str, Any], field: str) -> str:
+    return hashlib.sha256(canonical_json_bytes({key: item for key, item in value.items() if key != field})).hexdigest()
+
+
+def _reject(message: str, gate: str, code: str, **data: Any) -> None:
+    raise AcceptanceV2Rejected(message, data={"first_failing_gate": gate, "error_code": code, **data})
+
+
+def _control_reject(message: str, code: str) -> None:
+    raise ControlStoreUnavailable(
+        message,
+        data={"first_failing_gate": "control_store", "error_code": code},
+    )
+
+
+def _validate_policy_evidence(evidence: Any) -> dict[str, Any]:
+    if not isinstance(evidence, dict) or evidence.get("schema_name") != "global-gate-exit-evidence" or evidence.get("schema_version") != "1.0.0" or evidence.get("cutover") != "global_acceptance_v2" or evidence.get("overall_decision") != "pass":
+        _reject("Global Gate Exit Evidence schema or decision is invalid", "exit_evidence_schema", "global_gate_exit_evidence_invalid")
+    if set(evidence.get("atomic_members", [])) != ATOMIC_MEMBERS:
+        _reject("Global Gate atomic publication group is incomplete", "atomic_group", "global_gate_atomic_group_incomplete")
+    statuses = evidence.get("atomic_member_status")
+    if not isinstance(statuses, dict) or set(statuses) != ATOMIC_MEMBERS or any(statuses[member] != "active" for member in sorted(ATOMIC_MEMBERS)):
+        failed = next((member for member in sorted(ATOMIC_MEMBERS) if not isinstance(statuses, dict) or statuses.get(member) != "active"), None)
+        _reject("Global Gate atomic member is not active", "atomic_member_status", "global_gate_atomic_member_failed", member=failed)
+    mirror_checks = evidence.get("mirror_checks")
+    if not isinstance(mirror_checks, list) or not mirror_checks:
+        _reject("Global Gate managed mirror evidence is incomplete", "mirror_checks", "global_gate_mirror_stale")
+    for check in mirror_checks:
+        if not isinstance(check, dict) or set(check) != {"source_path", "mirror_path", "source_sha256", "mirror_sha256", "status"}:
+            _reject("Global Gate managed mirror evidence is invalid", "mirror_checks", "global_gate_mirror_stale")
+        source = Path(check["source_path"])
+        mirror = Path(check["mirror_path"])
+        if (
+            check["status"] != "equal"
+            or check["source_sha256"] != check["mirror_sha256"]
+            or not source.is_file()
+            or not mirror.is_file()
+            or sha256_file(source) != check["source_sha256"]
+            or sha256_file(mirror) != check["mirror_sha256"]
+        ):
+            _reject("Global Gate managed mirrors are stale", "mirror_checks", "global_gate_mirror_stale", source_path=str(source), mirror_path=str(mirror))
+    if evidence.get("policy_status") != "active_global_gate":
+        _reject("Global Gate policy status is inactive", "policy_status", "global_gate_policy_inactive")
+    results = evidence.get("results")
+    if not isinstance(results, dict) or set(results) != REQUIRED_RESULTS:
+        _reject("Global Gate policy result set is incomplete", "policy_results", "global_gate_results_incomplete")
+    for result in sorted(REQUIRED_RESULTS):
+        if results[result] is not True:
+            _reject("Global Gate required policy rejection or pass is unproven", "policy_results", RESULT_ERROR_CODES[result], result=result)
+    return evidence
+
+
+def _contained_file(root: Path, candidate: Path, *, gate: str, code: str) -> Path:
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        _reject("Legacy Acceptance input path escapes the video output directory", gate, code, path=str(resolved))
+    if not resolved.is_file():
+        _reject("Legacy Acceptance input is missing", gate, code, path=str(resolved))
+    return resolved
+
+
+class LegacyAcceptanceProvider:
+    """Adopts current Legacy final evidence without inventing workflow authority."""
+
+    def __init__(self, project_root: Path) -> None:
+        self.project_root = project_root.resolve()
+
+    def adopt(
+        self, *, video_output_dir: Path, final_pdf: Path, main_tex: Path,
+        allowed_artifacts_manifest: Path, compile_report: Path, criteria: Path,
+        dimension_map: Path, rendered_pages_manifest: Path, control_store_root: Path, adopted_at: str,
+        output: Path | None = None,
+    ) -> dict[str, Any]:
+        root = video_output_dir.resolve()
+        if not root.is_dir():
+            _reject("Legacy video output directory is unavailable", "video_output_authority", "legacy_video_output_unavailable")
+        local = {
+            "final_pdf": _contained_file(root, final_pdf, gate="path_boundary", code="legacy_input_path_escape"),
+            "main_tex": _contained_file(root, main_tex, gate="path_boundary", code="legacy_input_path_escape"),
+            "allowed_manifest": _contained_file(root, allowed_artifacts_manifest, gate="path_boundary", code="legacy_input_path_escape"),
+            "compile_report": _contained_file(root, compile_report, gate="path_boundary", code="legacy_input_path_escape"),
+            "dimension_map": _contained_file(root, dimension_map, gate="path_boundary", code="legacy_input_path_escape"),
+            "pages_manifest": _contained_file(root, rendered_pages_manifest, gate="path_boundary", code="legacy_input_path_escape"),
+        }
+        criteria_path = criteria.resolve()
+        if not criteria_path.is_file() or not criteria_path.is_relative_to(self.project_root):
+            _reject("Acceptance criteria authority is unavailable", "policy_binding", "legacy_criteria_unavailable")
+
+        compile_value = read_json(local["compile_report"])
+        if not isinstance(compile_value, dict) or (
+            compile_value.get("schema_version") != "latex_compile_report.v1"
+            or compile_value.get("mode") != "final"
+            or compile_value.get("status") != "passed"
+            or compile_value.get("producer") != "compile_latex_ascii.py"
+            or compile_value.get("producer_contract") != "latex_compile_guard.v1"
+            or Path(compile_value.get("final_pdf", "")).resolve() != local["final_pdf"]
+            or Path(compile_value.get("main_tex", compile_value.get("source_tex", ""))).resolve() != local["main_tex"]
+            or compile_value.get("final_pdf_fingerprint", {}).get("sha256") != sha256_file(local["final_pdf"])
+            or compile_value.get("source_tex_fingerprint", {}).get("sha256") != sha256_file(local["main_tex"])
+        ):
+            _reject("Legacy final compile provenance is absent, stale, or unsupported", "compile_provenance", "legacy_compile_provenance_invalid")
+
+        allowed = read_json(local["allowed_manifest"])
+        declared = {
+            (item.get("role"), item.get("path"), item.get("sha256"))
+            for item in allowed.get("final_artifacts", []) if isinstance(item, dict)
+        }
+        expected = {
+            ("pdf", local["final_pdf"].relative_to(root).as_posix(), sha256_file(local["final_pdf"])),
+            ("tex", local["main_tex"].relative_to(root).as_posix(), sha256_file(local["main_tex"])),
+        }
+        if not expected <= declared:
+            _reject("Allowed-artifact manifest does not bind current final artifacts", "allowed_manifest", "legacy_allowed_manifest_stale")
+
+        rendered = read_json(local["pages_manifest"])
+        pages = rendered.get("pages", []) if isinstance(rendered, dict) else []
+        if rendered.get("final_pdf_sha256") != sha256_file(local["final_pdf"]) or rendered.get("page_count") != len(pages) or [p.get("page") for p in pages] != list(range(1, len(pages) + 1)) or not pages:
+            _reject("Rendered-page manifest lacks complete current coverage", "rendered_page_coverage", "legacy_rendered_page_coverage_invalid")
+        normalized_pages = []
+        for page in pages:
+            path = _contained_file(root, Path(page.get("path", "")), gate="rendered_page_freshness", code="legacy_rendered_page_stale")
+            if sha256_file(path) != page.get("sha256"):
+                _reject("Rendered page is stale", "rendered_page_freshness", "legacy_rendered_page_stale", page=page.get("page"))
+            normalized_pages.append({"page": page["page"], "path": str(path), "sha256": page["sha256"]})
+
+        artifacts = []
+        for logical_id, path in (("final_pdf", local["final_pdf"]), ("main_tex", local["main_tex"])):
+            digest = sha256_file(path)
+            artifacts.append({"logical_id": logical_id, "path": str(path), "size": path.stat().st_size,
+                              "sha256": digest, "generation_id": hashlib.sha256(f"{logical_id}\0{digest}".encode()).hexdigest()})
+        gate_binding = GlobalGatePublisher().require_current(control_store_root=control_store_root)
+        value = {
+            "schema_name": "legacy-acceptance-input-set", "schema_version": "1.0.0",
+            "activation_status": "active_global_gate", "input_track": "legacy",
+            "input_set_id": hashlib.sha256(f"{root}\0{adopted_at}".encode()).hexdigest()[:32],
+            "video_output_dir": str(root), "artifacts": artifacts,
+            "allowed_artifacts_manifest": {"path": str(local["allowed_manifest"]), "sha256": sha256_file(local["allowed_manifest"])},
+            "compile_provenance": {"path": str(local["compile_report"]), "sha256": sha256_file(local["compile_report"]), "classification": "guarded_final_compile"},
+            "acceptance_criteria": {"path": str(criteria_path), "sha256": sha256_file(criteria_path)},
+            "acceptance_dimension_map": {"path": str(local["dimension_map"]), "sha256": sha256_file(local["dimension_map"])},
+            "rendered_pages": {"manifest_path": str(local["pages_manifest"]), "manifest_sha256": sha256_file(local["pages_manifest"]), "page_count": len(normalized_pages), "pages": normalized_pages},
+            "provider": {"provider_id": "legacy-acceptance-adoption-provider", "provider_version": "1.0.0", "provider_sha256": sha256_file(Path(__file__))},
+            "invocation": {"explicit_video_output_dir": str(root), "selection_policy": "explicit_paths_only"},
+            "adopted_at": adopted_at,
+            "global_gate_authority": gate_binding,
+        }
+        value["input_set_sha256"] = _fingerprint(value, "input_set_sha256")
+        target = (output or root / "review/acceptance/legacy_input_set.json").resolve()
+        if not target.is_relative_to(root):
+            _reject("Legacy input-set output escapes the video directory", "path_boundary", "legacy_output_path_escape")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(target, value)
+        return {"input_set_path": str(target), "input_set_sha256": value["input_set_sha256"], "input_track": "legacy", "activation_status": "active_global_gate"}
+
+
+class GlobalGatePublisher:
+    """Crash-safe CAS publication for the sole active global delivery gate."""
+
+    def _connect(self, root: Path) -> sqlite3.Connection:
+        if not root.is_dir():
+            _control_reject("Global Gate control-store root is unavailable", "global_gate_control_store_unavailable")
+        try:
+            connection = sqlite3.connect(root / GLOBAL_GATE_DB, timeout=0.05, isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                connection.close()
+                _control_reject("Global Gate control store is corrupt", "global_gate_control_store_corrupt")
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version not in {0, GLOBAL_GATE_SCHEMA_VERSION}:
+                connection.close()
+                _control_reject("Global Gate control store schema is incompatible", "global_gate_control_store_incompatible")
+            connection.execute(f"PRAGMA user_version={GLOBAL_GATE_SCHEMA_VERSION}")
+            connection.execute("CREATE TABLE IF NOT EXISTS gate_authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS gate_intents (intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL, authority_sha256 TEXT, authority_json TEXT)")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(gate_intents)")}
+            if "authority_json" not in columns:
+                connection.execute("ALTER TABLE gate_intents ADD COLUMN authority_json TEXT")
+            return connection
+        except ControlStoreUnavailable:
+            raise
+        except sqlite3.DatabaseError as exc:
+            code = "global_gate_control_store_corrupt" if "not a database" in str(exc).casefold() else "global_gate_control_store_locked"
+            raise ControlStoreUnavailable("Global Gate control store cannot be opened", data={"first_failing_gate": "control_store", "error_code": code}) from exc
+        except OSError as exc:
+            raise ControlStoreUnavailable("Global Gate control store is unavailable", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_unavailable"}) from exc
+
+    def activate(self, *, control_store_root: Path, exit_evidence: Path, activated_at: str, fault_point: str | None = None) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        evidence_path = exit_evidence.resolve()
+        if not evidence_path.is_file():
+            _reject("Global Gate Exit Evidence is unavailable", "exit_evidence_schema", "global_gate_exit_evidence_unavailable")
+        evidence = read_json(evidence_path)
+        _validate_policy_evidence(evidence)
+        evidence_sha = sha256_file(evidence_path)
+        authority_path = root / "active_global_gate.json"
+        intent_id = hashlib.sha256((evidence_sha + "\0global_acceptance_v2").encode()).hexdigest()
+        authority = {"schema_name": "global-gate-authority", "schema_version": "1.0.0", "generation": 1,
+                     "active_global_gate": "acceptance_report_v2", "acceptance_report_schema_version": "2.0.0",
+                     "legacy_acceptance_authority": "legacy_acceptance_input_set_v1", "platform_kernel_authority": "unchanged",
+                     "exit_evidence_path": str(evidence_path), "exit_evidence_sha256": evidence_sha, "activated_at": activated_at}
+        authority["authority_sha256"] = _fingerprint(authority, "authority_sha256")
+        with self._connect(root) as control:
+            try:
+                control.execute("BEGIN IMMEDIATE")
+                current = control.execute("SELECT * FROM gate_authority WHERE singleton=1").fetchone()
+                if current is not None:
+                    if current["evidence_sha256"] != evidence_sha:
+                        control.execute("ROLLBACK")
+                        _reject("A different Global Gate authority already won the CAS", "activation_fencing", "global_gate_authority_conflict")
+                    authority = read_json(authority_path) if authority_path.is_file() else None
+                    if not authority or sha256_file(authority_path) != current["authority_sha256"]:
+                        control.execute("ROLLBACK")
+                        _reject("Committed Global Gate authority bytes are stale", "activation_reconcile", "global_gate_authority_stale")
+                    control.execute("COMMIT")
+                    return {"authority_path": str(authority_path), "authority_sha256": current["authority_sha256"], "generation": current["generation"], "idempotent": True}
+                pending = control.execute("SELECT * FROM gate_intents WHERE state='PREPARED'").fetchall()
+                if pending:
+                    control.execute("ROLLBACK")
+                    _reject("An interrupted Global Gate publication requires reconciliation", "activation_reconcile", "global_gate_reconcile_required")
+                control.execute("INSERT INTO gate_intents(intent_id,expected_generation,evidence_sha256,state,authority_sha256,authority_json) VALUES(?,?,?,?,?,?)", (intent_id, 0, evidence_sha, "PREPARED", authority["authority_sha256"], json.dumps(authority, sort_keys=True, separators=(",", ":"))))
+                control.execute("COMMIT")
+            except sqlite3.OperationalError as exc:
+                try:
+                    control.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise ControlStoreUnavailable("Global Gate control store is unavailable or locked", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_locked"}) from exc
+        if fault_point == "after_intent":
+            raise GlobalGateFault(fault_point)
+        write_json_atomic(authority_path, authority)
+        if fault_point == "after_authority_write":
+            raise GlobalGateFault(fault_point)
+        file_sha = sha256_file(authority_path)
+        with self._connect(root) as control:
+            try:
+                control.execute("BEGIN IMMEDIATE")
+                control.execute("INSERT INTO gate_authority(singleton,generation,evidence_sha256,authority_sha256) VALUES(1,1,?,?)", (evidence_sha, file_sha))
+                control.execute("UPDATE gate_intents SET state='COMMITTED',authority_sha256=? WHERE intent_id=?", (file_sha, intent_id))
+                control.execute("COMMIT")
+            except sqlite3.OperationalError as exc:
+                try:
+                    control.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise ControlStoreUnavailable("Global Gate control store is unavailable or locked", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_locked"}) from exc
+        if fault_point == "after_control_commit":
+            raise GlobalGateFault(fault_point)
+        return {"authority_path": str(authority_path), "authority_sha256": file_sha, "generation": 1, "idempotent": False}
+
+    def require_current(self, *, control_store_root: Path) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        authority_path = root / "active_global_gate.json"
+        with self._connect(root) as control:
+            row = control.execute("SELECT * FROM gate_authority WHERE singleton=1").fetchone()
+            pending = control.execute("SELECT COUNT(*) FROM gate_intents WHERE state!='COMMITTED'").fetchone()[0]
+        if row is None or pending or not authority_path.is_file() or sha256_file(authority_path) != row["authority_sha256"]:
+            _reject("Global Gate authority is absent, stale, or has an incomplete publication", "global_gate_authority", "global_gate_authority_stale")
+        value = read_json(authority_path)
+        if (
+            value.get("active_global_gate") != "acceptance_report_v2"
+            or value.get("platform_kernel_authority") != "unchanged"
+            or value.get("generation") != row["generation"]
+            or value.get("exit_evidence_sha256") != row["evidence_sha256"]
+            or value.get("authority_sha256") != _fingerprint(value, "authority_sha256")
+        ):
+            _reject("Global Gate authority content conflicts with committed control state", "global_gate_authority", "global_gate_authority_conflict")
+        return {
+            "control_store_root": str(root), "path": str(authority_path),
+            "file_sha256": row["authority_sha256"], "authority_sha256": value["authority_sha256"],
+            "exit_evidence_sha256": row["evidence_sha256"], "generation": row["generation"],
+        }
+
+    def reconcile(self, *, control_store_root: Path) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        authority_path = root / "active_global_gate.json"
+        with self._connect(root) as control:
+            control.execute("BEGIN IMMEDIATE")
+            current = control.execute("SELECT * FROM gate_authority WHERE singleton=1").fetchone()
+            pending = control.execute("SELECT * FROM gate_intents WHERE state='PREPARED'").fetchall()
+            if len(pending) > 1:
+                control.execute("ROLLBACK")
+                _reject("Multiple activation publications require operator disposition", "activation_reconcile", "global_gate_reconcile_ambiguous")
+            if pending:
+                intent = pending[0]
+                authority = json.loads(intent["authority_json"])
+                if not authority_path.is_file():
+                    write_json_atomic(authority_path, authority)
+                if read_json(authority_path) != authority:
+                    control.execute("ROLLBACK")
+                    _reject("Interrupted Global Gate authority bytes conflict", "activation_reconcile", "global_gate_authority_stale")
+                file_sha = sha256_file(authority_path)
+                if current is None:
+                    control.execute("INSERT INTO gate_authority(singleton,generation,evidence_sha256,authority_sha256) VALUES(1,1,?,?)", (intent["evidence_sha256"], file_sha))
+                elif current["evidence_sha256"] != intent["evidence_sha256"] or current["authority_sha256"] != file_sha:
+                    control.execute("ROLLBACK")
+                    _reject("Interrupted publication lost its activation fence", "activation_fencing", "global_gate_authority_conflict")
+                control.execute("UPDATE gate_intents SET state='COMMITTED',authority_sha256=? WHERE intent_id=?", (file_sha, intent["intent_id"]))
+            control.execute("COMMIT")
+        current_value = self.require_current(control_store_root=root)
+        return {"authority_path": current_value["path"], "authority_sha256": current_value["file_sha256"], "generation": current_value["generation"], "reconciled": True}
+
+    def check_policy(self, *, control_store_root: Path) -> dict[str, Any]:
+        current = self.require_current(control_store_root=control_store_root)
+        authority = read_json(Path(current["path"]))
+        evidence_path = Path(authority["exit_evidence_path"])
+        if not evidence_path.is_file() or sha256_file(evidence_path) != current["exit_evidence_sha256"]:
+            _reject("Current Global Gate Exit Evidence is stale", "global_gate_authority", "global_gate_exit_evidence_stale")
+        evidence = _validate_policy_evidence(read_json(evidence_path))
+        return {
+            "current": True,
+            "policy_status": evidence["policy_status"],
+            "active_atomic_members": sorted(evidence["atomic_member_status"]),
+            "mirror_checks": evidence["mirror_checks"],
+            "global_gate_authority": current,
+            "results": evidence["results"],
+        }

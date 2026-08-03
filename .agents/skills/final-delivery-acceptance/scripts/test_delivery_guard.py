@@ -11,11 +11,13 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 import fitz
 
 from validate_acceptance_report import compute_artifact_fingerprint, create_allowed_artifacts_manifest
 from tests.project_test_runner._fixture_root import new_fixture_dir
+from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
 
 
 SOURCE_REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -43,6 +45,13 @@ def load_criteria() -> dict[str, object]:
 
 
 class DeliveryGuardTests(unittest.TestCase):
+    ensure_run_authority = acceptance_v2_tests.AcceptanceV2CliTests.ensure_run_authority
+    refresh_final_authority = acceptance_v2_tests.AcceptanceV2CliTests.refresh_final_authority
+    build_binding = acceptance_v2_tests.AcceptanceV2CliTests.build_binding
+    patch = acceptance_v2_tests.AcceptanceV2CliTests.patch
+    commit_visual = acceptance_v2_tests.AcceptanceV2CliTests.commit_visual
+    materialize = acceptance_v2_tests.AcceptanceV2CliTests.materialize
+
     def setUp(self) -> None:
         global REPO_ROOT
         self.project_root = new_fixture_dir(
@@ -85,9 +94,57 @@ class DeliveryGuardTests(unittest.TestCase):
             self.current_target_path.parent / "sessions" / self.session_id / "current.json"
         )
         self.write_compile_report(self.valid_compile_report())
-        self.write_report(self.valid_report())
+        self.materialize_valid_v2_authority()
         self.write_delivery_target()
         self.write_current_target()
+
+    def materialize_valid_v2_authority(self) -> None:
+        """Build the committed v2 authority graph used by every Guard scenario.
+
+        Graph: Global Gate authority -> input binding -> prepared execution ->
+        committed visual Patch -> materialized Acceptance Report v2 -> target.
+        Negative tests mutate one node after this boundary and assert the first
+        gate that owns the intended contradiction.
+        """
+        original_write_bytes = Path.write_bytes
+
+        def write_fixture_bytes(path: Path, data: bytes) -> int:
+            if path.name == "final.pdf" and data == b"pdf":
+                self.write_pdf(path, pages=2)
+                return path.stat().st_size
+            return original_write_bytes(path, data)
+
+        with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
+            binding_path = self.build_binding(self.video_dir, 1)
+        prepared, envelope = acceptance_v2_tests.run_cli(
+            "acceptance-prepare",
+            "--workspace-root",
+            str(self.acceptance_dir),
+            "--input-binding",
+            str(binding_path),
+            "--attempt-number",
+            "1",
+            "--prepared-at",
+            "2026-08-03T00:00:00Z",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        self.commit_visual(self.acceptance_dir)
+        materialized, envelope = self.materialize(self.acceptance_dir)
+        self.assertEqual(0, materialized.returncode, materialized.stdout + materialized.stderr)
+        self.binding = json.loads((self.acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
+        self.final_pdf = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "final_pdf"))
+        self.main_tex = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "main_tex"))
+        for item in self.binding["rendered_pages"]:
+            shutil.copy2(item["path"], self.rendered_dir / f"page_{item['page']:04d}.png")
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [
+                ("tex", self.main_tex.relative_to(self.video_dir).as_posix()),
+                ("pdf", self.final_pdf.relative_to(self.video_dir).as_posix()),
+            ],
+        )
+        self.write_compile_report(self.valid_compile_report())
 
     def write_pdf(self, path: Path, *, pages: int) -> None:
         doc = fitz.open()
@@ -259,8 +316,8 @@ class DeliveryGuardTests(unittest.TestCase):
         }
 
     def valid_compile_report(self, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
-        source_tex = self.video_dir / "main.tex"
-        final_pdf = self.video_dir / final_pdf_name
+        source_tex = getattr(self, "main_tex", self.video_dir / "main.tex")
+        final_pdf = getattr(self, "final_pdf", self.video_dir / final_pdf_name)
         return {
             "schema_version": "latex_compile_report.v1",
             "mode": "final",
@@ -290,9 +347,16 @@ class DeliveryGuardTests(unittest.TestCase):
             "source_skill": "test-fixture",
         }
 
-    def valid_compile_report_for(self, video_dir: Path, *, final_pdf_name: str = "final.pdf") -> dict[str, object]:
-        source_tex = video_dir / "main.tex"
-        final_pdf = video_dir / final_pdf_name
+    def valid_compile_report_for(
+        self,
+        video_dir: Path,
+        *,
+        final_pdf_name: str = "final.pdf",
+        source_tex: Path | None = None,
+        final_pdf: Path | None = None,
+    ) -> dict[str, object]:
+        source_tex = source_tex or video_dir / "main.tex"
+        final_pdf = final_pdf or video_dir / final_pdf_name
         return {
             "schema_version": "latex_compile_report.v1",
             "mode": "final",
@@ -444,22 +508,27 @@ class DeliveryGuardTests(unittest.TestCase):
         self,
         *,
         stage: str = "accepted",
-        final_pdf: str = "final.pdf",
+        final_pdf: str | None = None,
         compile_report: str | None = "review/latex/compile_report.json",
         compile_provenance_required: bool | None = None,
         legacy_existing_pdf: bool | None = None,
         recompiled: bool | None = None,
     ) -> None:
+        resolved_final_pdf = final_pdf or self.final_pdf.relative_to(self.video_dir).as_posix()
         target = {
             "schema_version": "1.0",
             "stage": stage,
             "video_output_dir": ".",
-            "final_pdf": final_pdf,
-            "main_tex": "main.tex",
+            "final_pdf": resolved_final_pdf,
+            "main_tex": self.main_tex.relative_to(self.video_dir).as_posix(),
             "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
             "acceptance_report": "review/acceptance/acceptance_report.json",
             "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
             "attempt_limit": 3,
+            "global_gate_authority": {
+                "path": Path(self.binding["global_gate_authority"]["path"]).relative_to(self.project_root).as_posix(),
+                "sha256": self.binding["global_gate_authority"]["file_sha256"],
+            },
         }
         if compile_report is not None:
             target["compile_report"] = compile_report
@@ -551,33 +620,70 @@ class DeliveryGuardTests(unittest.TestCase):
         (video_dir / "main.tex").write_text(f"{name} article text.\n", encoding="utf-8")
         self.write_pdf(video_dir / "final.pdf", pages=1)
         (rendered_dir / "page_0001.png").write_bytes(f"png evidence {name}".encode("utf-8"))
+        original_write_bytes = Path.write_bytes
+
+        def write_fixture_bytes(path: Path, data: bytes) -> int:
+            if path.name == "final.pdf" and data == b"pdf":
+                self.write_pdf(path, pages=2)
+                return path.stat().st_size
+            return original_write_bytes(path, data)
+
+        with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
+            binding_path = self.build_binding(video_dir, 1)
+        prepared, envelope = acceptance_v2_tests.run_cli(
+            "acceptance-prepare",
+            "--workspace-root",
+            str(acceptance_dir),
+            "--input-binding",
+            str(binding_path),
+            "--attempt-number",
+            "1",
+            "--prepared-at",
+            "2026-08-03T00:00:00Z",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        self.commit_visual(acceptance_dir, decision=acceptance_status)
+        materialized, envelope = self.materialize(acceptance_dir)
+        self.assertEqual(0, materialized.returncode, materialized.stdout + materialized.stderr)
+        binding = json.loads((acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
+        final_pdf = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"))
+        main_tex = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "main_tex"))
+        for item in binding["rendered_pages"]:
+            shutil.copy2(item["path"], rendered_dir / f"page_{item['page']:04d}.png")
         create_allowed_artifacts_manifest(
             video_dir,
             CRITERIA_PATH,
-            [("tex", "main.tex"), ("pdf", "final.pdf")],
+            [
+                ("tex", main_tex.relative_to(video_dir).as_posix()),
+                ("pdf", final_pdf.relative_to(video_dir).as_posix()),
+            ],
         )
         compile_report_path = video_dir / "review" / "latex" / "compile_report.json"
         compile_report_path.parent.mkdir(parents=True, exist_ok=True)
         compile_report_path.write_text(
-            json.dumps(self.valid_compile_report_for(video_dir), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        report = self.failed_report_for(video_dir) if acceptance_status == "fail" else self.valid_report_for(video_dir)
-        (acceptance_dir / "acceptance_report.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
+            json.dumps(
+                self.valid_compile_report_for(video_dir, source_tex=main_tex, final_pdf=final_pdf),
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         target_path = acceptance_dir / "delivery_target.json"
+        gate = binding["global_gate_authority"]
         target = {
             "schema_version": "1.0",
             "stage": stage,
             "video_output_dir": ".",
-            "final_pdf": "final.pdf",
-            "main_tex": "main.tex",
+            "final_pdf": final_pdf.relative_to(video_dir).as_posix(),
+            "main_tex": main_tex.relative_to(video_dir).as_posix(),
             "allowed_artifacts_manifest": "review/acceptance/allowed_artifacts_manifest.json",
             "acceptance_report": "review/acceptance/acceptance_report.json",
             "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
             "compile_report": "review/latex/compile_report.json",
+            "global_gate_authority": {
+                "path": Path(gate["path"]).relative_to(self.project_root).as_posix(),
+                "sha256": gate["file_sha256"],
+            },
             "attempt_limit": 3,
         }
         target_path.write_text(json.dumps(target, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -623,6 +729,12 @@ class DeliveryGuardTests(unittest.TestCase):
 
     def run_check(self, *, current_target: Path | None = None) -> subprocess.CompletedProcess[str]:
         return self.run_guard("check", current_target=current_target or self.write_session_current_target())
+
+    def assert_guard_failure(self, *, gate: str, code: str) -> dict[str, object]:
+        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(gate, report["first_failing_gate"])
+        self.assertEqual(code, report["error_code"])
+        return report
 
     def run_task_command(self, *extra: str) -> subprocess.CompletedProcess[str]:
         return self.run_guard(*extra, "--task-index", str(self.task_index_path))
@@ -998,15 +1110,18 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(report["schema_version"], "1.0")
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["stage"], "accepted")
-        self.assertEqual(report["final_pdf"], "final.pdf")
+        self.assertEqual(report["final_pdf"], self.final_pdf.relative_to(self.video_dir).as_posix())
         self.assertEqual(report["validated_by"], "delivery_guard.py")
         self.assertEqual(report["acceptance_report_status"], "pass")
         self.assertIsNone(report["blocking_message"])
         fingerprint_paths = {item["path"] for item in report["artifact_fingerprints"]}
         self.assertIn(session_target.relative_to(REPO_ROOT).as_posix(), fingerprint_paths)
-        self.assertIn("final.pdf", fingerprint_paths)
+        self.assertIn(self.final_pdf.relative_to(self.video_dir).as_posix(), fingerprint_paths)
         self.assertIn("review/latex/compile_report.json", fingerprint_paths)
-        self.assertIn("acceptance_report_enforced", {item["condition"] for item in report["checked_conditions"]})
+        self.assertIn(
+            "acceptance_report_v2_authority_current",
+            {item["condition"] for item in report["checked_conditions"]},
+        )
 
     def test_check_rejects_missing_final_compile_report_for_new_video_target(self) -> None:
         self.write_delivery_target(compile_report="review/latex/missing_compile_report.json")
@@ -1086,7 +1201,7 @@ class DeliveryGuardTests(unittest.TestCase):
 
     def test_check_rejects_compile_report_without_final_mode_argv(self) -> None:
         report = self.valid_compile_report()
-        report["argv"] = ["--tex", str((self.video_dir / "main.tex").resolve()), "--mode", "quick"]
+        report["argv"] = ["--tex", str(self.main_tex.resolve()), "--mode", "quick"]
         self.write_compile_report(report)
 
         completed = self.run_check()
@@ -1148,7 +1263,7 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("final compile report source_tex does not match delivery_target.main_tex", completed.stderr)
 
     def test_check_rejects_stale_compile_report_pdf_fingerprint(self) -> None:
-        with (self.video_dir / "final.pdf").open("ab") as handle:
+        with self.final_pdf.open("ab") as handle:
             handle.write(b"\nchanged after final compile report")
 
         completed = self.run_check()
@@ -1157,26 +1272,26 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("final compile report final_pdf_fingerprint is stale", completed.stderr)
 
     def test_check_rejects_stale_compile_report_tex_fingerprint(self) -> None:
-        (self.video_dir / "main.tex").write_text("Changed after final compile report.\n", encoding="utf-8")
+        self.main_tex.write_text("Changed after final compile report.\n", encoding="utf-8")
 
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
         self.assertIn("final compile report source_tex_fingerprint is stale", completed.stderr)
 
-    def test_legacy_existing_pdf_can_explicitly_skip_compile_provenance(self) -> None:
+    def test_legacy_v1_fallback_cannot_skip_active_v2_authority(self) -> None:
         self.write_delivery_target(
             compile_report="review/latex/missing_legacy_compile_report.json",
             compile_provenance_required=False,
             legacy_existing_pdf=True,
             recompiled=False,
         )
+        self.write_report(self.valid_report())
 
         completed = self.run_check()
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
-        self.assertEqual(report["status"], "pass")
+        self.assertEqual(completed.returncode, 2)
+        self.assert_guard_failure(gate="acceptance_authority", code="acceptance_report_v1_rejected")
 
     def test_new_video_target_cannot_disable_compile_provenance(self) -> None:
         self.write_delivery_target(
@@ -1216,29 +1331,27 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("missing_recompile_compile_report.json", completed.stderr)
 
     def test_check_rejects_stale_acceptance_report(self) -> None:
-        (self.video_dir / "main.tex").write_text("Changed after acceptance.\n", encoding="utf-8")
+        self.main_tex.write_text("Changed after acceptance.\n", encoding="utf-8")
         self.write_compile_report(self.valid_compile_report())
 
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("artifact_fingerprints entry is stale: main.tex", completed.stderr)
-        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        report = self.assert_guard_failure(gate="input_freshness", code="acceptance_input_stale")
         self.assertEqual(report["status"], "fail")
         self.assertIn("Final Delivery Guard blocked delivery", report["blocking_message"])
 
-    def test_check_rejects_failed_acceptance_report_decision(self) -> None:
+    def test_check_rejects_v1_failed_report_as_inactive_authority(self) -> None:
         self.write_report(self.failed_report())
 
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("acceptance report status 'fail' blocks delivery", completed.stderr)
-        report = json.loads((self.acceptance_dir / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        report = self.assert_guard_failure(gate="acceptance_authority", code="acceptance_report_v1_rejected")
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["acceptance_report_status"], "fail")
 
-    def test_check_rejects_malformed_acceptance_report(self) -> None:
+    def test_check_rejects_malformed_v1_acceptance_report_before_historical_fields(self) -> None:
         report = self.valid_report()
         del report["overall_status"]
         self.write_report(report)
@@ -1246,28 +1359,26 @@ class DeliveryGuardTests(unittest.TestCase):
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("report missing keys", completed.stderr)
-        self.assertIn("overall_status", completed.stderr)
+        self.assert_guard_failure(gate="acceptance_authority", code="acceptance_report_v1_rejected")
 
-    def test_check_rejects_acceptance_report_with_forbidden_context(self) -> None:
-        report = self.valid_report()
-        context = dict(report["review_context_used"])
-        context["artifacts_read"] = [
-            *context["artifacts_read"],
-            "review/pyramid/main.pyramid.json",
-        ]
-        report["review_context_used"] = context
+    def test_check_rejects_compatibility_translation_marker(self) -> None:
+        report = json.loads(self.report_path.read_text(encoding="utf-8"))
+        report["translated_from"] = "acceptance-report-v1"
         self.write_report(report)
 
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("review_context_used.artifacts_read", completed.stderr)
-        self.assertIn("outside allowed artifacts", completed.stderr)
+        self.assert_guard_failure(
+            gate="acceptance_authority",
+            code="acceptance_compatibility_translation_rejected",
+        )
 
     def test_check_rejects_manifest_mismatch_and_missing_rendered_page_coverage(self) -> None:
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-        manifest["final_artifacts"] = [{"role": "tex", "path": "main.tex"}]
+        manifest["final_artifacts"] = [
+            {"role": "tex", "path": self.main_tex.relative_to(self.video_dir).as_posix()}
+        ]
         self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
         manifest_mismatch = self.run_check()
@@ -1275,20 +1386,28 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertEqual(manifest_mismatch.returncode, 2)
         self.assertIn("final PDF is absent from allowed_artifacts_manifest.json", manifest_mismatch.stderr)
 
-        self.write_two_page_target_and_report(pages_checked=[1])
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [
+                ("tex", self.main_tex.relative_to(self.video_dir).as_posix()),
+                ("pdf", self.final_pdf.relative_to(self.video_dir).as_posix()),
+            ],
+        )
+        shutil.move(self.rendered_dir / "page_0002.png", self.video_dir / "待删除" / "page_0002.png")
 
         missing_page = self.run_check()
 
         self.assertEqual(missing_page.returncode, 2)
-        self.assertIn("visual_scan_evidence.pages_checked must cover every page exactly once", missing_page.stderr)
+        self.assertIn("rendered page evidence is missing", missing_page.stderr)
 
     def test_check_rejects_missing_rendered_page_image(self) -> None:
-        self.write_two_page_target_and_report(pages_checked=[1, 2])
+        shutil.move(self.rendered_dir / "page_0002.png", self.video_dir / "待删除" / "page_0002.png")
 
         completed = self.run_check()
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("rendered page image is missing", completed.stderr)
+        self.assertIn("rendered page evidence is missing", completed.stderr)
         self.assertIn("review/acceptance/rendered_pages/page_0002.png", completed.stderr)
 
     def test_resolver_rejects_invalid_stage_and_path_escape(self) -> None:
@@ -1518,12 +1637,14 @@ class DeliveryGuardTests(unittest.TestCase):
         self.assertIn("PASS:", passed_a.stdout)
         self.assertEqual(blocked_b.returncode, 2)
         self.assertIn("Final Delivery Guard blocked delivery", blocked_b.stderr)
-        self.assertIn("acceptance report status 'fail' blocks delivery", blocked_b.stderr)
+        self.assertIn("Acceptance Report v2 authority is ineligible: decision_pass", blocked_b.stderr)
         self.assertEqual(hook_a_after_b.returncode, 0, hook_a_after_b.stderr)
         self.assertIn("fresh passing guard report", hook_a_after_b.stdout)
         self.assertTrue((video_a["acceptance_dir"] / "delivery_guard_report.json").exists())
         report_b = json.loads((video_b["acceptance_dir"] / "delivery_guard_report.json").read_text(encoding="utf-8"))
         self.assertEqual(report_b["status"], "fail")
+        self.assertEqual(report_b["first_failing_gate"], "decision_pass")
+        self.assertEqual(report_b["error_code"], "acceptance_v2_decision_pass_stale")
 
     def test_concurrent_task_index_rejects_same_video_owner_and_allows_handoff(self) -> None:
         session_a = "owner-a"

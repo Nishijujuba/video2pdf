@@ -1,6 +1,6 @@
 # Delivery Quality Context
 
-Status: target-only. It succeeds the active Final Acceptance Context only at the Global Gate Cutover.
+Status: active_global_gate. It succeeded the Final Acceptance Context at the Global Gate Cutover. Platform Kernel authority remains unchanged.
 
 This target context owns canonical delivery-blocking quality policy, Language Profiles, Role Projections, semantic decision ownership, evidence sufficiency, implementation conformance, precompile quality judgments, text sealing, rendered-text reconciliation, and final semantic materialization.
 
@@ -91,4 +91,4 @@ fidelity failures from Contract Gaps and performs no semantic reinterpretation.
 
 ## Migration boundary
 
-The target migration ledger binds active Acceptance Criteria v1 identities to future canonical rule identities and decision owners. Its presence does not change active Legacy Final Acceptance authority. `Acceptance Report v2` remains the future sole final semantic delivery decision after the Global Gate Cutover.
+Acceptance Report v2 is the sole active final semantic delivery decision. Acceptance Report v1, fallback, translation, dual authority, and synthetic Legacy Run Records are rejected. Bilibili and YouTube Run ownership remains active Legacy until each Platform Kernel Cutover.

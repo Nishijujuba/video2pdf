@@ -63,6 +63,17 @@ class AcceptanceV2Fault(KernelError):
         )
 
 
+class GlobalGateFault(KernelError):
+    classification = "injected_global_gate_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Global Gate fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
 class UnknownContractVersion(ContractError):
     classification = "unknown_contract_version"
 

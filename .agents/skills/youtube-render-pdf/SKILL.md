@@ -511,16 +511,18 @@ After the final PDF is rendered and visual verification is complete, run the Fin
 
 Required evidence paths:
 
-- `docs/acceptance/acceptance_criteria.v1.json`
+- current Delivery Quality Rule Catalog and Role Projections
 - `review/acceptance/allowed_artifacts_manifest.json`
 - `review/acceptance/acceptance_report.skeleton.json`
 - `review/acceptance/rendered_pages/`
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
+Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged. This active Legacy workflow must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`. It must never create a synthetic Legacy Run. Run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, then publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, and dual authority are forbidden. Both Legacy and Kernel inputs use the same Acceptance Report v2 provider and active Guard.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, forbidden-context, or non-v2 report blocks final delivery.
 
 If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
 

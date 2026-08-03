@@ -1,6 +1,6 @@
 # Context Map
 
-This repository uses four active contexts, one supporting context, and one target-only successor context. Every active canonical term has one owning glossary; cross-context consumers use the Published Language below and do not redefine it.
+This repository uses four active contexts and one supporting context. Delivery Quality succeeded Final Acceptance at the Global Gate Cutover; every active canonical term has one owning glossary.
 
 Runtime activation is independent from domain-document presence. The [Video Workflow Kernel 2.0 decision map](./docs/adr/video-workflow-kernel-2.0-decision-map.md) records component-level `target_only`, `active_legacy`, `active_global_gate`, and `active_kernel` status.
 
@@ -11,14 +11,9 @@ Runtime activation is independent from domain-document presence. The [Video Work
 | [Project Governance](./docs/contexts/project-governance/CONTEXT.md) | active | Current Project 2.0 planning language and Human Publication authority | Runtime state and frozen Project 1.0 execution language |
 | [Video Workflow](./docs/contexts/video-workflow/CONTEXT.md) | active | Run lifecycle, source preparation, production, assurance, repair, compile provenance, resources, Batch projections, and delivery mechanics | Pyramid semantic judgment, Final Acceptance semantic judgment, and historical-directory relocation |
 | [Pyramid Evaluation](./docs/contexts/pyramid-evaluation/CONTEXT.md) | active | Pyramid standards, evaluation targets, semantic review, Pyramid Gate Reports, and waiver boundaries | Workflow invocation timing, checkpoints, and continuation state |
-| [Final Acceptance](./docs/contexts/final-acceptance/CONTEXT.md) | active | Final quality criteria, Reviewer partitions, semantic evidence, and the Acceptance Report | Artifact generation, compilation, Delivery Targets, Delivery Guard mechanics, and delivery lifecycle state |
+| [Delivery Quality](./docs/contexts/delivery-quality/CONTEXT.md) | `active_global_gate` | Canonical quality policy, semantic ownership, precompile quality, rendered reconciliation, and Acceptance Report v2 | Artifact generation, platform Run ownership, Delivery Targets, and Guard mechanics |
+| [Final Acceptance](./docs/contexts/final-acceptance/CONTEXT.md) | superseded | Historical Acceptance Report v1 vocabulary | Active delivery authority |
 | [Legacy Workspace Maintenance](./docs/contexts/legacy-workspace-maintenance/CONTEXT.md) | supporting | Evidence-based classification and relocation of historical video documentation directories | New-run naming, Final PDF naming, Run Migration, and active workflow state |
-
-## Target-only successor context
-
-| Context | Classification | Owns after activation | Current boundary |
-|---|---|---|---|
-| [Delivery Quality](./docs/contexts/delivery-quality/CONTEXT.md) | `target_only` | Canonical quality policy, Language Profiles, Role Projections, semantic ownership, conformance, precompile quality, text sealing, rendered-text reconciliation, and final semantic materialization | Registered contracts and conformance carry implementation-qualification authority only. Final Acceptance remains active until the Global Gate Cutover. |
 
 ## Published Language and Relationships
 

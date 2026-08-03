@@ -8,7 +8,7 @@
             "command": "python .agents/skills/final-delivery-acceptance/scripts/delivery_guard.py hook-stop",
             "commandWindows": "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe -X utf8 -B D:\\Project\\video2pdf\\newskill-kimi\\.agents\\skills\\final-delivery-acceptance\\scripts\\delivery_guard.py hook-stop",
             "timeout": 30,
-            "statusMessage": "Checking Final Delivery Guard"
+            "statusMessage": "Checking active Acceptance Report v2 Delivery Guard"
           }
         ]
       }

@@ -38,6 +38,7 @@ from .acceptance_v2 import (
     PREPARE_FAULT_POINTS as ACCEPTANCE_PREPARE_FAULT_POINTS,
     AcceptanceV2Provider,
 )
+from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcceptanceProvider
 from .utils import read_json
 
 
@@ -220,6 +221,31 @@ def _parser() -> argparse.ArgumentParser:
 
     acceptance_guard = commands.add_parser("acceptance-guard-eligibility")
     acceptance_guard.add_argument("--workspace-root", required=True, type=Path)
+
+    legacy_adopt = commands.add_parser("legacy-acceptance-adopt")
+    legacy_adopt.add_argument("--video-output-dir", required=True, type=Path)
+    legacy_adopt.add_argument("--final-pdf", required=True, type=Path)
+    legacy_adopt.add_argument("--main-tex", required=True, type=Path)
+    legacy_adopt.add_argument("--allowed-artifacts-manifest", required=True, type=Path)
+    legacy_adopt.add_argument("--compile-report", required=True, type=Path)
+    legacy_adopt.add_argument("--criteria", required=True, type=Path)
+    legacy_adopt.add_argument("--dimension-map", required=True, type=Path)
+    legacy_adopt.add_argument("--rendered-pages-manifest", required=True, type=Path)
+    legacy_adopt.add_argument("--control-store-root", required=True, type=Path)
+    legacy_adopt.add_argument("--adopted-at", required=True)
+    legacy_adopt.add_argument("--output", type=Path)
+
+    global_gate_activate = commands.add_parser("global-gate-activate")
+    global_gate_activate.add_argument("--control-store-root", required=True, type=Path)
+    global_gate_activate.add_argument("--exit-evidence", required=True, type=Path)
+    global_gate_activate.add_argument("--activated-at", required=True)
+    global_gate_activate.add_argument("--fault-point", choices=sorted(ACTIVATION_FAULT_POINTS))
+
+    global_gate_reconcile = commands.add_parser("global-gate-reconcile")
+    global_gate_reconcile.add_argument("--control-store-root", required=True, type=Path)
+
+    workflow_policy_check = commands.add_parser("workflow-policy-check")
+    workflow_policy_check.add_argument("--control-store-root", required=True, type=Path)
 
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
@@ -500,6 +526,29 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "legacy-acceptance-adopt":
+        result = LegacyAcceptanceProvider(project_root).adopt(
+            video_output_dir=args.video_output_dir, final_pdf=args.final_pdf,
+            main_tex=args.main_tex, allowed_artifacts_manifest=args.allowed_artifacts_manifest,
+            compile_report=args.compile_report, criteria=args.criteria,
+            dimension_map=args.dimension_map, rendered_pages_manifest=args.rendered_pages_manifest,
+            control_store_root=args.control_store_root, adopted_at=args.adopted_at, output=args.output,
+        )
+        return _ok(command, "legacy_acceptance_adopted", result, result["input_set_path"])
+    if command == "global-gate-activate":
+        result = GlobalGatePublisher().activate(
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            activated_at=args.activated_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(command, "global_gate_activated", result, result["authority_path"])
+    if command == "global-gate-reconcile":
+        result = GlobalGatePublisher().reconcile(control_store_root=args.control_store_root)
+        return _ok(command, "global_gate_reconciled", result, result["authority_path"])
+    if command == "workflow-policy-check":
+        result = GlobalGatePublisher().check_policy(control_store_root=args.control_store_root)
+        return _ok(command, "workflow_policy_current", result, result["global_gate_authority"]["path"])
     if command == "acceptance-final-authority-publish":
         result = AcceptanceV2Provider(project_root).publish_final_authority(input_binding_path=args.input_binding)
         return _ok(command, "acceptance_v2_final_authority_published", result)

@@ -11,6 +11,7 @@ from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .delivery_quality import DeliveryQualityRegistry
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
+from .global_gate import GlobalGatePublisher
 
 
 DIMENSION_CRITERIA = {
@@ -56,6 +57,22 @@ def _artifact_set_sha(binding: dict[str, Any]) -> str:
             ],
         })
     ).hexdigest()
+
+
+def _is_legacy_binding(binding: dict[str, Any]) -> bool:
+    return binding.get("schema_name") == "legacy-acceptance-input-set" and binding.get("input_track") == "legacy"
+
+
+def _binding_sha(binding: dict[str, Any]) -> str:
+    return binding["input_set_sha256"] if _is_legacy_binding(binding) else binding["binding_sha256"]
+
+
+def _binding_pages(binding: dict[str, Any]) -> list[dict[str, Any]]:
+    return binding["rendered_pages"]["pages"] if _is_legacy_binding(binding) else binding["rendered_pages"]
+
+
+def _binding_video_root(binding: dict[str, Any]) -> Path:
+    return Path(binding["video_output_dir"] if _is_legacy_binding(binding) else binding["run"]["video_root"]).resolve()
 
 
 def _final_authority_generations(binding: dict[str, Any]) -> list[dict[str, Any]]:
@@ -168,13 +185,13 @@ class AcceptanceV2Provider:
                     control.execute("ROLLBACK")
                     _reject("Final Quality authority revision conflicts", "run_final_quality_authority", "acceptance_final_authority_conflict")
                 control.execute("COMMIT")
-                return {"run_id": run["run_id"], "acceptance_revision": run["acceptance_revision"], "authority_sha256": checkpoint["authority_sha256"], "idempotent": True, "activation_status": "target_only"}
+                return {"run_id": run["run_id"], "acceptance_revision": run["acceptance_revision"], "authority_sha256": checkpoint["authority_sha256"], "idempotent": True, "activation_status": "active_global_gate"}
             control.execute(
                 "INSERT OR REPLACE INTO final_quality_authority(run_id,acceptance_revision,run_record_sha256,authority_path,authority_sha256) VALUES(?,?,?,?,?)",
                 values,
             )
             control.execute("COMMIT")
-        return {"run_id": run["run_id"], "acceptance_revision": run["acceptance_revision"], "authority_sha256": checkpoint["authority_sha256"], "idempotent": False, "activation_status": "target_only"}
+        return {"run_id": run["run_id"], "acceptance_revision": run["acceptance_revision"], "authority_sha256": checkpoint["authority_sha256"], "idempotent": False, "activation_status": "active_global_gate"}
 
     def prepare(
         self,
@@ -188,7 +205,7 @@ class AcceptanceV2Provider:
         root = workspace_root.resolve()
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
-        expected_root = (Path(binding["run"]["video_root"]).resolve() / "review" / "acceptance").resolve()
+        expected_root = (_binding_video_root(binding) / "review" / "acceptance").resolve()
         if root != expected_root:
             _reject("Acceptance workspace is not the canonical video authority", "workspace_authority", "acceptance_workspace_authority_invalid")
         if attempt_number != 1:
@@ -224,13 +241,19 @@ class AcceptanceV2Provider:
     ) -> dict[str, Any]:
         root.mkdir(parents=True, exist_ok=True)
         self.registry.validate("acceptance-v2-repair-ledger", ledger)
-        execution_id = _id(binding["binding_sha256"], attempt_number, prepared_at)
+        binding_sha = _binding_sha(binding)
+        execution_id = _id(binding_sha, attempt_number, prepared_at)
         execution_root = root / "executions" / execution_id
         evaluation_rules = self._evaluation_rules()
         dimensions: dict[str, Any] = {}
-        for dimension, criteria in {
-            "visual_quality": tuple(item["rule_id"] for item in evaluation_rules["visual-quality-evaluation"])
-        }.items():
+        dimension_rules = {"visual_quality": tuple(item["rule_id"] for item in evaluation_rules["visual-quality-evaluation"])}
+        if _is_legacy_binding(binding):
+            dimension_rules = {
+                "text_quality": tuple(item["rule_id"] for item in evaluation_rules["writing-quality-evaluation"]),
+                **dimension_rules,
+            }
+        pages = _binding_pages(binding)
+        for dimension, criteria in dimension_rules.items():
             task_id = _id(execution_id, dimension)
             dimensions[dimension] = {
                 "task_id": task_id,
@@ -238,21 +261,20 @@ class AcceptanceV2Provider:
                 "claim_generation": 1,
                 "fencing_token": _id(execution_id, task_id, 1, length=64),
                 "criterion_ids": list(criteria),
-                "allowed_read_set": [
-                    "final_pdf",
-                    *[f"rendered_page:{page['page']}" for page in binding["rendered_pages"]],
-                ],
+                "allowed_read_set": (["main_tex"] if dimension == "text_quality" else [
+                    "final_pdf", *[f"rendered_page:{page['page']}" for page in pages],
+                ]),
                 "peer_results_visible": False,
             }
         skeleton = {
             "schema_name": "acceptance-v2-review-skeleton",
             "schema_version": "1.0.0",
-            "activation_status": "target_only",
+            "activation_status": "active_global_gate",
             "execution_id": execution_id,
-            "input_binding_sha256": binding["binding_sha256"],
+            "input_binding_sha256": binding_sha,
             "attempt_number": attempt_number,
             "dimensions": dimensions,
-            "required_visual_pages": [page["page"] for page in binding["rendered_pages"]],
+            "required_visual_pages": [page["page"] for page in pages],
             "aggregation_policy": "failure-dominant-add-only-v1",
             "policy_bindings": {
                 "catalog_sha256": sha256_file(self.project_root / "delivery-quality/v1/rule-catalog.v1.json"),
@@ -263,19 +285,20 @@ class AcceptanceV2Provider:
         execution = {
             "schema_name": "acceptance-v2-execution-context",
             "schema_version": "1.0.0",
-            "activation_status": "target_only",
+            "activation_status": "active_global_gate",
             "execution_id": execution_id,
             "execution_revision": 1,
             "state": "reviewing",
             "prepared_at": prepared_at,
             "attempt_number": attempt_number,
-            "input_binding_sha256": binding["binding_sha256"],
+            "input_binding_sha256": binding_sha,
             "skeleton_sha256": skeleton["skeleton_sha256"],
             "committed_patches": {},
             "report_publication": None,
         }
         execution["execution_sha256"] = _fingerprint_without(execution, "execution_sha256")
-        self.registry.validate("acceptance-v2-input-binding", binding)
+        if not _is_legacy_binding(binding):
+            self.registry.validate("acceptance-v2-input-binding", binding)
         self.registry.validate("acceptance-v2-review-skeleton", skeleton)
         self.registry.validate("acceptance-v2-execution-context", execution)
         execution_root.mkdir(parents=True, exist_ok=True)
@@ -286,7 +309,7 @@ class AcceptanceV2Provider:
             task_value = {
                 "schema_name": "acceptance-v2-task-envelope",
                 "schema_version": "1.0.0",
-                "activation_status": "target_only",
+                "activation_status": "active_global_gate",
                 "task_authority": {"kind": "acceptance_execution", "execution_id": execution_id},
                 "dimension": dimension,
                 **task,
@@ -304,14 +327,14 @@ class AcceptanceV2Provider:
             if active is None or active["state"] in {"invalidated", "terminal"}:
                 control.execute(
                     "INSERT OR REPLACE INTO execution_authority(singleton,execution_id,execution_revision,state,binding_sha256) VALUES(1,?,?,?,?)",
-                    (execution_id, 1, "reviewing", binding["binding_sha256"]),
+                    (execution_id, 1, "reviewing", binding_sha),
                 )
                 for task in dimensions.values():
                     control.execute(
                         "INSERT INTO reviewer_claims(task_id,execution_id,claim_generation,fencing_token,skeleton_sha256,state) VALUES(?,?,?,?,?,?)",
                         (task["task_id"], execution_id, task["claim_generation"], task["fencing_token"], skeleton["skeleton_sha256"], "ACTIVE"),
                     )
-            elif active["execution_revision"] != 1 or active["binding_sha256"] != binding["binding_sha256"]:
+            elif active["execution_revision"] != 1 or active["binding_sha256"] != binding_sha:
                 control.execute("ROLLBACK")
                 _reject("prepared Acceptance authority is contradictory", "execution_uniqueness", "acceptance_execution_prepare_contradictory")
             control.execute("COMMIT")
@@ -327,8 +350,8 @@ class AcceptanceV2Provider:
             "execution_id": execution_id,
             "execution_root": str(execution_root),
             "skeleton_path": str(root / "acceptance_report.skeleton.json"),
-            "activation_status": "target_only",
-            "dimension_count": 1,
+            "activation_status": "active_global_gate",
+            "dimension_count": len(dimensions),
         }
 
     def commit_patch(
@@ -444,7 +467,7 @@ class AcceptanceV2Provider:
                 "overall_status": report["overall_status"],
                 "routing_state": report["routing_state"],
                 "semantic_attempts_used": report["repair_budget"]["semantic_attempts_used"],
-                "activation_status": "target_only",
+                "activation_status": "active_global_gate",
                 "idempotent": True,
             }
         if execution["state"] != "reviewing" or execution.get("report_publication") is not None:
@@ -591,7 +614,8 @@ class AcceptanceV2Provider:
         report = {
             "schema_name": "acceptance-report-v2",
             "schema_version": "2.0.0",
-            "activation_status": "target_only",
+            "activation_status": "active_global_gate",
+            "global_gate_authority": binding["global_gate_authority"],
             "execution_id": execution["execution_id"],
             "execution_revision": execution["execution_revision"] + 1,
             "materialized_at": materialized_at,
@@ -680,7 +704,7 @@ class AcceptanceV2Provider:
             "overall_status": overall,
             "routing_state": routing,
             "semantic_attempts_used": len(ledger["semantic_attempts"]),
-            "activation_status": "target_only",
+            "activation_status": "active_global_gate",
             "idempotent": False,
         }
 
@@ -913,7 +937,12 @@ class AcceptanceV2Provider:
             "decision_pass": report.get("overall_status") == "pass",
             "routing_ready": report.get("routing_state") == "ready_for_delivery",
         })
-        return {"activation_status": "target_only", "delivery_authority": False, "eligible": all(checks.values()), "mechanical_checks": checks, "report_sha256": report.get("report_sha256")}
+        current_global_gate = GlobalGatePublisher().require_current(control_store_root=Path(binding["global_gate_authority"]["control_store_root"]))
+        checks["global_gate_authority_current"] = bool(
+            report.get("activation_status") == "active_global_gate"
+            and report.get("global_gate_authority") == binding.get("global_gate_authority") == current_global_gate
+        )
+        return {"activation_status": "active_global_gate", "delivery_authority": all(checks.values()), "eligible": all(checks.values()), "mechanical_checks": checks, "report_sha256": report.get("report_sha256")}
 
     def _historical_attempts_current(self, root: Path, ledger: dict[str, Any], current_execution: dict[str, Any]) -> bool:
         executions_root = (root / "executions").resolve()
@@ -1013,7 +1042,7 @@ class AcceptanceV2Provider:
         }
         task_envelope = read_json(execution_root / "tasks" / task_id / "task.json")
         expected_envelope = {
-            "schema_name": "acceptance-v2-task-envelope", "schema_version": "1.0.0", "activation_status": "target_only",
+            "schema_name": "acceptance-v2-task-envelope", "schema_version": "1.0.0", "activation_status": "active_global_gate",
             "task_authority": {"kind": "acceptance_execution", "execution_id": execution["execution_id"]},
             "dimension": "visual_quality", **expected_dimension, "skeleton_sha256": skeleton["skeleton_sha256"],
         }
@@ -1032,6 +1061,39 @@ class AcceptanceV2Provider:
         return root, execution_root, execution, skeleton, binding
 
     def _validate_binding(self, binding: dict[str, Any], *, verify_files: bool, require_published_final_authority: bool = True) -> None:
+        if _is_legacy_binding(binding):
+            if "run" in binding:
+                _reject("A Legacy Acceptance Input Set cannot contain a synthetic Run binding", "input_identity", "legacy_synthetic_run_rejected")
+            if binding.get("contract_gaps"):
+                _reject("A Legacy Acceptance Input Set with Contract Gaps cannot enter review", "contract_gap", "legacy_contract_gap_blocked")
+            required = {"schema_name", "schema_version", "activation_status", "input_track", "input_set_id", "video_output_dir", "artifacts", "allowed_artifacts_manifest", "compile_provenance", "acceptance_criteria", "acceptance_dimension_map", "rendered_pages", "provider", "invocation", "adopted_at", "global_gate_authority", "input_set_sha256"}
+            _require_shape(binding, required, "Legacy Acceptance Input Set")
+            if set(binding) != required or binding.get("schema_version") != "1.0.0" or binding.get("activation_status") != "active_global_gate":
+                _reject("unsupported Legacy Acceptance Input Set", "contract_shape", "legacy_acceptance_input_contract_invalid")
+            if binding["input_set_sha256"] != _fingerprint_without(binding, "input_set_sha256"):
+                _reject("Legacy Acceptance Input Set fingerprint is stale", "input_freshness", "legacy_acceptance_input_stale")
+            root = Path(binding["video_output_dir"]).resolve()
+            for item in [*binding["artifacts"], *binding["rendered_pages"]["pages"]]:
+                path = Path(item.get("path", "")).resolve()
+                if not path.is_relative_to(root):
+                    _reject("Legacy Acceptance input path escapes its authority", "input_path_boundary", "acceptance_input_path_escape")
+                if verify_files and (not path.is_file() or sha256_file(path) != item.get("sha256")):
+                    _reject("Legacy Acceptance input is stale", "input_freshness", "acceptance_input_stale", path=str(path))
+            for key in ("allowed_artifacts_manifest", "compile_provenance", "acceptance_dimension_map"):
+                item = binding[key]
+                path = Path(item.get("path", "")).resolve()
+                if not path.is_relative_to(root) or (verify_files and (not path.is_file() or sha256_file(path) != item.get("sha256"))):
+                    _reject("Legacy Acceptance authority binding is stale", "input_freshness", "acceptance_input_stale", path=str(path))
+            criteria = binding["acceptance_criteria"]
+            criteria_path = Path(criteria.get("path", "")).resolve()
+            if not criteria_path.is_relative_to(self.project_root) or (verify_files and (not criteria_path.is_file() or sha256_file(criteria_path) != criteria.get("sha256"))):
+                _reject("Legacy Acceptance criteria binding is stale", "policy_binding", "acceptance_policy_stale")
+            if binding.get("provider", {}).get("provider_id") != "legacy-acceptance-adoption-provider":
+                _reject("Legacy Acceptance provider identity is unsupported", "input_identity", "legacy_provider_unsupported")
+            current_gate = GlobalGatePublisher().require_current(control_store_root=Path(binding["global_gate_authority"].get("control_store_root", "")))
+            if current_gate != binding["global_gate_authority"]:
+                _reject("Legacy Acceptance Global Gate binding is stale", "global_gate_authority", "global_gate_authority_stale")
+            return
         _require_shape(binding, {"schema_name", "schema_version", "activation_status", "input_track", "binding_id", "run", "quality_inputs", "artifacts", "rendered_pages", "binding_sha256"}, "Acceptance input binding")
         if binding["schema_name"] != "acceptance-v2-input-binding" or binding["schema_version"] != "1.0.0" or binding["activation_status"] != "target_only":
             _reject("unsupported Acceptance input binding", "contract_shape", "acceptance_input_contract_invalid")
@@ -1043,6 +1105,9 @@ class AcceptanceV2Provider:
         video_root = Path(run["video_root"]).resolve()
         run_record_path = Path(run.get("run_record_path", "")).resolve()
         control_store_root = Path(run.get("control_store_root", "")).resolve()
+        current_global_gate = GlobalGatePublisher().require_current(control_store_root=control_store_root)
+        if binding.get("global_gate_authority") != current_global_gate:
+            _reject("Kernel Acceptance Global Gate binding is stale", "global_gate_authority", "global_gate_authority_stale")
         if run_record_path != video_root / "workflow" / "run.json" or not control_store_root.is_dir():
             _reject("Kernel Run authority path is invalid", "run_lifecycle", "acceptance_run_authority_invalid")
         if not run_record_path.is_file() or sha256_file(run_record_path) != run.get("run_record_sha256"):

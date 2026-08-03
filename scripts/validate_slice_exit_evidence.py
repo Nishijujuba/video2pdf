@@ -103,6 +103,19 @@ from slice10_exit_evidence_contract import (
     RESULTS as SLICE10_RESULTS,
     SLICE_BASE_COMMIT as SLICE10_BASE_COMMIT,
 )
+from issue43_exit_evidence_contract import (
+    ACTIVATION_SCOPE as ISSUE43_ACTIVATION_SCOPE,
+    ATOMIC_MEMBERS as ISSUE43_ATOMIC_MEMBERS,
+    COMMANDS as ISSUE43_COMMANDS,
+    EVIDENCE_PREFIX as ISSUE43_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as ISSUE43_EXPECTED_CHECKPOINTS,
+    FIXTURE_SPECS as ISSUE43_FIXTURE_SPECS,
+    MIRROR_SPECS as ISSUE43_MIRROR_SPECS,
+    POLICY_STATUS as ISSUE43_POLICY_STATUS,
+    RESULT_BINDINGS as ISSUE43_RESULT_BINDINGS,
+    RESULTS as ISSUE43_RESULTS,
+    SLICE_BASE_COMMIT as ISSUE43_BASE_COMMIT,
+)
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
@@ -283,11 +296,39 @@ SLICE_CONFIGS = {
         "result_bindings": SLICE10_RESULT_BINDINGS,
         "fixture_specs": SLICE10_FIXTURE_SPECS,
     },
+    11: {
+        "base_commit": ISSUE43_BASE_COMMIT,
+        "evidence_prefix": ISSUE43_EVIDENCE_PREFIX,
+        "checkpoints": ISSUE43_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _, _ in ISSUE43_COMMANDS],
+        "commands": [
+            {
+                "test_id": test_id,
+                "command": list(command),
+                "expected_exit_code": expected_exit_code,
+            }
+            for test_id, command, expected_exit_code in ISSUE43_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "recovery", "fencing"],
+        "results": ISSUE43_RESULTS,
+        "result_bindings": ISSUE43_RESULT_BINDINGS,
+        "fixture_specs": ISSUE43_FIXTURE_SPECS,
+        "activation_scope": ISSUE43_ACTIVATION_SCOPE,
+    },
 }
 
 
 class EvidenceError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        first_failing_gate: str = "exit_evidence_validation",
+        error_code: str = "invalid_exit_evidence",
+    ) -> None:
+        super().__init__(message)
+        self.first_failing_gate = first_failing_gate
+        self.error_code = error_code
 
 
 def git(*arguments: str) -> str:
@@ -401,7 +442,124 @@ def slice_config(manifest: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError(f"unsupported Slice Exit Evidence number: {number}") from exc
 
 
+def validate_issue43_cutover(manifest: dict[str, Any]) -> None:
+    if manifest.get("slice", {}).get("number") != 11:
+        return
+
+    scope = manifest.get("activation_scope")
+    if isinstance(scope, dict) and scope.get("platform_kernel_authority") != "unchanged":
+        raise EvidenceError(
+            "Global Gate Exit Evidence cannot change platform Kernel authority",
+            first_failing_gate="activation_scope",
+            error_code="platform_kernel_authority_changed",
+        )
+    if scope != ISSUE43_ACTIVATION_SCOPE:
+        raise EvidenceError(
+            "Global Gate Exit Evidence activation scope differs from its closed authority",
+            first_failing_gate="activation_scope",
+            error_code="unsupported_activation_scope",
+        )
+
+    if manifest.get("atomic_members") != list(ISSUE43_ATOMIC_MEMBERS):
+        raise EvidenceError(
+            "Global Gate atomic member registry is incomplete or reordered",
+            first_failing_gate="atomic_members",
+            error_code="atomic_member_set_mismatch",
+        )
+    expected_member_status = {member: "active" for member in ISSUE43_ATOMIC_MEMBERS}
+    if manifest.get("atomic_member_status") != expected_member_status:
+        raise EvidenceError(
+            "Every Global Gate atomic member must be active",
+            first_failing_gate="atomic_member_status",
+            error_code="atomic_member_inactive",
+        )
+
+    mirror_checks = manifest.get("mirror_checks")
+    if not isinstance(mirror_checks, list) or len(mirror_checks) != len(ISSUE43_MIRROR_SPECS):
+        raise EvidenceError(
+            "Global Gate mirror checks are incomplete",
+            first_failing_gate="mirror_checks",
+            error_code="incomplete_mirror_checks",
+        )
+    for check, (source_relative, mirror_relative) in zip(
+        mirror_checks, ISSUE43_MIRROR_SPECS, strict=True
+    ):
+        source = (PROJECT_ROOT / source_relative).resolve()
+        mirror = (PROJECT_ROOT / mirror_relative).resolve()
+        source_sha256 = sha256_file(source)
+        mirror_sha256 = sha256_file(mirror)
+        if (
+            check.get("source_path") != str(source)
+            or check.get("mirror_path") != str(mirror)
+            or check.get("source_sha256") != source_sha256
+            or check.get("mirror_sha256") != mirror_sha256
+            or check.get("status") != "equal"
+            or source_sha256 != mirror_sha256
+        ):
+            raise EvidenceError(
+                f"Global Gate mirror check is stale: {source_relative}",
+                first_failing_gate="mirror_checks",
+                error_code="stale_or_unequal_mirror",
+            )
+
+    if manifest.get("policy_status") != ISSUE43_POLICY_STATUS:
+        raise EvidenceError(
+            "Global Gate policy status is inactive",
+            first_failing_gate="policy_status",
+            error_code="inactive_global_gate_policy",
+        )
+
+    failed_commands = [
+        command.get("test_id", "<unknown>")
+        for command in manifest.get("commands", [])
+        if command.get("actual_exit_code") != command.get("expected_exit_code")
+        or command.get("conforms") is not True
+    ]
+    if failed_commands:
+        raise EvidenceError(
+            f"Global Gate atomic members failed: {failed_commands}",
+            first_failing_gate="atomic_group",
+            error_code="atomic_member_failed",
+        )
+
+    blocking_contract_gaps = [
+        item
+        for item in manifest.get("unresolved_exceptions", [])
+        if item.get("blocking") and item.get("code") == "contract_gap"
+    ]
+    if blocking_contract_gaps:
+        raise EvidenceError(
+            "Global Gate Exit Evidence contains an unresolved Contract Gap",
+            first_failing_gate="contract_gap",
+            error_code="unresolved_contract_gap",
+        )
+
+    expected_ids = {
+        result_id for values in ISSUE43_RESULTS.values() for result_id in values
+    }
+    provided_ids = {
+        result_id
+        for values in manifest.get("results", {}).values()
+        for result_id in values
+    }
+    missing = sorted(expected_ids - provided_ids)
+    if missing:
+        raise EvidenceError(
+            f"Global Gate qualification results are incomplete: {missing}",
+            first_failing_gate="qualification_result_coverage",
+            error_code="incomplete_results",
+        )
+    unsupported = sorted(provided_ids - expected_ids)
+    if unsupported:
+        raise EvidenceError(
+            f"Global Gate qualification results use unsupported identities: {unsupported}",
+            first_failing_gate="qualification_result_coverage",
+            error_code="unsupported_result_identity",
+        )
+
+
 def validate_semantics(manifest: dict[str, Any]) -> None:
+    validate_issue43_cutover(manifest)
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):
@@ -779,7 +937,15 @@ def main(argv: list[str] | None = None) -> int:
             schema_only=args.schema_only,
             pre_publication=args.pre_publication,
         )
-    except (EvidenceError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except EvidenceError as exc:
+        print(
+            "INVALID: "
+            f"first_failing_gate={exc.first_failing_gate}; "
+            f"error_code={exc.error_code}; {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1
     print(f"VALID: {args.manifest.resolve()}")

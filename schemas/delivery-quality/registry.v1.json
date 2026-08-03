@@ -229,7 +229,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
-      "canonical_sha256": "e56ce0471f23ee858e0e676b5fc54a7b1b93d78d303228447f097fe9c34d1bac",
+      "canonical_sha256": "45a2f9c2619ca308129f5a019df1d2451ba919c56cebf0955e24d051fa14e0d6",
       "positive_example": "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-input-binding.invalid.json"
     },
@@ -269,7 +269,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/acceptance-report-v2.example.v1.json",
-      "canonical_sha256": "07321a2214e51759a53aed809e84dbe48172e15b01298a4b57da33b7548deb85",
+      "canonical_sha256": "b9f1b58f74e6f95c15b4b58468b3ac3730f03b5d995e30cc90c976dd1a8f9e11",
       "positive_example": "delivery-quality/v1/acceptance-report-v2.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-report-v2.invalid.json"
     },

@@ -21,7 +21,7 @@ from .evidence import (
 SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
 SLICE_BASE_COMMIT = "64f3fb1638f601b533cb0ee4dec908203c1bef71"
 EVIDENCE_PREFIX = "evidence/global-gate/"
-QUALIFICATION_CONTRACT_SHA256 = "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
+QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
 ATOMIC_MEMBERS = (
     "catalogs", "projections", "criteria_migration", "schemas", "providers",
     "validators", "hooks", "skills", "project_instructions", "mirrors", "tests",
@@ -37,6 +37,7 @@ ACTIVATION_SCOPE = {
 }
 FIXTURE_SPECS = (
     ("legacy_acceptance_input_contract", "schemas/global-gate/legacy-acceptance-input-set.v1.schema.json"),
+    ("acceptance_input_binding_contract", "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json"),
     ("acceptance_report_v2_contract", "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json"),
     ("exit_evidence_manifest_contract", "schemas/exit-evidence-manifest.v2.schema.json"),
 )
@@ -44,6 +45,10 @@ MIRROR_SPECS = tuple(
     (f".agents/skills/{name}/SKILL.md", f".claude/skills/{name}/SKILL.md")
     for name in ("final-delivery-acceptance", "bilibili-render-pdf", "youtube-render-pdf")
 )
+MIRROR_SPECS += ((
+    ".agents/skills/final-delivery-acceptance/scripts/delivery_guard.py",
+    ".claude/skills/final-delivery-acceptance/scripts/delivery_guard.py",
+),)
 EXPECTED_CHECKPOINTS = [
     {"name": "acceptance_report_v2_global_authority", "status": "current"},
     {"name": "legacy_acceptance_report_v1_authority", "status": "retired"},

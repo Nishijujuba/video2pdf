@@ -21,7 +21,7 @@ from tests.video_workflow._issue43_git_authority import (
     commit_later_implementation_change,
 )
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
-from video2pdf_workflow_kernel.errors import KernelError
+from video2pdf_workflow_kernel.errors import AcceptanceV2Rejected, GlobalGateFault, KernelError
 
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
@@ -239,6 +239,31 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         retried, value = self.activate(root, evidence)
         self.assertEqual(retried.returncode, 0, retried.stdout)
         self.assertTrue(value["data"]["idempotent"])
+
+    def test_after_intent_reconcile_rejects_evidence_made_stale_by_later_commit(self) -> None:
+        # scenario_id: reconcile_stale_after_intent; the later implementation
+        # commit is the only contradiction after the publication intent exists.
+        root = new_case_dir(self.id(), label="issue43-policy")
+        repository, manifest = build_current_global_gate_authority(root)
+        publisher = GlobalGatePublisher(project_root=repository)
+        with self.assertRaises(GlobalGateFault) as interrupted:
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=manifest,
+                activated_at="2026-08-03T00:00:00Z",
+                fault_point="after_intent",
+            )
+        self.assertEqual(interrupted.exception.classification, "injected_global_gate_fault")
+
+        commit_later_implementation_change(repository)
+        with self.assertRaises(AcceptanceV2Rejected) as raised:
+            publisher.reconcile(control_store_root=root)
+        error = raised.exception
+        self.assertEqual(error.data["first_failing_gate"], "implementation_currentness")
+        self.assertEqual(error.data["error_code"], "evidence_publication_not_current")
+        with sqlite3.connect(root / "global-gate-control.sqlite3") as database:
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM gate_authority").fetchone()[0], 0)
+        self.assertFalse((root / "active_global_gate.json").exists())
 
     def test_competing_activation_is_fenced(self) -> None:
         root = new_case_dir(self.id(), label="issue43-policy")

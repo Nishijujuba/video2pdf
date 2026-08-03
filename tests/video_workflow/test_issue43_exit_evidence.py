@@ -101,6 +101,8 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "v1_rejected",
             "stale_legacy_authority_rejected",
             "incomplete_mirrors_rejected",
+            "delivery_guard_runtime_mirrors_bound",
+            "incomplete_delivery_guard_runtime_mirror_rejected",
             "unsupported_identity_rejected",
             "contract_gap_rejected",
             "failed_atomic_member_rejected",
@@ -108,6 +110,10 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "report_publication_recovered",
             "activation_publication_recovered",
             "activation_writers_fenced",
+            "patch_writers_fenced",
+            "report_writers_fenced",
+            "patch_retry_idempotent",
+            "report_retry_idempotent",
             "activation_retry_idempotent",
             "control_store_unavailable_rejected",
             "control_store_corrupt_rejected",
@@ -117,6 +123,7 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "translation_rejected",
             "synthetic_legacy_run_rejected",
             "dual_authority_rejected",
+            "activation_reconcile_stale_publication_rejected",
             "active_global_gate_only",
         }
         actual_results = {

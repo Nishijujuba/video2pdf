@@ -4,6 +4,7 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
+import shutil
 import subprocess
 
 from scripts import issue43_exit_evidence_contract as contract
@@ -42,7 +43,12 @@ def _write_json(path: Path, value: object) -> None:
 def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     """Create a real two-commit Issue 43 authority without mutating the source repo."""
     authority_id = hashlib.sha256(
-        str(root.resolve()).casefold().encode("utf-8")
+        (
+            str(root.resolve()).casefold()
+            + "\0"
+            + contract.QUALIFICATION_CONTRACT_SHA256
+            + "\0spec-gap-v3"
+        ).encode("utf-8")
     ).hexdigest()[:24]
     repository = AUTHORITY_ROOT / authority_id
     origin_path = AUTHORITY_ROOT / f"{authority_id}.origin.json"
@@ -67,7 +73,7 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     _git(repository, "sparse-checkout", "init", "--cone")
     _git(
         repository, "sparse-checkout", "set",
-        "schemas", ".agents", ".claude", "src", "scripts", "tests", "evidence/global-gate",
+        "schemas", "delivery-quality", ".agents", ".claude", "src", "scripts", "tests", "evidence/global-gate",
     )
     source_head = _git(PROJECT_ROOT, "rev-parse", "HEAD")
     changed = set(filter(None, _git(PROJECT_ROOT, "diff-tree", "--no-commit-id", "--name-only", "-r", source_head).splitlines()))
@@ -79,6 +85,30 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     _git(repository, "checkout", "--detach", implementation)
     _git(repository, "config", "user.name", "Issue43 Test Authority")
     _git(repository, "config", "user.email", "issue43-authority@example.invalid")
+
+    authority_sources = (
+        "schemas/exit-evidence-manifest.v2.schema.json",
+        "schemas/delivery-quality/registry.v1.json",
+        "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
+        "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
+        "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
+        "delivery-quality/v1/acceptance-report-v2.example.v1.json",
+        "scripts/issue43_exit_evidence_contract.py",
+        "src/video2pdf_workflow_kernel/global_gate.py",
+        "src/video2pdf_workflow_kernel/global_gate_exit_evidence.py",
+        "tests/video_workflow/_issue43_git_authority.py",
+        "tests/video_workflow/test_issue43_activation_fencing.py",
+        "tests/video_workflow/test_issue43_spec_gap_contracts.py",
+    )
+    for relative in authority_sources:
+        source = PROJECT_ROOT / relative
+        target = repository / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    _git(repository, "add", *authority_sources)
+    if _git(repository, "status", "--porcelain=v1"):
+        _git(repository, "commit", "-m", "Materialize test implementation authority")
+        implementation = _git(repository, "rev-parse", "HEAD")
 
     commands = [
         {

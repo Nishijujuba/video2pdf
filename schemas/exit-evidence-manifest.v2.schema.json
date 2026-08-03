@@ -360,7 +360,7 @@
         },
         "legacy_track_authority": {"const": "acceptance_report_v2"},
         "platform_kernel_authority": {"const": "unchanged"},
-        "qualification_contract_sha256": {"const": "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"}
+        "qualification_contract_sha256": {"const": "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"}
       }
     },
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},

@@ -10,6 +10,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .delivery_quality import DeliveryQualityRegistry
+from .evidence import EvidenceSupportError, git_output
 from .errors import AcceptanceV2Rejected, ContractError, ControlStoreUnavailable, GlobalGateFault
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
@@ -27,7 +28,7 @@ ATOMIC_MEMBERS = frozenset({
 })
 EXIT_EVIDENCE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas/exit-evidence-manifest.v2.schema.json"
 GLOBAL_GATE_SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
-QUALIFICATION_CONTRACT_SHA256 = "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
+QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
 ACTIVATION_FAULT_POINTS = frozenset({"after_intent", "after_authority_write", "after_control_commit"})
 REQUIRED_ACCEPTANCE_QUALITY_INPUTS = frozenset({
     "precompile_quality_report", "precompile_text_seal", "rendered_text_reconciliation",
@@ -303,10 +304,17 @@ class GlobalGatePublisher:
                 _control_reject("Global Gate control store schema is incompatible", "global_gate_control_store_incompatible")
             connection.execute(f"PRAGMA user_version={GLOBAL_GATE_SCHEMA_VERSION}")
             connection.execute("CREATE TABLE IF NOT EXISTS gate_authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)")
-            connection.execute("CREATE TABLE IF NOT EXISTS gate_intents (intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL, authority_sha256 TEXT, authority_json TEXT)")
+            connection.execute("CREATE TABLE IF NOT EXISTS gate_intents (intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL, authority_sha256 TEXT, authority_json TEXT, evidence_path TEXT, project_root TEXT, publication_commit TEXT)")
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(gate_intents)")}
-            if "authority_json" not in columns:
-                connection.execute("ALTER TABLE gate_intents ADD COLUMN authority_json TEXT")
+            migrations = {
+                "authority_json": "TEXT",
+                "evidence_path": "TEXT",
+                "project_root": "TEXT",
+                "publication_commit": "TEXT",
+            }
+            for column, declaration in migrations.items():
+                if column not in columns:
+                    connection.execute(f"ALTER TABLE gate_intents ADD COLUMN {column} {declaration}")
             return connection
         except ControlStoreUnavailable:
             raise
@@ -316,20 +324,53 @@ class GlobalGatePublisher:
         except OSError as exc:
             raise ControlStoreUnavailable("Global Gate control store is unavailable", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_unavailable"}) from exc
 
+    def _validate_publication_identity(
+        self, *, evidence_path: Path, project_root: Path,
+        expected_sha256: str | None = None,
+        expected_publication_commit: str | None = None,
+    ) -> tuple[Any, str]:
+        try:
+            head_before = git_output(project_root, "rev-parse", "HEAD")
+            validated = validate_global_gate_exit_evidence(
+                evidence_path,
+                project_root=project_root,
+            )
+            head_after = git_output(project_root, "rev-parse", "HEAD")
+        except ExitEvidenceValidationError as exc:
+            _reject(str(exc), exc.first_failing_gate, exc.error_code)
+        except EvidenceSupportError as exc:
+            _reject(
+                str(exc),
+                "implementation_currentness",
+                "evidence_publication_not_current",
+            )
+        if head_before != head_after:
+            _reject(
+                "Global Gate evidence publication changed during validation",
+                "implementation_currentness",
+                "evidence_publication_not_current",
+            )
+        if (
+            expected_sha256 is not None
+            and validated.sha256 != expected_sha256
+        ) or (
+            expected_publication_commit is not None
+            and head_after != expected_publication_commit
+        ):
+            _reject(
+                "Global Gate evidence publication no longer matches its prepared intent",
+                "implementation_currentness",
+                "evidence_publication_not_current",
+            )
+        return validated, head_after
+
     def activate(self, *, control_store_root: Path, exit_evidence: Path, activated_at: str, fault_point: str | None = None) -> dict[str, Any]:
         root = control_store_root.resolve()
         evidence_path = exit_evidence.resolve()
-        try:
-            validated = validate_global_gate_exit_evidence(
-                evidence_path,
-                project_root=self.project_root,
-            )
-        except ExitEvidenceValidationError as exc:
-            _reject(
-                str(exc),
-                exc.first_failing_gate,
-                exc.error_code,
-            )
+        validated, publication_commit = self._validate_publication_identity(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+        )
         evidence_sha = validated.sha256
         authority_path = root / "active_global_gate.json"
         intent_id = hashlib.sha256((evidence_sha + "\0global_acceptance_v2").encode()).hexdigest()
@@ -356,7 +397,14 @@ class GlobalGatePublisher:
                 if pending:
                     control.execute("ROLLBACK")
                     _reject("An interrupted Global Gate publication requires reconciliation", "activation_reconcile", "global_gate_reconcile_required")
-                control.execute("INSERT INTO gate_intents(intent_id,expected_generation,evidence_sha256,state,authority_sha256,authority_json) VALUES(?,?,?,?,?,?)", (intent_id, 0, evidence_sha, "PREPARED", authority["authority_sha256"], json.dumps(authority, sort_keys=True, separators=(",", ":"))))
+                control.execute(
+                    "INSERT INTO gate_intents(intent_id,expected_generation,evidence_sha256,state,authority_sha256,authority_json,evidence_path,project_root,publication_commit) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        intent_id, 0, evidence_sha, "PREPARED", authority["authority_sha256"],
+                        json.dumps(authority, sort_keys=True, separators=(",", ":")),
+                        str(evidence_path), str(self.project_root), publication_commit,
+                    ),
+                )
                 control.execute("COMMIT")
             except sqlite3.OperationalError as exc:
                 try:
@@ -366,6 +414,12 @@ class GlobalGatePublisher:
                 raise ControlStoreUnavailable("Global Gate control store is unavailable or locked", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_locked"}) from exc
         if fault_point == "after_intent":
             raise GlobalGateFault(fault_point)
+        self._validate_publication_identity(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+            expected_sha256=evidence_sha,
+            expected_publication_commit=publication_commit,
+        )
         write_json_atomic(authority_path, authority)
         if fault_point == "after_authority_write":
             raise GlobalGateFault(fault_point)
@@ -373,6 +427,12 @@ class GlobalGatePublisher:
         with self._connect(root) as control:
             try:
                 control.execute("BEGIN IMMEDIATE")
+                self._validate_publication_identity(
+                    evidence_path=evidence_path,
+                    project_root=self.project_root,
+                    expected_sha256=evidence_sha,
+                    expected_publication_commit=publication_commit,
+                )
                 control.execute("INSERT INTO gate_authority(singleton,generation,evidence_sha256,authority_sha256) VALUES(1,1,?,?)", (evidence_sha, file_sha))
                 control.execute("UPDATE gate_intents SET state='COMMITTED',authority_sha256=? WHERE intent_id=?", (file_sha, intent_id))
                 control.execute("COMMIT")
@@ -422,6 +482,17 @@ class GlobalGatePublisher:
             if pending:
                 intent = pending[0]
                 authority = json.loads(intent["authority_json"])
+                if not intent["evidence_path"] or not intent["project_root"] or not intent["publication_commit"]:
+                    control.execute("ROLLBACK")
+                    _reject("Interrupted Global Gate publication lacks validation identity", "activation_reconcile", "global_gate_reconcile_ambiguous")
+                evidence_path = Path(intent["evidence_path"])
+                project_root = Path(intent["project_root"])
+                self._validate_publication_identity(
+                    evidence_path=evidence_path,
+                    project_root=project_root,
+                    expected_sha256=intent["evidence_sha256"],
+                    expected_publication_commit=intent["publication_commit"],
+                )
                 if not authority_path.is_file():
                     write_json_atomic(authority_path, authority)
                 if read_json(authority_path) != authority:
@@ -433,6 +504,12 @@ class GlobalGatePublisher:
                 elif current["evidence_sha256"] != intent["evidence_sha256"] or current["authority_sha256"] != file_sha:
                     control.execute("ROLLBACK")
                     _reject("Interrupted publication lost its activation fence", "activation_fencing", "global_gate_authority_conflict")
+                self._validate_publication_identity(
+                    evidence_path=evidence_path,
+                    project_root=project_root,
+                    expected_sha256=intent["evidence_sha256"],
+                    expected_publication_commit=intent["publication_commit"],
+                )
                 control.execute("UPDATE gate_intents SET state='COMMITTED',authority_sha256=? WHERE intent_id=?", (file_sha, intent["intent_id"]))
             control.execute("COMMIT")
         current_value = self.require_current(control_store_root=root)

@@ -34,8 +34,12 @@ MIRROR_SPECS = tuple(
         "youtube-render-pdf",
     )
 )
+MIRROR_SPECS += ((
+    ".agents/skills/final-delivery-acceptance/scripts/delivery_guard.py",
+    ".claude/skills/final-delivery-acceptance/scripts/delivery_guard.py",
+),)
 POLICY_STATUS = "active_global_gate"
-QUALIFICATION_CONTRACT_SHA256 = "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
+QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
 
 ACTIVATION_SCOPE = {
     "kind": "active_global_gate",
@@ -55,6 +59,14 @@ MIRROR_TEST = (
     "test_active_global_gate_policy_and_mirrors_are_synchronized"
 )
 ACCEPTANCE_TESTS = "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests"
+SPEC_GAP_TESTS = (
+    "tests.video_workflow.test_issue43_spec_gap_contracts."
+    "Issue43SpecGapContractTests"
+)
+ACTIVATION_FENCING_TESTS = (
+    "tests.video_workflow.test_issue43_activation_fencing."
+    "Issue43ActivationFencingTests"
+)
 
 RESULT_SPECS = (
     ("legacy_run_record_free_v2_pass", "positive", f"{GLOBAL_GATE_TESTS}.test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility", None, None),
@@ -63,9 +75,11 @@ RESULT_SPECS = (
     ("kernel_active_guard_pass", "positive", f"{GUARD_TESTS}.test_active_guard_accepts_current_passing_v2_authority", None, None),
     ("active_global_gate_only", "positive", f"{POLICY_TESTS}.test_workflow_policy_check_accepts_current_atomic_policy_authority", None, None),
     ("mirrors_current", "positive", MIRROR_TEST, None, None),
+    ("delivery_guard_runtime_mirrors_bound", "positive", f"{SPEC_GAP_TESTS}.test_exit_evidence_binds_delivery_guard_runtime_script_mirrors", None, None),
     ("v1_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_v1_fallback", "acceptance_authority", "acceptance_report_v1_rejected"),
     ("stale_legacy_authority_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_stale_global_gate_authority", "global_gate_authority", "global_gate_authority_stale"),
     ("incomplete_mirrors_rejected", "negative", f"{POLICY_TESTS}.test_mirror_and_policy_status_are_distinct_first_gates", "mirror_checks", "global_gate_mirror_stale"),
+    ("incomplete_delivery_guard_runtime_mirror_rejected", "negative", f"{SPEC_GAP_TESTS}.test_incomplete_delivery_guard_runtime_mirror_evidence_fails_closed", "mirror_checks", "global_gate_mirror_stale"),
     ("unsupported_identity_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_unsupported_identity", "input_identity", "legacy_provider_unsupported"),
     ("contract_gap_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_contract_gap", "contract_gap", "legacy_contract_gap_blocked"),
     ("failed_atomic_member_rejected", "negative", f"{POLICY_TESTS}.test_failed_atomic_member_is_first_rejected_by_atomic_member_status", "atomic_member_status", "global_gate_atomic_member_failed"),
@@ -77,11 +91,16 @@ RESULT_SPECS = (
     ("translation_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_compatibility_translation", "acceptance_authority", "acceptance_compatibility_translation_rejected"),
     ("synthetic_legacy_run_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_synthetic_run", "input_identity", "legacy_synthetic_run_rejected"),
     ("dual_authority_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_dual_authority", "acceptance_authority", "acceptance_dual_authority_rejected"),
+    ("activation_reconcile_stale_publication_rejected", "negative", f"{POLICY_TESTS}.test_after_intent_reconcile_rejects_evidence_made_stale_by_later_commit", "implementation_currentness", "evidence_publication_not_current"),
     ("patch_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication", None, None),
     ("report_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_finishes_an_intact_interrupted_report_publication", None, None),
+    ("patch_retry_idempotent", "recovery", f"{ACCEPTANCE_TESTS}.test_successful_patch_and_terminal_materialization_retries_are_idempotent", None, None),
+    ("report_retry_idempotent", "recovery", f"{ACCEPTANCE_TESTS}.test_successful_patch_and_terminal_materialization_retries_are_idempotent", None, None),
     ("activation_publication_recovered", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
     ("activation_retry_idempotent", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
-    ("activation_writers_fenced", "fencing", f"{POLICY_TESTS}.test_competing_activation_is_fenced", None, None),
+    ("patch_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
+    ("report_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
+    ("activation_writers_fenced", "fencing", f"{ACTIVATION_FENCING_TESTS}.test_distinct_valid_activation_authorities_reach_the_cas_fence", None, None),
 )
 QUALIFICATION_TEST_TARGETS = tuple(dict.fromkeys(target for _, _, target, _, _ in RESULT_SPECS))
 
@@ -149,6 +168,10 @@ FIXTURE_SPECS = (
     (
         "legacy_acceptance_input_contract",
         "schemas/global-gate/legacy-acceptance-input-set.v1.schema.json",
+    ),
+    (
+        "acceptance_input_binding_contract",
+        "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
     ),
     (
         "acceptance_report_v2_contract",

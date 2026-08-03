@@ -3,7 +3,7 @@
   "$id":"https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
   "type":"object",
   "additionalProperties":false,
-  "required":["schema_name","schema_version","activation_status","input_track","binding_id","run","quality_inputs","artifacts","rendered_pages","binding_sha256"],
+  "required":["schema_name","schema_version","activation_status","input_track","binding_id","global_gate_authority","run","quality_inputs","artifacts","rendered_pages","binding_sha256"],
   "properties":{
     "schema_name":{"const":"acceptance-v2-input-binding"},
     "schema_version":{"const":"1.0.0"},

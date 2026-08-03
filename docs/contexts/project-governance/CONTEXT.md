@@ -12,6 +12,11 @@ A human-approved GitHub planning item that defines the problem, solution, user s
 
 A human-approved, context-sized vertical slice derived from a Project 2.0 Spec. It owns independently verifiable acceptance criteria and explicit blocking relationships for one unit of implementation work.
 
+## Implementation Qualification Sequence
+
+The project-wide stage order for formally qualifying an Implementation Ticket that requires Exit Evidence or another publication proof: Implementation, Affected Tests, authoritative `/code-review`, Code Freeze, Final Qualification Validator, then Publication.
+_Avoid_: Validation pipeline, final test order
+
 ## Human Publication Gate
 
 The required human approval checkpoint before an agent publishes or materially changes a Project 2.0 Spec, Implementation Ticket, milestone assignment, containment relationship, or dependency relationship.

@@ -20,13 +20,15 @@ test_after_intent_reconcile_rejects_evidence_made_stale_by_later_commit (tests.v
 test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication (tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication) ... ok
 test_reconcile_finishes_an_intact_interrupted_report_publication (tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_reconcile_finishes_an_intact_interrupted_report_publication) ... ok
 test_successful_patch_and_terminal_materialization_retries_are_idempotent (tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_successful_patch_and_terminal_materialization_retries_are_idempotent) ... ok
+test_patch_after_control_commit_recovers_intact_and_exact_retry_is_idempotent (tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_patch_after_control_commit_recovers_intact_and_exact_retry_is_idempotent) ... ok
 test_activation_interruption_reconciles_and_exact_retry_is_idempotent (tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_activation_interruption_reconciles_and_exact_retry_is_idempotent) ... ok
+test_activation_after_control_commit_is_intact_and_exact_retry_is_idempotent (tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_activation_after_control_commit_is_intact_and_exact_retry_is_idempotent) ... ok
 test_two_writers_are_fenced_at_patch_and_report_publication (tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_two_writers_are_fenced_at_patch_and_report_publication) ... ok
 test_distinct_valid_activation_authorities_reach_the_cas_fence (tests.video_workflow.test_issue43_activation_fencing.Issue43ActivationFencingTests.test_distinct_valid_activation_authorities_reach_the_cas_fence) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 463.019s
+Ran 27 tests in 542.769s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: bf2f4535774d9da02621cddf6bcbfc2f0ee15e3c
+EVIDENCE_IMPLEMENTATION_COMMIT: 666d0942f4c71cc3854fdc4ca58df006af17f761

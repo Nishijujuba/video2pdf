@@ -32,3 +32,4 @@ tests/video_workflow/fixtures/providers/**/outputs/*.srt text eol=lf -diff
 tests/video_workflow/fixtures/providers/**/outputs/*.jpg -text -diff
 tests/video_workflow/fixtures/providers/**/outputs/*.mp4 -text -diff
 evidence/slice-*/** text eol=lf
+evidence/global-gate/** text eol=lf

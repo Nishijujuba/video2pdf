@@ -543,9 +543,12 @@ class AcceptanceV2Provider:
             _reject("Acceptance execution is not open for materialization", "report_fencing", "acceptance_execution_terminal")
         if execution["input_binding_sha256"] != domain.fingerprint:
             _reject("execution input binding is stale", "input_freshness", "acceptance_input_stale")
-        pending = [path for path in (execution_root / "intents").glob("*.json") if read_json(path).get("state") == "PREPARED"] if (execution_root / "intents").exists() else []
-        if pending:
-            _reject("acceptance publication intent is non-terminal", "publication_recovery", "acceptance_reconcile_required")
+        pending = []
+        if (execution_root / "intents").exists():
+            for path in (execution_root / "intents").glob("*.json"):
+                earlier = read_json(path)
+                if earlier.get("state") == "PREPARED":
+                    pending.append(earlier)
         if set(execution["committed_patches"]) != set(DIMENSION_CRITERIA):
             _reject("the Visual Quality Patch is required", "patch_completeness", "acceptance_patch_incomplete")
         patches = {
@@ -760,6 +763,14 @@ class AcceptanceV2Provider:
             "staged_path": str(staged_report_path),
             "materialized_at": materialized_at,
         }
+        if any(
+            earlier.get("intent_kind") == "acceptance_report_publication"
+            and earlier.get("report_sha256") != intent["report_sha256"]
+            for earlier in pending
+        ):
+            _reject("a competing Acceptance Report publication already owns this execution", "report_fencing", "acceptance_report_conflict")
+        if pending:
+            _reject("acceptance publication intent is non-terminal", "publication_recovery", "acceptance_reconcile_required")
         with self._connect_control(root) as control:
             authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
             active_claims = control.execute("SELECT COUNT(*) FROM reviewer_claims WHERE execution_id=? AND state='ACTIVE'", (execution["execution_id"],)).fetchone()[0]

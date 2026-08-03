@@ -593,6 +593,32 @@ class AcceptanceV2CliTests(unittest.TestCase):
         pending = [json.loads(path.read_text(encoding="utf-8")) for path in (Path(current["execution_root"]) / "intents").glob("*.json")]
         self.assertFalse(any(item["state"] == "PREPARED" for item in pending))
 
+    def test_distinct_report_writer_is_fenced_while_exact_interrupted_publication_requires_recovery(self) -> None:
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        arguments = (
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+        )
+        interrupted, fault = run_cli(
+            *arguments, "--materialized-at", "2026-08-02T00:20:00Z",
+            "--fault-point", "after_report_publish",
+        )
+        self.assertNotEqual(0, interrupted.returncode)
+        self.assertEqual("after_report_publish", fault["data"]["fault_point"])
+
+        competing, conflict = run_cli(
+            *arguments, "--materialized-at", "2026-08-02T00:21:00Z",
+        )
+        self.assertNotEqual(0, competing.returncode)
+        self.assertEqual("report_fencing", conflict["data"]["first_failing_gate"])
+
+        retry, recovery = run_cli(
+            *arguments, "--materialized-at", "2026-08-02T00:20:00Z",
+        )
+        self.assertNotEqual(0, retry.returncode)
+        self.assertEqual("publication_recovery", recovery["data"]["first_failing_gate"])
+
     def test_run_record_control_authority_and_skeleton_drift_fail_closed(self) -> None:
         workspace, _ = self.prepare()
         binding = json.loads((workspace / "input-binding.json").read_text(encoding="utf-8"))

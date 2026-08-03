@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -940,6 +941,68 @@ class AcceptanceV2CliTests(unittest.TestCase):
         reconciled, data = run_cli("acceptance-reconcile", "--workspace-root", str(workspace))
         self.assertEqual(0, reconciled.returncode, reconciled.stderr)
         self.assertEqual(["visual_quality"], data["data"]["committed_dimensions"])
+
+    def test_patch_after_control_commit_recovers_intact_and_exact_retry_is_idempotent(self) -> None:
+        # scenario_id: patch_after_control_commit_intact_recovery
+        # authority: valid Patch + active Reviewer Claim -> boundary: Control Store commit
+        # mutation seam: injected after_patch_control_commit fault
+        # rematerialized nodes: execution.json and publication intent; stale before recovery: both
+        # observation: committed Patch authority remains byte-stable through reconcile and retry
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_patch_control_commit",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("injected_acceptance_v2_fault", fault["classification"])
+        self.assertEqual("after_patch_control_commit", fault["data"]["fault_point"])
+
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_root = Path(current["execution_root"])
+        intent_path = next((execution_root / "intents").glob("patch-*.json"))
+        self.assertEqual("PREPARED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            control_before = database.execute(
+                "SELECT state, artifact_sha256 FROM publication_intents"
+            ).fetchall()
+            authority_before = database.execute(
+                "SELECT execution_revision, state FROM execution_authority WHERE singleton=1"
+            ).fetchone()
+        self.assertEqual([("COMMITTED", json.loads(patch.read_text(encoding="utf-8"))["patch_sha256"])], control_before)
+        self.assertEqual((2, "reviewing"), authority_before)
+
+        reconciled, recovery = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+        self.assertEqual(["committed_patch:visual_quality"], recovery["data"]["actions"])
+        self.assertEqual("COMMITTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        stable_paths = (
+            workspace / "execution.json",
+            execution_root / "execution.json",
+            intent_path,
+            Path(json.loads((workspace / "execution.json").read_text(encoding="utf-8"))[
+                "committed_patches"
+            ]["visual_quality"]["path"]),
+        )
+        stable_bytes = {path: path.read_bytes() for path in stable_paths}
+
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertTrue(retry["data"]["idempotent"])
+        self.assertEqual(stable_bytes, {path: path.read_bytes() for path in stable_paths})
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertEqual(control_before, database.execute(
+                "SELECT state, artifact_sha256 FROM publication_intents"
+            ).fetchall())
+            self.assertEqual(authority_before, database.execute(
+                "SELECT execution_revision, state FROM execution_authority WHERE singleton=1"
+            ).fetchone())
 
     def test_reconcile_rejects_mutable_intent_authority_and_path_substitution(self) -> None:
         workspace, _ = self.prepare()

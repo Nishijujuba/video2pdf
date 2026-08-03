@@ -28,7 +28,7 @@ ATOMIC_MEMBERS = frozenset({
 })
 EXIT_EVIDENCE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas/exit-evidence-manifest.v2.schema.json"
 GLOBAL_GATE_SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
-QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
+QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
 ACTIVATION_FAULT_POINTS = frozenset({"after_intent", "after_authority_write", "after_control_commit"})
 REQUIRED_ACCEPTANCE_QUALITY_INPUTS = frozenset({
     "precompile_quality_report", "precompile_text_seal", "rendered_text_reconciliation",

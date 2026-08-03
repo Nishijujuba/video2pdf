@@ -27,6 +27,7 @@ CLI = PROJECT_ROOT / "scripts/video_workflow.py"
 class Issue43ExitEvidenceContractTests(unittest.TestCase):
     def manifest(self) -> dict:
         sha256 = "1" * 64
+        run_id = "11111111-1111-4111-8111-111111111111"
         return {
             "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
             "schema_version": 2,
@@ -40,6 +41,11 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                 *[
                     f"evidence/global-gate/logs/{command_id}.log"
                     for command_id, _, _ in contract.COMMANDS
+                ],
+                *[
+                    f"evidence/global-gate/persisted/{command_id}/{filename}"
+                    for command_id, _, _ in contract.COMMANDS
+                    for filename in ("command.json", "status.json", "exit-code.txt")
                 ],
             ],
             "generated_at": "2026-08-02T00:00:00Z",
@@ -71,6 +77,24 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                         "role": "command_log",
                         "path": f"evidence/global-gate/logs/{command_id}.log",
                         "sha256": sha256,
+                    },
+                    "persisted_run": {
+                        "run_id": run_id,
+                        "command_record": {
+                            "role": "persisted_command_record",
+                            "path": f"evidence/global-gate/persisted/{command_id}/command.json",
+                            "sha256": sha256,
+                        },
+                        "terminal_status": {
+                            "role": "persisted_terminal_status",
+                            "path": f"evidence/global-gate/persisted/{command_id}/status.json",
+                            "sha256": sha256,
+                        },
+                        "exit_code": {
+                            "role": "persisted_exit_code",
+                            "path": f"evidence/global-gate/persisted/{command_id}/exit-code.txt",
+                            "sha256": sha256,
+                        },
                     },
                     "conforms": True,
                 }
@@ -113,8 +137,10 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "patch_writers_fenced",
             "report_writers_fenced",
             "patch_retry_idempotent",
+            "patch_after_control_commit_recovered_idempotent",
             "report_retry_idempotent",
             "activation_retry_idempotent",
+            "activation_after_control_commit_recovered_idempotent",
             "control_store_unavailable_rejected",
             "control_store_corrupt_rejected",
             "control_store_locked_rejected",
@@ -125,6 +151,9 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "dual_authority_rejected",
             "activation_reconcile_stale_publication_rejected",
             "active_global_gate_only",
+            "complete_acceptance_v2_module",
+            "complete_issue43_active_guard_module",
+            "complete_delivery_guard_module",
         }
         actual_results = {
             result_id for values in contract.RESULTS.values() for result_id in values
@@ -135,9 +164,11 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             {binding["result_id"] for binding in contract.RESULT_BINDINGS},
         )
         self.assertEqual(
-            set(contract.QUALIFICATION_TEST_TARGETS),
+            set(contract.QUALIFICATION_TEST_TARGETS)
+            | {item[3] for item in contract.COMPLETE_MODULE_RESULT_SPECS},
             {binding["test_target"] for binding in contract.RESULT_BINDINGS},
         )
+        self.assertEqual(37, len(contract.RESULT_BINDINGS))
         self.assertGreaterEqual(
             len(contract.QUALIFICATION_TEST_TARGETS),
             12,
@@ -156,6 +187,245 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                 ) + "\n"
             ).encode("utf-8")).hexdigest(),
         )
+
+    def _synthetic_terminal_collection(self, root: Path) -> tuple[dict, Path, Path]:
+        run_root = root / "runs"
+        evidence_dir = root / "evidence/global-gate"
+        runs = []
+        for index, (command_id, command, expected_exit_code) in enumerate(contract.COMMANDS, 1):
+            run_id = f"00000000-0000-4000-8000-{index:012d}"
+            run_dir = run_root / command_id
+            run_dir.mkdir(parents=True)
+            (run_dir / "command.json").write_text(json.dumps({
+                "schema_name": "persisted-command",
+                "schema_version": "1.0.0",
+                "run_id": run_id,
+                "cwd": str(root.resolve()),
+                "argv": list(command),
+                "accepted_exit_codes": [expected_exit_code],
+            }) + "\n", encoding="utf-8")
+            (run_dir / "status.json").write_text(json.dumps({
+                "schema_name": "persisted-command-status",
+                "schema_version": "1.0.0",
+                "run_id": run_id,
+                "state": "succeeded",
+                "exit_code": expected_exit_code,
+                "security": {
+                    "acceptance_evidence_eligible": True,
+                    "classification": "no_secret_detected",
+                },
+            }) + "\n", encoding="utf-8")
+            (run_dir / "exit-code.txt").write_text(
+                f"{expected_exit_code}\n", encoding="utf-8"
+            )
+            (run_dir / "stdout.log").write_text("synthetic pass\n", encoding="utf-8")
+            (run_dir / "stderr.log").write_bytes(b"")
+            runs.append({"command_id": command_id, "run_id": run_id, "run_dir": str(run_dir)})
+        return ({
+            "schema_name": "issue43-exit-evidence-collection",
+            "schema_version": "1.0.0",
+            "implementation_commit": "2" * 40,
+            "runs": runs,
+        }, evidence_dir, run_root)
+
+    def test_complete_delivery_guard_uses_import_safe_unittest_discovery(self) -> None:
+        command_id, command, expected_exit_code = next(
+            item
+            for item in contract.COMMANDS
+            if item[0] == "issue43-complete-delivery-guard"
+        )
+        self.assertEqual(0, expected_exit_code)
+        self.assertEqual(
+            ["-m", "unittest", "discover", "-v", "-s"],
+            list(command[4:9]),
+        )
+        self.assertEqual(
+            ".agents/skills/final-delivery-acceptance/scripts",
+            command[9],
+        )
+        self.assertEqual(["-p", "test_delivery_guard.py"], list(command[10:]))
+        binding = next(
+            item
+            for item in contract.RESULT_BINDINGS
+            if item["command_id"] == command_id
+        )
+        self.assertEqual("test_delivery_guard.py", binding["test_target"])
+        self.assertIn(binding["test_target"], command)
+
+    def test_finalizer_binds_synthetic_persisted_terminal_evidence(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-persisted-terminal")
+        collection, evidence_dir, _ = self._synthetic_terminal_collection(root)
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", root),
+            mock.patch.object(collector, "EVIDENCE_DIR", evidence_dir),
+            mock.patch.object(collector, "LOG_DIR", evidence_dir / "logs"),
+        ):
+            (evidence_dir / "logs").mkdir(parents=True)
+            commands = collector.finalize_commands(collection, "2" * 40)
+        self.assertEqual(len(contract.COMMANDS), len(commands))
+        for command in commands:
+            self.assertTrue(command["conforms"])
+            self.assertEqual(
+                {"run_id", "command_record", "terminal_status", "exit_code"},
+                set(command["persisted_run"]),
+            )
+
+    def test_preflight_rejects_nonterminal_parent_before_publication(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-finalize-preflight")
+        collection, _, run_root = self._synthetic_terminal_collection(root)
+        status_path = run_root / contract.COMMANDS[0][0] / "status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status["state"] = "running"
+        status["exit_code"] = None
+        status_path.write_text(json.dumps(status) + "\n", encoding="utf-8")
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", root),
+            self.assertRaisesRegex(RuntimeError, "no coherent terminal state"),
+        ):
+            collector.require_collection_terminal(collection)
+
+    def test_collect_never_starts_a_second_run_while_the_first_is_active(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-sequential-collect")
+        calls: list[str] = []
+
+        def fake_start(command_id: str, _command: tuple[str, ...], _exit: int) -> dict[str, str]:
+            calls.append(command_id)
+            run_dir = root / "runs" / command_id
+            run_dir.mkdir(parents=True)
+            run_id = "00000000-0000-4000-8000-000000000001"
+            (run_dir / "status.json").write_text(json.dumps({
+                "schema_name": "persisted-command-status",
+                "run_id": run_id,
+                "state": "running",
+                "exit_code": None,
+            }) + "\n", encoding="utf-8")
+            return {"command_id": command_id, "run_id": run_id, "run_dir": str(run_dir)}
+
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", root),
+            mock.patch.object(collector, "REFRESH_ROOT", root / "refresh"),
+            mock.patch.object(collector, "_start_command", side_effect=fake_start),
+            mock.patch.object(
+                collector,
+                "_observe_run",
+                return_value={"state": "running", "exit_code": None},
+            ),
+        ):
+            first = collector.advance_collection("2" * 40)
+            resumed = collector.advance_collection(
+                "2" * 40, Path(first["collection_path"])
+            )
+        self.assertEqual([contract.COMMANDS[0][0]], calls)
+        self.assertEqual("running", resumed["orchestration_state"])
+        self.assertEqual(1, len(resumed["runs"]))
+
+    def test_collect_resumes_after_interruption_without_relaunching_completed_run(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-sequential-resume")
+        calls: list[str] = []
+
+        def fake_start(command_id: str, _command: tuple[str, ...], _exit: int) -> dict[str, str]:
+            calls.append(command_id)
+            index = len(calls)
+            run_dir = root / "runs" / command_id
+            run_dir.mkdir(parents=True)
+            run_id = f"00000000-0000-4000-8000-{index:012d}"
+            (run_dir / "status.json").write_text(json.dumps({
+                "schema_name": "persisted-command-status",
+                "run_id": run_id,
+                "state": "running",
+                "exit_code": None,
+            }) + "\n", encoding="utf-8")
+            return {"command_id": command_id, "run_id": run_id, "run_dir": str(run_dir)}
+
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", root),
+            mock.patch.object(collector, "REFRESH_ROOT", root / "refresh"),
+            mock.patch.object(collector, "_start_command", side_effect=fake_start),
+            mock.patch.object(
+                collector,
+                "_observe_run",
+                return_value={
+                    "state": "succeeded",
+                    "exit_code": 0,
+                    "security": {
+                        "acceptance_evidence_eligible": True,
+                        "classification": "no_secret_detected",
+                    },
+                },
+            ),
+        ):
+            first = collector.advance_collection("2" * 40)
+            first_run = first["runs"][0]
+            first_status = Path(first_run["run_dir"]) / "status.json"
+            first_status.write_text(json.dumps({
+                "schema_name": "persisted-command-status",
+                "run_id": first_run["run_id"],
+                "state": "succeeded",
+                "exit_code": 0,
+                "security": {
+                    "acceptance_evidence_eligible": True,
+                    "classification": "no_secret_detected",
+                },
+            }) + "\n", encoding="utf-8")
+            (Path(first_run["run_dir"]) / "exit-code.txt").write_text(
+                "0\n", encoding="utf-8"
+            )
+            resumed = collector.advance_collection(
+                "2" * 40, Path(first["collection_path"])
+            )
+        self.assertEqual(
+            [contract.COMMANDS[0][0], contract.COMMANDS[1][0]], calls
+        )
+        self.assertEqual(first_run, resumed["runs"][0])
+        self.assertEqual(2, len(resumed["runs"]))
+
+    def test_shared_validator_rejects_running_status_at_persisted_terminal_gate(self) -> None:
+        # scenario_id: issue43_persisted_status_not_terminal
+        # authority: persisted status -> boundary: Exit Evidence finalization
+        # mutation: terminal state only; rematerialized: status fingerprint; stale: none
+        # expected_first_gate: persisted_command_terminal
+        # expected_error_code: persisted_command_terminal_invalid
+        root = new_case_dir(self.id(), label="issue43-persisted-running")
+        collection, evidence_dir, _ = self._synthetic_terminal_collection(root)
+        logs = evidence_dir / "logs"
+        logs.mkdir(parents=True)
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", root),
+            mock.patch.object(collector, "EVIDENCE_DIR", evidence_dir),
+            mock.patch.object(collector, "LOG_DIR", logs),
+        ):
+            commands = collector.finalize_commands(collection, "2" * 40)
+        target = commands[0]["persisted_run"]["terminal_status"]
+        status_path = root / target["path"]
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status["state"] = "running"
+        status_path.write_text(json.dumps(status) + "\n", encoding="utf-8")
+        target["sha256"] = hashlib.sha256(status_path.read_bytes()).hexdigest()
+        manifest_path = evidence_dir / "exit-evidence-manifest.json"
+        manifest_path.write_text("{}\n", encoding="utf-8")
+        manifest = {
+            "slice": {"number": 11},
+            "implementation_commit": "2" * 40,
+            "commands": commands,
+            "fixtures": [],
+            "evidence_paths": [
+                manifest_path.relative_to(root).as_posix(),
+                *[command["log"]["path"] for command in commands],
+                *[
+                    artifact["path"]
+                    for command in commands
+                    for key, artifact in command["persisted_run"].items()
+                    if key != "run_id"
+                ],
+            ],
+        }
+        with (
+            mock.patch.object(validator, "PROJECT_ROOT", root),
+            self.assertRaises(validator.EvidenceError) as raised,
+        ):
+            validator.validate_bindings(manifest, manifest_path)
+        self.assertEqual("persisted_command_terminal", raised.exception.first_failing_gate)
+        self.assertEqual("persisted_command_terminal_invalid", raised.exception.error_code)
 
     def test_v2_schema_admits_global_gate_activation_and_historical_manifests(self) -> None:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -361,21 +631,17 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         logs = evidence_dir / "logs"
         manifest_path = evidence_dir / "exit-evidence-manifest.json"
         sha256 = "1" * 64
-        commands = [
-            {
-                "test_id": command_id,
-                "command": list(command),
-                "expected_exit_code": expected_exit_code,
-                "actual_exit_code": expected_exit_code,
-                "log": {
-                    "role": "command_log",
-                    "path": f"{root.relative_to(PROJECT_ROOT).as_posix()}/evidence/global-gate/logs/{command_id}.log",
-                    "sha256": sha256,
-                },
-                "conforms": True,
-            }
-            for command_id, command, expected_exit_code in contract.COMMANDS
-        ]
+        commands = deepcopy(self.manifest()["commands"])
+        collection_path = root / "collection.json"
+        collection_path.write_text(
+            json.dumps({
+                "schema_name": "issue43-exit-evidence-collection",
+                "schema_version": "1.0.0",
+                "implementation_commit": "2" * 40,
+                "runs": [],
+            }) + "\n",
+            encoding="utf-8",
+        )
 
         def fake_git(*arguments: str) -> str:
             if arguments[:2] == ("status", "--porcelain=v1"):
@@ -390,7 +656,8 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             mock.patch.object(collector, "MANIFEST_PATH", manifest_path),
             mock.patch.object(collector, "git", side_effect=fake_git),
             mock.patch.object(collector, "preserve_previous_evidence"),
-            mock.patch.object(collector, "run_commands", return_value=commands),
+            mock.patch.object(collector, "require_collection_terminal"),
+            mock.patch.object(collector, "finalize_commands", return_value=commands),
             mock.patch.object(
                 collector,
                 "fingerprint_implementation_changes",
@@ -403,7 +670,7 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                 ],
             ),
         ):
-            self.assertEqual(collector.main(), 0)
+            self.assertEqual(collector.finalize(collection_path), 0)
 
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         Draft202012Validator(schema).validate(json.loads(manifest_path.read_text(encoding="utf-8")))

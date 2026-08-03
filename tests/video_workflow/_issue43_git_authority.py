@@ -121,9 +121,29 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
                 "path": f"evidence/global-gate/logs/{command_id}.log",
                 "sha256": "",
             },
+            "persisted_run": {
+                "run_id": f"00000000-0000-4000-8000-{index:012d}",
+                "command_record": {
+                    "role": "persisted_command_record",
+                    "path": f"evidence/global-gate/persisted/{command_id}/command.json",
+                    "sha256": "",
+                },
+                "terminal_status": {
+                    "role": "persisted_terminal_status",
+                    "path": f"evidence/global-gate/persisted/{command_id}/status.json",
+                    "sha256": "",
+                },
+                "exit_code": {
+                    "role": "persisted_exit_code",
+                    "path": f"evidence/global-gate/persisted/{command_id}/exit-code.txt",
+                    "sha256": "",
+                },
+            },
             "conforms": True,
         }
-        for command_id, command, expected_exit_code in contract.COMMANDS
+        for index, (command_id, command, expected_exit_code) in enumerate(
+            contract.COMMANDS, 1
+        )
     ]
     for command in commands:
         log_path = repository / command["log"]["path"]
@@ -134,6 +154,37 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
             encoding="utf-8",
         )
         command["log"]["sha256"] = hashlib.sha256(log_path.read_bytes()).hexdigest()
+        run_id = command["persisted_run"]["run_id"]
+        persisted_values = {
+            "command_record": {
+                "schema_name": "persisted-command",
+                "schema_version": "1.0.0",
+                "run_id": run_id,
+                "cwd": str(repository.resolve()),
+                "argv": command["command"],
+                "accepted_exit_codes": [command["expected_exit_code"]],
+            },
+            "terminal_status": {
+                "schema_name": "persisted-command-status",
+                "schema_version": "1.0.0",
+                "run_id": run_id,
+                "state": "succeeded",
+                "exit_code": command["actual_exit_code"],
+                "security": {
+                    "acceptance_evidence_eligible": True,
+                    "classification": "no_secret_detected",
+                },
+            },
+        }
+        for key, value in persisted_values.items():
+            artifact = command["persisted_run"][key]
+            artifact_path = repository / artifact["path"]
+            _write_json(artifact_path, value)
+            artifact["sha256"] = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        exit_artifact = command["persisted_run"]["exit_code"]
+        exit_path = repository / exit_artifact["path"]
+        exit_path.write_text(f"{command['actual_exit_code']}\n", encoding="utf-8")
+        exit_artifact["sha256"] = hashlib.sha256(exit_path.read_bytes()).hexdigest()
 
     artifact_fingerprints = fingerprint_implementation_changes(
         repository,
@@ -173,6 +224,12 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         "evidence_paths": [
             "evidence/global-gate/exit-evidence-manifest.json",
             *[item["log"]["path"] for item in commands],
+            *[
+                artifact["path"]
+                for item in commands
+                for key, artifact in item["persisted_run"].items()
+                if key != "run_id"
+            ],
         ],
         "generated_at": "2026-08-03T00:00:00Z",
         "activation_scope": deepcopy(contract.ACTIVATION_SCOPE),
@@ -190,7 +247,7 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         "overall_decision": "pass",
     }
     _write_json(manifest, template)
-    _git(repository, "add", "evidence/global-gate")
+    _git(repository, "add", "-f", "evidence/global-gate")
     _git(repository, "commit", "-m", "Publish test Global Gate evidence")
     return repository, manifest
 

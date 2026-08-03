@@ -21,7 +21,7 @@ from .evidence import (
 SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
 SLICE_BASE_COMMIT = "64f3fb1638f601b533cb0ee4dec908203c1bef71"
 EVIDENCE_PREFIX = "evidence/global-gate/"
-QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
+QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
 ATOMIC_MEMBERS = (
     "catalogs", "projections", "criteria_migration", "schemas", "providers",
     "validators", "hooks", "skills", "project_instructions", "mirrors", "tests",
@@ -186,6 +186,7 @@ def _validate_implementation(project_root: Path, value: dict[str, Any]) -> None:
 def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path: Path) -> None:
     relative_manifest = manifest_path.relative_to(project_root).as_posix()
     log_paths = {item["log"]["path"] for item in value["commands"]}
+    persisted_paths: set[str] = set()
     seen: set[str] = set()
     marker = f"EVIDENCE_IMPLEMENTATION_COMMIT: {value['implementation_commit']}".encode("ascii")
     for command in value["commands"]:
@@ -199,6 +200,54 @@ def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path:
             _fail("command log fingerprint is stale", "command_log", "command_log_sha256_stale")
         if [line for line in path.read_bytes().splitlines() if line == marker] != [marker]:
             _fail("command log implementation marker is missing, duplicated, or stale", "command_log_provenance", "command_log_provenance_invalid")
+        persisted = command.get("persisted_run")
+        if not isinstance(persisted, dict):
+            _fail("qualification command lacks persisted terminal evidence", "persisted_command_evidence", "persisted_command_evidence_missing")
+        artifacts: dict[str, Path] = {}
+        for artifact_name, expected_role in (
+            ("command_record", "persisted_command_record"),
+            ("terminal_status", "persisted_terminal_status"),
+            ("exit_code", "persisted_exit_code"),
+        ):
+            artifact = persisted[artifact_name]
+            if artifact["role"] != expected_role:
+                _fail("persisted evidence role is stale", "persisted_command_evidence", "persisted_command_role_stale")
+            artifact_path = _project_file(
+                project_root,
+                artifact["path"],
+                gate="persisted_command_evidence",
+                missing_code="persisted_command_artifact_missing",
+            )
+            if artifact["path"] in persisted_paths or sha256_file(artifact_path) != artifact["sha256"]:
+                _fail("persisted evidence fingerprint is stale or duplicated", "persisted_command_evidence", "persisted_command_artifact_stale")
+            persisted_paths.add(artifact["path"])
+            artifacts[artifact_name] = artifact_path
+        try:
+            command_record = json.loads(artifacts["command_record"].read_text(encoding="utf-8"))
+            terminal_status = json.loads(artifacts["terminal_status"].read_text(encoding="utf-8"))
+            exit_code = int(artifacts["exit_code"].read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise ExitEvidenceValidationError(
+                "persisted evidence cannot be decoded",
+                first_failing_gate="persisted_command_evidence",
+                error_code="persisted_command_artifact_invalid",
+            ) from exc
+        run_id = persisted["run_id"]
+        if command_record.get("schema_name") != "persisted-command" or command_record.get("run_id") != run_id:
+            _fail("persisted command identity is stale", "persisted_command_identity", "persisted_command_identity_stale")
+        if (
+            command_record.get("argv") != command["command"]
+            or command_record.get("accepted_exit_codes") != [command["expected_exit_code"]]
+            or command_record.get("cwd") != str(project_root)
+        ):
+            _fail("persisted command contract differs from manifest", "persisted_command_identity", "persisted_command_argv_stale")
+        if terminal_status.get("schema_name") != "persisted-command-status" or terminal_status.get("run_id") != run_id:
+            _fail("persisted terminal identity is stale", "persisted_command_terminal", "persisted_command_terminal_identity_stale")
+        if terminal_status.get("state") != "succeeded" or terminal_status.get("exit_code") != exit_code or exit_code != command["actual_exit_code"]:
+            _fail("persisted run does not prove successful terminal completion", "persisted_command_terminal", "persisted_command_terminal_invalid")
+        security = terminal_status.get("security", {})
+        if security.get("acceptance_evidence_eligible") is not True or security.get("classification") == "security_failure":
+            _fail("persisted run is ineligible for acceptance evidence", "persisted_command_security", "persisted_command_security_failure")
     for fixture in value["fixtures"]:
         try:
             actual = sha256_git_blob(project_root, value["implementation_commit"], fixture["path"])
@@ -206,7 +255,7 @@ def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path:
             raise ExitEvidenceValidationError(str(exc), first_failing_gate="fixture_fingerprint", error_code="fixture_missing_at_implementation") from exc
         if actual != fixture["sha256"]:
             _fail("fixture fingerprint is stale", "fixture_fingerprint", "fixture_sha256_stale")
-    if set(value["evidence_paths"]) != {relative_manifest, *log_paths}:
+    if set(value["evidence_paths"]) != {relative_manifest, *log_paths, *persisted_paths}:
         _fail("evidence_paths differ from canonical manifest and logs", "evidence_paths", "evidence_paths_stale")
 
 

@@ -39,7 +39,7 @@ MIRROR_SPECS += ((
     ".claude/skills/final-delivery-acceptance/scripts/delivery_guard.py",
 ),)
 POLICY_STATUS = "active_global_gate"
-QUALIFICATION_CONTRACT_SHA256 = "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"
+QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
 
 ACTIVATION_SCOPE = {
     "kind": "active_global_gate",
@@ -95,14 +95,37 @@ RESULT_SPECS = (
     ("patch_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication", None, None),
     ("report_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_finishes_an_intact_interrupted_report_publication", None, None),
     ("patch_retry_idempotent", "recovery", f"{ACCEPTANCE_TESTS}.test_successful_patch_and_terminal_materialization_retries_are_idempotent", None, None),
+    ("patch_after_control_commit_recovered_idempotent", "recovery", f"{ACCEPTANCE_TESTS}.test_patch_after_control_commit_recovers_intact_and_exact_retry_is_idempotent", None, None),
     ("report_retry_idempotent", "recovery", f"{ACCEPTANCE_TESTS}.test_successful_patch_and_terminal_materialization_retries_are_idempotent", None, None),
     ("activation_publication_recovered", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
     ("activation_retry_idempotent", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
+    ("activation_after_control_commit_recovered_idempotent", "recovery", f"{POLICY_TESTS}.test_activation_after_control_commit_is_intact_and_exact_retry_is_idempotent", None, None),
     ("patch_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
     ("report_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
     ("activation_writers_fenced", "fencing", f"{ACTIVATION_FENCING_TESTS}.test_distinct_valid_activation_authorities_reach_the_cas_fence", None, None),
 )
 QUALIFICATION_TEST_TARGETS = tuple(dict.fromkeys(target for _, _, target, _, _ in RESULT_SPECS))
+
+COMPLETE_MODULE_RESULT_SPECS = (
+    (
+        "complete_acceptance_v2_module",
+        "positive",
+        "issue43-complete-acceptance-v2",
+        "tests.video_workflow.test_acceptance_v2",
+    ),
+    (
+        "complete_issue43_active_guard_module",
+        "positive",
+        "issue43-complete-active-guard",
+        "tests.video_workflow.test_issue43_active_guard",
+    ),
+    (
+        "complete_delivery_guard_module",
+        "positive",
+        "issue43-complete-delivery-guard",
+        "test_delivery_guard.py",
+    ),
+)
 
 COMMANDS = (
     (
@@ -133,6 +156,41 @@ COMMANDS = (
         ),
         0,
     ),
+    *(
+        (
+            command_id,
+            (
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                "-m",
+                "unittest",
+                "-v",
+                test_target,
+            ),
+            0,
+        )
+        for _, _, command_id, test_target in COMPLETE_MODULE_RESULT_SPECS[:2]
+    ),
+    (
+        "issue43-complete-delivery-guard",
+        (
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-v",
+            "-s",
+            ".agents/skills/final-delivery-acceptance/scripts",
+            "-p",
+            "test_delivery_guard.py",
+        ),
+        0,
+    ),
 )
 
 EXPECTED_CHECKPOINTS = [
@@ -153,6 +211,14 @@ RESULT_BINDINGS = [
         } if result_kind == "negative" else {}),
     }
     for result_id, result_kind, target, first_gate, error_code in RESULT_SPECS
+] + [
+    {
+        "result_id": result_id,
+        "result_kind": result_kind,
+        "command_id": command_id,
+        "test_target": test_target,
+    }
+    for result_id, result_kind, command_id, test_target in COMPLETE_MODULE_RESULT_SPECS
 ]
 
 RESULTS = {

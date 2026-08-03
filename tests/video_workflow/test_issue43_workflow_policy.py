@@ -240,6 +240,53 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(retried.returncode, 0, retried.stdout)
         self.assertTrue(value["data"]["idempotent"])
 
+    def test_activation_after_control_commit_is_intact_and_exact_retry_is_idempotent(self) -> None:
+        # scenario_id: activation_after_control_commit_intact_recovery
+        # authority: current Issue 43 Exit Evidence -> boundary: gate Control Store commit
+        # mutation seam: injected after_control_commit fault
+        # rematerialized nodes: none; intentionally stale nodes: none
+        # observation: reconcile and exact retry preserve the committed authority generation
+        root = new_case_dir(self.id(), label="issue43-policy")
+        evidence = self.evidence(root)
+        interrupted, fault = self.activate(
+            root, evidence, "--fault-point", "after_control_commit",
+        )
+        self.assertNotEqual(0, interrupted.returncode)
+        self.assertEqual("injected_global_gate_fault", fault["classification"])
+        self.assertEqual("after_control_commit", fault["data"]["fault_point"])
+
+        authority_path = root / "active_global_gate.json"
+        self.assertTrue(authority_path.is_file())
+        with sqlite3.connect(root / "global-gate-control.sqlite3") as database:
+            control_before = database.execute(
+                "SELECT generation, evidence_sha256, authority_sha256 FROM gate_authority WHERE singleton=1"
+            ).fetchone()
+            intents_before = database.execute(
+                "SELECT state, authority_sha256 FROM gate_intents"
+            ).fetchall()
+        self.assertEqual(1, control_before[0])
+        self.assertEqual([("COMMITTED", control_before[2])], intents_before)
+        authority_bytes = authority_path.read_bytes()
+
+        reconciled, recovery = _run(
+            "global-gate-reconcile", "--control-store-root", str(root),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stdout)
+        self.assertEqual(1, recovery["data"]["generation"])
+        self.assertEqual(control_before[2], recovery["data"]["authority_sha256"])
+        retried, retry = self.activate(root, evidence)
+        self.assertEqual(0, retried.returncode, retried.stdout)
+        self.assertTrue(retry["data"]["idempotent"])
+        self.assertEqual(1, retry["data"]["generation"])
+        self.assertEqual(authority_bytes, authority_path.read_bytes())
+        with sqlite3.connect(root / "global-gate-control.sqlite3") as database:
+            self.assertEqual(control_before, database.execute(
+                "SELECT generation, evidence_sha256, authority_sha256 FROM gate_authority WHERE singleton=1"
+            ).fetchone())
+            self.assertEqual(intents_before, database.execute(
+                "SELECT state, authority_sha256 FROM gate_intents"
+            ).fetchall())
+
     def test_after_intent_reconcile_rejects_evidence_made_stale_by_later_commit(self) -> None:
         # scenario_id: reconcile_stale_after_intent; the later implementation
         # commit is the only contradiction after the publication intent exists.

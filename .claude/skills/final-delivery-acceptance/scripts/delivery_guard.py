@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass
@@ -1474,6 +1475,12 @@ def _validate_active_acceptance_authority(target: DeliveryTarget) -> dict[str, A
             first_failing_gate=data.get("first_failing_gate", "acceptance_v2_authority"),
             error_code=data.get("error_code", "acceptance_v2_authority_stale"),
         ) from exc
+    except (sqlite3.DatabaseError, OSError) as exc:
+        raise GuardError(
+            "Acceptance Report v2 control store is unavailable or corrupt",
+            first_failing_gate="control_store",
+            error_code="acceptance_v2_control_store_unavailable",
+        ) from exc
     if (
         Path(current_gate["path"]).resolve() != target.global_gate_authority_path
         or current_gate["file_sha256"] != target.global_gate_authority_sha256
@@ -1611,6 +1618,14 @@ def run_hook_stop(
         except GuardError as exc:
             return EXIT_BLOCKED, _blocking_message(str(exc), None)
         if guard_report_is_fresh(target):
+            try:
+                _validate_active_acceptance_authority(target)
+            except GuardError:
+                return run_check(
+                    project_root=project_root,
+                    current_target_path=current_target_path,
+                    criteria_path=criteria_path,
+                )
             return EXIT_PASS, f"Final Delivery Guard found a fresh passing guard report: {target.guard_report_path}"
         return run_check(project_root=project_root, current_target_path=current_target_path, criteria_path=criteria_path)
 

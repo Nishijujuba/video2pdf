@@ -819,17 +819,30 @@ def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
 def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_paths = {command["log"]["path"] for command in manifest["commands"]}
+    persisted_artifacts = [
+        artifact
+        for command in manifest["commands"]
+        for key, artifact in command.get("persisted_run", {}).items()
+        if key != "run_id"
+    ]
+    persisted_paths = {artifact["path"] for artifact in persisted_artifacts}
     smoke_manifest_paths = {
         smoke["source_manifest"]["path"]
         for smoke in manifest.get("platform_smokes", [])
     }
-    expected_evidence_paths = {manifest_relative, *log_paths, *smoke_manifest_paths}
+    expected_evidence_paths = {
+        manifest_relative,
+        *log_paths,
+        *persisted_paths,
+        *smoke_manifest_paths,
+    }
     if set(manifest["evidence_paths"]) != expected_evidence_paths:
         raise EvidenceError(
-            "evidence_paths must be exactly manifest, command logs, and platform smoke manifests"
+            "evidence_paths must be exactly manifest, command logs, persisted terminal artifacts, and platform smoke manifests"
         )
     seen: set[str] = set()
     bound = [command["log"] for command in manifest["commands"]]
+    bound.extend(persisted_artifacts)
     bound.extend(manifest["fixtures"])
     bound.extend(
         smoke["source_manifest"] for smoke in manifest.get("platform_smokes", [])
@@ -860,6 +873,66 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             raise EvidenceError(
                 f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"
             )
+    if manifest.get("slice", {}).get("number") == 11:
+        for command in manifest["commands"]:
+            persisted = command.get("persisted_run")
+            if not isinstance(persisted, dict):
+                raise EvidenceError(
+                    "Issue #43 command lacks persisted terminal evidence",
+                    first_failing_gate="persisted_command_evidence",
+                    error_code="persisted_command_evidence_missing",
+                )
+            try:
+                command_record = json.loads(
+                    resolve_project_path(persisted["command_record"]["path"]).read_text(encoding="utf-8")
+                )
+                terminal_status = json.loads(
+                    resolve_project_path(persisted["terminal_status"]["path"]).read_text(encoding="utf-8")
+                )
+                exit_code = int(
+                    resolve_project_path(persisted["exit_code"]["path"]).read_text(encoding="utf-8").strip()
+                )
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise EvidenceError(
+                    "Issue #43 persisted evidence cannot be decoded",
+                    first_failing_gate="persisted_command_evidence",
+                    error_code="persisted_command_artifact_invalid",
+                ) from exc
+            run_id = persisted["run_id"]
+            if (
+                command_record.get("run_id") != run_id
+                or command_record.get("argv") != command["command"]
+                or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+            ):
+                raise EvidenceError(
+                    "Issue #43 persisted command identity differs from its manifest binding",
+                    first_failing_gate="persisted_command_identity",
+                    error_code="persisted_command_identity_stale",
+                )
+            if command_record.get("accepted_exit_codes") != [command["expected_exit_code"]]:
+                raise EvidenceError(
+                    "Issue #43 persisted accepted exit codes differ from the command contract",
+                    first_failing_gate="persisted_command_identity",
+                    error_code="persisted_command_argv_stale",
+                )
+            if terminal_status.get("run_id") != run_id or terminal_status.get("state") != "succeeded":
+                raise EvidenceError(
+                    "Issue #43 persisted run lacks successful terminal status",
+                    first_failing_gate="persisted_command_terminal",
+                    error_code="persisted_command_terminal_invalid",
+                )
+            if terminal_status.get("exit_code") != exit_code or exit_code != command["actual_exit_code"]:
+                raise EvidenceError(
+                    "Issue #43 persisted exit-code evidence is inconsistent",
+                    first_failing_gate="persisted_command_terminal",
+                    error_code="persisted_command_terminal_invalid",
+                )
+            if terminal_status.get("security", {}).get("acceptance_evidence_eligible") is not True:
+                raise EvidenceError(
+                    "Issue #43 persisted run is ineligible for acceptance evidence",
+                    first_failing_gate="persisted_command_security",
+                    error_code="persisted_command_security_failure",
+                )
 
 
 def validate_command_log_provenance(manifest: dict[str, Any]) -> None:

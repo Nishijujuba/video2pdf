@@ -317,7 +317,19 @@
         "slice": {"properties": {"number": {"const": 11}, "name": {"const": "global-acceptance-v2-gate"}}},
         "slice_base_commit": {"const": "64f3fb1638f601b533cb0ee4dec908203c1bef71"},
         "activation_scope": {"$ref": "#/$defs/globalGateActivationScope"},
-        "result_bindings": {"items": {"$ref": "#/$defs/globalGateResultBinding"}},
+        "result_bindings": {
+          "minItems": 37,
+          "maxItems": 37,
+          "items": {"$ref": "#/$defs/globalGateResultBinding"}
+        },
+        "commands": {
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/commandEvidence"},
+              {"required": ["persisted_run"]}
+            ]
+          }
+        },
         "results": {"required": ["fencing", "recovery"]},
         "fault_points": false,
         "platform_smokes": false
@@ -360,7 +372,7 @@
         },
         "legacy_track_authority": {"const": "acceptance_report_v2"},
         "platform_kernel_authority": {"const": "unchanged"},
-        "qualification_contract_sha256": {"const": "01a05f52a0101c7e701ecc395219cd4acc8cb0d6c4e8b667772fea2239ed6ff0"}
+        "qualification_contract_sha256": {"const": "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"}
       }
     },
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
@@ -384,7 +396,19 @@
         "expected_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
         "actual_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
         "log": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "persisted_run": {"$ref": "#/$defs/persistedRunEvidence"},
         "conforms": {"type": "boolean"}
+      }
+    },
+    "persistedRunEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "command_record", "terminal_status", "exit_code"],
+      "properties": {
+        "run_id": {"type": "string", "format": "uuid"},
+        "command_record": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "terminal_status": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "exit_code": {"$ref": "#/$defs/fingerprintedArtifact"}
       }
     },
     "resultBinding": {
@@ -395,7 +419,7 @@
         "result_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,119}$"},
         "result_kind": {"enum": ["positive", "negative", "quota", "fencing", "fairness", "restart", "recovery"]},
         "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
-        "test_target": {"type": "string", "pattern": "^tests\\.video_workflow\\.[A-Za-z0-9_.]+$"},
+        "test_target": {"type": "string", "pattern": "^(?:tests\\.video_workflow\\.[A-Za-z0-9_.]+|test_delivery_guard\\.py)$"},
         "expected_first_failing_gate": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,119}$"},
         "expected_error_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,159}$"}
       }

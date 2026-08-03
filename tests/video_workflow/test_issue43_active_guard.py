@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 from pathlib import Path
 import shutil
@@ -231,6 +232,35 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             check=False,
         )
 
+    def run_hook_stop(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(GUARD),
+                "hook-stop",
+                "--project-root",
+                str(self.project_root),
+                "--current-target",
+                str(self.project_root / ".codex/delivery-targets/current.json"),
+            ],
+            cwd=self.project_root,
+            input=json.dumps({"session_id": self.session_id}),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+
+    def assert_cached_hook_passes(self) -> None:
+        checked = self.run_guard()
+        self.assertEqual(0, checked.returncode, checked.stdout + checked.stderr)
+        cached = self.run_hook_stop()
+        self.assertEqual(0, cached.returncode, cached.stdout + cached.stderr)
+        self.assertIn("fresh passing guard report", cached.stdout)
+
     def test_active_guard_accepts_current_passing_v2_authority(self) -> None:
         completed = self.run_guard()
 
@@ -239,6 +269,63 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.assertEqual("pass", report["status"])
         self.assertEqual("pass", report["acceptance_report_status"])
         self.assertIn("acceptance_report_v2_authority_current", {item["condition"] for item in report["checked_conditions"]})
+
+    def test_cached_hook_rejects_missing_acceptance_control_store(self) -> None:
+        self.assert_cached_hook_passes()
+        control_store = self.workspace / "acceptance-control.sqlite3"
+        quarantine = self.project_root / "待删除" / control_store.name
+        quarantine.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(control_store, quarantine)
+
+        completed = self.run_hook_stop()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual("execution_identity", report["first_failing_gate"])
+        self.assertEqual("acceptance_dimension_authority_stale", report["error_code"])
+
+    def test_cached_hook_rejects_corrupt_acceptance_control_store(self) -> None:
+        self.assert_cached_hook_passes()
+        (self.workspace / "acceptance-control.sqlite3").write_bytes(b"not sqlite")
+
+        completed = self.run_hook_stop()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual("control_store", report["first_failing_gate"])
+        self.assertEqual("acceptance_v2_control_store_unavailable", report["error_code"])
+
+    def test_cached_hook_rejects_corrupt_global_gate_control_store(self) -> None:
+        self.assert_cached_hook_passes()
+        gate_root = Path(self.binding["global_gate_authority"]["path"]).parent
+        (gate_root / "global-gate-control.sqlite3").write_bytes(b"not sqlite")
+
+        completed = self.run_hook_stop()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual("control_store", report["first_failing_gate"])
+        self.assertEqual("global_gate_control_store_corrupt", report["error_code"])
+
+    def test_cached_hook_rejects_missing_global_gate_control_store(self) -> None:
+        self.assert_cached_hook_passes()
+        gate_root = Path(self.binding["global_gate_authority"]["path"]).parent
+        control_store = gate_root / "global-gate-control.sqlite3"
+        quarantine = self.project_root / "待删除" / control_store.name
+        quarantine.parent.mkdir(parents=True, exist_ok=True)
+        gc.collect()
+        shutil.move(control_store, quarantine)
+
+        completed = self.run_hook_stop()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
+        report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual("global_gate_authority", report["first_failing_gate"])
+        self.assertEqual("global_gate_authority_stale", report["error_code"])
 
     def test_active_guard_accepts_run_record_free_legacy_v2_authority(self) -> None:
         project_root = new_case_dir(self.id(), label="issue43-active-guard-legacy")

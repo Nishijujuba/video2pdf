@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 import subprocess
 
-from video2pdf_workflow_kernel.evidence import fingerprint_implementation_changes
+from scripts import issue43_exit_evidence_contract as contract
+from video2pdf_workflow_kernel.evidence import (
+    fingerprint_implementation_changes,
+    sha256_git_blob,
+)
 from video2pdf_workflow_kernel.global_gate_exit_evidence import (
     EVIDENCE_PREFIX,
     SLICE_BASE_COMMIT,
@@ -13,7 +18,6 @@ from video2pdf_workflow_kernel.global_gate_exit_evidence import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CANONICAL_MANIFEST = PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -37,6 +41,9 @@ def _write_json(path: Path, value: object) -> None:
 def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     """Create a real two-commit Issue 43 authority without mutating the source repo."""
     repository = root / "git-authority"
+    manifest = repository / "evidence/global-gate/exit-evidence-manifest.json"
+    if manifest.is_file():
+        return repository, manifest
     repository.mkdir(parents=True)
     _git(repository, "init")
     alternates = repository / ".git/objects/info/alternates"
@@ -50,13 +57,33 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         repository, "sparse-checkout", "set",
         "schemas", ".agents", ".claude", "src", "scripts", "tests", "evidence/global-gate",
     )
-    template = json.loads(CANONICAL_MANIFEST.read_text(encoding="utf-8"))
-    implementation = template["implementation_commit"]
+    source_head = _git(PROJECT_ROOT, "rev-parse", "HEAD")
+    changed = set(filter(None, _git(PROJECT_ROOT, "diff-tree", "--no-commit-id", "--name-only", "-r", source_head).splitlines()))
+    implementation = (
+        _git(PROJECT_ROOT, "rev-parse", f"{source_head}^")
+        if changed and all(path.startswith(EVIDENCE_PREFIX) for path in changed)
+        else source_head
+    )
     _git(repository, "checkout", "--detach", implementation)
     _git(repository, "config", "user.name", "Issue43 Test Authority")
     _git(repository, "config", "user.email", "issue43-authority@example.invalid")
 
-    for command in template["commands"]:
+    commands = [
+        {
+            "test_id": command_id,
+            "command": list(command),
+            "expected_exit_code": expected_exit_code,
+            "actual_exit_code": expected_exit_code,
+            "log": {
+                "role": "command_log",
+                "path": f"evidence/global-gate/logs/{command_id}.log",
+                "sha256": "",
+            },
+            "conforms": True,
+        }
+        for command_id, command, expected_exit_code in contract.COMMANDS
+    ]
+    for command in commands:
         log_path = repository / command["log"]["path"]
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
@@ -66,22 +93,60 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         )
         command["log"]["sha256"] = hashlib.sha256(log_path.read_bytes()).hexdigest()
 
-    template["artifact_fingerprints"] = fingerprint_implementation_changes(
+    artifact_fingerprints = fingerprint_implementation_changes(
         repository,
         SLICE_BASE_COMMIT,
         implementation,
         excluded_prefixes=(EVIDENCE_PREFIX,),
     )
-    for check in template["mirror_checks"]:
-        source = repository / Path(check["source_path"]).relative_to(PROJECT_ROOT)
-        mirror = repository / Path(check["mirror_path"]).relative_to(PROJECT_ROOT)
-        check["source_path"] = str(source.resolve())
-        check["mirror_path"] = str(mirror.resolve())
-        check["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
-        check["mirror_sha256"] = hashlib.sha256(mirror.read_bytes()).hexdigest()
-        check["status"] = "equal"
-
-    manifest = repository / "evidence/global-gate/exit-evidence-manifest.json"
+    mirror_checks = []
+    for source_relative, mirror_relative in contract.MIRROR_SPECS:
+        source = repository / source_relative
+        mirror = repository / mirror_relative
+        source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+        mirror_sha = hashlib.sha256(mirror.read_bytes()).hexdigest()
+        mirror_checks.append({
+            "source_path": str(source.resolve()),
+            "mirror_path": str(mirror.resolve()),
+            "source_sha256": source_sha,
+            "mirror_sha256": mirror_sha,
+            "status": "equal" if source_sha == mirror_sha else "stale",
+        })
+    fixtures = [
+        {
+            "role": role,
+            "path": path,
+            "sha256": sha256_git_blob(repository, implementation, path),
+        }
+        for role, path in contract.FIXTURE_SPECS
+    ]
+    template = {
+        "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+        "schema_version": 2,
+        "kind": "video-workflow-exit-evidence",
+        "fingerprint_algorithm": "sha256-raw-v1",
+        "slice": {"number": contract.SLICE_NUMBER, "name": contract.SLICE_NAME},
+        "slice_base_commit": contract.SLICE_BASE_COMMIT,
+        "implementation_commit": implementation,
+        "evidence_paths": [
+            "evidence/global-gate/exit-evidence-manifest.json",
+            *[item["log"]["path"] for item in commands],
+        ],
+        "generated_at": "2026-08-03T00:00:00Z",
+        "activation_scope": deepcopy(contract.ACTIVATION_SCOPE),
+        "atomic_members": list(contract.ATOMIC_MEMBERS),
+        "atomic_member_status": deepcopy(contract.ATOMIC_MEMBER_STATUS),
+        "mirror_checks": mirror_checks,
+        "policy_status": contract.POLICY_STATUS,
+        "commands": commands,
+        "expected_checkpoints": deepcopy(contract.EXPECTED_CHECKPOINTS),
+        "fixtures": fixtures,
+        "results": deepcopy(contract.RESULTS),
+        "result_bindings": deepcopy(contract.RESULT_BINDINGS),
+        "artifact_fingerprints": artifact_fingerprints,
+        "unresolved_exceptions": [],
+        "overall_decision": "pass",
+    }
     _write_json(manifest, template)
     _git(repository, "add", "evidence/global-gate")
     _git(repository, "commit", "-m", "Publish test Global Gate evidence")

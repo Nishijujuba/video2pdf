@@ -21,6 +21,7 @@ from tests.video_workflow._issue43_git_authority import (
     commit_later_implementation_change,
 )
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+from video2pdf_workflow_kernel.errors import KernelError
 
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
@@ -49,17 +50,31 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
     """Public Seam 4 fixtures start valid and mutate one declared policy invariant."""
 
     def evidence(self, root: Path, **changes: object) -> Path:
-        canonical = PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
-        value = json.loads(canonical.read_text(encoding="utf-8"))
+        repository, manifest = build_current_global_gate_authority(root)
+        if not changes:
+            return manifest
+        value = json.loads(manifest.read_text(encoding="utf-8"))
         value.update(changes)
-        return _write(root / "exit-evidence.json", value)
+        return _write(repository / "variant-exit-evidence.json", value)
 
     def activate(self, root: Path, evidence: Path | None = None, *extra: str) -> tuple[subprocess.CompletedProcess[str], dict]:
-        return _run(
-            "global-gate-activate", "--control-store-root", str(root),
-            "--exit-evidence", str(evidence or PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-            "--activated-at", "2026-08-03T00:00:00Z", *extra,
-        )
+        repository, default_evidence = build_current_global_gate_authority(root)
+        fault_point = extra[1] if len(extra) == 2 and extra[0] == "--fault-point" else None
+        try:
+            data = GlobalGatePublisher(project_root=repository).activate(
+                control_store_root=root,
+                exit_evidence=evidence or default_evidence,
+                activated_at="2026-08-03T00:00:00Z",
+                fault_point=fault_point,
+            )
+            envelope = {"classification": "global_gate_activated", "data": data}
+            return subprocess.CompletedProcess([], 0, json.dumps(envelope), ""), envelope
+        except KernelError as exc:
+            envelope = {
+                "classification": exc.classification,
+                "data": {**exc.data, "message": str(exc)},
+            }
+            return subprocess.CompletedProcess([], exc.exit_code, json.dumps(envelope), ""), envelope
 
     def policy_check(self, root: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
         return _run("workflow-policy-check", "--control-store-root", str(root))
@@ -148,24 +163,25 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         for scenario, gate, code in scenarios:
             with self.subTest(scenario=scenario):
                 root = new_case_dir(f"{self.id()}-{scenario}", label="issue43-policy")
-                value = json.loads((PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json").read_text(encoding="utf-8"))
+                repository, manifest = build_current_global_gate_authority(root)
+                value = json.loads(manifest.read_text(encoding="utf-8"))
                 if scenario == "command_log_missing":
                     value["commands"][0]["log"]["path"] = "evidence/global-gate/logs/absent.log"
                 elif scenario == "command_log_sha":
                     value["commands"][0]["log"]["sha256"] = "0" * 64
                 elif scenario == "command_log_marker":
-                    log = root / "markerless.log"
+                    log = repository / "markerless.log"
                     log.write_text("tests passed without a commit marker\n", encoding="utf-8")
                     value["commands"][0]["log"] = {
                         "role": "command_log",
-                        "path": log.relative_to(PROJECT_ROOT).as_posix(),
+                        "path": log.relative_to(repository).as_posix(),
                         "sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
                     }
                 elif scenario == "fixture_sha":
                     value["fixtures"][0]["sha256"] = "0" * 64
                 else:
                     value["artifact_fingerprints"][0]["sha256"] = "0" * 64
-                evidence = _write(root / "exit-evidence.json", value)
+                evidence = _write(repository / "variant-exit-evidence.json", value)
                 completed, envelope = self.activate(root, evidence)
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertEqual(envelope["data"]["first_failing_gate"], gate)
@@ -213,7 +229,7 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
 
     def test_activation_interruption_reconciles_and_exact_retry_is_idempotent(self) -> None:
         root = new_case_dir(self.id(), label="issue43-policy")
-        evidence = PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
+        evidence = self.evidence(root)
         interrupted, envelope = self.activate(root, evidence, "--fault-point", "after_authority_write")
         self.assertNotEqual(interrupted.returncode, 0)
         self.assertEqual(envelope["classification"], "injected_global_gate_fault")
@@ -233,7 +249,7 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         value["evidence_nonce"] = "different-authority"
         # Keep the contract closed: change a governed result order through a second valid file path.
         value.pop("evidence_nonce")
-        alternate = _write(root / "alternate-evidence.json", value)
+        alternate = _write(root / "git-authority/alternate-evidence.json", value)
         # A distinct uncommitted byte identity is rejected before it can reach the CAS fence.
         alternate.write_text(alternate.read_text(encoding="utf-8") + " ", encoding="utf-8")
         completed, envelope = self.activate(root, alternate)

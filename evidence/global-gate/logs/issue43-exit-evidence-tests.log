@@ -1,4 +1,4 @@
-D:\Project\video2pdf\newskill-kimi\待删除\kernel-test-runs\c-af627ade89-7db139d9\evidence\global-gate\exit-evidence-manifest.json
+D:\Project\video2pdf\newskill-kimi\待删除\kernel-test-runs\c-af627ade89-8b858466\evidence\global-gate\exit-evidence-manifest.json
 test_collector_materializes_the_registered_schema_valid_cutover_shape (tests.video_workflow.test_issue43_exit_evidence.Issue43ExitEvidenceContractTests.test_collector_materializes_the_registered_schema_valid_cutover_shape) ... ok
 test_contract_gap_blocks_before_activation_decision (tests.video_workflow.test_issue43_exit_evidence.Issue43ExitEvidenceContractTests.test_contract_gap_blocks_before_activation_decision) ... ok
 test_contract_registers_the_complete_global_gate_qualification_surface (tests.video_workflow.test_issue43_exit_evidence.Issue43ExitEvidenceContractTests.test_contract_registers_the_complete_global_gate_qualification_surface) ... ok
@@ -16,8 +16,8 @@ test_unsupported_result_identity_has_a_stable_first_gate (tests.video_workflow.t
 test_v2_schema_admits_global_gate_activation_and_historical_manifests (tests.video_workflow.test_issue43_exit_evidence.Issue43ExitEvidenceContractTests.test_v2_schema_admits_global_gate_activation_and_historical_manifests) ... ok
 
 ----------------------------------------------------------------------
-Ran 15 tests in 9.712s
+Ran 15 tests in 14.601s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: ee411bdc94c079295f7a9259c3d5cfc88f0ca45e
+EVIDENCE_IMPLEMENTATION_COMMIT: bf2f4535774d9da02621cddf6bcbfc2f0ee15e3c

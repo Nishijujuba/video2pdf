@@ -254,6 +254,16 @@
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-judgment-patch.invalid.json"
     },
     {
+      "schema_name": "acceptance-v2-task-envelope",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-task-envelope.example.v1.json",
+      "canonical_sha256": "b54082c88dded5ce610dfa9775ccfd5444ac18db6fda7b6bc26894725c127517",
+      "positive_example": "delivery-quality/v1/acceptance-v2-task-envelope.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-task-envelope.invalid.json"
+    },
+    {
       "schema_name": "acceptance-v2-execution-context",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-execution-context.v1.schema.json",
@@ -279,7 +289,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-attempt-record.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/acceptance-v2-attempt-record.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/acceptance-v2-attempt-record.example.v1.json",
-      "canonical_sha256": "3a6b54a6516e1062e9aaa8d3f9541824b352a6848b01cb3a8b743c34f858638e",
+      "canonical_sha256": "2c6c746ec54e17b0cfbfedb884943b4d5b9114d7d6251f4f896b8ceaa99978ec",
       "positive_example": "delivery-quality/v1/acceptance-v2-attempt-record.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-attempt-record.invalid.json"
     },

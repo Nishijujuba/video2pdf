@@ -85,6 +85,7 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
             "--input-binding", str(binding_path), "--attempt-number", "1",
             "--prepared-at", "2026-08-03T00:01:00Z",
+            "--coordinator-session", "coordinator-session",
         )
 
     def test_legacy_v2_provider_rejects_contract_gap(self) -> None:

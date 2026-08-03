@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import stat
 from typing import Any, Literal
+import uuid
 
 from .evidence import sha256_file
 from .errors import KernelError
@@ -29,7 +30,7 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def write_json_atomic(path: Path, value: Any) -> str:
     data = canonical_json_bytes(value)
-    temp = path.with_name(f".{path.name}.kernel-new")
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.kernel-new")
     with temp.open("wb") as handle:
         handle.write(data)
         handle.flush()

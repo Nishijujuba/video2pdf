@@ -125,10 +125,8 @@ class DeliveryQualityRegistry:
         if self._manifest["authority"] != SUPPORTED_AUTHORITY:
             raise ContractError("Delivery Quality registry would activate runtime authority")
         contracts = self._manifest["contracts"]
-        if not isinstance(contracts, list) or len(contracts) != 29:
-            raise ContractError(
-                "Delivery Quality registry must contain twenty-nine contracts"
-            )
+        if not isinstance(contracts, list):
+            raise ContractError("Delivery Quality registry contracts must be a list")
 
         expected_entry_fields = {
             "schema_name",
@@ -218,6 +216,7 @@ class DeliveryQualityRegistry:
             "acceptance-v2-input-binding",
             "acceptance-v2-review-skeleton",
             "acceptance-v2-judgment-patch",
+            "acceptance-v2-task-envelope",
             "acceptance-v2-execution-context",
             "acceptance-report-v2",
             "acceptance-v2-attempt-record",

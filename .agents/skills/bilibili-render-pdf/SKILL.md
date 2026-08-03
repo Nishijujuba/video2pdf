@@ -635,11 +635,13 @@ Required evidence paths:
 
 Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged. This active Legacy workflow must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`. It must never create a synthetic Legacy Run. Run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, then publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
 
+The three precompile semantic owners retain their committed semantic decisions. `source-faithfulness-reviewer` owns source fidelity, `writing-quality-reviewer` owns full reader-facing text, formula, and Delivery Glossary semantic review, and `pyramid-reviewer` owns document structure. The Acceptance Reviewer handles only the `visual_quality` criteria in the provider-created Task Envelope. It reads only the exact path-and-SHA `authorized_read_set` and writes one Visual Quality Judgment Patch to `required_output.path`, the sole `declared_write_set` entry inside the provider-created Attempt directory. The Reviewer has no report-publication authority; after `acceptance-patch-commit`, the `acceptance-materialize` provider materializes the canonical Acceptance Report v2 without reinterpreting precompile decisions.
+
 Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, and dual authority are forbidden. Both Legacy and Kernel inputs use the same Acceptance Report v2 provider and active Guard.
 
 `acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, forbidden-context, or non-v2 report blocks final delivery.
 
-If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and any invalidated precompile owner evidence, then create a fresh provider Attempt and launch its Acceptance Reviewer from the new Task Envelope exact authorized read set.
 
 Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
 

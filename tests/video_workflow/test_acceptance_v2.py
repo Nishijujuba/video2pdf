@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
 
 from tests.video_workflow._test_run import new_case_dir
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +22,9 @@ if str(SRC) not in sys.path:
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+import video2pdf_workflow_kernel.acceptance_v2 as acceptance_v2_module
+from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
+from video2pdf_workflow_kernel.errors import AcceptanceV2Rejected
 from scripts import issue43_exit_evidence_contract as issue43_evidence
 from tests.video_workflow._issue43_git_authority import build_current_global_gate_authority
 
@@ -116,7 +123,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         write_json(authority_path, authority)
         final_checkpoint["authority_sha256"] = file_sha(authority_path)
 
-    def build_binding(self, root: Path, generation: int, *, equivalent: bool = False, publish_authority: bool = True) -> Path:
+    def build_binding(self, root: Path, generation: int, *, equivalent: bool = False, publish_authority: bool = True, include_delivery_glossary: bool = False) -> Path:
         run_record, run_record_path, control_store_root = self.ensure_run_authority(root)
         artifacts = root / "artifacts"
         final_pdf = artifacts / "final.pdf"
@@ -132,6 +139,20 @@ class AcceptanceV2CliTests(unittest.TestCase):
         for path, data in values:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+        manifest_artifacts = [
+            {"role": "pdf", "path": final_pdf.relative_to(root).as_posix()},
+            {"role": "tex", "path": main_tex.relative_to(root).as_posix()},
+        ]
+        if include_delivery_glossary:
+            glossary = root / "review" / "acceptance" / "delivery_glossary.json"
+            write_json(glossary, {"schema_version": "delivery_glossary.v1", "terms": []})
+            manifest_artifacts.append(
+                {"role": "delivery_glossary", "path": glossary.relative_to(root).as_posix()}
+            )
+        allowed_manifest = write_json(
+            root / "review" / "acceptance" / "allowed_artifacts_manifest.json",
+            {"criteria_file": "docs/acceptance/acceptance_criteria.v1.json", "review_output_dir": "review/acceptance", "final_artifacts": manifest_artifacts, "forbidden_artifacts": []},
+        )
 
         generation_sha = hashlib.sha256(f"generation-{generation}".encode()).hexdigest()
         fixed = hashlib.sha256(b"fixed").hexdigest()
@@ -331,6 +352,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         completed, _ = run_cli(
             "acceptance-prepare", "--workspace-root", str(workspace), "--input-binding", str(binding_path),
             "--attempt-number", "1", "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         return workspace, root
@@ -341,6 +363,11 @@ class AcceptanceV2CliTests(unittest.TestCase):
         skeleton = json.loads((workspace / "acceptance_report.skeleton.json").read_text(encoding="utf-8"))
         task = skeleton["dimensions"]["visual_quality"]
         binding = json.loads((workspace / "input-binding.json").read_text(encoding="utf-8"))
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        task_envelope_path = next(
+            (Path(current["execution_root"]) / "tasks").glob("*/task.json")
+        )
+        task_envelope = json.loads(task_envelope_path.read_text(encoding="utf-8"))
         violation_by_rule = {
             "figure_visual_integrity": "figure_rendering_defect",
             "table_layout_integrity": "table_rendering_defect",
@@ -366,18 +393,328 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "claim_generation": task["claim_generation"], "fencing_token": fencing_token or task["fencing_token"],
             "skeleton_sha256": skeleton["skeleton_sha256"],
             "reviewer": {"reviewer_id": "independent-visual", "independent": True},
-            "actual_read_set": read_set if read_set is not None else [
-                {"logical_id": "final_pdf", "path": next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"),
-                 "sha256": next(item["sha256"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf")},
-                *[{"logical_id": f"rendered_page:{item['page']}", "path": item["path"], "sha256": item["sha256"]}
-                  for item in bound_pages],
-            ],
+            "actual_read_set": read_set if read_set is not None else task_envelope["authorized_read_set"],
             "criterion_results": results, "visual_scan_evidence": {"pages_checked": pages},
             "cross_phase_findings": cross_findings or [],
             "contract_gaps": [{"gap_id": "gap-1", "observation": "unmapped evidence", "evidence_location": "final.pdf:1"}] if contract_gap else [],
         }
         patch["patch_sha256"] = canonical_sha(patch)
-        return write_json(workspace.parent.parent / "visual-quality.patch.json", patch)
+        return write_json(Path(task_envelope["required_output"]["path"]), patch)
+
+    def test_prepare_materializes_exact_read_only_reviewer_task_envelope(self) -> None:
+        workspace, root = self.prepare()
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_root = Path(current["execution_root"])
+        task_path = next((execution_root / "tasks").glob("*/task.json"))
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        binding = json.loads((workspace / "input-binding.json").read_text(encoding="utf-8"))
+        pages = binding["rendered_pages"]
+        final_pdf = next(
+            item for item in binding["artifacts"] if item["logical_id"] == "final_pdf"
+        )
+        role_projections = json.loads(
+            (PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        visual_projection = next(
+            item
+            for item in role_projections["projections"]
+            if item["projection_id"] == "visual-quality-evaluation"
+        )
+        expected = [
+            {"logical_id": "final_pdf", "path": str(Path(final_pdf["path"]).resolve()), "sha256": final_pdf["sha256"]},
+            *[
+                {"logical_id": f"rendered_page:{item['page']}", "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
+                for item in pages
+            ],
+            {"logical_id": "delivery_quality_catalog", "path": str((PROJECT_ROOT / "delivery-quality/v1/rule-catalog.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/rule-catalog.v1.json")},
+            {"logical_id": "delivery_quality_role_projections", "path": str((PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json")},
+            {"logical_id": "role_projection:visual-quality-evaluation", "path": str((PROJECT_ROOT / visual_projection["generated_prompt"]["path"]).resolve()), "sha256": visual_projection["generated_prompt"]["sha256"]},
+            {"logical_id": "acceptance_review_skeleton", "path": str((execution_root / "acceptance_report.skeleton.json").resolve()), "sha256": file_sha(execution_root / "acceptance_report.skeleton.json")},
+            {"logical_id": "acceptance_input_binding", "path": str((execution_root / "input-binding.json").resolve()), "sha256": file_sha(execution_root / "input-binding.json")},
+            {"logical_id": "global_gate_authority", "path": str(Path(binding["global_gate_authority"]["path"]).resolve()), "sha256": binding["global_gate_authority"]["file_sha256"]},
+            {"logical_id": "allowed_artifacts_manifest", "path": str((root / "review/acceptance/allowed_artifacts_manifest.json").resolve()), "sha256": file_sha(root / "review/acceptance/allowed_artifacts_manifest.json")},
+        ]
+        self.assertEqual("read_only", task["input_access"])
+        self.assertEqual(expected, task["authorized_read_set"])
+        staged_patch = Path(task["required_output"]["path"])
+        self.assertEqual(staged_patch.parent.name, task["attempt_id"])
+        self.assertEqual([{"logical_id": "judgment_patch", "path": str(staged_patch)}], task["declared_write_set"])
+        self.assertEqual(1, task["expected_execution_revision"])
+        self.assertEqual("coordinator-session", task["coordinator_session"])
+        self.assertTrue(staged_patch.parent.is_dir())
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as control:
+            claim = control.execute(
+                "SELECT execution_id,task_id,attempt_id,expected_execution_revision,coordinator_session,declared_write_set_json,fencing_token,task_envelope_sha256 FROM reviewer_claims WHERE task_id=?",
+                (task["task_id"],),
+            ).fetchone()
+        self.assertEqual(
+            (
+                task["task_authority"]["execution_id"], task["task_id"], task["attempt_id"],
+                task["expected_execution_revision"], task["coordinator_session"],
+                json.dumps(task["declared_write_set"], ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+                task["fencing_token"], file_sha(task_path),
+            ),
+            claim,
+        )
+
+    def test_claim_key_rejects_each_single_stale_authority_component(self) -> None:
+        scenarios = (
+            ("task_id", "f" * 32),
+            ("execution_id", "f" * 32),
+            ("attempt_id", "f" * 32),
+            ("expected_execution_revision", 2),
+            ("coordinator_session", "stale-session"),
+            ("declared_write_set_json", "[]\n"),
+            ("fencing_token", "f" * 64),
+            ("task_envelope_sha256", "f" * 64),
+        )
+        for column, stale_value in scenarios:
+            with self.subTest(
+                scenario_id=f"stale_claim_{column}",
+                target_invariant="complete_reviewer_claim_key",
+                mutation_seam="after_prepare_before_patch_commit",
+                rematerialized_nodes=[],
+                intentionally_stale_nodes=[column],
+                expected_first_gate="execution_identity",
+                expected_error_code="acceptance_dimension_authority_stale",
+            ):
+                workspace, _ = self.prepare()
+                staged = self.patch(workspace)
+                with sqlite3.connect(workspace / "acceptance-control.sqlite3") as control:
+                    control.execute(
+                        f"UPDATE reviewer_claims SET {column}=?",
+                        (stale_value,),
+                    )
+                completed, envelope = run_cli(
+                    "acceptance-patch-commit", "--workspace-root", str(workspace),
+                    "--dimension", "visual_quality", "--patch", str(staged),
+                    "--committed-at", "2026-08-02T00:10:00Z",
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertEqual("execution_identity", envelope["data"]["first_failing_gate"])
+                self.assertEqual("acceptance_dimension_authority_stale", envelope["data"]["error_code"])
+
+    def test_patch_commit_rejects_patch_outside_provider_created_staging_path(self) -> None:
+        workspace, root = self.prepare()
+        staged = self.patch(workspace)
+        external = write_json(root / "external.patch.json", json.loads(staged.read_text(encoding="utf-8")))
+        completed, envelope = run_cli(
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(external),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("patch_write_boundary", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_patch_staging_path_invalid", envelope["data"]["error_code"])
+
+    def test_manifest_listed_delivery_glossary_is_an_exact_authorized_read(self) -> None:
+        root = new_case_dir(self.id(), label="acceptance-v2-glossary")
+        workspace = root / "review" / "acceptance"
+        binding_path = self.build_binding(root, 1, include_delivery_glossary=True)
+        completed, _ = run_cli(
+            "acceptance-prepare", "--workspace-root", str(workspace),
+            "--input-binding", str(binding_path), "--attempt-number", "1",
+            "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        task = json.loads(next((Path(current["execution_root"]) / "tasks").glob("*/task.json")).read_text(encoding="utf-8"))
+        glossary = root / "review" / "acceptance" / "delivery_glossary.json"
+        self.assertIn(
+            {"logical_id": "delivery_glossary", "path": str(glossary.resolve()), "sha256": file_sha(glossary)},
+            task["authorized_read_set"],
+        )
+
+    def test_prepare_rejects_duplicate_rendered_page_physical_path(self) -> None:
+        root = new_case_dir(self.id(), label="acceptance-v2-duplicate-page-path")
+        binding_path = self.build_binding(root, 1, publish_authority=False)
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        binding["rendered_pages"][1]["path"] = binding["rendered_pages"][0]["path"]
+        binding["rendered_pages"][1]["sha256"] = binding["rendered_pages"][0]["sha256"]
+        render_manifest_path = Path(binding["quality_inputs"]["render_evidence_manifest"]["path"])
+        render_manifest = json.loads(render_manifest_path.read_text(encoding="utf-8"))
+        render_manifest["pages"] = [dict(item) for item in binding["rendered_pages"]]
+        render_manifest["manifest_sha256"] = canonical_sha(
+            {key: value for key, value in render_manifest.items() if key != "manifest_sha256"}
+        )
+        write_json(render_manifest_path, render_manifest)
+        binding["quality_inputs"]["render_evidence_manifest"]["sha256"] = file_sha(render_manifest_path)
+        reconciliation_path = Path(binding["quality_inputs"]["rendered_text_reconciliation"]["path"])
+        reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+        reconciliation["render_evidence_manifest_sha256"] = render_manifest["manifest_sha256"]
+        reconciliation["report_sha256"] = canonical_sha(
+            {key: value for key, value in reconciliation.items() if key != "report_sha256"}
+        )
+        write_json(reconciliation_path, reconciliation)
+        binding["quality_inputs"]["rendered_text_reconciliation"]["sha256"] = file_sha(reconciliation_path)
+        self.refresh_final_authority(binding)
+        binding["binding_sha256"] = canonical_sha({key: value for key, value in binding.items() if key != "binding_sha256"})
+        write_json(binding_path, binding)
+        published, _ = run_cli("acceptance-final-authority-publish", "--input-binding", str(binding_path))
+        self.assertEqual(0, published.returncode)
+        completed, envelope = run_cli(
+            "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
+            "--input-binding", str(binding_path), "--attempt-number", "1",
+            "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_read_set_duplicate_path", envelope["data"]["error_code"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows case aliases are platform-specific")
+    def test_prepare_rejects_case_alias_for_same_rendered_page_physical_path(self) -> None:
+        root = new_case_dir(self.id(), label="acceptance-v2-case-alias-page-path")
+        binding_path = self.build_binding(root, 1, publish_authority=False)
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        aliased_path = binding["rendered_pages"][0]["path"].swapcase()
+        if not Path(aliased_path).is_file():
+            self.skipTest("test volume treats the case alias as a distinct path")
+        binding["rendered_pages"][1]["path"] = aliased_path
+        binding["rendered_pages"][1]["sha256"] = binding["rendered_pages"][0]["sha256"]
+        self._publish_duplicate_rendered_page_binding(binding_path, binding)
+        completed, envelope = run_cli(
+            "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
+            "--input-binding", str(binding_path), "--attempt-number", "1",
+            "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_read_set_duplicate_path", envelope["data"]["error_code"])
+
+    def test_prepare_rejects_hardlink_alias_for_same_rendered_page_physical_file(self) -> None:
+        root = new_case_dir(self.id(), label="acceptance-v2-hardlink-alias-page-path")
+        binding_path = self.build_binding(root, 1, publish_authority=False)
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        source = Path(binding["rendered_pages"][0]["path"])
+        alias = source.with_name("page-hardlink-alias.png")
+        try:
+            alias.hardlink_to(source)
+        except OSError as exc:
+            self.skipTest(f"hard links are unavailable on the test filesystem: {exc}")
+        binding["rendered_pages"][1]["path"] = str(alias)
+        binding["rendered_pages"][1]["sha256"] = binding["rendered_pages"][0]["sha256"]
+        self._publish_duplicate_rendered_page_binding(binding_path, binding)
+        completed, envelope = run_cli(
+            "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
+            "--input-binding", str(binding_path), "--attempt-number", "1",
+            "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_read_set_duplicate_path", envelope["data"]["error_code"])
+
+    def test_patch_commit_rejects_missing_authorized_read_path_fail_closed(self) -> None:
+        workspace, root = self.prepare()
+        patch = self.patch(workspace)
+        binding = json.loads((workspace / "input-binding.json").read_text(encoding="utf-8"))
+        rendered_page = Path(binding["rendered_pages"][0]["path"])
+        staged_for_deletion = root / "待删除" / rendered_page.name
+        staged_for_deletion.parent.mkdir(parents=True, exist_ok=True)
+        rendered_page.replace(staged_for_deletion)
+        completed, envelope = run_cli(
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        self.assertNotEqual(0, completed.returncode)
+        self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_read_set_path_invalid", envelope["data"]["error_code"])
+
+    def _publish_duplicate_rendered_page_binding(self, binding_path: Path, binding: dict) -> None:
+        render_manifest_path = Path(binding["quality_inputs"]["render_evidence_manifest"]["path"])
+        render_manifest = json.loads(render_manifest_path.read_text(encoding="utf-8"))
+        render_manifest["pages"] = [dict(item) for item in binding["rendered_pages"]]
+        render_manifest["manifest_sha256"] = canonical_sha(
+            {key: value for key, value in render_manifest.items() if key != "manifest_sha256"}
+        )
+        write_json(render_manifest_path, render_manifest)
+        binding["quality_inputs"]["render_evidence_manifest"]["sha256"] = file_sha(render_manifest_path)
+        reconciliation_path = Path(binding["quality_inputs"]["rendered_text_reconciliation"]["path"])
+        reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+        reconciliation["render_evidence_manifest_sha256"] = render_manifest["manifest_sha256"]
+        reconciliation["report_sha256"] = canonical_sha(
+            {key: value for key, value in reconciliation.items() if key != "report_sha256"}
+        )
+        write_json(reconciliation_path, reconciliation)
+        binding["quality_inputs"]["rendered_text_reconciliation"]["sha256"] = file_sha(reconciliation_path)
+        self.refresh_final_authority(binding)
+        binding["binding_sha256"] = canonical_sha(
+            {key: value for key, value in binding.items() if key != "binding_sha256"}
+        )
+        write_json(binding_path, binding)
+        published, envelope = run_cli(
+            "acceptance-final-authority-publish", "--input-binding", str(binding_path)
+        )
+        self.assertEqual(0, published.returncode, published.stdout + published.stderr)
+
+    def test_patch_read_set_rejects_each_single_contradiction_at_allowed_read_set_gate(self) -> None:
+        scenarios = (
+            "omitted_path",
+            "stale_path",
+            "extra_path",
+            "stale_sha",
+            "duplicate_logical_id",
+        )
+        for scenario_id in scenarios:
+            with self.subTest(
+                scenario_id=scenario_id,
+                target_invariant="task_envelope_exact_path_sha_read_set",
+                mutation_seam="after_prepare_before_patch_commit",
+                rematerialized_nodes=["patch_sha256"],
+                intentionally_stale_nodes=[scenario_id],
+                expected_first_gate="allowed_read_set",
+                expected_error_code="acceptance_read_set_incomplete",
+            ):
+                workspace, root = self.prepare()
+                current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+                task = json.loads(next((Path(current["execution_root"]) / "tasks").glob("*/task.json")).read_text(encoding="utf-8"))
+                reads = [dict(item) for item in task["authorized_read_set"]]
+                if scenario_id == "omitted_path":
+                    reads.pop()
+                elif scenario_id == "stale_path":
+                    reads[0]["path"] = str((root / "artifacts" / "stale-final.pdf").resolve())
+                elif scenario_id == "extra_path":
+                    reads.append({"logical_id": "forbidden_generation_notes", "path": str((root / "generation-notes.md").resolve()), "sha256": "f" * 64})
+                elif scenario_id == "stale_sha":
+                    reads[0]["sha256"] = "f" * 64
+                else:
+                    duplicate = dict(reads[0])
+                    duplicate["path"] = str((root / "artifacts" / "duplicate.pdf").resolve())
+                    reads.append(duplicate)
+                patch = self.patch(workspace, read_set=reads)
+                completed, envelope = run_cli(
+                    "acceptance-patch-commit", "--workspace-root", str(workspace),
+                    "--dimension", "visual_quality", "--patch", str(patch),
+                    "--committed-at", "2026-08-02T00:10:00Z",
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
+                self.assertEqual("acceptance_read_set_incomplete", envelope["data"]["error_code"])
+
+    def test_patch_read_set_order_has_no_authority_semantics(self) -> None:
+        workspace, _ = self.prepare()
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        task = json.loads(
+            next((Path(current["execution_root"]) / "tasks").glob("*/task.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        patch = self.patch(
+            workspace,
+            read_set=list(reversed(task["authorized_read_set"])),
+        )
+        completed, envelope = run_cli(
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        self.assertEqual(0, completed.returncode, envelope)
 
     def commit_visual(self, workspace: Path, **kwargs: object) -> None:
         patch = self.patch(workspace, **kwargs)
@@ -393,6 +730,177 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
             "--materialized-at", "2026-08-02T00:20:00Z",
         )
+
+    def reconcile_while_writer_waits_on_abort(
+        self,
+        workspace: Path,
+        intent_path: Path,
+        writer_arguments: tuple[str, ...],
+    ) -> tuple[dict, subprocess.CompletedProcess[str], dict]:
+        entered_abort_write = threading.Event()
+        release_abort_write = threading.Event()
+        original_write = acceptance_v2_module.write_json_atomic
+
+        def blocked_abort_write(path: Path, value: object) -> str:
+            if (
+                path.resolve() == intent_path.resolve()
+                and isinstance(value, dict)
+                and value.get("state") == "ABORTED"
+                and not entered_abort_write.is_set()
+            ):
+                entered_abort_write.set()
+                if not release_abort_write.wait(timeout=10):
+                    raise TimeoutError("reconcile abort-write barrier was not released")
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = blocked_abort_write
+        initial_mtime = intent_path.stat().st_mtime_ns
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                reconcile_future = pool.submit(
+                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
+                    workspace_root=workspace,
+                )
+                self.assertTrue(entered_abort_write.wait(timeout=10))
+                writer_future = pool.submit(run_cli, *writer_arguments)
+                deadline = time.monotonic() + 10
+                while intent_path.stat().st_mtime_ns == initial_mtime:
+                    if time.monotonic() >= deadline:
+                        self.fail("writer did not republish PREPARED intent before the barrier deadline")
+                    time.sleep(0.01)
+                release_abort_write.set()
+                recovery = reconcile_future.result(timeout=30)
+                writer_completed, writer_envelope = writer_future.result(timeout=30)
+        finally:
+            release_abort_write.set()
+            acceptance_v2_module.write_json_atomic = original_write
+        return recovery, writer_completed, writer_envelope
+
+    def writer_wins_before_waiting_reconcile(
+        self,
+        workspace: Path,
+        intent_path: Path,
+        writer_arguments: tuple[str, ...],
+    ) -> tuple[subprocess.CompletedProcess[str], dict, dict]:
+        blocker = sqlite3.connect(
+            workspace / "acceptance-control.sqlite3",
+            timeout=30,
+            isolation_level=None,
+        )
+        blocker.execute("BEGIN IMMEDIATE")
+        initial_mtime = intent_path.stat().st_mtime_ns
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                writer_future = pool.submit(run_cli, *writer_arguments)
+                deadline = time.monotonic() + 10
+                while intent_path.stat().st_mtime_ns == initial_mtime:
+                    if time.monotonic() >= deadline:
+                        self.fail("writer did not reach its first-CAS barrier")
+                    time.sleep(0.01)
+                reconcile_future = pool.submit(
+                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
+                    workspace_root=workspace,
+                )
+                time.sleep(0.2)
+                blocker.execute("COMMIT")
+                writer_completed, writer_envelope = writer_future.result(timeout=30)
+                recovery = reconcile_future.result(timeout=30)
+        finally:
+            try:
+                blocker.execute("ROLLBACK")
+            except sqlite3.OperationalError:
+                pass
+            blocker.close()
+        return writer_completed, writer_envelope, recovery
+
+    def reconcile_then_two_writers_compete_at_reauthorization(
+        self,
+        workspace: Path,
+        intent_path: Path,
+        first_writer: Callable[[], dict],
+        second_writer_arguments: tuple[str, ...],
+    ) -> tuple[dict, AcceptanceV2Rejected, subprocess.CompletedProcess[str], dict]:
+        reconcile_abort_entered = threading.Event()
+        release_reconcile_abort = threading.Event()
+        first_writer_abort_entered = threading.Event()
+        release_first_writer_abort = threading.Event()
+        abort_write_lock = threading.Lock()
+        abort_write_count = 0
+        original_write = acceptance_v2_module.write_json_atomic
+
+        def blocked_abort_write(path: Path, value: object) -> str:
+            nonlocal abort_write_count
+            if (
+                path.resolve() == intent_path.resolve()
+                and isinstance(value, dict)
+                and value.get("state") == "ABORTED"
+            ):
+                with abort_write_lock:
+                    abort_write_count += 1
+                    current_abort_write = abort_write_count
+                if current_abort_write == 1:
+                    reconcile_abort_entered.set()
+                    if not release_reconcile_abort.wait(timeout=10):
+                        raise TimeoutError("reconcile abort-write barrier was not released")
+                elif current_abort_write == 2:
+                    first_writer_abort_entered.set()
+                    if not release_first_writer_abort.wait(timeout=10):
+                        raise TimeoutError("first-writer abort-write barrier was not released")
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = blocked_abort_write
+        initial_mtime = intent_path.stat().st_mtime_ns
+        intent_id = json.loads(intent_path.read_text(encoding="utf-8"))["intent_id"]
+        try:
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                reconcile_future = pool.submit(
+                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
+                    workspace_root=workspace,
+                )
+                self.assertTrue(reconcile_abort_entered.wait(timeout=10))
+                first_writer_future = pool.submit(first_writer)
+                deadline = time.monotonic() + 10
+                while intent_path.stat().st_mtime_ns == initial_mtime:
+                    if time.monotonic() >= deadline:
+                        self.fail("first writer did not reach its reauthorization barrier")
+                    time.sleep(0.01)
+                release_reconcile_abort.set()
+                recovery = reconcile_future.result(timeout=30)
+                self.assertTrue(first_writer_abort_entered.wait(timeout=10))
+
+                before_second_writer = intent_path.stat().st_mtime_ns
+                second_writer_future = pool.submit(run_cli, *second_writer_arguments)
+                deadline = time.monotonic() + 10
+                while (
+                    intent_path.stat().st_mtime_ns == before_second_writer
+                    or json.loads(intent_path.read_text(encoding="utf-8"))["state"] != "PREPARED"
+                ):
+                    if time.monotonic() >= deadline:
+                        self.fail("second writer did not reach its first-CAS barrier")
+                    time.sleep(0.01)
+                control_deadline = time.monotonic() + 5
+                while time.monotonic() < control_deadline and not second_writer_future.done():
+                    with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+                        controlled = database.execute(
+                            "SELECT state FROM publication_intents WHERE intent_id=?",
+                            (intent_id,),
+                        ).fetchone()
+                    if controlled is not None:
+                        break
+                    time.sleep(0.01)
+                release_first_writer_abort.set()
+                try:
+                    first_writer_future.result(timeout=30)
+                except AcceptanceV2Rejected as error:
+                    first_writer_error = error
+                else:
+                    self.fail("first writer unexpectedly passed stale reauthorization")
+                second_writer_completed, second_writer_envelope = second_writer_future.result(timeout=30)
+        finally:
+            release_reconcile_abort.set()
+            release_first_writer_abort.set()
+            acceptance_v2_module.write_json_atomic = original_write
+        return recovery, first_writer_error, second_writer_completed, second_writer_envelope
 
     def test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility(self) -> None:
         workspace, _ = self.prepare()
@@ -554,19 +1062,31 @@ class AcceptanceV2CliTests(unittest.TestCase):
         self.assertEqual("patch_freshness", envelope["data"]["first_failing_gate"])
 
     def test_two_writers_are_fenced_at_patch_and_report_publication(self) -> None:
-        workspace, root = self.prepare()
-        pass_patch = self.patch(workspace)
-        pass_patch = write_json(root / "visual-pass.patch.json", json.loads(pass_patch.read_text(encoding="utf-8")))
-        fail_patch = self.patch(workspace, decision="fail")
-        fail_patch = write_json(root / "visual-fail.patch.json", json.loads(fail_patch.read_text(encoding="utf-8")))
-        def commit(path: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+        workspace, _ = self.prepare()
+        staged_path = self.patch(workspace)
+        def commit(_: int) -> tuple[subprocess.CompletedProcess[str], dict]:
             return run_cli("acceptance-patch-commit", "--workspace-root", str(workspace),
-                "--dimension", "visual_quality", "--patch", str(path), "--committed-at", "2026-08-02T00:10:00Z")
+                "--dimension", "visual_quality", "--patch", str(staged_path), "--committed-at", "2026-08-02T00:10:00Z")
         with ThreadPoolExecutor(max_workers=2) as pool:
-            outcomes = list(pool.map(commit, (pass_patch, fail_patch)))
-        self.assertEqual([0, 1], sorted(0 if item[0].returncode == 0 else 1 for item in outcomes))
-        loser = next(envelope for completed, envelope in outcomes if completed.returncode != 0)
-        self.assertEqual("patch_fencing", loser["data"]["first_failing_gate"])
+            outcomes = list(pool.map(commit, (1, 2)))
+        successful_patches = [
+            envelope["data"] for completed, envelope in outcomes
+            if completed.returncode == 0
+        ]
+        self.assertIn(len(successful_patches), {1, 2})
+        if len(successful_patches) == 2:
+            self.assertEqual(
+                [False, True],
+                sorted(item["idempotent"] for item in successful_patches),
+            )
+        else:
+            self.assertFalse(successful_patches[0]["idempotent"])
+            loser = next(
+                envelope for completed, envelope in outcomes
+                if completed.returncode != 0
+            )
+            self.assertIn("first_failing_gate", loser["data"], loser)
+            self.assertEqual("patch_fencing", loser["data"]["first_failing_gate"], loser)
         current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
         execution = json.loads((workspace / "execution.json").read_text(encoding="utf-8"))
         committed_path = Path(execution["committed_patches"]["visual_quality"]["path"])
@@ -648,7 +1168,6 @@ class AcceptanceV2CliTests(unittest.TestCase):
             write_json(path, execution)
         task_path = next((Path(current["execution_root"]) / "tasks").glob("*/task.json"))
         task = json.loads(task_path.read_text(encoding="utf-8"))
-        task["allowed_read_set"] = skeleton["dimensions"]["visual_quality"]["allowed_read_set"]
         task["skeleton_sha256"] = skeleton["skeleton_sha256"]
         write_json(task_path, task)
         patch = self.patch(workspace)
@@ -671,6 +1190,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
             "--input-binding", str(binding_path), "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertNotEqual(0, completed.returncode)
         self.assertEqual("run_final_quality_authority", envelope["data"]["first_failing_gate"])
@@ -682,6 +1202,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
             "--input-binding", str(binding_path), "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertNotEqual(0, completed.returncode)
         self.assertEqual("acceptance_final_authority_unpublished", envelope["data"]["error_code"])
@@ -762,6 +1283,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         repaired, _ = run_cli(
             "acceptance-repair-prepare", "--workspace-root", str(workspace),
             "--input-binding", str(successor), "--prepared-at", "2026-08-02T00:30:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(0, repaired.returncode, repaired.stderr)
         self.commit_visual(workspace)
@@ -802,6 +1324,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(workspace),
             "--input-binding", str(binding), "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:05:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertNotEqual(0, completed.returncode)
         self.assertEqual("execution_uniqueness", envelope["data"]["first_failing_gate"])
@@ -813,6 +1336,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         arguments = (
             "acceptance-prepare", "--workspace-root", str(workspace), "--input-binding", str(binding),
             "--attempt-number", "1", "--prepared-at", "2026-08-02T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         failed, _ = run_cli(*arguments, "--fault-point", "after_prepare_control_commit")
         self.assertNotEqual(0, failed.returncode)
@@ -867,7 +1391,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             if attempt < 3:
                 unchanged = root / f"input-binding-{attempt}.json"
                 rejected, rejection = run_cli("acceptance-repair-prepare", "--workspace-root", str(workspace),
-                    "--input-binding", str(unchanged), "--prepared-at", f"2026-08-02T00:{20 + attempt:02d}:00Z")
+                    "--input-binding", str(unchanged), "--prepared-at", f"2026-08-02T00:{20 + attempt:02d}:00Z", "--coordinator-session", "coordinator-session")
                 self.assertNotEqual(0, rejected.returncode)
                 self.assertEqual("repair_generation", rejection["data"]["first_failing_gate"])
                 fresh = self.build_binding(root, attempt + 1)
@@ -876,11 +1400,11 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 unrelated["binding_sha256"] = canonical_sha({key: value for key, value in unrelated.items() if key != "binding_sha256"})
                 unrelated_path = write_json(root / f"unrelated-binding-{attempt + 1}.json", unrelated)
                 rejected, rejection = run_cli("acceptance-repair-prepare", "--workspace-root", str(workspace),
-                    "--input-binding", str(unrelated_path), "--prepared-at", f"2026-08-02T00:{25 + attempt:02d}:00Z")
+                    "--input-binding", str(unrelated_path), "--prepared-at", f"2026-08-02T00:{25 + attempt:02d}:00Z", "--coordinator-session", "coordinator-session")
                 self.assertNotEqual(0, rejected.returncode)
                 self.assertEqual("run_lifecycle", rejection["data"]["first_failing_gate"])
                 repaired, _ = run_cli("acceptance-repair-prepare", "--workspace-root", str(workspace),
-                    "--input-binding", str(fresh), "--prepared-at", f"2026-08-02T00:{30 + attempt:02d}:00Z")
+                    "--input-binding", str(fresh), "--prepared-at", f"2026-08-02T00:{30 + attempt:02d}:00Z", "--coordinator-session", "coordinator-session")
                 self.assertEqual(0, repaired.returncode, repaired.stderr)
             else:
                 self.assertEqual("manual_repair_required", envelope["data"]["routing_state"])
@@ -904,7 +1428,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         successor = self.build_binding(root, 2, equivalent=True)
         repaired, envelope = run_cli("acceptance-repair-prepare", "--workspace-root", str(workspace),
-            "--input-binding", str(successor), "--prepared-at", "2026-08-02T00:30:00Z")
+            "--input-binding", str(successor), "--prepared-at", "2026-08-02T00:30:00Z", "--coordinator-session", "coordinator-session")
         self.assertEqual(0, repaired.returncode, repaired.stderr + json.dumps(envelope))
         self.commit_visual(workspace)
         completed, _ = self.materialize(workspace)
@@ -929,6 +1453,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         repaired, envelope = run_cli(
             "acceptance-repair-prepare", "--workspace-root", str(workspace),
             "--input-binding", str(successor_path), "--prepared-at", "2026-08-02T00:30:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertNotEqual(0, repaired.returncode)
         self.assertEqual("repair_generation", envelope["data"]["first_failing_gate"])
@@ -1030,6 +1555,320 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 "SELECT execution_revision, state FROM execution_authority WHERE singleton=1"
             ).fetchone())
 
+    def test_patch_first_control_commit_recovers_and_exact_retry_is_idempotent(self) -> None:
+        # scenario_id: patch_first_control_commit_recovery
+        # authority: complete file intent + canonical Patch, then SQLite PREPARED/COMMITTING CAS
+        # boundary: first SQLite commit before final publication control commit
+        # expected observation: reconcile commits once; exact command retry is byte-idempotent
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_patch_intent_control_commit",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("after_patch_intent_control_commit", fault["data"]["fault_point"])
+
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_root = Path(current["execution_root"])
+        intent_path = next((execution_root / "intents").glob("patch-*.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("PREPARED", intent["state"])
+        self.assertTrue(Path(intent["canonical_path"]).is_file())
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertEqual(
+                ("PREPARED",),
+                database.execute(
+                    "SELECT state FROM publication_intents WHERE intent_id=?",
+                    (intent["intent_id"],),
+                ).fetchone(),
+            )
+            self.assertEqual(
+                ("COMMITTING",),
+                database.execute(
+                    "SELECT state FROM reviewer_claims WHERE task_id=?",
+                    (intent["task_id"],),
+                ).fetchone(),
+            )
+
+        reconciled, recovery = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+        self.assertEqual(["committed_patch:visual_quality"], recovery["data"]["actions"])
+        stable_paths = (
+            workspace / "execution.json",
+            execution_root / "execution.json",
+            intent_path,
+            Path(intent["canonical_path"]),
+        )
+        stable = {path: path.read_bytes() for path in stable_paths}
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertTrue(retry["data"]["idempotent"])
+        self.assertEqual(stable, {path: path.read_bytes() for path in stable_paths})
+
+    def test_patch_reconcile_abort_is_serialized_against_first_cas(self) -> None:
+        # scenario_id: patch_reconcile_vs_first_cas
+        # target invariant: a control-less abort cannot overwrite a newly controlled intent
+        # barrier: reconcile holds BEGIN IMMEDIATE while publishing ABORTED; writer waits on CAS
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_patch_file_prepare",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("after_patch_file_prepare", fault["data"]["fault_point"])
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
+
+        recovery, writer, writer_envelope = self.reconcile_while_writer_waits_on_abort(
+            workspace, intent_path, arguments,
+        )
+        self.assertEqual(
+            ["aborted_uncommitted:acceptance_patch_publication"],
+            recovery["actions"],
+        )
+        self.assertNotEqual(0, writer.returncode)
+        self.assertEqual("patch_fencing", writer_envelope["data"]["first_failing_gate"])
+        self.assertEqual("ABORTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertIsNone(database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (json.loads(intent_path.read_text(encoding="utf-8"))["intent_id"],),
+            ).fetchone())
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertFalse(retry["data"]["idempotent"])
+
+    def test_patch_writer_commit_is_not_overwritten_by_waiting_reconcile(self) -> None:
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, _ = run_cli(
+            *arguments, "--fault-point", "after_patch_file_prepare",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
+        writer, _, recovery = self.writer_wins_before_waiting_reconcile(
+            workspace, intent_path, arguments,
+        )
+        self.assertEqual(0, writer.returncode, writer.stderr)
+        self.assertIn(recovery["actions"], ([], ["committed_patch:visual_quality"]))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("COMMITTED", intent["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertEqual(("COMMITTED",), database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone())
+
+    def test_patch_failed_writer_cannot_abort_a_later_competing_writer(self) -> None:
+        # scenario_id: patch_reconcile_stale_writer_competing_writer
+        # order: reconcile aborts, W1 fails locked reauthorization, W2 waits on W1's lock
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, _ = run_cli(*arguments, "--fault-point", "after_patch_file_prepare")
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
+
+        recovery, first_error, second_completed, second_envelope = (
+            self.reconcile_then_two_writers_compete_at_reauthorization(
+                workspace,
+                intent_path,
+                lambda: AcceptanceV2Provider(PROJECT_ROOT).commit_patch(
+                    workspace_root=workspace,
+                    dimension="visual_quality",
+                    patch_path=patch,
+                    committed_at="2026-08-02T00:10:00Z",
+                ),
+                arguments,
+            )
+        )
+        self.assertEqual(
+            ["aborted_uncommitted:acceptance_patch_publication"],
+            recovery["actions"],
+        )
+        self.assertEqual("patch_fencing", first_error.data["first_failing_gate"])
+        self.assertNotEqual(0, second_completed.returncode)
+        self.assertEqual("patch_fencing", second_envelope["data"]["first_failing_gate"])
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("ABORTED", intent["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertIsNone(database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone())
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertFalse(retry["data"]["idempotent"])
+        committed_intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("COMMITTED", committed_intent["state"])
+
+    def test_reconcile_abort_file_io_failure_rolls_back_and_remains_retryable(self) -> None:
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, _ = run_cli(
+            *arguments, "--fault-point", "after_patch_file_prepare",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        original_write = acceptance_v2_module.write_json_atomic
+
+        def fail_abort_write(path: Path, value: object) -> str:
+            if (
+                path.resolve() == intent_path.resolve()
+                and isinstance(value, dict)
+                and value.get("state") == "ABORTED"
+            ):
+                raise OSError("injected abort publication failure")
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = fail_abort_write
+        try:
+            with self.assertRaisesRegex(OSError, "injected abort publication failure"):
+                AcceptanceV2Provider(PROJECT_ROOT).reconcile(workspace_root=workspace)
+        finally:
+            acceptance_v2_module.write_json_atomic = original_write
+        self.assertEqual("PREPARED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertIsNone(database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone())
+        recovery = AcceptanceV2Provider(PROJECT_ROOT).reconcile(workspace_root=workspace)
+        self.assertEqual(
+            ["aborted_uncommitted:acceptance_patch_publication"],
+            recovery["actions"],
+        )
+        retried, _ = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+
+    def test_patch_reconcile_recovers_every_post_control_publication_boundary(self) -> None:
+        # scenario_id: patch_post_control_projection_recovery
+        # authority input: committed Control Store intent at revision N+1
+        # boundary: each execution projection or file-intent write after that commit
+        # rematerialized nodes: both execution projections and the file intent
+        # expected first gate: public reconciliation completes the committed publication
+        fault_points = (
+            "after_patch_control_commit",
+            "after_patch_execution_projection_write",
+            "after_patch_root_execution_projection_write",
+            "after_patch_intent_commit_write",
+        )
+        for fault_point in fault_points:
+            with self.subTest(fault_point=fault_point):
+                workspace, _ = self.prepare()
+                patch = self.patch(workspace)
+                failed, fault = run_cli(
+                    "acceptance-patch-commit", "--workspace-root", str(workspace),
+                    "--dimension", "visual_quality", "--patch", str(patch),
+                    "--committed-at", "2026-08-02T00:10:00Z",
+                    "--fault-point", fault_point,
+                )
+                self.assertNotEqual(0, failed.returncode)
+                self.assertEqual(fault_point, fault["data"]["fault_point"])
+
+                current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+                execution_root = Path(current["execution_root"])
+                intent_path = next((execution_root / "intents").glob("patch-*.json"))
+                if fault_point == "after_patch_execution_projection_write":
+                    self.assertEqual(
+                        json.loads((workspace / "execution.json").read_text(encoding="utf-8"))["execution_revision"] + 1,
+                        json.loads((execution_root / "execution.json").read_text(encoding="utf-8"))["execution_revision"],
+                    )
+                if fault_point == "after_patch_root_execution_projection_write":
+                    self.assertEqual("PREPARED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+                    self.assertEqual(
+                        json.loads(intent_path.read_text(encoding="utf-8"))["expected_execution_revision"] + 1,
+                        json.loads((workspace / "execution.json").read_text(encoding="utf-8"))["execution_revision"],
+                    )
+
+                reconciled, recovery = run_cli(
+                    "acceptance-reconcile", "--workspace-root", str(workspace),
+                )
+                self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+                self.assertEqual(
+                    [] if fault_point == "after_patch_intent_commit_write" else ["committed_patch:visual_quality"],
+                    recovery["data"]["actions"],
+                )
+                self.assertEqual("COMMITTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+                self.assertEqual(
+                    (workspace / "execution.json").read_bytes(),
+                    (execution_root / "execution.json").read_bytes(),
+                )
+                stable = {
+                    path: path.read_bytes()
+                    for path in (workspace / "execution.json", execution_root / "execution.json", intent_path)
+                }
+                repeated, repeat = run_cli(
+                    "acceptance-reconcile", "--workspace-root", str(workspace),
+                )
+                self.assertEqual(0, repeated.returncode, repeated.stderr)
+                self.assertEqual([], repeat["data"]["actions"])
+                self.assertEqual(stable, {path: path.read_bytes() for path in stable})
+
+    def test_patch_reconcile_rejects_equal_tampered_successor_projections(self) -> None:
+        # scenario_id: patch_equal_successor_projection_tamper
+        # target invariant: N+1 execution must be the deterministic successor of SQLite-bound N
+        # mutation seam: after both execution projections are written, before file-intent commit
+        # intentionally stale node: SQLite prior_execution_sha256
+        # expected first gate/code: publication_recovery/acceptance_execution_projection_stale
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        failed, _ = run_cli(
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+            "--fault-point", "after_patch_root_execution_projection_write",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_paths = (
+            workspace / "execution.json",
+            Path(current["execution_root"]) / "execution.json",
+        )
+        tampered = json.loads(execution_paths[0].read_text(encoding="utf-8"))
+        tampered["prepared_at"] = "2026-08-02T00:00:01Z"
+        tampered["execution_sha256"] = canonical_sha({
+            key: value for key, value in tampered.items() if key != "execution_sha256"
+        })
+        for path in execution_paths:
+            write_json(path, tampered)
+        reconciled, envelope = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertNotEqual(0, reconciled.returncode)
+        self.assertEqual("publication_recovery", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_execution_projection_stale", envelope["data"]["error_code"])
+
     def test_reconcile_rejects_mutable_intent_authority_and_path_substitution(self) -> None:
         workspace, _ = self.prepare()
         patch = self.patch(workspace)
@@ -1085,6 +1924,290 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 reconciled, data = run_cli("acceptance-reconcile", "--workspace-root", str(workspace))
                 self.assertEqual(0, reconciled.returncode, reconciled.stderr)
                 self.assertTrue(data["data"]["report_published"])
+
+    def test_report_first_control_commit_recovers_and_exact_retry_is_idempotent(self) -> None:
+        # scenario_id: report_first_control_commit_recovery
+        # authority: complete file intent + staged bundle, then SQLite PREPARED CAS
+        # boundary: first SQLite commit before final publication control commit
+        # expected observation: reconcile commits once; exact command retry is byte-idempotent
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        arguments = (
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-02T00:20:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_report_intent_control_commit",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("after_report_intent_control_commit", fault["data"]["fault_point"])
+
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_root = Path(current["execution_root"])
+        intent_path = next((execution_root / "intents").glob("report-*.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("PREPARED", intent["state"])
+        staged_root = Path(intent["staged_path"]).parent
+        self.assertTrue(all(
+            (staged_root / filename).is_file()
+            for filename in ("acceptance_report.json", "attempt-record.json", "repair-ledger.json")
+        ))
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertEqual(
+                ("PREPARED",),
+                database.execute(
+                    "SELECT state FROM publication_intents WHERE intent_id=?",
+                    (intent["intent_id"],),
+                ).fetchone(),
+            )
+
+        reconciled, recovery = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+        self.assertEqual(["committed_report"], recovery["data"]["actions"])
+        published_root = Path(intent["canonical_path"]).parent
+        stable_paths = (
+            workspace / "execution.json",
+            execution_root / "execution.json",
+            workspace / "acceptance_report.json",
+            workspace / "repair-ledger.json",
+            published_root / "acceptance_report.json",
+            published_root / "attempt-record.json",
+            published_root / "repair-ledger.json",
+            intent_path,
+        )
+        stable = {path: path.read_bytes() for path in stable_paths}
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertTrue(retry["data"]["idempotent"])
+        self.assertEqual(stable, {path: path.read_bytes() for path in stable_paths})
+
+    def test_report_reconcile_abort_is_serialized_against_first_cas(self) -> None:
+        # scenario_id: report_reconcile_vs_first_cas
+        # target invariant: a control-less abort cannot overwrite a newly controlled intent
+        # barrier: reconcile holds BEGIN IMMEDIATE while publishing ABORTED; writer waits on CAS
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        arguments = (
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-02T00:20:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_report_file_prepare",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("after_report_file_prepare", fault["data"]["fault_point"])
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("report-*.json"))
+
+        recovery, writer, writer_envelope = self.reconcile_while_writer_waits_on_abort(
+            workspace, intent_path, arguments,
+        )
+        self.assertEqual(
+            ["aborted_uncommitted:acceptance_report_publication"],
+            recovery["actions"],
+        )
+        self.assertNotEqual(0, writer.returncode)
+        self.assertEqual("report_fencing", writer_envelope["data"]["first_failing_gate"])
+        self.assertEqual("ABORTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertIsNone(database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (json.loads(intent_path.read_text(encoding="utf-8"))["intent_id"],),
+            ).fetchone())
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertFalse(retry["data"]["idempotent"])
+
+    def test_report_writer_commit_is_not_overwritten_by_waiting_reconcile(self) -> None:
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        arguments = (
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-02T00:20:00Z",
+        )
+        failed, _ = run_cli(
+            *arguments, "--fault-point", "after_report_file_prepare",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("report-*.json"))
+        writer, _, recovery = self.writer_wins_before_waiting_reconcile(
+            workspace, intent_path, arguments,
+        )
+        self.assertEqual(0, writer.returncode, writer.stderr)
+        self.assertIn(recovery["actions"], ([], ["committed_report"]))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("COMMITTED", intent["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertEqual(("COMMITTED",), database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone())
+
+    def test_report_failed_writer_cannot_abort_a_later_competing_writer(self) -> None:
+        # scenario_id: report_reconcile_stale_writer_competing_writer
+        # order: reconcile aborts, W1 fails locked reauthorization, W2 waits on W1's lock
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        arguments = (
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-02T00:20:00Z",
+        )
+        failed, _ = run_cli(*arguments, "--fault-point", "after_report_file_prepare")
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next((Path(current["execution_root"]) / "intents").glob("report-*.json"))
+
+        recovery, first_error, second_completed, second_envelope = (
+            self.reconcile_then_two_writers_compete_at_reauthorization(
+                workspace,
+                intent_path,
+                lambda: AcceptanceV2Provider(PROJECT_ROOT).materialize(
+                    workspace_root=workspace,
+                    provider_id="acceptance-v2-provider",
+                    provider_version="1.0.0",
+                    materialized_at="2026-08-02T00:20:00Z",
+                ),
+                arguments,
+            )
+        )
+        self.assertEqual(
+            ["aborted_uncommitted:acceptance_report_publication"],
+            recovery["actions"],
+        )
+        self.assertEqual("report_fencing", first_error.data["first_failing_gate"])
+        self.assertNotEqual(0, second_completed.returncode)
+        self.assertEqual("report_fencing", second_envelope["data"]["first_failing_gate"])
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("ABORTED", intent["state"])
+        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
+            self.assertIsNone(database.execute(
+                "SELECT state FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone())
+        retried, retry = run_cli(*arguments)
+        self.assertEqual(0, retried.returncode, retried.stderr)
+        self.assertFalse(retry["data"]["idempotent"])
+        committed_intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        self.assertEqual("COMMITTED", committed_intent["state"])
+        guarded, guard = run_cli(
+            "acceptance-guard-eligibility", "--workspace-root", str(workspace),
+        )
+        self.assertEqual(0, guarded.returncode, guarded.stderr)
+        self.assertTrue(guard["data"]["eligible"])
+
+    def test_report_reconcile_recovers_every_post_control_publication_boundary(self) -> None:
+        # scenario_id: report_post_control_projection_recovery
+        # authority input: terminal Control Store authority and committed report intent
+        # boundary: every immutable/root projection or file-intent write after that commit
+        # rematerialized nodes: report bundle, execution projections, root projections, intent
+        # expected first gate: public reconciliation completes the committed publication
+        fault_points = (
+            "after_report_control_commit",
+            "after_report_canonical_write",
+            "after_report_attempt_record_write",
+            "after_report_repair_ledger_write",
+            "after_report_execution_projection_write",
+            "after_report_root_execution_projection_write",
+            "after_report_root_report_projection_write",
+            "after_report_root_ledger_projection_write",
+            "after_report_intent_commit_write",
+        )
+        for fault_point in fault_points:
+            with self.subTest(fault_point=fault_point):
+                workspace, _ = self.prepare()
+                self.commit_visual(workspace)
+                failed, fault = run_cli(
+                    "acceptance-materialize", "--workspace-root", str(workspace),
+                    "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+                    "--materialized-at", "2026-08-02T00:20:00Z", "--fault-point", fault_point,
+                )
+                self.assertNotEqual(0, failed.returncode)
+                self.assertEqual(fault_point, fault["data"]["fault_point"])
+
+                current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+                execution_root = Path(current["execution_root"])
+                intent_path = next((execution_root / "intents").glob("report-*.json"))
+                if fault_point == "after_report_execution_projection_write":
+                    self.assertEqual(
+                        json.loads((workspace / "execution.json").read_text(encoding="utf-8"))["execution_revision"] + 1,
+                        json.loads((execution_root / "execution.json").read_text(encoding="utf-8"))["execution_revision"],
+                    )
+                if fault_point == "after_report_root_execution_projection_write":
+                    self.assertEqual("PREPARED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+                    self.assertEqual(
+                        json.loads(intent_path.read_text(encoding="utf-8"))["expected_execution_revision"] + 1,
+                        json.loads((workspace / "execution.json").read_text(encoding="utf-8"))["execution_revision"],
+                    )
+
+                reconciled, recovery = run_cli(
+                    "acceptance-reconcile", "--workspace-root", str(workspace),
+                )
+                self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+                self.assertEqual(
+                    [] if fault_point == "after_report_intent_commit_write" else ["committed_report"],
+                    recovery["data"]["actions"],
+                )
+                self.assertTrue(recovery["data"]["report_published"])
+                self.assertEqual("COMMITTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+                self.assertEqual(
+                    (workspace / "execution.json").read_bytes(),
+                    (execution_root / "execution.json").read_bytes(),
+                )
+                stable_paths = (
+                    workspace / "execution.json",
+                    execution_root / "execution.json",
+                    workspace / "acceptance_report.json",
+                    workspace / "repair-ledger.json",
+                    intent_path,
+                )
+                stable = {path: path.read_bytes() for path in stable_paths}
+                repeated, repeat = run_cli(
+                    "acceptance-reconcile", "--workspace-root", str(workspace),
+                )
+                self.assertEqual(0, repeated.returncode, repeated.stderr)
+                self.assertEqual([], repeat["data"]["actions"])
+                self.assertEqual(stable, {path: path.read_bytes() for path in stable_paths})
+
+    def test_report_reconcile_rejects_equal_tampered_successor_projections(self) -> None:
+        # scenario_id: report_equal_successor_projection_tamper
+        # target invariant: N+1 execution must be the deterministic successor of SQLite-bound N
+        # mutation seam: after both execution projections are written, before file-intent commit
+        # intentionally stale node: SQLite prior_execution_sha256
+        # expected first gate/code: publication_recovery/acceptance_execution_projection_stale
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        failed, _ = run_cli(
+            "acceptance-materialize", "--workspace-root", str(workspace),
+            "--provider-id", "acceptance-v2-provider", "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-02T00:20:00Z",
+            "--fault-point", "after_report_root_execution_projection_write",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        execution_paths = (
+            workspace / "execution.json",
+            Path(current["execution_root"]) / "execution.json",
+        )
+        tampered = json.loads(execution_paths[0].read_text(encoding="utf-8"))
+        tampered["prepared_at"] = "2026-08-02T00:00:01Z"
+        tampered["execution_sha256"] = canonical_sha({
+            key: value for key, value in tampered.items() if key != "execution_sha256"
+        })
+        for path in execution_paths:
+            write_json(path, tampered)
+        reconciled, envelope = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertNotEqual(0, reconciled.returncode)
+        self.assertEqual("publication_recovery", envelope["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_execution_projection_stale", envelope["data"]["error_code"])
 
     def test_report_bundle_recovery_and_terminal_retry_reject_companion_drift(self) -> None:
         scenarios = (

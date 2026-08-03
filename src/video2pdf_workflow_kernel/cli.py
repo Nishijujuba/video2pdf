@@ -195,6 +195,7 @@ def _parser() -> argparse.ArgumentParser:
     acceptance_prepare.add_argument("--input-binding", required=True, type=Path)
     acceptance_prepare.add_argument("--attempt-number", required=True, type=int)
     acceptance_prepare.add_argument("--prepared-at", required=True)
+    acceptance_prepare.add_argument("--coordinator-session", required=True)
     acceptance_prepare.add_argument("--fault-point", choices=sorted(ACCEPTANCE_PREPARE_FAULT_POINTS))
 
     acceptance_patch = commands.add_parser("acceptance-patch-commit")
@@ -215,6 +216,7 @@ def _parser() -> argparse.ArgumentParser:
     acceptance_repair.add_argument("--workspace-root", required=True, type=Path)
     acceptance_repair.add_argument("--input-binding", required=True, type=Path)
     acceptance_repair.add_argument("--prepared-at", required=True)
+    acceptance_repair.add_argument("--coordinator-session", required=True)
 
     acceptance_reconcile = commands.add_parser("acceptance-reconcile")
     acceptance_reconcile.add_argument("--workspace-root", required=True, type=Path)
@@ -560,6 +562,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             input_binding_path=args.input_binding,
             attempt_number=args.attempt_number,
             prepared_at=args.prepared_at,
+            coordinator_session=args.coordinator_session,
             fault_point=args.fault_point,
         )
         return _ok(command, "acceptance_v2_prepared", result, result["skeleton_path"])
@@ -586,6 +589,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             workspace_root=args.workspace_root,
             input_binding_path=args.input_binding,
             prepared_at=args.prepared_at,
+            coordinator_session=args.coordinator_session,
         )
         return _ok(command, "acceptance_v2_repair_prepared", result, result["skeleton_path"])
     if command == "acceptance-reconcile":

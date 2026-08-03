@@ -143,6 +143,7 @@ class Issue43GlobalGateTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
             "--input-binding", adopted["data"]["input_set_path"], "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:01:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(completed.returncode, 0, completed.stdout)
         skeleton = json.loads(Path(prepared["data"]["skeleton_path"]).read_text(encoding="utf-8"))
@@ -158,6 +159,7 @@ class Issue43GlobalGateTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(workspace),
             "--input-binding", adopted["data"]["input_set_path"], "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:01:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(workspace)
@@ -218,6 +220,7 @@ class Issue43GlobalGateTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(workspace),
             "--input-binding", adopted["data"]["input_set_path"], "--attempt-number", "1",
             "--prepared-at", "2026-08-02T00:01:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(workspace)

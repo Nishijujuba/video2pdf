@@ -78,11 +78,6 @@ class DeliveryGuardTests(unittest.TestCase):
         (self.video_dir / "main.tex").write_text("Final article text.\n", encoding="utf-8")
         self.write_pdf(self.video_dir / "final.pdf", pages=1)
         (self.rendered_dir / "page_0001.png").write_bytes(b"png evidence")
-        self.manifest_path = create_allowed_artifacts_manifest(
-            self.video_dir,
-            CRITERIA_PATH,
-            [("tex", "main.tex"), ("pdf", "final.pdf")],
-        )
         self.compile_report_path = self.video_dir / "review" / "latex" / "compile_report.json"
         self.report_path = self.acceptance_dir / "acceptance_report.json"
         self.target_path = self.acceptance_dir / "delivery_target.json"
@@ -116,6 +111,24 @@ class DeliveryGuardTests(unittest.TestCase):
 
         with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
             binding_path = self.build_binding(self.video_dir, 1)
+        prepared_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        prepared_final_pdf = Path(next(
+            item["path"] for item in prepared_binding["artifacts"]
+            if item["logical_id"] == "final_pdf"
+        ))
+        prepared_main_tex = Path(next(
+            item["path"] for item in prepared_binding["artifacts"]
+            if item["logical_id"] == "main_tex"
+        ))
+        self.manifest_path = create_allowed_artifacts_manifest(
+            self.video_dir,
+            CRITERIA_PATH,
+            [
+                ("tex", prepared_main_tex.relative_to(self.video_dir).as_posix()),
+                ("pdf", prepared_final_pdf.relative_to(self.video_dir).as_posix()),
+            ],
+        )
+        prepared_manifest_bytes = self.manifest_path.read_bytes()
         prepared, envelope = acceptance_v2_tests.run_cli(
             "acceptance-prepare",
             "--workspace-root",
@@ -126,24 +139,19 @@ class DeliveryGuardTests(unittest.TestCase):
             "1",
             "--prepared-at",
             "2026-08-03T00:00:00Z",
+            "--coordinator-session",
+            "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(self.acceptance_dir)
         materialized, envelope = self.materialize(self.acceptance_dir)
         self.assertEqual(0, materialized.returncode, materialized.stdout + materialized.stderr)
+        self.assertEqual(prepared_manifest_bytes, self.manifest_path.read_bytes())
         self.binding = json.loads((self.acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
         self.final_pdf = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "final_pdf"))
         self.main_tex = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "main_tex"))
         for item in self.binding["rendered_pages"]:
             shutil.copy2(item["path"], self.rendered_dir / f"page_{item['page']:04d}.png")
-        self.manifest_path = create_allowed_artifacts_manifest(
-            self.video_dir,
-            CRITERIA_PATH,
-            [
-                ("tex", self.main_tex.relative_to(self.video_dir).as_posix()),
-                ("pdf", self.final_pdf.relative_to(self.video_dir).as_posix()),
-            ],
-        )
         self.write_compile_report(self.valid_compile_report())
 
     def write_pdf(self, path: Path, *, pages: int) -> None:
@@ -630,6 +638,24 @@ class DeliveryGuardTests(unittest.TestCase):
 
         with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
             binding_path = self.build_binding(video_dir, 1)
+        prepared_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        prepared_final_pdf = Path(next(
+            item["path"] for item in prepared_binding["artifacts"]
+            if item["logical_id"] == "final_pdf"
+        ))
+        prepared_main_tex = Path(next(
+            item["path"] for item in prepared_binding["artifacts"]
+            if item["logical_id"] == "main_tex"
+        ))
+        manifest_path = create_allowed_artifacts_manifest(
+            video_dir,
+            CRITERIA_PATH,
+            [
+                ("tex", prepared_main_tex.relative_to(video_dir).as_posix()),
+                ("pdf", prepared_final_pdf.relative_to(video_dir).as_posix()),
+            ],
+        )
+        prepared_manifest_bytes = manifest_path.read_bytes()
         prepared, envelope = acceptance_v2_tests.run_cli(
             "acceptance-prepare",
             "--workspace-root",
@@ -640,24 +666,19 @@ class DeliveryGuardTests(unittest.TestCase):
             "1",
             "--prepared-at",
             "2026-08-03T00:00:00Z",
+            "--coordinator-session",
+            "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(acceptance_dir, decision=acceptance_status)
         materialized, envelope = self.materialize(acceptance_dir)
         self.assertEqual(0, materialized.returncode, materialized.stdout + materialized.stderr)
+        self.assertEqual(prepared_manifest_bytes, manifest_path.read_bytes())
         binding = json.loads((acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
         final_pdf = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"))
         main_tex = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "main_tex"))
         for item in binding["rendered_pages"]:
             shutil.copy2(item["path"], rendered_dir / f"page_{item['page']:04d}.png")
-        create_allowed_artifacts_manifest(
-            video_dir,
-            CRITERIA_PATH,
-            [
-                ("tex", main_tex.relative_to(video_dir).as_posix()),
-                ("pdf", final_pdf.relative_to(video_dir).as_posix()),
-            ],
-        )
         compile_report_path = video_dir / "review" / "latex" / "compile_report.json"
         compile_report_path.parent.mkdir(parents=True, exist_ok=True)
         compile_report_path.write_text(

@@ -5,13 +5,20 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import sqlite3
+import stat
 from typing import Any
 
 from .errors import AcceptanceV2Fault, AcceptanceV2Rejected, ContractError, KernelError
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .delivery_quality import DeliveryQualityRegistry
-from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
+from .utils import (
+    canonical_json_bytes,
+    normalized_physical_path,
+    read_json,
+    sha256_file,
+    write_json_atomic,
+)
 from .global_gate import (
     GlobalGatePublisher,
     OPTIONAL_ACCEPTANCE_QUALITY_INPUTS,
@@ -27,8 +34,29 @@ DIMENSION_CRITERIA = {
     ),
 }
 PREPARE_FAULT_POINTS = {"after_prepare_control_commit"}
-PATCH_FAULT_POINTS = {"after_patch_publish", "after_patch_control_commit"}
-MATERIALIZE_FAULT_POINTS = {"after_report_publish", "after_report_control_commit"}
+PATCH_FAULT_POINTS = {
+    "after_patch_file_prepare",
+    "after_patch_publish",
+    "after_patch_intent_control_commit",
+    "after_patch_control_commit",
+    "after_patch_execution_projection_write",
+    "after_patch_root_execution_projection_write",
+    "after_patch_intent_commit_write",
+}
+MATERIALIZE_FAULT_POINTS = {
+    "after_report_file_prepare",
+    "after_report_publish",
+    "after_report_intent_control_commit",
+    "after_report_control_commit",
+    "after_report_canonical_write",
+    "after_report_attempt_record_write",
+    "after_report_repair_ledger_write",
+    "after_report_execution_projection_write",
+    "after_report_root_execution_projection_write",
+    "after_report_root_report_projection_write",
+    "after_report_root_ledger_projection_write",
+    "after_report_intent_commit_write",
+}
 ATTEMPT_LIMIT = 3
 CONTROL_DB_NAME = "acceptance-control.sqlite3"
 FINAL_AUTHORITY_DB_NAME = "acceptance-v2-final-authority.sqlite3"
@@ -114,6 +142,7 @@ class AcceptanceInputDomain:
     quality_inputs: dict[str, dict[str, Any]]
     pages: list[dict[str, Any]]
     global_gate_authority: dict[str, Any]
+    allowed_artifacts_manifest: dict[str, Any]
     run: dict[str, Any] | None
     legacy_authority: dict[str, Any] | None
     producer_ids: frozenset[str]
@@ -138,6 +167,7 @@ class AcceptanceInputDomain:
                 quality_inputs=binding["quality_inputs"],
                 pages=pages,
                 global_gate_authority=binding["global_gate_authority"],
+                allowed_artifacts_manifest=binding["allowed_artifacts_manifest"],
                 run=None,
                 legacy_authority={
                     "input_set_id": binding["input_set_id"],
@@ -163,6 +193,10 @@ class AcceptanceInputDomain:
                 quality_inputs=binding["quality_inputs"],
                 pages=binding["rendered_pages"],
                 global_gate_authority=binding["global_gate_authority"],
+                allowed_artifacts_manifest={
+                    "path": str((Path(run.get("video_root", "")).resolve() / "review" / "acceptance" / "allowed_artifacts_manifest.json").resolve()),
+                    "sha256": sha256_file(Path(run.get("video_root", "")).resolve() / "review" / "acceptance" / "allowed_artifacts_manifest.json"),
+                },
                 run=run,
                 legacy_authority=None,
                 producer_ids=frozenset(run.get("producer_ids", [])),
@@ -203,14 +237,31 @@ class AcceptanceV2Provider:
             "CREATE TABLE IF NOT EXISTS execution_authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), execution_id TEXT NOT NULL, execution_revision INTEGER NOT NULL, state TEXT NOT NULL, binding_sha256 TEXT NOT NULL)"
         )
         connection.execute(
-            "CREATE TABLE IF NOT EXISTS reviewer_claims (task_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, claim_generation INTEGER NOT NULL, fencing_token TEXT NOT NULL, skeleton_sha256 TEXT NOT NULL, state TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS reviewer_claims (task_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, attempt_id TEXT NOT NULL, expected_execution_revision INTEGER NOT NULL, coordinator_session TEXT NOT NULL, declared_write_set_json TEXT NOT NULL, claim_generation INTEGER NOT NULL, fencing_token TEXT NOT NULL, skeleton_sha256 TEXT NOT NULL, task_envelope_sha256 TEXT NOT NULL, state TEXT NOT NULL)"
         )
         claim_columns = {row[1] for row in connection.execute("PRAGMA table_info(reviewer_claims)")}
         if "skeleton_sha256" not in claim_columns:
             connection.execute("ALTER TABLE reviewer_claims ADD COLUMN skeleton_sha256 TEXT")
+        if "task_envelope_sha256" not in claim_columns:
+            connection.execute("ALTER TABLE reviewer_claims ADD COLUMN task_envelope_sha256 TEXT")
+        for column, kind in (
+            ("attempt_id", "TEXT"),
+            ("expected_execution_revision", "INTEGER"),
+            ("coordinator_session", "TEXT"),
+            ("declared_write_set_json", "TEXT"),
+        ):
+            if column not in claim_columns:
+                connection.execute(f"ALTER TABLE reviewer_claims ADD COLUMN {column} {kind}")
         connection.execute(
-            "CREATE TABLE IF NOT EXISTS publication_intents (intent_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, expected_revision INTEGER NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, artifact_sha256 TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS publication_intents (intent_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, expected_revision INTEGER NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, prior_execution_sha256 TEXT NOT NULL)"
         )
+        publication_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(publication_intents)")
+        }
+        if "prior_execution_sha256" not in publication_columns:
+            connection.execute(
+                "ALTER TABLE publication_intents ADD COLUMN prior_execution_sha256 TEXT"
+            )
         return connection
 
     @staticmethod
@@ -259,9 +310,12 @@ class AcceptanceV2Provider:
         input_binding_path: Path,
         attempt_number: int,
         prepared_at: str,
+        coordinator_session: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
         root = workspace_root.resolve()
+        if not isinstance(coordinator_session, str) or not coordinator_session.strip():
+            _reject("Acceptance coordinator session is empty", "claim_identity", "acceptance_coordinator_session_invalid")
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
         domain = AcceptanceInputDomain.from_binding(binding)
@@ -286,6 +340,7 @@ class AcceptanceV2Provider:
             attempt_number=attempt_number,
             prepared_at=prepared_at,
             ledger=ledger,
+            coordinator_session=coordinator_session,
             fault_point=fault_point,
         )
 
@@ -297,6 +352,7 @@ class AcceptanceV2Provider:
         attempt_number: int,
         prepared_at: str,
         ledger: dict[str, Any],
+        coordinator_session: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
         root.mkdir(parents=True, exist_ok=True)
@@ -361,19 +417,50 @@ class AcceptanceV2Provider:
         write_json_atomic(execution_root / "input-binding.json", binding)
         write_json_atomic(execution_root / "acceptance_report.skeleton.json", skeleton)
         write_json_atomic(execution_root / "execution.json", execution)
+        task_envelope_sha256_by_task_id: dict[str, str] = {}
+        task_envelope_by_task_id: dict[str, dict[str, Any]] = {}
         for dimension, task in dimensions.items():
+            attempt_root = execution_root / "tasks" / task["task_id"] / "attempts" / task["attempt_id"]
+            attempt_root.mkdir(parents=True, exist_ok=True)
+            staged_patch_path = (attempt_root / "judgment-patch.json").resolve()
+            authorized_read_set = self._authorized_read_set(
+                execution_root=execution_root,
+                domain=domain,
+                dimension=dimension,
+            )
             task_value = {
                 "schema_name": "acceptance-v2-task-envelope",
                 "schema_version": "1.0.0",
                 "activation_status": "active_global_gate",
                 "task_authority": {"kind": "acceptance_execution", "execution_id": execution_id},
                 "dimension": dimension,
-                **task,
+                "task_id": task["task_id"],
+                "attempt_id": task["attempt_id"],
+                "claim_generation": task["claim_generation"],
+                "fencing_token": task["fencing_token"],
+                "criterion_ids": task["criterion_ids"],
+                "expected_execution_revision": 1,
+                "coordinator_session": coordinator_session,
+                "authorized_read_set": authorized_read_set,
+                "input_access": "read_only",
+                "declared_write_set": [
+                    {"logical_id": "judgment_patch", "path": str(staged_patch_path)}
+                ],
+                "required_output": {
+                    "logical_id": "judgment_patch",
+                    "path": str(staged_patch_path),
+                    "schema_name": "acceptance-v2-judgment-patch",
+                },
+                "peer_results_visible": task["peer_results_visible"],
                 "skeleton_sha256": skeleton["skeleton_sha256"],
             }
+            self.registry.validate("acceptance-v2-task-envelope", task_value)
             task_root = execution_root / "tasks" / task["task_id"]
             task_root.mkdir(parents=True, exist_ok=True)
-            write_json_atomic(task_root / "task.json", task_value)
+            task_path = task_root / "task.json"
+            write_json_atomic(task_path, task_value)
+            task_envelope_sha256_by_task_id[task["task_id"]] = sha256_file(task_path)
+            task_envelope_by_task_id[task["task_id"]] = task_value
         with self._connect_control(root) as control:
             control.execute("BEGIN IMMEDIATE")
             active = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
@@ -387,8 +474,8 @@ class AcceptanceV2Provider:
                 )
                 for task in dimensions.values():
                     control.execute(
-                        "INSERT INTO reviewer_claims(task_id,execution_id,claim_generation,fencing_token,skeleton_sha256,state) VALUES(?,?,?,?,?,?)",
-                        (task["task_id"], execution_id, task["claim_generation"], task["fencing_token"], skeleton["skeleton_sha256"], "ACTIVE"),
+                        "INSERT INTO reviewer_claims(task_id,execution_id,attempt_id,expected_execution_revision,coordinator_session,declared_write_set_json,claim_generation,fencing_token,skeleton_sha256,task_envelope_sha256,state) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (task["task_id"], execution_id, task["attempt_id"], 1, coordinator_session, canonical_json_bytes(task_envelope_by_task_id[task["task_id"]]["declared_write_set"]).decode("utf-8"), task["claim_generation"], task["fencing_token"], skeleton["skeleton_sha256"], task_envelope_sha256_by_task_id[task["task_id"]], "ACTIVE"),
                     )
             elif active["execution_revision"] != 1 or active["binding_sha256"] != binding_sha:
                 control.execute("ROLLBACK")
@@ -419,18 +506,21 @@ class AcceptanceV2Provider:
         committed_at: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
-        root, execution_root, execution, skeleton, binding = self._load_current(workspace_root)
+        root, execution_root, execution, skeleton, binding = self._load_current(
+            workspace_root, allow_claim_transition=True,
+        )
         if dimension not in DIMENSION_CRITERIA:
             _reject("unknown acceptance dimension", "patch_identity", "acceptance_dimension_unknown")
-        patch = read_json(patch_path.resolve())
+        task_id = skeleton["dimensions"][dimension]["task_id"]
+        task_envelope_path = execution_root / "tasks" / task_id / "task.json"
+        task_envelope = read_json(task_envelope_path)
+        authorized_patch_path = Path(task_envelope["required_output"]["path"]).resolve()
+        if patch_path.resolve() != authorized_patch_path:
+            _reject("Patch is outside the provider-created Attempt staging path", "patch_write_boundary", "acceptance_patch_staging_path_invalid")
+        patch = read_json(authorized_patch_path)
         self.registry.validate("acceptance-v2-judgment-patch", patch)
         self._validate_patch(patch, dimension, skeleton, binding)
-        pending = []
-        if (execution_root / "intents").exists():
-            for path in (execution_root / "intents").glob("*.json"):
-                intent = read_json(path)
-                if intent.get("state") == "PREPARED":
-                    pending.append(intent)
+        pending = self._controlled_pending_file_intents(root, execution_root)
         if any(
             intent.get("intent_kind") == "acceptance_patch_publication"
             and intent.get("dimension") == dimension
@@ -438,7 +528,13 @@ class AcceptanceV2Provider:
             for intent in pending
         ):
             _reject("a competing Patch publication already owns this dimension", "patch_fencing", "acceptance_patch_conflict")
-        if pending:
+        exact_patch_pending = bool(pending) and all(
+            intent.get("intent_kind") == "acceptance_patch_publication"
+            and intent.get("dimension") == dimension
+            and intent.get("patch_sha256") == patch["patch_sha256"]
+            for intent in pending
+        )
+        if pending and not exact_patch_pending:
             _reject("an earlier Acceptance publication requires reconciliation", "publication_recovery", "acceptance_reconcile_required")
         if dimension in execution["committed_patches"]:
             existing = execution["committed_patches"][dimension]
@@ -453,19 +549,6 @@ class AcceptanceV2Provider:
                     _reject("committed Patch bytes drifted", "patch_freshness", "acceptance_patch_stale")
                 return {"dimension": dimension, "patch_sha256": patch["patch_sha256"], "idempotent": True}
             _reject("dimension already has a different committed Patch", "patch_fencing", "acceptance_patch_conflict")
-        with self._connect_control(root) as control:
-            authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
-            claim = control.execute("SELECT * FROM reviewer_claims WHERE task_id=?", (patch["task_id"],)).fetchone()
-            if (
-                authority is None
-                or authority["execution_id"] != execution["execution_id"]
-                or authority["execution_revision"] != execution["execution_revision"]
-                or claim is None
-                or claim["state"] != "ACTIVE"
-                or claim["claim_generation"] != patch["claim_generation"]
-                or claim["fencing_token"] != patch["fencing_token"]
-            ):
-                _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
         intent_id = _id(execution["execution_id"], dimension, patch["patch_sha256"])
         committed_path = execution_root / "committed" / dimension / intent_id / "judgment-patch.json"
         intent_path = execution_root / "intents" / f"patch-{dimension}-{intent_id}.json"
@@ -478,19 +561,96 @@ class AcceptanceV2Provider:
             "dimension": dimension,
             "expected_execution_revision": execution["execution_revision"],
             "patch_sha256": patch["patch_sha256"],
+            "task_id": patch["task_id"],
+            "attempt_id": patch["attempt_id"],
+            "coordinator_session": task_envelope["coordinator_session"],
+            "task_envelope_sha256": sha256_file(task_envelope_path),
+            "staged_path": str(authorized_patch_path),
             "canonical_path": str(committed_path),
             "committed_at": committed_at,
         }
-        with self._connect_control(root) as control:
-            control.execute(
-                "INSERT OR IGNORE INTO publication_intents(intent_id,execution_id,expected_revision,kind,state,artifact_sha256) VALUES(?,?,?,?,?,?)",
-                (intent["intent_id"], execution["execution_id"], execution["execution_revision"], intent["intent_kind"], "PREPARED", intent["patch_sha256"]),
-            )
         write_json_atomic(intent_path, intent)
         write_json_atomic(committed_path, patch)
+        if fault_point == "after_patch_file_prepare":
+            raise AcceptanceV2Fault(fault_point)
+        with self._connect_control(root) as control:
+            control.execute("BEGIN IMMEDIATE")
+            authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
+            claim = control.execute("SELECT * FROM reviewer_claims WHERE task_id=?", (patch["task_id"],)).fetchone()
+            existing_same_intent = control.execute(
+                "SELECT * FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone()
+            current_file_intent = (
+                read_json(intent_path) if intent_path.is_file() else None
+            )
+            current_canonical_patch = (
+                read_json(committed_path) if committed_path.is_file() else None
+            )
+            prepared_files_match = bool(
+                current_file_intent == intent
+                and current_canonical_patch == patch
+                and current_canonical_patch.get("patch_sha256")
+                == _fingerprint_without(current_canonical_patch, "patch_sha256")
+            )
+            if (
+                authority is None
+                or authority["execution_id"] != execution["execution_id"]
+                or authority["execution_revision"] != execution["execution_revision"]
+                or claim is None
+                or claim["state"] != "ACTIVE"
+                or claim["claim_generation"] != patch["claim_generation"]
+                or claim["fencing_token"] != patch["fencing_token"]
+                or claim["execution_id"] != execution["execution_id"]
+                or claim["attempt_id"] != patch["attempt_id"]
+                or claim["expected_execution_revision"] != task_envelope["expected_execution_revision"]
+                or claim["coordinator_session"] != task_envelope["coordinator_session"]
+                or claim["declared_write_set_json"] != canonical_json_bytes(task_envelope["declared_write_set"]).decode("utf-8")
+                or claim["task_envelope_sha256"] != sha256_file(task_envelope_path)
+                or not prepared_files_match
+            ):
+                rejected_intent = {
+                    **intent,
+                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
+                }
+                try:
+                    write_json_atomic(intent_path, rejected_intent)
+                except Exception:
+                    control.execute("ROLLBACK")
+                    raise
+                control.execute("ROLLBACK")
+                _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
+            control.execute(
+                "INSERT OR IGNORE INTO publication_intents(intent_id,execution_id,expected_revision,kind,state,artifact_sha256,prior_execution_sha256) VALUES(?,?,?,?,?,?,?)",
+                (
+                    intent["intent_id"], execution["execution_id"],
+                    execution["execution_revision"], intent["intent_kind"],
+                    "PREPARED", intent["patch_sha256"],
+                    execution["execution_sha256"],
+                ),
+            )
+            acquired = control.execute(
+                "UPDATE reviewer_claims SET state='COMMITTING' WHERE task_id=? AND state='ACTIVE'",
+                (patch["task_id"],),
+            )
+            if acquired.rowcount != 1:
+                rejected_intent = {
+                    **intent,
+                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
+                }
+                try:
+                    write_json_atomic(intent_path, rejected_intent)
+                except Exception:
+                    control.execute("ROLLBACK")
+                    raise
+                control.execute("ROLLBACK")
+                _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
+            control.execute("COMMIT")
+        if fault_point == "after_patch_intent_control_commit":
+            raise AcceptanceV2Fault(fault_point)
         if fault_point == "after_patch_publish":
             raise AcceptanceV2Fault(fault_point)
-        self._finish_patch_intent(root, execution_root, execution, intent, intent_path, fault_after_control=fault_point == "after_patch_control_commit")
+        self._finish_patch_intent(root, execution_root, execution, intent, intent_path, fault_point=fault_point)
         return {"dimension": dimension, "patch_sha256": patch["patch_sha256"], "intent_id": intent["intent_id"], "idempotent": False}
 
     def materialize(
@@ -543,12 +703,7 @@ class AcceptanceV2Provider:
             _reject("Acceptance execution is not open for materialization", "report_fencing", "acceptance_execution_terminal")
         if execution["input_binding_sha256"] != domain.fingerprint:
             _reject("execution input binding is stale", "input_freshness", "acceptance_input_stale")
-        pending = []
-        if (execution_root / "intents").exists():
-            for path in (execution_root / "intents").glob("*.json"):
-                earlier = read_json(path)
-                if earlier.get("state") == "PREPARED":
-                    pending.append(earlier)
+        pending = self._controlled_pending_file_intents(root, execution_root)
         if set(execution["committed_patches"]) != set(DIMENSION_CRITERIA):
             _reject("the Visual Quality Patch is required", "patch_completeness", "acceptance_patch_incomplete")
         patches = {
@@ -771,23 +926,59 @@ class AcceptanceV2Provider:
             _reject("a competing Acceptance Report publication already owns this execution", "report_fencing", "acceptance_report_conflict")
         if pending:
             _reject("acceptance publication intent is non-terminal", "publication_recovery", "acceptance_reconcile_required")
-        with self._connect_control(root) as control:
-            authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
-            active_claims = control.execute("SELECT COUNT(*) FROM reviewer_claims WHERE execution_id=? AND state='ACTIVE'", (execution["execution_id"],)).fetchone()[0]
-            if authority is None or authority["execution_revision"] != execution["execution_revision"] or active_claims:
-                _reject("report publication lacks terminal Reviewer Claims or current revision", "report_fencing", "acceptance_report_fencing_stale")
-            control.execute(
-                "INSERT INTO publication_intents(intent_id,execution_id,expected_revision,kind,state,artifact_sha256) VALUES(?,?,?,?,?,?)",
-                (intent["intent_id"], execution["execution_id"], execution["execution_revision"], intent["intent_kind"], "PREPARED", intent["bundle_sha256"]),
-            )
         write_json_atomic(intent_path, intent)
         staged_report_path.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(staged_report_path, report)
         write_json_atomic(staged_report_path.parent / "attempt-record.json", attempt_record)
         write_json_atomic(staged_report_path.parent / "repair-ledger.json", ledger)
+        if fault_point == "after_report_file_prepare":
+            raise AcceptanceV2Fault(fault_point)
+        with self._connect_control(root) as control:
+            control.execute("BEGIN IMMEDIATE")
+            authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
+            active_claims = control.execute("SELECT COUNT(*) FROM reviewer_claims WHERE execution_id=? AND state='ACTIVE'", (execution["execution_id"],)).fetchone()[0]
+            existing_same_intent = control.execute(
+                "SELECT * FROM publication_intents WHERE intent_id=?",
+                (intent["intent_id"],),
+            ).fetchone()
+            current_file_intent = (
+                read_json(intent_path) if intent_path.is_file() else None
+            )
+            prepared_files_match = bool(
+                current_file_intent == intent
+                and self._report_bundle_valid(staged_report_path.parent, intent)
+            )
+            prepared_publications = control.execute(
+                "SELECT COUNT(*) FROM publication_intents WHERE execution_id=? AND state='PREPARED'",
+                (execution["execution_id"],),
+            ).fetchone()[0]
+            if authority is None or authority["execution_revision"] != execution["execution_revision"] or active_claims or prepared_publications or not prepared_files_match:
+                rejected_intent = {
+                    **intent,
+                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
+                }
+                try:
+                    write_json_atomic(intent_path, rejected_intent)
+                except Exception:
+                    control.execute("ROLLBACK")
+                    raise
+                control.execute("ROLLBACK")
+                _reject("report publication lacks terminal Reviewer Claims or current revision", "report_fencing", "acceptance_report_fencing_stale")
+            control.execute(
+                "INSERT INTO publication_intents(intent_id,execution_id,expected_revision,kind,state,artifact_sha256,prior_execution_sha256) VALUES(?,?,?,?,?,?,?)",
+                (
+                    intent["intent_id"], execution["execution_id"],
+                    execution["execution_revision"], intent["intent_kind"],
+                    "PREPARED", intent["bundle_sha256"],
+                    execution["execution_sha256"],
+                ),
+            )
+            control.execute("COMMIT")
+        if fault_point == "after_report_intent_control_commit":
+            raise AcceptanceV2Fault(fault_point)
         if fault_point == "after_report_publish":
             raise AcceptanceV2Fault(fault_point)
-        self._finish_report_intent(root, execution_root, execution, intent, intent_path, fault_after_control=fault_point == "after_report_control_commit")
+        self._finish_report_intent(root, execution_root, execution, intent, intent_path, fault_point=fault_point)
         return {
             "report_path": str(report_path),
             "report_sha256": report["report_sha256"],
@@ -798,8 +989,10 @@ class AcceptanceV2Provider:
             "idempotent": False,
         }
 
-    def prepare_repair(self, *, workspace_root: Path, input_binding_path: Path, prepared_at: str) -> dict[str, Any]:
+    def prepare_repair(self, *, workspace_root: Path, input_binding_path: Path, prepared_at: str, coordinator_session: str) -> dict[str, Any]:
         root = workspace_root.resolve()
+        if not isinstance(coordinator_session, str) or not coordinator_session.strip():
+            _reject("Acceptance coordinator session is empty", "claim_identity", "acceptance_coordinator_session_invalid")
         report = read_json(root / "acceptance_report.json")
         if report.get("overall_status") != "fail" or report.get("routing_state") != "repair_required":
             _reject("repair requires a complete repairable semantic failure", "repair_admission", "acceptance_repair_not_admissible")
@@ -863,10 +1056,12 @@ class AcceptanceV2Provider:
             _reject("declared changed generations do not match predecessor bytes", "repair_generation", "acceptance_changed_generation_ids_mismatch")
         with self._connect_control(root) as control:
             control.execute("UPDATE execution_authority SET state='invalidated' WHERE singleton=1")
-        return self._prepare_execution(root=root, binding=binding, attempt_number=next_attempt, prepared_at=prepared_at, ledger=ledger)
+        return self._prepare_execution(root=root, binding=binding, attempt_number=next_attempt, prepared_at=prepared_at, ledger=ledger, coordinator_session=coordinator_session)
 
     def reconcile(self, *, workspace_root: Path) -> dict[str, Any]:
-        root, execution_root, execution, _, _ = self._load_current(workspace_root)
+        root, execution_root, execution, _, _ = self._load_current(
+            workspace_root, allow_projection_recovery=True,
+        )
         actions = []
         intents_root = execution_root / "intents"
         if intents_root.exists():
@@ -874,7 +1069,69 @@ class AcceptanceV2Provider:
                 intent = read_json(intent_path)
                 if intent.get("state") != "PREPARED":
                     continue
-                self._validate_intent_paths(execution_root, execution, intent, intent_path)
+                self._validate_intent_paths(
+                    execution_root, execution, intent, intent_path,
+                    allow_committed_successor=True,
+                )
+                with self._connect_control(root) as control:
+                    control.execute("BEGIN IMMEDIATE")
+                    current_intent = read_json(intent_path)
+                    if current_intent.get("state") != "PREPARED":
+                        control.execute("COMMIT")
+                        continue
+                    self._validate_intent_paths(
+                        execution_root, execution, current_intent, intent_path,
+                        allow_committed_successor=True,
+                    )
+                    stored_intent = control.execute(
+                        "SELECT * FROM publication_intents WHERE intent_id=?",
+                        (current_intent["intent_id"],),
+                    ).fetchone()
+                    if stored_intent is None:
+                        confirmed_absent = control.execute(
+                            "SELECT 1 FROM publication_intents WHERE intent_id=?",
+                            (current_intent["intent_id"],),
+                        ).fetchone()
+                        if confirmed_absent is None:
+                            aborted_intent = {**current_intent, "state": "ABORTED"}
+                            try:
+                                write_json_atomic(intent_path, aborted_intent)
+                            except Exception:
+                                control.execute("ROLLBACK")
+                                raise
+                            control.execute("COMMIT")
+                            actions.append(
+                                f"aborted_uncommitted:{current_intent['intent_kind']}"
+                            )
+                            continue
+                        stored_intent = control.execute(
+                            "SELECT * FROM publication_intents WHERE intent_id=?",
+                            (current_intent["intent_id"],),
+                        ).fetchone()
+                    if stored_intent["state"] == "ABORTED":
+                        aborted_intent = {**current_intent, "state": "ABORTED"}
+                        try:
+                            write_json_atomic(intent_path, aborted_intent)
+                        except Exception:
+                            control.execute("ROLLBACK")
+                            raise
+                        control.execute("COMMIT")
+                        actions.append(
+                            f"aborted_uncommitted:{current_intent['intent_kind']}"
+                        )
+                        continue
+                    control.execute("COMMIT")
+                intent = current_intent
+                if (
+                    execution["execution_revision"]
+                    == intent["expected_execution_revision"] + 1
+                ):
+                    predecessor = self._execution_predecessor_for_intent(
+                        execution, intent,
+                    )
+                    self._require_committed_execution_successor(
+                        root, predecessor, execution, intent,
+                    )
                 canonical = Path(intent["canonical_path"])
                 if intent["intent_kind"] == "acceptance_patch_publication":
                     if not canonical.is_file():
@@ -894,18 +1151,64 @@ class AcceptanceV2Provider:
                     actions.append("committed_report")
         return {"execution_id": execution["execution_id"], "actions": actions, "committed_dimensions": sorted(execution["committed_patches"]), "report_published": execution["report_publication"] is not None}
 
+    def _controlled_pending_file_intents(
+        self, root: Path, execution_root: Path,
+    ) -> list[dict[str, Any]]:
+        intents_root = execution_root / "intents"
+        if not intents_root.exists():
+            return []
+        pending = []
+        with self._connect_control(root) as control:
+            for path in intents_root.glob("*.json"):
+                intent = read_json(path)
+                if intent.get("state") != "PREPARED":
+                    continue
+                stored = control.execute(
+                    "SELECT state FROM publication_intents WHERE intent_id=?",
+                    (intent.get("intent_id"),),
+                ).fetchone()
+                if stored is not None and stored["state"] != "ABORTED":
+                    pending.append(intent)
+        return pending
+
     @staticmethod
-    def _validate_intent_paths(execution_root: Path, execution: dict[str, Any], intent: dict[str, Any], intent_path: Path) -> None:
-        if intent.get("expected_execution_revision") != execution["execution_revision"]:
+    def _validate_intent_paths(
+        execution_root: Path,
+        execution: dict[str, Any],
+        intent: dict[str, Any],
+        intent_path: Path,
+        *,
+        allow_committed_successor: bool = False,
+    ) -> None:
+        allowed_revisions = {execution["execution_revision"]}
+        if allow_committed_successor:
+            allowed_revisions.add(execution["execution_revision"] - 1)
+        if intent.get("expected_execution_revision") not in allowed_revisions:
             _reject("publication intent revision is stale", "publication_recovery", "acceptance_publication_intent_stale")
         if intent.get("intent_kind") == "acceptance_patch_publication":
             expected_id = _id(execution["execution_id"], intent.get("dimension"), intent.get("patch_sha256"))
             expected_canonical = execution_root / "committed" / str(intent.get("dimension")) / expected_id / "judgment-patch.json"
             expected_intent_path = execution_root / "intents" / f"patch-{intent.get('dimension')}-{expected_id}.json"
+            task_path = execution_root / "tasks" / str(intent.get("task_id")) / "task.json"
+            task_envelope = read_json(task_path) if task_path.is_file() else {}
+            expected_staged = (
+                execution_root / "tasks" / str(intent.get("task_id")) / "attempts" /
+                str(intent.get("attempt_id")) / "judgment-patch.json"
+            ).resolve()
+            staged_path = Path(intent.get("staged_path", "")).resolve()
+            staged_patch = read_json(staged_path) if staged_path.is_file() else {}
             valid = (
                 intent.get("intent_id") == expected_id
                 and Path(intent.get("canonical_path", "")).resolve() == expected_canonical.resolve()
                 and intent_path.resolve() == expected_intent_path.resolve()
+                and staged_path == expected_staged
+                and task_envelope.get("required_output", {}).get("path") == str(expected_staged)
+                and task_envelope.get("attempt_id") == intent.get("attempt_id")
+                and task_envelope.get("coordinator_session") == intent.get("coordinator_session")
+                and sha256_file(task_path) == intent.get("task_envelope_sha256")
+                and staged_patch.get("task_id") == intent.get("task_id")
+                and staged_patch.get("attempt_id") == intent.get("attempt_id")
+                and staged_patch.get("patch_sha256") == intent.get("patch_sha256")
             )
         elif intent.get("intent_kind") == "acceptance_report_publication":
             expected_id = _id(execution["execution_id"], intent.get("report_sha256"))
@@ -1089,7 +1392,13 @@ class AcceptanceV2Provider:
                 return False
         return True
 
-    def _load_current(self, workspace_root: Path) -> tuple[Path, Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    def _load_current(
+        self,
+        workspace_root: Path,
+        *,
+        allow_projection_recovery: bool = False,
+        allow_claim_transition: bool = False,
+    ) -> tuple[Path, Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
         root = workspace_root.resolve()
         current = read_json(root / "current.json")
         execution_root = Path(current["execution_root"]).resolve()
@@ -1106,8 +1415,14 @@ class AcceptanceV2Provider:
         immutable_execution = read_json(execution_root / "execution.json")
         immutable_skeleton = read_json(execution_root / "acceptance_report.skeleton.json")
         immutable_binding = read_json(execution_root / "input-binding.json")
-        if execution != immutable_execution or skeleton != immutable_skeleton or binding != immutable_binding:
+        if skeleton != immutable_skeleton or binding != immutable_binding:
             _reject("Acceptance root projections drifted from execution-owned evidence", "execution_identity", "acceptance_execution_projection_stale")
+        if execution != immutable_execution:
+            if not allow_projection_recovery:
+                _reject("Acceptance root projections drifted from execution-owned evidence", "execution_identity", "acceptance_execution_projection_stale")
+            execution = self._select_recoverable_execution_projection(
+                root, execution_root, execution, immutable_execution,
+            )
         self.registry.validate("acceptance-v2-execution-context", execution)
         self.registry.validate("acceptance-v2-review-skeleton", skeleton)
         if binding.get("input_track") != "legacy":
@@ -1143,24 +1458,347 @@ class AcceptanceV2Provider:
             "peer_results_visible": False,
         }
         task_envelope = read_json(execution_root / "tasks" / task_id / "task.json")
+        staged_patch_path = (
+            execution_root / "tasks" / task_id / "attempts" /
+            expected_dimension["attempt_id"] / "judgment-patch.json"
+        ).resolve()
         expected_envelope = {
             "schema_name": "acceptance-v2-task-envelope", "schema_version": "1.0.0", "activation_status": "active_global_gate",
             "task_authority": {"kind": "acceptance_execution", "execution_id": execution["execution_id"]},
-            "dimension": "visual_quality", **expected_dimension, "skeleton_sha256": skeleton["skeleton_sha256"],
+            "dimension": "visual_quality",
+            "task_id": expected_dimension["task_id"],
+            "attempt_id": expected_dimension["attempt_id"],
+            "expected_execution_revision": 1,
+            "coordinator_session": task_envelope.get("coordinator_session"),
+            "claim_generation": expected_dimension["claim_generation"],
+            "fencing_token": expected_dimension["fencing_token"],
+            "criterion_ids": expected_dimension["criterion_ids"],
+            "authorized_read_set": self._authorized_read_set(
+                execution_root=execution_root,
+                domain=domain,
+                dimension="visual_quality",
+            ),
+            "input_access": "read_only",
+            "declared_write_set": [
+                {"logical_id": "judgment_patch", "path": str(staged_patch_path)}
+            ],
+            "required_output": {
+                "logical_id": "judgment_patch",
+                "path": str(staged_patch_path),
+                "schema_name": "acceptance-v2-judgment-patch",
+            },
+            "peer_results_visible": False,
+            "skeleton_sha256": skeleton["skeleton_sha256"],
         }
+        self.registry.validate("acceptance-v2-task-envelope", task_envelope)
         with self._connect_control(root) as control:
             claim = control.execute("SELECT * FROM reviewer_claims WHERE task_id=?", (task_id,)).fetchone()
-        if (
+        claim_identity_stale = (
             skeleton.get("dimensions") != {"visual_quality": expected_dimension}
             or task_envelope != expected_envelope
             or claim is None
             or claim["execution_id"] != execution["execution_id"]
+            or claim["attempt_id"] != expected_dimension["attempt_id"]
+            or claim["expected_execution_revision"] != 1
+            or claim["coordinator_session"] != task_envelope.get("coordinator_session")
+            or claim["declared_write_set_json"] != canonical_json_bytes(
+                expected_envelope["declared_write_set"]
+            ).decode("utf-8")
             or claim["claim_generation"] != 1
             or claim["fencing_token"] != expected_dimension["fencing_token"]
             or claim["skeleton_sha256"] != skeleton["skeleton_sha256"]
-        ):
+            or claim["task_envelope_sha256"] != sha256_file(
+                execution_root / "tasks" / task_id / "task.json"
+            )
+        )
+        committed_visual_patch = "visual_quality" in execution["committed_patches"]
+        allowed_claim_states = (
+            {"ACTIVE", "COMMITTING", "TERMINAL"}
+            if allow_projection_recovery or allow_claim_transition
+            else ({"TERMINAL"} if committed_visual_patch else {"ACTIVE"})
+        )
+        claim_state = claim["state"] if claim is not None else None
+        if claim_identity_stale or claim_state not in allowed_claim_states:
             _reject("Acceptance dimension authority is stale", "execution_identity", "acceptance_dimension_authority_stale")
         return root, execution_root, execution, skeleton, binding
+
+    def _authorized_read_set(
+        self,
+        *,
+        execution_root: Path,
+        domain: AcceptanceInputDomain,
+        dimension: str,
+    ) -> list[dict[str, str]]:
+        if dimension != "visual_quality":
+            _reject(
+                "unknown acceptance dimension read boundary",
+                "allowed_read_set",
+                "acceptance_dimension_unknown",
+            )
+        final_pdf = next(
+            item for item in domain.artifacts if item["logical_id"] == "final_pdf"
+        )
+        catalog_path = (
+            self.project_root / "delivery-quality/v1/rule-catalog.v1.json"
+        ).resolve()
+        projections_path = (
+            self.project_root / "delivery-quality/v1/role-projections.v1.json"
+        ).resolve()
+        projections = read_json(projections_path)
+        projection = next(
+            item
+            for item in projections["projections"]
+            if item["projection_id"] == "visual-quality-evaluation"
+        )
+        prompt_path = (
+            self.project_root / projection["generated_prompt"]["path"]
+        ).resolve()
+        skeleton_path = (execution_root / "acceptance_report.skeleton.json").resolve()
+        binding_path = (execution_root / "input-binding.json").resolve()
+        gate = domain.global_gate_authority
+        allowed_manifest_path = Path(domain.allowed_artifacts_manifest["path"]).resolve()
+        manifest = read_json(allowed_manifest_path)
+        glossary_entries = [
+            item for item in manifest.get("final_artifacts", [])
+            if isinstance(item, dict) and item.get("role") == "delivery_glossary"
+        ]
+        if len(glossary_entries) > 1:
+            _reject("Allowed artifact manifest duplicates the Delivery Glossary", "allowed_read_set", "acceptance_read_set_duplicate_path")
+        glossary_reads: list[dict[str, str]] = []
+        if glossary_entries:
+            glossary_path = (domain.video_root / glossary_entries[0].get("path", "")).resolve()
+            if not glossary_path.is_relative_to(domain.video_root) or not glossary_path.is_file():
+                _reject("Manifest-listed Delivery Glossary is outside input authority", "allowed_read_set", "acceptance_read_set_path_invalid")
+            glossary_reads.append({"logical_id": "delivery_glossary", "path": str(glossary_path), "sha256": sha256_file(glossary_path)})
+        authorized = [
+            {
+                "logical_id": "final_pdf",
+                "path": str(Path(final_pdf["path"]).resolve()),
+                "sha256": final_pdf["sha256"],
+            },
+            *[
+                {
+                    "logical_id": f"rendered_page:{item['page']}",
+                    "path": str(Path(item["path"]).resolve()),
+                    "sha256": item["sha256"],
+                }
+                for item in domain.pages
+            ],
+            {
+                "logical_id": "delivery_quality_catalog",
+                "path": str(catalog_path),
+                "sha256": sha256_file(catalog_path),
+            },
+            {
+                "logical_id": "delivery_quality_role_projections",
+                "path": str(projections_path),
+                "sha256": sha256_file(projections_path),
+            },
+            {
+                "logical_id": "role_projection:visual-quality-evaluation",
+                "path": str(prompt_path),
+                "sha256": sha256_file(prompt_path),
+            },
+            {
+                "logical_id": "acceptance_review_skeleton",
+                "path": str(skeleton_path),
+                "sha256": sha256_file(skeleton_path),
+            },
+            {
+                "logical_id": "acceptance_input_binding",
+                "path": str(binding_path),
+                "sha256": sha256_file(binding_path),
+            },
+            {
+                "logical_id": "global_gate_authority",
+                "path": str(Path(gate["path"]).resolve()),
+                "sha256": gate["file_sha256"],
+            },
+            {
+                "logical_id": "allowed_artifacts_manifest",
+                "path": str(allowed_manifest_path),
+                "sha256": domain.allowed_artifacts_manifest["sha256"],
+            },
+            *glossary_reads,
+        ]
+        normalized_paths: set[str] = set()
+        file_identities: set[tuple[int, int]] = set()
+        physical_paths: list[Path] = []
+        for item in authorized:
+            path = Path(item["path"])
+            try:
+                metadata = path.stat()
+            except OSError:
+                _reject(
+                    "Acceptance authorized read path is unavailable",
+                    "allowed_read_set",
+                    "acceptance_read_set_path_invalid",
+                    logical_id=item["logical_id"],
+                    path=str(path),
+                )
+            if not stat.S_ISREG(metadata.st_mode):
+                _reject(
+                    "Acceptance authorized read path is not a regular file",
+                    "allowed_read_set",
+                    "acceptance_read_set_path_invalid",
+                    logical_id=item["logical_id"],
+                    path=str(path),
+                )
+            normalized = normalized_physical_path(path)
+            file_identity = (metadata.st_dev, metadata.st_ino)
+            duplicate_identity = metadata.st_ino != 0 and file_identity in file_identities
+            duplicate_fallback = False
+            if metadata.st_ino == 0:
+                try:
+                    duplicate_fallback = any(path.samefile(previous) for previous in physical_paths)
+                except OSError:
+                    _reject(
+                        "Acceptance authorized read file identity is unavailable",
+                        "allowed_read_set",
+                        "acceptance_read_set_path_invalid",
+                        logical_id=item["logical_id"],
+                        path=str(path),
+                    )
+            if normalized in normalized_paths or duplicate_identity or duplicate_fallback:
+                _reject(
+                    "Acceptance authorized reads contain a duplicate physical path",
+                    "allowed_read_set",
+                    "acceptance_read_set_duplicate_path",
+                )
+            normalized_paths.add(normalized)
+            if metadata.st_ino != 0:
+                file_identities.add(file_identity)
+            physical_paths.append(path)
+        return authorized
+
+    def _select_recoverable_execution_projection(
+        self,
+        root: Path,
+        execution_root: Path,
+        root_execution: dict[str, Any],
+        owned_execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Authenticate the one legal split caused by a post-control write fault."""
+        candidates = sorted(
+            (root_execution, owned_execution), key=lambda item: item.get("execution_revision", -1),
+        )
+        lower, higher = candidates
+        for candidate in candidates:
+            self.registry.validate("acceptance-v2-execution-context", candidate)
+            if candidate.get("execution_sha256") != _fingerprint_without(candidate, "execution_sha256"):
+                _reject("Acceptance execution projection fingerprint is stale", "publication_recovery", "acceptance_execution_projection_stale")
+        if (
+            lower.get("execution_id") != higher.get("execution_id")
+            or higher.get("execution_revision") != lower.get("execution_revision", -2) + 1
+        ):
+            _reject("Acceptance execution projections have no recoverable revision boundary", "publication_recovery", "acceptance_execution_projection_stale")
+        prepared = []
+        for path in sorted((execution_root / "intents").glob("*.json")):
+            intent = read_json(path)
+            if intent.get("state") == "PREPARED":
+                prepared.append((path, intent))
+        if len(prepared) != 1:
+            _reject("Acceptance execution projection split lacks one prepared file intent", "publication_recovery", "acceptance_execution_projection_stale")
+        intent_path, intent = prepared[0]
+        self._validate_intent_paths(execution_root, lower, intent, intent_path)
+        if intent.get("intent_kind") == "acceptance_patch_publication":
+            canonical = Path(intent["canonical_path"])
+            if not canonical.is_file():
+                _reject("prepared publication has no canonical bytes", "publication_recovery", "acceptance_publication_missing")
+        elif intent.get("intent_kind") == "acceptance_report_publication":
+            staged = Path(intent["staged_path"])
+            if not staged.is_file() or not self._report_bundle_valid(staged.parent, intent):
+                _reject("prepared publication has no staged bytes", "publication_recovery", "acceptance_publication_missing")
+        else:
+            _reject("unknown Acceptance publication intent", "publication_recovery", "acceptance_publication_intent_contradictory")
+        self._require_committed_execution_successor(root, lower, higher, intent)
+
+        return higher
+
+    @staticmethod
+    def _execution_predecessor_for_intent(
+        successor: dict[str, Any], intent: dict[str, Any],
+    ) -> dict[str, Any]:
+        predecessor = copy.deepcopy(successor)
+        predecessor["execution_revision"] = intent["expected_execution_revision"]
+        if intent["intent_kind"] == "acceptance_patch_publication":
+            predecessor["committed_patches"].pop(intent["dimension"], None)
+        elif intent["intent_kind"] == "acceptance_report_publication":
+            predecessor["report_publication"] = None
+            predecessor["state"] = "reviewing"
+        else:
+            _reject(
+                "unknown Acceptance publication intent",
+                "publication_recovery",
+                "acceptance_publication_intent_contradictory",
+            )
+        predecessor["execution_sha256"] = _fingerprint_without(
+            predecessor, "execution_sha256",
+        )
+        return predecessor
+
+    def _require_committed_execution_successor(
+        self,
+        root: Path,
+        predecessor: dict[str, Any],
+        successor: dict[str, Any],
+        intent: dict[str, Any],
+    ) -> None:
+        expected = intent["expected_execution_revision"]
+        for candidate in (predecessor, successor):
+            self.registry.validate("acceptance-v2-execution-context", candidate)
+            if candidate.get("execution_sha256") != _fingerprint_without(
+                candidate, "execution_sha256",
+            ):
+                _reject(
+                    "Acceptance execution projection fingerprint is stale",
+                    "publication_recovery",
+                    "acceptance_execution_projection_stale",
+                )
+        if (
+            predecessor.get("execution_id") != successor.get("execution_id")
+            or predecessor.get("execution_revision") != expected
+            or successor.get("execution_revision") != expected + 1
+            or successor
+            != self._execution_replacement_for_intent(predecessor, intent)
+        ):
+            _reject(
+                "Acceptance execution projection is not the deterministic committed successor",
+                "publication_recovery",
+                "acceptance_execution_projection_stale",
+            )
+        with self._connect_control(root) as control:
+            authority = control.execute(
+                "SELECT * FROM execution_authority WHERE singleton=1"
+            ).fetchone()
+            stored_intent = control.execute(
+                "SELECT * FROM publication_intents WHERE intent_id=?", (intent["intent_id"],)
+            ).fetchone()
+        expected_artifact = (
+            intent.get("patch_sha256")
+            if intent.get("intent_kind") == "acceptance_patch_publication"
+            else intent.get("bundle_sha256")
+        )
+        expected_authority_state = (
+            "reviewing"
+            if intent.get("intent_kind") == "acceptance_patch_publication"
+            else "terminal"
+        )
+        if not (
+            authority
+            and authority["execution_id"] == predecessor["execution_id"]
+            and authority["execution_revision"] == successor["execution_revision"]
+            and authority["state"] == expected_authority_state
+            and stored_intent
+            and stored_intent["execution_id"] == predecessor["execution_id"]
+            and stored_intent["expected_revision"] == expected
+            and stored_intent["kind"] == intent.get("intent_kind")
+            and stored_intent["state"] == "COMMITTED"
+            and stored_intent["artifact_sha256"] == expected_artifact
+            and stored_intent["prior_execution_sha256"]
+            == predecessor["execution_sha256"]
+        ):
+            _reject("Acceptance execution projection split lacks committed Control Store authority", "publication_recovery", "acceptance_execution_projection_stale")
 
     def _validate_binding(self, binding: dict[str, Any], *, verify_files: bool, require_published_final_authority: bool = True) -> None:
         if binding.get("schema_name") == "legacy-acceptance-input-set" and binding.get("input_track") == "legacy":
@@ -1220,6 +1858,9 @@ class AcceptanceV2Provider:
             _reject("Acceptance input binding fingerprint is invalid", "input_freshness", "acceptance_input_stale")
         run = binding["run"]
         video_root = Path(run["video_root"]).resolve()
+        allowed_manifest_path = video_root / "review" / "acceptance" / "allowed_artifacts_manifest.json"
+        if not allowed_manifest_path.is_file():
+            _reject("Allowed Artifacts Manifest is missing", "input_freshness", "acceptance_input_stale", path=str(allowed_manifest_path))
         run_record_path = Path(run.get("run_record_path", "")).resolve()
         control_store_root = Path(run.get("control_store_root", "")).resolve()
         current_global_gate = GlobalGatePublisher().require_current(control_store_root=control_store_root)
@@ -1480,19 +2121,34 @@ class AcceptanceV2Provider:
                 for item in page_results
             ):
                 _reject("Visual page evidence is not bound to the authorized input", "visual_page_coverage", "acceptance_visual_page_binding_stale")
-        final_pdf = next(item for item in domain.artifacts if item["logical_id"] == "final_pdf")
-        expected_reads = [
-            {"logical_id": "final_pdf", "path": str(Path(final_pdf["path"]).resolve()), "sha256": final_pdf["sha256"]},
-            *[
-                {"logical_id": f"rendered_page:{item['page']}", "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
-                for item in domain.pages
-            ],
-        ]
+        execution_root = Path(
+            read_json(domain.video_root / "review" / "acceptance" / "current.json")[
+                "execution_root"
+            ]
+        ).resolve()
+        task_envelope = read_json(
+            execution_root / "tasks" / task["task_id"] / "task.json"
+        )
+        if task_envelope.get("input_access") != "read_only":
+            _reject(
+                "Reviewer Task Envelope does not preserve read-only input access",
+                "allowed_read_set",
+                "acceptance_read_set_incomplete",
+            )
+        expected_reads = task_envelope.get("authorized_read_set")
         actual_reads = [
             {**item, "path": str(Path(item.get("path", "")).resolve())}
             for item in patch["actual_read_set"]
         ]
-        if actual_reads != expected_reads:
+        actual_logical_ids = [item.get("logical_id") for item in actual_reads]
+        expected_logical_ids = [item.get("logical_id") for item in expected_reads or []]
+        if (
+            not isinstance(expected_reads, list)
+            or len(actual_logical_ids) != len(set(actual_logical_ids))
+            or len(expected_logical_ids) != len(set(expected_logical_ids))
+            or sorted(actual_reads, key=lambda item: item["logical_id"])
+            != sorted(expected_reads, key=lambda item: item["logical_id"])
+        ):
             _reject("Patch read set does not exactly cover its dimension boundary", "allowed_read_set", "acceptance_read_set_incomplete")
 
     def _committed_patch_authority_current(self, root: Path, execution_root: Path, execution: dict[str, Any], dimension: str, record: dict[str, Any]) -> bool:
@@ -1538,22 +2194,59 @@ class AcceptanceV2Provider:
             _reject("committed Patch authority is stale", "patch_freshness", "acceptance_patch_authority_stale")
         return True
 
-    def _finish_patch_intent(self, root: Path, execution_root: Path, execution: dict[str, Any], intent: dict[str, Any], intent_path: Path, *, fault_after_control: bool = False) -> None:
-        self._validate_intent_paths(execution_root, execution, intent, intent_path)
+    @staticmethod
+    def _execution_replacement_for_intent(
+        execution: dict[str, Any], intent: dict[str, Any],
+    ) -> dict[str, Any]:
+        expected = intent["expected_execution_revision"]
+        replacement = copy.deepcopy(execution)
+        replacement["execution_revision"] = expected + 1
+        if intent["intent_kind"] == "acceptance_patch_publication":
+            canonical = Path(intent["canonical_path"])
+            replacement["committed_patches"][intent["dimension"]] = {
+                "patch_sha256": intent["patch_sha256"],
+                "file_sha256": sha256_file(canonical),
+                "path": str(canonical),
+                "intent_id": intent["intent_id"],
+                "generation": 1,
+            }
+        elif intent["intent_kind"] == "acceptance_report_publication":
+            replacement["report_publication"] = {
+                "intent_id": intent["intent_id"],
+                "report_sha256": intent["report_sha256"],
+                "path": intent["canonical_path"],
+            }
+            replacement["state"] = "materialized"
+        else:
+            _reject(
+                "unknown Acceptance publication intent",
+                "publication_recovery",
+                "acceptance_publication_intent_contradictory",
+            )
+        replacement["execution_sha256"] = _fingerprint_without(
+            replacement, "execution_sha256",
+        )
+        return replacement
+
+    def _finish_patch_intent(
+        self,
+        root: Path,
+        execution_root: Path,
+        execution: dict[str, Any],
+        intent: dict[str, Any],
+        intent_path: Path,
+        *,
+        fault_point: str | None = None,
+    ) -> None:
+        self._validate_intent_paths(
+            execution_root, execution, intent, intent_path,
+            allow_committed_successor=True,
+        )
         expected = intent["expected_execution_revision"]
         if execution["execution_revision"] not in {expected, expected + 1}:
             _reject("Patch publication lost its execution revision fence", "patch_fencing", "acceptance_patch_revision_stale")
         canonical = Path(intent["canonical_path"])
-        replacement = copy.deepcopy(execution)
-        replacement["committed_patches"][intent["dimension"]] = {
-            "patch_sha256": intent["patch_sha256"],
-            "file_sha256": sha256_file(canonical),
-            "path": str(canonical),
-            "intent_id": intent["intent_id"],
-            "generation": 1,
-        }
-        replacement["execution_revision"] = expected + 1
-        replacement["execution_sha256"] = _fingerprint_without(replacement, "execution_sha256")
+        replacement = self._execution_replacement_for_intent(execution, intent)
         lost_fence = False
         with self._connect_control(root) as control:
             control.execute("BEGIN IMMEDIATE")
@@ -1570,27 +2263,50 @@ class AcceptanceV2Provider:
                 and stored_intent["expected_revision"] == expected
                 and stored_intent["kind"] == intent["intent_kind"]
                 and stored_intent["artifact_sha256"] == intent["patch_sha256"]
+                and stored_intent["prior_execution_sha256"]
+                == self._execution_predecessor_for_intent(
+                    replacement, intent,
+                )["execution_sha256"]
             )
             if authority and authority["execution_id"] == execution["execution_id"] and authority["execution_revision"] == expected and stored_matches and stored_intent["state"] == "PREPARED" and bytes_match:
-                control.execute("UPDATE execution_authority SET execution_revision=? WHERE singleton=1", (expected + 1,))
                 committed_patch = read_json(canonical)
-                control.execute("UPDATE reviewer_claims SET state='TERMINAL' WHERE task_id=? AND state='ACTIVE'", (committed_patch["task_id"],))
-                control.execute("UPDATE publication_intents SET state='COMMITTED' WHERE intent_id=?", (intent["intent_id"],))
-            elif not (authority and authority["execution_id"] == execution["execution_id"] and authority["execution_revision"] == expected + 1 and stored_intent and stored_intent["state"] == "COMMITTED"):
+                transitioned = control.execute(
+                    "UPDATE reviewer_claims SET state='TERMINAL' WHERE task_id=? AND state='COMMITTING'",
+                    (committed_patch["task_id"],),
+                )
+                if transitioned.rowcount != 1:
+                    lost_fence = True
+                else:
+                    control.execute("UPDATE execution_authority SET execution_revision=? WHERE singleton=1", (expected + 1,))
+                    control.execute("UPDATE publication_intents SET state='COMMITTED' WHERE intent_id=?", (intent["intent_id"],))
+            elif not (
+                authority
+                and authority["execution_id"] == execution["execution_id"]
+                and authority["execution_revision"] == expected + 1
+                and stored_matches
+                and stored_intent["state"] == "COMMITTED"
+                and bytes_match
+            ):
                 if stored_intent and stored_intent["state"] == "PREPARED":
                     control.execute("UPDATE publication_intents SET state='ABORTED' WHERE intent_id=?", (intent["intent_id"],))
                 lost_fence = True
-            control.execute("COMMIT")
+            control.execute("ROLLBACK" if lost_fence else "COMMIT")
         if lost_fence:
             intent["state"] = "ABORTED"
             write_json_atomic(intent_path, intent)
             _reject("Patch publication lost its Control Store revision fence", "patch_fencing", "acceptance_patch_revision_stale")
-        if fault_after_control:
+        if fault_point == "after_patch_control_commit":
             raise AcceptanceV2Fault("after_patch_control_commit")
         write_json_atomic(execution_root / "execution.json", replacement)
+        if fault_point == "after_patch_execution_projection_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(root / "execution.json", replacement)
+        if fault_point == "after_patch_root_execution_projection_write":
+            raise AcceptanceV2Fault(fault_point)
         intent["state"] = "COMMITTED"
         write_json_atomic(intent_path, intent)
+        if fault_point == "after_patch_intent_commit_write":
+            raise AcceptanceV2Fault(fault_point)
 
     def _report_bundle_valid(self, bundle_root: Path, intent: dict[str, Any]) -> bool:
         report_path = bundle_root / "acceptance_report.json"
@@ -1626,16 +2342,24 @@ class AcceptanceV2Provider:
             and intent.get("bundle_sha256") == _report_bundle_sha(report_sha, attempt_sha, ledger_sha)
         )
 
-    def _finish_report_intent(self, root: Path, execution_root: Path, execution: dict[str, Any], intent: dict[str, Any], intent_path: Path, *, fault_after_control: bool = False) -> None:
-        self._validate_intent_paths(execution_root, execution, intent, intent_path)
+    def _finish_report_intent(
+        self,
+        root: Path,
+        execution_root: Path,
+        execution: dict[str, Any],
+        intent: dict[str, Any],
+        intent_path: Path,
+        *,
+        fault_point: str | None = None,
+    ) -> None:
+        self._validate_intent_paths(
+            execution_root, execution, intent, intent_path,
+            allow_committed_successor=True,
+        )
         expected = intent["expected_execution_revision"]
         if execution["execution_revision"] not in {expected, expected + 1}:
             _reject("report publication lost its execution revision fence", "report_fencing", "acceptance_report_revision_stale")
-        replacement = copy.deepcopy(execution)
-        replacement["report_publication"] = {"intent_id": intent["intent_id"], "report_sha256": intent["report_sha256"], "path": intent["canonical_path"]}
-        replacement["execution_revision"] = expected + 1
-        replacement["state"] = "materialized"
-        replacement["execution_sha256"] = _fingerprint_without(replacement, "execution_sha256")
+        replacement = self._execution_replacement_for_intent(execution, intent)
         lost_fence = False
         with self._connect_control(root) as control:
             control.execute("BEGIN IMMEDIATE")
@@ -1649,11 +2373,23 @@ class AcceptanceV2Provider:
                 and stored_intent["expected_revision"] == expected
                 and stored_intent["kind"] == intent["intent_kind"]
                 and stored_intent["artifact_sha256"] == intent["bundle_sha256"]
+                and stored_intent["prior_execution_sha256"]
+                == self._execution_predecessor_for_intent(
+                    replacement, intent,
+                )["execution_sha256"]
             )
             if authority and authority["execution_id"] == execution["execution_id"] and authority["execution_revision"] == expected and stored_matches and stored_intent["state"] == "PREPARED" and bytes_match:
                 control.execute("UPDATE execution_authority SET execution_revision=?, state='terminal' WHERE singleton=1", (expected + 1,))
                 control.execute("UPDATE publication_intents SET state='COMMITTED' WHERE intent_id=?", (intent["intent_id"],))
-            elif not (authority and authority["execution_id"] == execution["execution_id"] and authority["execution_revision"] == expected + 1 and authority["state"] == "terminal" and stored_intent and stored_intent["state"] == "COMMITTED"):
+            elif not (
+                authority
+                and authority["execution_id"] == execution["execution_id"]
+                and authority["execution_revision"] == expected + 1
+                and authority["state"] == "terminal"
+                and stored_matches
+                and stored_intent["state"] == "COMMITTED"
+                and bytes_match
+            ):
                 if stored_intent and stored_intent["state"] == "PREPARED":
                     control.execute("UPDATE publication_intents SET state='ABORTED' WHERE intent_id=?", (intent["intent_id"],))
                 lost_fence = True
@@ -1662,19 +2398,35 @@ class AcceptanceV2Provider:
             intent["state"] = "ABORTED"
             write_json_atomic(intent_path, intent)
             _reject("report publication lost its Control Store revision fence", "report_fencing", "acceptance_report_revision_stale")
-        if fault_after_control:
+        if fault_point == "after_report_control_commit":
             raise AcceptanceV2Fault("after_report_control_commit")
         staged_root = Path(intent.get("staged_path", intent["canonical_path"])).parent
         published_root = Path(intent["canonical_path"]).parent
         published_root.mkdir(parents=True, exist_ok=True)
         write_json_atomic(Path(intent["canonical_path"]), read_json(staged_root / "acceptance_report.json"))
+        if fault_point == "after_report_canonical_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(published_root / "attempt-record.json", read_json(staged_root / "attempt-record.json"))
+        if fault_point == "after_report_attempt_record_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(published_root / "repair-ledger.json", read_json(staged_root / "repair-ledger.json"))
+        if fault_point == "after_report_repair_ledger_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(execution_root / "execution.json", replacement)
+        if fault_point == "after_report_execution_projection_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(root / "execution.json", replacement)
+        if fault_point == "after_report_root_execution_projection_write":
+            raise AcceptanceV2Fault(fault_point)
         write_json_atomic(root / "acceptance_report.json", read_json(Path(intent["canonical_path"])))
+        if fault_point == "after_report_root_report_projection_write":
+            raise AcceptanceV2Fault(fault_point)
         staged_ledger_path = published_root / "repair-ledger.json"
         if staged_ledger_path.is_file():
             write_json_atomic(root / "repair-ledger.json", read_json(staged_ledger_path))
+            if fault_point == "after_report_root_ledger_projection_write":
+                raise AcceptanceV2Fault(fault_point)
         intent["state"] = "COMMITTED"
         write_json_atomic(intent_path, intent)
+        if fault_point == "after_report_intent_commit_write":
+            raise AcceptanceV2Fault(fault_point)

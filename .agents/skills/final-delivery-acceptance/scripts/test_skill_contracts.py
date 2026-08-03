@@ -68,25 +68,60 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
             "Delivery Quality policy",
             "review/acceptance/allowed_artifacts_manifest.json",
             "review/acceptance/rendered_pages/",
-            "review/acceptance/delivery_glossary.json",
+            "`authorized_read_set`",
             "review/acceptance/acceptance_report.json",
             "acceptance_report.json is the only machine-readable delivery decision source",
             "read-only",
-            "final delivered artifacts",
+            "Final delivered artifacts",
             "generation notes",
             "writer drafts",
             "chat history",
             "work/",
             "review/pyramid/",
             "review/consistency/",
-            "evaluate every criterion",
+            "every `criterion_ids` entry",
             "one `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page",
             "repair brief",
-            "fresh Acceptance Reviewer run",
+            "fresh provider Attempt",
         ]
         for item in required:
             with self.subTest(item=item):
                 self.assertIn(item, text)
+
+    def test_visual_reviewer_policy_uses_only_the_provider_attempt_contract(self) -> None:
+        skills = (
+            ".agents/skills/final-delivery-acceptance/SKILL.md",
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".agents/skills/youtube-render-pdf/SKILL.md",
+        )
+        required = (
+            "precompile semantic owners",
+            "`writing-quality-reviewer`",
+            "full reader-facing text, formula, and Delivery Glossary semantic review",
+            "provider-created Task Envelope",
+            "`authorized_read_set`",
+            "provider-created Attempt directory",
+            "`declared_write_set`",
+            "`required_output.path`",
+            "one Visual Quality Judgment Patch",
+            "`acceptance-materialize`",
+            "provider materializes",
+        )
+        forbidden = (
+            "run a full final text scan for style criteria",
+            "run a full final formula scan",
+            "`generation_process_used: false`",
+            "`review_context_used.artifacts_read`",
+            "replace every skeleton placeholder",
+            "final-artifacts-only context",
+        )
+        for relative in skills:
+            with self.subTest(relative=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in required:
+                    self.assertIn(phrase, text)
+                for phrase in forbidden:
+                    self.assertNotIn(phrase, text)
 
     def test_project_instructions_require_acceptance_reviewer_and_repair_separation(self) -> None:
         for relative in ("AGENTS.md", "CLAUDE.md"):

@@ -108,7 +108,27 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             return original_write_bytes(path, data)
 
         with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
-            return acceptance_v2_tests.AcceptanceV2CliTests.build_binding(self, root, generation, **kwargs)
+            binding_path = acceptance_v2_tests.AcceptanceV2CliTests.build_binding(
+                self, root, generation, **kwargs
+            )
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        final_pdf = Path(next(
+            item["path"] for item in binding["artifacts"]
+            if item["logical_id"] == "final_pdf"
+        ))
+        main_tex = Path(next(
+            item["path"] for item in binding["artifacts"]
+            if item["logical_id"] == "main_tex"
+        ))
+        create_allowed_artifacts_manifest(
+            root,
+            PROJECT_ROOT / "docs/acceptance/acceptance_criteria.v1.json",
+            [
+                ("tex", main_tex.relative_to(root).as_posix()),
+                ("pdf", final_pdf.relative_to(root).as_posix()),
+            ],
+        )
+        return binding_path
 
     @staticmethod
     def _fingerprint(path: Path) -> dict[str, object]:
@@ -133,6 +153,8 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             "1",
             "--prepared-at",
             "2026-08-03T00:00:00Z",
+            "--coordinator-session",
+            "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(self.workspace)
@@ -351,6 +373,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             "acceptance-prepare", "--workspace-root", str(workspace),
             "--input-binding", envelope["data"]["input_set_path"], "--attempt-number", "1",
             "--prepared-at", "2026-08-03T00:00:00Z",
+            "--coordinator-session", "coordinator-session",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         fixture.commit_visual(workspace)

@@ -231,6 +231,7 @@ def _parser() -> argparse.ArgumentParser:
     legacy_adopt.add_argument("--criteria", required=True, type=Path)
     legacy_adopt.add_argument("--dimension-map", required=True, type=Path)
     legacy_adopt.add_argument("--rendered-pages-manifest", required=True, type=Path)
+    legacy_adopt.add_argument("--quality-inputs-manifest", required=True, type=Path)
     legacy_adopt.add_argument("--control-store-root", required=True, type=Path)
     legacy_adopt.add_argument("--adopted-at", required=True)
     legacy_adopt.add_argument("--output", type=Path)
@@ -532,6 +533,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             main_tex=args.main_tex, allowed_artifacts_manifest=args.allowed_artifacts_manifest,
             compile_report=args.compile_report, criteria=args.criteria,
             dimension_map=args.dimension_map, rendered_pages_manifest=args.rendered_pages_manifest,
+            quality_inputs_manifest=args.quality_inputs_manifest,
             control_store_root=args.control_store_root, adopted_at=args.adopted_at, output=args.output,
         )
         return _ok(command, "legacy_acceptance_adopted", result, result["input_set_path"])

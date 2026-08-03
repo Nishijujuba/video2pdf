@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -11,7 +12,11 @@ from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .delivery_quality import DeliveryQualityRegistry
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
-from .global_gate import GlobalGatePublisher
+from .global_gate import (
+    GlobalGatePublisher,
+    OPTIONAL_ACCEPTANCE_QUALITY_INPUTS,
+    REQUIRED_ACCEPTANCE_QUALITY_INPUTS,
+)
 
 
 DIMENSION_CRITERIA = {
@@ -44,35 +49,19 @@ def _id(*parts: object, length: int = 32) -> str:
     return hashlib.sha256("\0".join(str(part) for part in parts).encode()).hexdigest()[:length]
 
 
-def _artifact_set_sha(binding: dict[str, Any]) -> str:
+def _artifact_set_sha(artifacts: list[dict[str, Any]], pages: list[dict[str, Any]]) -> str:
     return hashlib.sha256(
         canonical_json_bytes({
             "artifacts": [
                 {"logical_id": item["logical_id"], "sha256": item["sha256"]}
-                for item in binding["artifacts"]
+                for item in artifacts
             ],
             "rendered_pages": [
                 {"page": item["page"], "sha256": item["sha256"]}
-                for item in binding["rendered_pages"]
+                for item in pages
             ],
         })
     ).hexdigest()
-
-
-def _is_legacy_binding(binding: dict[str, Any]) -> bool:
-    return binding.get("schema_name") == "legacy-acceptance-input-set" and binding.get("input_track") == "legacy"
-
-
-def _binding_sha(binding: dict[str, Any]) -> str:
-    return binding["input_set_sha256"] if _is_legacy_binding(binding) else binding["binding_sha256"]
-
-
-def _binding_pages(binding: dict[str, Any]) -> list[dict[str, Any]]:
-    return binding["rendered_pages"]["pages"] if _is_legacy_binding(binding) else binding["rendered_pages"]
-
-
-def _binding_video_root(binding: dict[str, Any]) -> Path:
-    return Path(binding["video_output_dir"] if _is_legacy_binding(binding) else binding["run"]["video_root"]).resolve()
 
 
 def _final_authority_generations(binding: dict[str, Any]) -> list[dict[str, Any]]:
@@ -112,6 +101,76 @@ def _require_shape(value: Any, required: set[str], label: str) -> dict[str, Any]
     if not isinstance(value, dict) or not required <= set(value):
         _reject(f"{label} has missing fields", "contract_shape", "acceptance_contract_invalid")
     return value
+
+
+@dataclass(frozen=True)
+class AcceptanceInputDomain:
+    """Track-independent Acceptance input authority used by every provider phase."""
+
+    track: str
+    fingerprint: str
+    video_root: Path
+    artifacts: list[dict[str, Any]]
+    quality_inputs: dict[str, dict[str, Any]]
+    pages: list[dict[str, Any]]
+    global_gate_authority: dict[str, Any]
+    run: dict[str, Any] | None
+    legacy_authority: dict[str, Any] | None
+    producer_ids: frozenset[str]
+    repairer_ids: frozenset[str]
+    changed_generations: frozenset[str]
+    predecessor_generation_set_sha256: str | None
+
+    @classmethod
+    def from_binding(cls, binding: dict[str, Any]) -> "AcceptanceInputDomain":
+        track = binding.get("input_track")
+        if track == "legacy" and binding.get("schema_name") == "legacy-acceptance-input-set":
+            pages_container = binding.get("rendered_pages")
+            pages = pages_container.get("pages") if isinstance(pages_container, dict) else None
+            required = ("input_set_sha256", "video_output_dir", "artifacts", "quality_inputs", "global_gate_authority")
+            if any(key not in binding for key in required) or not isinstance(pages, list):
+                _reject("Legacy Acceptance domain is incomplete", "contract_shape", "legacy_acceptance_input_contract_invalid")
+            return cls(
+                track="legacy",
+                fingerprint=binding["input_set_sha256"],
+                video_root=Path(binding["video_output_dir"]).resolve(),
+                artifacts=binding["artifacts"],
+                quality_inputs=binding["quality_inputs"],
+                pages=pages,
+                global_gate_authority=binding["global_gate_authority"],
+                run=None,
+                legacy_authority={
+                    "input_set_id": binding["input_set_id"],
+                    "video_output_dir": binding["video_output_dir"],
+                    "provider": binding["provider"],
+                    "adopted_at": binding["adopted_at"],
+                },
+                producer_ids=frozenset(),
+                repairer_ids=frozenset(),
+                changed_generations=frozenset(),
+                predecessor_generation_set_sha256=None,
+            )
+        if track == "kernel" and binding.get("schema_name") == "acceptance-v2-input-binding":
+            run = binding.get("run")
+            required = ("binding_sha256", "artifacts", "quality_inputs", "rendered_pages", "global_gate_authority")
+            if any(key not in binding for key in required) or not isinstance(run, dict):
+                _reject("Kernel Acceptance domain is incomplete", "contract_shape", "acceptance_input_contract_invalid")
+            return cls(
+                track="kernel",
+                fingerprint=binding["binding_sha256"],
+                video_root=Path(run.get("video_root", "")).resolve(),
+                artifacts=binding["artifacts"],
+                quality_inputs=binding["quality_inputs"],
+                pages=binding["rendered_pages"],
+                global_gate_authority=binding["global_gate_authority"],
+                run=run,
+                legacy_authority=None,
+                producer_ids=frozenset(run.get("producer_ids", [])),
+                repairer_ids=frozenset(run.get("repairer_ids", [])),
+                changed_generations=frozenset(run.get("changed_generation_ids", [])),
+                predecessor_generation_set_sha256=run.get("predecessor_generation_set_sha256"),
+            )
+        _reject("Acceptance input identity is unsupported", "input_identity", "acceptance_input_identity_unsupported")
 
 
 class AcceptanceV2Provider:
@@ -205,7 +264,8 @@ class AcceptanceV2Provider:
         root = workspace_root.resolve()
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
-        expected_root = (_binding_video_root(binding) / "review" / "acceptance").resolve()
+        domain = AcceptanceInputDomain.from_binding(binding)
+        expected_root = (domain.video_root / "review" / "acceptance").resolve()
         if root != expected_root:
             _reject("Acceptance workspace is not the canonical video authority", "workspace_authority", "acceptance_workspace_authority_invalid")
         if attempt_number != 1:
@@ -241,18 +301,14 @@ class AcceptanceV2Provider:
     ) -> dict[str, Any]:
         root.mkdir(parents=True, exist_ok=True)
         self.registry.validate("acceptance-v2-repair-ledger", ledger)
-        binding_sha = _binding_sha(binding)
+        domain = AcceptanceInputDomain.from_binding(binding)
+        binding_sha = domain.fingerprint
         execution_id = _id(binding_sha, attempt_number, prepared_at)
         execution_root = root / "executions" / execution_id
         evaluation_rules = self._evaluation_rules()
         dimensions: dict[str, Any] = {}
         dimension_rules = {"visual_quality": tuple(item["rule_id"] for item in evaluation_rules["visual-quality-evaluation"])}
-        if _is_legacy_binding(binding):
-            dimension_rules = {
-                "text_quality": tuple(item["rule_id"] for item in evaluation_rules["writing-quality-evaluation"]),
-                **dimension_rules,
-            }
-        pages = _binding_pages(binding)
+        pages = domain.pages
         for dimension, criteria in dimension_rules.items():
             task_id = _id(execution_id, dimension)
             dimensions[dimension] = {
@@ -297,7 +353,7 @@ class AcceptanceV2Provider:
             "report_publication": None,
         }
         execution["execution_sha256"] = _fingerprint_without(execution, "execution_sha256")
-        if not _is_legacy_binding(binding):
+        if domain.track == "kernel":
             self.registry.validate("acceptance-v2-input-binding", binding)
         self.registry.validate("acceptance-v2-review-skeleton", skeleton)
         self.registry.validate("acceptance-v2-execution-context", execution)
@@ -364,14 +420,26 @@ class AcceptanceV2Provider:
         fault_point: str | None = None,
     ) -> dict[str, Any]:
         root, execution_root, execution, skeleton, binding = self._load_current(workspace_root)
-        pending = [path for path in (execution_root / "intents").glob("*.json") if read_json(path).get("state") == "PREPARED"] if (execution_root / "intents").exists() else []
-        if pending:
-            _reject("an earlier Acceptance publication requires reconciliation", "publication_recovery", "acceptance_reconcile_required")
         if dimension not in DIMENSION_CRITERIA:
             _reject("unknown acceptance dimension", "patch_identity", "acceptance_dimension_unknown")
         patch = read_json(patch_path.resolve())
         self.registry.validate("acceptance-v2-judgment-patch", patch)
         self._validate_patch(patch, dimension, skeleton, binding)
+        pending = []
+        if (execution_root / "intents").exists():
+            for path in (execution_root / "intents").glob("*.json"):
+                intent = read_json(path)
+                if intent.get("state") == "PREPARED":
+                    pending.append(intent)
+        if any(
+            intent.get("intent_kind") == "acceptance_patch_publication"
+            and intent.get("dimension") == dimension
+            and intent.get("patch_sha256") != patch["patch_sha256"]
+            for intent in pending
+        ):
+            _reject("a competing Patch publication already owns this dimension", "patch_fencing", "acceptance_patch_conflict")
+        if pending:
+            _reject("an earlier Acceptance publication requires reconciliation", "publication_recovery", "acceptance_reconcile_required")
         if dimension in execution["committed_patches"]:
             existing = execution["committed_patches"][dimension]
             if existing["patch_sha256"] == patch["patch_sha256"]:
@@ -437,6 +505,7 @@ class AcceptanceV2Provider:
         if provider_id != "acceptance-v2-provider" or provider_version != "1.0.0":
             _reject("unregistered Acceptance v2 provider identity", "provider_identity", "acceptance_provider_invalid")
         root, execution_root, execution, skeleton, binding = self._load_current(workspace_root)
+        domain = AcceptanceInputDomain.from_binding(binding)
         self._validate_binding(binding, verify_files=True)
         if execution["state"] == "materialized" and execution.get("report_publication"):
             immutable_path = Path(execution["report_publication"]["path"])
@@ -472,7 +541,7 @@ class AcceptanceV2Provider:
             }
         if execution["state"] != "reviewing" or execution.get("report_publication") is not None:
             _reject("Acceptance execution is not open for materialization", "report_fencing", "acceptance_execution_terminal")
-        if execution["input_binding_sha256"] != binding["binding_sha256"]:
+        if execution["input_binding_sha256"] != domain.fingerprint:
             _reject("execution input binding is stale", "input_freshness", "acceptance_input_stale")
         pending = [path for path in (execution_root / "intents").glob("*.json") if read_json(path).get("state") == "PREPARED"] if (execution_root / "intents").exists() else []
         if pending:
@@ -498,10 +567,10 @@ class AcceptanceV2Provider:
             rule["rule_id"]: {item["exception_id"] for item in rule.get("exceptions", [])}
             for rule in catalog["rules"]
         }
-        precompile_report = read_json(Path(binding["quality_inputs"]["precompile_quality_report"]["path"]))
-        precompile_seal = read_json(Path(binding["quality_inputs"]["precompile_text_seal"]["path"]))
+        precompile_report = read_json(Path(domain.quality_inputs["precompile_quality_report"]["path"]))
+        precompile_seal = read_json(Path(domain.quality_inputs["precompile_text_seal"]["path"]))
         precompile_reused = precompile_seal.get("decision_origin") == "reused_after_text_equivalence"
-        changed_generations = set(binding["run"]["changed_generation_ids"])
+        changed_generations = set(domain.changed_generations)
         equivalence_waivers = (
             {"source-faithfulness-reviewer", "writing-quality-reviewer", "pyramid-reviewer"}
             if precompile_reused else set()
@@ -566,7 +635,7 @@ class AcceptanceV2Provider:
                     "decision_phase": "postcompile",
                     "primary_semantic_decision_owner": "visual-quality-reviewer",
                     "source_report_sha256": visual_patch["patch_sha256"],
-                    "artifact_generation_sha256": binding["binding_sha256"],
+                    "artifact_generation_sha256": domain.fingerprint,
                     "decision": result["decision"],
                     "evidence": result["evidence"],
                     "violations": [violation_id] if result["decision"] == "fail" and violation_id in registered_violations[rule["rule_id"]] else [],
@@ -599,9 +668,9 @@ class AcceptanceV2Provider:
                 ledger["semantic_attempts"].append({
                     "attempt": execution["attempt_number"],
                     "execution_id": execution["execution_id"],
-                    "input_binding_sha256": binding["binding_sha256"],
+                    "input_binding_sha256": domain.fingerprint,
                     "artifact_generation_sha256": precompile_seal["generation_set_sha256"],
-                    "artifact_set_sha256": _artifact_set_sha(binding),
+                    "artifact_set_sha256": _artifact_set_sha(domain.artifacts, domain.pages),
                     "source_failure_set_sha256": hashlib.sha256(canonical_json_bytes([item for item in results if item["decision"] == "fail"])).hexdigest(),
                     "decision": "fail",
                     "routing_state": "repair_required",
@@ -620,8 +689,8 @@ class AcceptanceV2Provider:
             "execution_revision": execution["execution_revision"] + 1,
             "materialized_at": materialized_at,
             "provider": {"provider_id": provider_id, "provider_version": provider_version},
-            "input_binding_sha256": binding["binding_sha256"],
-            "run_binding": binding["run"],
+            "input_track": domain.track,
+            "input_binding_sha256": domain.fingerprint,
             "skeleton_sha256": skeleton["skeleton_sha256"],
             "patches": {dimension: {"patch_sha256": patch["patch_sha256"], "task_id": patch["task_id"], "attempt_id": patch["attempt_id"]} for dimension, patch in patches.items()},
             "criterion_results": results,
@@ -635,18 +704,20 @@ class AcceptanceV2Provider:
             "repair_ledger_sha256": ledger["ledger_sha256"],
             "semantic_reinterpretation_performed": False,
         }
+        if domain.run is not None:
+            report["run_binding"] = domain.run
+        else:
+            report["legacy_binding"] = domain.legacy_authority
         attempt_record = {
             "schema_name": "acceptance-v2-attempt-record",
             "schema_version": "1.0.0",
             "execution_id": execution["execution_id"],
             "attempt_number": execution["attempt_number"],
-            "run_id": binding["run"]["run_id"],
-            "run_revision": binding["run"]["coordination_revision"],
-            "acceptance_revision": binding["run"]["acceptance_revision"],
-            "input_binding_sha256": binding["binding_sha256"],
-            "predecessor_generation_set_sha256": binding["run"]["predecessor_generation_set_sha256"],
+            "input_track": domain.track,
+            "input_binding_sha256": domain.fingerprint,
+            "predecessor_generation_set_sha256": domain.predecessor_generation_set_sha256,
             "artifact_generation_sha256": precompile_seal["generation_set_sha256"],
-            "artifact_set_sha256": _artifact_set_sha(binding),
+            "artifact_set_sha256": _artifact_set_sha(domain.artifacts, domain.pages),
             "changed_generations": sorted(changed_generations),
             "dependency_snapshot": dependency_snapshot,
             "invalidated_judgments": invalidated_judgments,
@@ -657,6 +728,14 @@ class AcceptanceV2Provider:
             "overall_status": overall,
             "routing_state": routing,
         }
+        if domain.run is not None:
+            attempt_record.update({
+                "run_id": domain.run["run_id"],
+                "run_revision": domain.run["coordination_revision"],
+                "acceptance_revision": domain.run["acceptance_revision"],
+            })
+        else:
+            attempt_record["legacy_input_set_id"] = domain.legacy_authority["input_set_id"]
         attempt_record["attempt_record_sha256"] = _fingerprint_without(attempt_record, "attempt_record_sha256")
         self.registry.validate("acceptance-v2-attempt-record", attempt_record)
         self.registry.validate("acceptance-v2-repair-ledger", ledger)
@@ -740,7 +819,11 @@ class AcceptanceV2Provider:
         prior_binding = read_json(root / "input-binding.json")
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
-        if binding["binding_sha256"] == prior_binding["binding_sha256"]:
+        prior_domain = AcceptanceInputDomain.from_binding(prior_binding)
+        domain = AcceptanceInputDomain.from_binding(binding)
+        if domain.track != "kernel" or prior_domain.track != "kernel":
+            _reject("Legacy repair admission requires a freshly adopted input set and new execution", "repair_lineage", "legacy_repair_admission_unsupported")
+        if domain.fingerprint == prior_domain.fingerprint:
             _reject("semantic repair requires a new Artifact Generation binding", "repair_generation", "acceptance_repair_generation_unchanged")
         prior_seal = read_json(Path(prior_binding["quality_inputs"]["precompile_text_seal"]["path"]))
         current_seal = read_json(Path(binding["quality_inputs"]["precompile_text_seal"]["path"]))
@@ -756,7 +839,7 @@ class AcceptanceV2Provider:
             _reject("repair binding is outside the current Kernel Run lineage", "repair_lineage", "acceptance_repair_lineage_invalid")
         if (
             current_seal["generation_set_sha256"] == prior_seal["generation_set_sha256"]
-            or _artifact_set_sha(binding) == _artifact_set_sha(prior_binding)
+            or _artifact_set_sha(domain.artifacts, domain.pages) == _artifact_set_sha(prior_domain.artifacts, prior_domain.pages)
         ):
             _reject("semantic repair requires a new Artifact Generation binding", "repair_generation", "acceptance_repair_generation_unchanged")
         actual_changed_generation_ids = {
@@ -834,6 +917,7 @@ class AcceptanceV2Provider:
 
     def guard_eligibility(self, *, workspace_root: Path) -> dict[str, Any]:
         root, execution_root, execution, _, binding = self._load_current(workspace_root)
+        domain = AcceptanceInputDomain.from_binding(binding)
         self._validate_binding(binding, verify_files=True)
         report_path = root / "acceptance_report.json"
         checks = {
@@ -896,14 +980,19 @@ class AcceptanceV2Provider:
                 and report.get("execution_id") == execution["execution_id"]
                 and report.get("execution_revision") == execution["execution_revision"]
                 and report.get("skeleton_sha256") == execution["skeleton_sha256"]
-                and report.get("run_binding") == binding["run"]
+                and report.get("input_track") == domain.track
+                and (
+                    report.get("run_binding") == domain.run
+                    if domain.run is not None
+                    else report.get("legacy_binding") == domain.legacy_authority and "run_binding" not in report
+                )
             ),
             "control_authority_terminal": bool(
                 authority
                 and authority["execution_id"] == execution["execution_id"]
                 and authority["execution_revision"] == execution["execution_revision"]
                 and authority["state"] == "terminal"
-                and authority["binding_sha256"] == binding["binding_sha256"]
+                and authority["binding_sha256"] == domain.fingerprint
             ),
             "control_no_pending_intents": pending_control_intents == 0,
             "control_report_intent_committed": bool(
@@ -930,17 +1019,17 @@ class AcceptanceV2Provider:
                 and attempt_record.get("attempt_record_sha256") == _fingerprint_without(attempt_record, "attempt_record_sha256")
                 and report.get("attempt_record_sha256") == attempt_record.get("attempt_record_sha256")
                 and attempt_record.get("execution_id") == execution["execution_id"]
-                and attempt_record.get("input_binding_sha256") == binding["binding_sha256"]
+                and attempt_record.get("input_binding_sha256") == domain.fingerprint
             ),
             "historical_attempts_current": self._historical_attempts_current(root, ledger, execution),
-            "input_binding_current": report.get("input_binding_sha256") == binding["binding_sha256"],
+            "input_binding_current": report.get("input_binding_sha256") == domain.fingerprint,
             "decision_pass": report.get("overall_status") == "pass",
             "routing_ready": report.get("routing_state") == "ready_for_delivery",
         })
-        current_global_gate = GlobalGatePublisher().require_current(control_store_root=Path(binding["global_gate_authority"]["control_store_root"]))
+        current_global_gate = GlobalGatePublisher().require_current(control_store_root=Path(domain.global_gate_authority["control_store_root"]))
         checks["global_gate_authority_current"] = bool(
             report.get("activation_status") == "active_global_gate"
-            and report.get("global_gate_authority") == binding.get("global_gate_authority") == current_global_gate
+            and report.get("global_gate_authority") == domain.global_gate_authority == current_global_gate
         )
         return {"activation_status": "active_global_gate", "delivery_authority": all(checks.values()), "eligible": all(checks.values()), "mechanical_checks": checks, "report_sha256": report.get("report_sha256")}
 
@@ -969,8 +1058,8 @@ class AcceptanceV2Provider:
             except ContractError:
                 return False
             if (
-                not {"schema_name", "schema_version", "execution_id", "attempt_number", "input_binding_sha256", "artifact_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"} <= set(attempt)
-                or set(attempt) - {"schema_name", "schema_version", "execution_id", "attempt_number", "run_id", "run_revision", "acceptance_revision", "input_binding_sha256", "predecessor_generation_set_sha256", "artifact_generation_sha256", "artifact_set_sha256", "changed_generations", "dependency_snapshot", "invalidated_judgments", "retained_judgments", "required_reruns", "completed_reruns", "failure_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"}
+                not {"schema_name", "schema_version", "input_track", "execution_id", "attempt_number", "input_binding_sha256", "artifact_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"} <= set(attempt)
+                or set(attempt) - {"schema_name", "schema_version", "input_track", "execution_id", "attempt_number", "run_id", "run_revision", "acceptance_revision", "legacy_input_set_id", "input_binding_sha256", "predecessor_generation_set_sha256", "artifact_generation_sha256", "artifact_set_sha256", "changed_generations", "dependency_snapshot", "invalidated_judgments", "retained_judgments", "required_reruns", "completed_reruns", "failure_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"}
                 or report.get("report_sha256") != entry["report_sha256"]
                 or report.get("report_sha256") != _fingerprint_without(report, "report_sha256")
                 or attempt.get("attempt_record_sha256") != entry["attempt_record_sha256"]
@@ -1010,21 +1099,23 @@ class AcceptanceV2Provider:
             _reject("Acceptance root projections drifted from execution-owned evidence", "execution_identity", "acceptance_execution_projection_stale")
         self.registry.validate("acceptance-v2-execution-context", execution)
         self.registry.validate("acceptance-v2-review-skeleton", skeleton)
-        self.registry.validate("acceptance-v2-input-binding", binding)
+        if binding.get("input_track") != "legacy":
+            self.registry.validate("acceptance-v2-input-binding", binding)
         self._validate_binding(binding, verify_files=False)
-        if execution["execution_id"] != current["execution_id"] or skeleton["execution_id"] != execution["execution_id"] or execution.get("skeleton_sha256") != skeleton.get("skeleton_sha256") or execution.get("input_binding_sha256") != binding.get("binding_sha256"):
+        domain = AcceptanceInputDomain.from_binding(binding)
+        if execution["execution_id"] != current["execution_id"] or skeleton["execution_id"] != execution["execution_id"] or execution.get("skeleton_sha256") != skeleton.get("skeleton_sha256") or execution.get("input_binding_sha256") != domain.fingerprint:
             _reject("acceptance execution identities disagree", "execution_identity", "acceptance_execution_identity_invalid")
         if execution.get("execution_sha256") != _fingerprint_without(execution, "execution_sha256"):
             _reject("acceptance execution fingerprint is stale", "execution_identity", "acceptance_execution_stale")
         if skeleton.get("skeleton_sha256") != _fingerprint_without(skeleton, "skeleton_sha256"):
             _reject("Acceptance Skeleton fingerprint is stale", "execution_identity", "acceptance_skeleton_stale")
-        if skeleton.get("input_binding_sha256") != binding["binding_sha256"]:
+        if skeleton.get("input_binding_sha256") != domain.fingerprint:
             _reject("Acceptance Skeleton input binding is stale", "execution_identity", "acceptance_skeleton_binding_stale")
         expected_policy = {
             "catalog_sha256": sha256_file(self.project_root / "delivery-quality/v1/rule-catalog.v1.json"),
             "role_projections_sha256": sha256_file(self.project_root / "delivery-quality/v1/role-projections.v1.json"),
         }
-        if skeleton.get("policy_bindings") != expected_policy or skeleton.get("required_visual_pages") != [item["page"] for item in binding["rendered_pages"]]:
+        if skeleton.get("policy_bindings") != expected_policy or skeleton.get("required_visual_pages") != [item["page"] for item in domain.pages]:
             _reject("Acceptance Skeleton policy or page bindings are stale", "execution_identity", "acceptance_skeleton_policy_stale")
         visual_rules = next(
             item["rules"] for item in read_json(self.project_root / "delivery-quality/v1/role-projections.v1.json")["projections"]
@@ -1037,7 +1128,7 @@ class AcceptanceV2Provider:
             "claim_generation": 1,
             "fencing_token": _id(execution["execution_id"], task_id, 1, length=64),
             "criterion_ids": [item["rule_id"] for item in visual_rules],
-            "allowed_read_set": ["final_pdf", *[f"rendered_page:{item['page']}" for item in binding["rendered_pages"]]],
+            "allowed_read_set": ["final_pdf", *[f"rendered_page:{item['page']}" for item in domain.pages]],
             "peer_results_visible": False,
         }
         task_envelope = read_json(execution_root / "tasks" / task_id / "task.json")
@@ -1061,12 +1152,12 @@ class AcceptanceV2Provider:
         return root, execution_root, execution, skeleton, binding
 
     def _validate_binding(self, binding: dict[str, Any], *, verify_files: bool, require_published_final_authority: bool = True) -> None:
-        if _is_legacy_binding(binding):
+        if binding.get("schema_name") == "legacy-acceptance-input-set" and binding.get("input_track") == "legacy":
             if "run" in binding:
                 _reject("A Legacy Acceptance Input Set cannot contain a synthetic Run binding", "input_identity", "legacy_synthetic_run_rejected")
             if binding.get("contract_gaps"):
                 _reject("A Legacy Acceptance Input Set with Contract Gaps cannot enter review", "contract_gap", "legacy_contract_gap_blocked")
-            required = {"schema_name", "schema_version", "activation_status", "input_track", "input_set_id", "video_output_dir", "artifacts", "allowed_artifacts_manifest", "compile_provenance", "acceptance_criteria", "acceptance_dimension_map", "rendered_pages", "provider", "invocation", "adopted_at", "global_gate_authority", "input_set_sha256"}
+            required = {"schema_name", "schema_version", "activation_status", "input_track", "input_set_id", "video_output_dir", "artifacts", "quality_inputs_manifest", "quality_inputs", "allowed_artifacts_manifest", "compile_provenance", "acceptance_criteria", "acceptance_dimension_map", "rendered_pages", "provider", "invocation", "adopted_at", "global_gate_authority", "input_set_sha256"}
             _require_shape(binding, required, "Legacy Acceptance Input Set")
             if set(binding) != required or binding.get("schema_version") != "1.0.0" or binding.get("activation_status") != "active_global_gate":
                 _reject("unsupported Legacy Acceptance Input Set", "contract_shape", "legacy_acceptance_input_contract_invalid")
@@ -1079,11 +1170,26 @@ class AcceptanceV2Provider:
                     _reject("Legacy Acceptance input path escapes its authority", "input_path_boundary", "acceptance_input_path_escape")
                 if verify_files and (not path.is_file() or sha256_file(path) != item.get("sha256")):
                     _reject("Legacy Acceptance input is stale", "input_freshness", "acceptance_input_stale", path=str(path))
-            for key in ("allowed_artifacts_manifest", "compile_provenance", "acceptance_dimension_map"):
+            for key in ("allowed_artifacts_manifest", "compile_provenance", "acceptance_dimension_map", "quality_inputs_manifest"):
                 item = binding[key]
                 path = Path(item.get("path", "")).resolve()
                 if not path.is_relative_to(root) or (verify_files and (not path.is_file() or sha256_file(path) != item.get("sha256"))):
                     _reject("Legacy Acceptance authority binding is stale", "input_freshness", "acceptance_input_stale", path=str(path))
+            if frozenset(binding["quality_inputs"]) not in {
+                REQUIRED_ACCEPTANCE_QUALITY_INPUTS,
+                REQUIRED_ACCEPTANCE_QUALITY_INPUTS | OPTIONAL_ACCEPTANCE_QUALITY_INPUTS,
+            }:
+                _reject("Legacy Acceptance quality inputs are incomplete", "quality_input_membership", "legacy_quality_input_incomplete")
+            manifest = read_json(Path(binding["quality_inputs_manifest"]["path"]))
+            if manifest.get("quality_inputs") != binding["quality_inputs"]:
+                _reject("Legacy quality input manifest disagrees with adopted authority", "quality_input_contract", "legacy_quality_input_contract_invalid")
+            if verify_files:
+                for logical_id, item in binding["quality_inputs"].items():
+                    path = Path(item.get("path", "")).resolve()
+                    if not path.is_relative_to(root):
+                        _reject("Legacy quality input path escapes its authority", "input_path_boundary", "acceptance_input_path_escape", path=str(path))
+                    if not path.is_file() or sha256_file(path) != item.get("sha256"):
+                        _reject("Legacy quality input is stale", "quality_input_freshness", "legacy_quality_input_stale", logical_id=logical_id)
             criteria = binding["acceptance_criteria"]
             criteria_path = Path(criteria.get("path", "")).resolve()
             if not criteria_path.is_relative_to(self.project_root) or (verify_files and (not criteria_path.is_file() or sha256_file(criteria_path) != criteria.get("sha256"))):
@@ -1327,6 +1433,7 @@ class AcceptanceV2Provider:
                 _reject("Rendered evidence provenance is incomplete", "quality_input_validity", "acceptance_rendered_evidence_invalid")
 
     def _validate_patch(self, patch: dict[str, Any], dimension: str, skeleton: dict[str, Any], binding: dict[str, Any]) -> None:
+        domain = AcceptanceInputDomain.from_binding(binding)
         _require_shape(patch, {"schema_name", "schema_version", "dimension", "task_id", "attempt_id", "claim_generation", "fencing_token", "skeleton_sha256", "reviewer", "actual_read_set", "criterion_results", "visual_scan_evidence", "cross_phase_findings", "contract_gaps", "patch_sha256"}, "Acceptance Judgment Patch")
         if patch["patch_sha256"] != _fingerprint_without(patch, "patch_sha256"):
             _reject("Patch fingerprint is stale", "patch_identity", "acceptance_patch_fingerprint_invalid")
@@ -1336,7 +1443,7 @@ class AcceptanceV2Provider:
         if patch["reviewer"].get("independent") is not True:
             _reject("Acceptance reviewer is not independent", "reviewer_independence", "acceptance_reviewer_not_independent")
         reviewer_id = patch["reviewer"].get("reviewer_id")
-        disallowed_reviewers = set(binding["run"]["producer_ids"]) | set(binding["run"]["repairer_ids"])
+        disallowed_reviewers = set(domain.producer_ids) | set(domain.repairer_ids)
         if reviewer_id in disallowed_reviewers:
             _reject("Acceptance reviewer overlaps an artifact producer or repairer", "reviewer_independence", "acceptance_reviewer_identity_overlap")
         criterion_ids = [item.get("criterion_id") for item in patch["criterion_results"]]
@@ -1355,19 +1462,19 @@ class AcceptanceV2Provider:
                 _reject("Visual Patch lacks page-specific decisions or evidence", "visual_page_coverage", "acceptance_visual_page_evidence_incomplete")
             if any(item["decision"] == "fail" for item in page_results) and not any(item["decision"] == "fail" for item in patch["criterion_results"]):
                 _reject("Visual page failures are absent from criterion decisions", "criterion_coverage", "acceptance_visual_failure_unmapped")
-            bound_pages = {item["page"]: item for item in binding["rendered_pages"]}
+            bound_pages = {item["page"]: item for item in domain.pages}
             if any(
                 Path(item.get("path", "")).resolve() != Path(bound_pages[item["page"]]["path"]).resolve()
                 or item.get("sha256") != bound_pages[item["page"]]["sha256"]
                 for item in page_results
             ):
                 _reject("Visual page evidence is not bound to the authorized input", "visual_page_coverage", "acceptance_visual_page_binding_stale")
-        final_pdf = next(item for item in binding["artifacts"] if item["logical_id"] == "final_pdf")
+        final_pdf = next(item for item in domain.artifacts if item["logical_id"] == "final_pdf")
         expected_reads = [
             {"logical_id": "final_pdf", "path": str(Path(final_pdf["path"]).resolve()), "sha256": final_pdf["sha256"]},
             *[
                 {"logical_id": f"rendered_page:{item['page']}", "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
-                for item in binding["rendered_pages"]
+                for item in domain.pages
             ],
         ]
         actual_reads = [
@@ -1489,7 +1596,7 @@ class AcceptanceV2Provider:
             self.registry.validate("acceptance-v2-repair-ledger", ledger)
         except ContractError:
             return False
-        required_attempt = {"schema_name", "schema_version", "execution_id", "attempt_number", "input_binding_sha256", "artifact_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"}
+        required_attempt = {"schema_name", "schema_version", "input_track", "execution_id", "attempt_number", "input_binding_sha256", "artifact_set_sha256", "overall_status", "routing_state", "attempt_record_sha256"}
         if not required_attempt <= set(attempt):
             return False
         report_sha = report.get("report_sha256")

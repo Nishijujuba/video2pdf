@@ -35,6 +35,7 @@ MIRROR_SPECS = tuple(
     )
 )
 POLICY_STATUS = "active_global_gate"
+QUALIFICATION_CONTRACT_SHA256 = "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
 
 ACTIVATION_SCOPE = {
     "kind": "active_global_gate",
@@ -42,6 +43,7 @@ ACTIVATION_SCOPE = {
     "components_activated": ["acceptance_report_v2", "delivery_quality_context"],
     "legacy_track_authority": "acceptance_report_v2",
     "platform_kernel_authority": "unchanged",
+    "qualification_contract_sha256": QUALIFICATION_CONTRACT_SHA256,
 }
 
 GLOBAL_GATE_TESTS = "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests"
@@ -55,31 +57,33 @@ MIRROR_TEST = (
 ACCEPTANCE_TESTS = "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests"
 
 RESULT_SPECS = (
-    ("legacy_run_record_free_v2_pass", "positive", f"{GLOBAL_GATE_TESTS}.test_legacy_adoption_materializes_a_fresh_run_record_free_input_set"),
-    ("kernel_v2_pass", "positive", f"{ACCEPTANCE_TESTS}.test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility"),
-    ("active_global_gate_only", "positive", f"{POLICY_TESTS}.test_workflow_policy_check_accepts_current_atomic_policy_authority"),
-    ("mirrors_current", "positive", MIRROR_TEST),
-    ("v1_rejected", "negative", f"{POLICY_TESTS}.test_required_negative_policy_results_have_stable_first_gate_codes"),
-    ("stale_legacy_authority_rejected", "negative", f"{POLICY_TESTS}.test_mirror_and_policy_status_are_distinct_first_gates"),
-    ("incomplete_mirrors_rejected", "negative", f"{POLICY_TESTS}.test_mirror_and_policy_status_are_distinct_first_gates"),
-    ("unsupported_identity_rejected", "negative", f"{POLICY_TESTS}.test_required_negative_policy_results_have_stable_first_gate_codes"),
-    ("contract_gap_rejected", "negative", f"{POLICY_TESTS}.test_required_negative_policy_results_have_stable_first_gate_codes"),
-    ("failed_atomic_member_rejected", "negative", f"{POLICY_TESTS}.test_failed_atomic_member_is_first_rejected_by_atomic_member_status"),
-    ("control_store_unavailable_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"),
-    ("control_store_corrupt_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"),
-    ("control_store_locked_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"),
-    ("control_store_incompatible_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"),
-    ("fallback_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_v1_fallback"),
-    ("translation_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_compatibility_translation"),
-    ("synthetic_legacy_run_rejected", "negative", f"{POLICY_TESTS}.test_required_negative_policy_results_have_stable_first_gate_codes"),
-    ("dual_authority_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_dual_authority"),
-    ("patch_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication"),
-    ("report_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_finishes_an_intact_interrupted_report_publication"),
-    ("activation_publication_recovered", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent"),
-    ("activation_retry_idempotent", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent"),
-    ("activation_writers_fenced", "fencing", f"{POLICY_TESTS}.test_competing_activation_is_fenced"),
+    ("legacy_run_record_free_v2_pass", "positive", f"{GLOBAL_GATE_TESTS}.test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility", None, None),
+    ("legacy_active_guard_pass", "positive", f"{GUARD_TESTS}.test_active_guard_accepts_run_record_free_legacy_v2_authority", None, None),
+    ("kernel_v2_pass", "positive", f"{ACCEPTANCE_TESTS}.test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility", None, None),
+    ("kernel_active_guard_pass", "positive", f"{GUARD_TESTS}.test_active_guard_accepts_current_passing_v2_authority", None, None),
+    ("active_global_gate_only", "positive", f"{POLICY_TESTS}.test_workflow_policy_check_accepts_current_atomic_policy_authority", None, None),
+    ("mirrors_current", "positive", MIRROR_TEST, None, None),
+    ("v1_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_v1_fallback", "acceptance_authority", "acceptance_report_v1_rejected"),
+    ("stale_legacy_authority_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_stale_global_gate_authority", "global_gate_authority", "global_gate_authority_stale"),
+    ("incomplete_mirrors_rejected", "negative", f"{POLICY_TESTS}.test_mirror_and_policy_status_are_distinct_first_gates", "mirror_checks", "global_gate_mirror_stale"),
+    ("unsupported_identity_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_unsupported_identity", "input_identity", "legacy_provider_unsupported"),
+    ("contract_gap_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_contract_gap", "contract_gap", "legacy_contract_gap_blocked"),
+    ("failed_atomic_member_rejected", "negative", f"{POLICY_TESTS}.test_failed_atomic_member_is_first_rejected_by_atomic_member_status", "atomic_member_status", "global_gate_atomic_member_failed"),
+    ("control_store_unavailable_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed", "control_store", "global_gate_control_store_unavailable"),
+    ("control_store_corrupt_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed", "control_store", "global_gate_control_store_corrupt"),
+    ("control_store_locked_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed", "control_store", "global_gate_control_store_locked"),
+    ("control_store_incompatible_rejected", "negative", f"{POLICY_TESTS}.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed", "control_store", "global_gate_control_store_incompatible"),
+    ("fallback_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_v1_fallback", "acceptance_authority", "acceptance_report_v1_rejected"),
+    ("translation_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_compatibility_translation", "acceptance_authority", "acceptance_compatibility_translation_rejected"),
+    ("synthetic_legacy_run_rejected", "negative", f"{POLICY_TESTS}.test_legacy_v2_provider_rejects_synthetic_run", "input_identity", "legacy_synthetic_run_rejected"),
+    ("dual_authority_rejected", "negative", f"{GUARD_TESTS}.test_active_guard_rejects_dual_authority", "acceptance_authority", "acceptance_dual_authority_rejected"),
+    ("patch_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication", None, None),
+    ("report_publication_recovered", "recovery", f"{ACCEPTANCE_TESTS}.test_reconcile_finishes_an_intact_interrupted_report_publication", None, None),
+    ("activation_publication_recovered", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
+    ("activation_retry_idempotent", "recovery", f"{POLICY_TESTS}.test_activation_interruption_reconciles_and_exact_retry_is_idempotent", None, None),
+    ("activation_writers_fenced", "fencing", f"{POLICY_TESTS}.test_competing_activation_is_fenced", None, None),
 )
-QUALIFICATION_TEST_TARGETS = tuple(dict.fromkeys(target for _, _, target in RESULT_SPECS))
+QUALIFICATION_TEST_TARGETS = tuple(dict.fromkeys(target for _, _, target, _, _ in RESULT_SPECS))
 
 COMMANDS = (
     (
@@ -124,8 +128,12 @@ RESULT_BINDINGS = [
         "result_kind": result_kind,
         "command_id": "issue43-global-gate-tests",
         "test_target": target,
+        **({
+            "expected_first_failing_gate": first_gate,
+            "expected_error_code": error_code,
+        } if result_kind == "negative" else {}),
     }
-    for result_id, result_kind, target in RESULT_SPECS
+    for result_id, result_kind, target, first_gate, error_code in RESULT_SPECS
 ]
 
 RESULTS = {
@@ -138,10 +146,6 @@ RESULTS = {
 }
 
 FIXTURE_SPECS = (
-    (
-        "global_gate_exit_evidence_contract",
-        "schemas/global-gate/global-gate-exit-evidence.v1.schema.json",
-    ),
     (
         "legacy_acceptance_input_contract",
         "schemas/global-gate/legacy-acceptance-input-set.v1.schema.json",

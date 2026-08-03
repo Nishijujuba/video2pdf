@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -18,6 +19,7 @@ from tests.video_workflow._test_run import new_case_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
+CLI = PROJECT_ROOT / "scripts/video_workflow.py"
 
 
 class Issue43ExitEvidenceContractTests(unittest.TestCase):
@@ -134,6 +136,17 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         )
         self.assertEqual("active_global_gate", contract.ACTIVATION_SCOPE["kind"])
         self.assertEqual("unchanged", contract.ACTIVATION_SCOPE["platform_kernel_authority"])
+        self.assertEqual(
+            contract.QUALIFICATION_CONTRACT_SHA256,
+            hashlib.sha256((
+                json.dumps(
+                    contract.RESULT_BINDINGS,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ) + "\n"
+            ).encode("utf-8")).hexdigest(),
+        )
 
     def test_v2_schema_admits_global_gate_activation_and_historical_manifests(self) -> None:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -142,6 +155,93 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         for number in range(7, 11):
             path = PROJECT_ROOT / f"evidence/slice-{number:02d}/exit-evidence-manifest.json"
             schema_validator.validate(json.loads(path.read_text(encoding="utf-8")))
+
+    def test_manifest_v2_is_the_direct_sha_bound_global_gate_activation_contract(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-manifest-v2-activation")
+        manifest_path = root / "exit-evidence-manifest.json"
+        manifest_path.write_text(
+            json.dumps(self.manifest(), sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [
+                sys.executable, "-X", "utf8", "-B", str(CLI),
+                "global-gate-activate", "--control-store-root", str(root),
+                "--exit-evidence", str(manifest_path),
+                "--activated-at", "2026-08-03T00:00:00Z",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        envelope = json.loads(completed.stdout)
+        authority = json.loads(
+            Path(envelope["data"]["authority_path"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            authority["exit_evidence_sha256"],
+            hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        )
+
+    def test_negative_result_bindings_require_public_failure_diagnostics(self) -> None:
+        manifest = self.manifest()
+        negative = next(
+            binding
+            for binding in manifest["result_bindings"]
+            if binding["result_kind"] == "negative"
+        )
+        self.assertIn("expected_first_failing_gate", negative)
+        self.assertIn("expected_error_code", negative)
+        damaged = deepcopy(manifest)
+        damaged_binding = next(
+            binding
+            for binding in damaged["result_bindings"]
+            if binding["result_kind"] == "negative"
+        )
+        damaged_binding.pop("expected_error_code")
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        errors = list(Draft202012Validator(schema).iter_errors(damaged))
+        self.assertTrue(errors, "a negative result without a stable public error code must be invalid")
+
+    def test_schema_valid_result_tracer_substitution_cannot_activate(self) -> None:
+        # scenario_id: qualification_tracer_substitution; the binding remains schema-valid
+        # and command-bound, while its registered qualification identity is stale.
+        root = new_case_dir(self.id(), label="issue43-tracer-substitution")
+        manifest = self.manifest()
+        manifest["result_bindings"][0]["test_target"] = manifest["result_bindings"][1]["test_target"]
+        manifest_path = root / "exit-evidence-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+        completed = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(CLI), "global-gate-activate",
+             "--control-store-root", str(root), "--exit-evidence", str(manifest_path),
+             "--activated-at", "2026-08-03T00:00:00Z"],
+            cwd=PROJECT_ROOT, text=True, encoding="utf-8", capture_output=True, check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        envelope = json.loads(completed.stdout)
+        self.assertEqual(envelope["data"]["first_failing_gate"], "qualification_result_binding")
+        self.assertEqual(envelope["data"]["error_code"], "global_gate_qualification_contract_stale")
+
+    def test_negative_result_diagnostic_drift_has_a_stable_binding_authority_gate(self) -> None:
+        # scenario_id: negative_tracer_diagnostic_drift
+        # authority: registered public tracer -> boundary: qualification publication
+        # mutation: expected error code only; rematerialized: none; stale: binding authority
+        # expected_first_gate: qualification_result_binding
+        # expected_error_code: result_binding_authority_stale
+        manifest = self.manifest()
+        negative = next(
+            binding
+            for binding in manifest["result_bindings"]
+            if binding["result_kind"] == "negative"
+        )
+        negative["expected_error_code"] = "invented_self_reported_rejection"
+        with self.assertRaises(validator.EvidenceError) as raised:
+            validator.validate_semantics(manifest)
+        self.assertEqual("qualification_result_binding", raised.exception.first_failing_gate)
+        self.assertEqual("result_binding_authority_stale", raised.exception.error_code)
 
     def test_historical_slice_7_through_10_evidence_bytes_match_the_cutover_base(self) -> None:
         completed = subprocess.run(
@@ -296,7 +396,6 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             mock.patch.object(collector, "git", side_effect=fake_git),
             mock.patch.object(collector, "preserve_previous_evidence"),
             mock.patch.object(collector, "run_commands", return_value=commands),
-            mock.patch.object(collector, "sha256_file", return_value=sha256),
             mock.patch.object(
                 collector,
                 "fingerprint_implementation_changes",
@@ -312,9 +411,21 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             self.assertEqual(collector.main(), 0)
 
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        Draft202012Validator(schema).validate(
-            json.loads(manifest_path.read_text(encoding="utf-8"))
+        Draft202012Validator(schema).validate(json.loads(manifest_path.read_text(encoding="utf-8")))
+        activated = subprocess.run(
+            [
+                sys.executable, "-X", "utf8", "-B", str(CLI),
+                "global-gate-activate", "--control-store-root", str(root),
+                "--exit-evidence", str(manifest_path),
+                "--activated-at", "2026-08-03T00:00:00Z",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
         )
+        self.assertEqual(activated.returncode, 0, activated.stdout + activated.stderr)
 
 
 if __name__ == "__main__":

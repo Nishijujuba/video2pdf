@@ -654,22 +654,30 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
             or provided_result_pairs != expected_result_pairs
         ):
             raise EvidenceError(
-                "Slice Exit Evidence result bindings differ from the complete result set"
+                "Slice Exit Evidence result bindings differ from the complete result set",
+                first_failing_gate="qualification_result_binding",
+                error_code="result_binding_coverage_invalid",
             )
         command_by_id = {command["test_id"]: command for command in commands}
         for binding in bindings:
             command = command_by_id.get(binding["command_id"])
             if command is None:
                 raise EvidenceError(
-                    "Slice Exit Evidence result binding names an unknown command"
+                    "Slice Exit Evidence result binding names an unknown command",
+                    first_failing_gate="qualification_result_binding",
+                    error_code="result_binding_command_unknown",
                 )
             if binding["test_target"] not in command["command"]:
                 raise EvidenceError(
-                    "Slice Exit Evidence result binding lacks an explicitly executed test target"
+                    "Slice Exit Evidence result binding lacks an explicitly executed test target",
+                    first_failing_gate="qualification_result_binding",
+                    error_code="result_binding_public_tracer_missing",
                 )
         if bindings != expected_bindings:
             raise EvidenceError(
-                "Slice Exit Evidence result bindings differ from the registered authority"
+                "Slice Exit Evidence result bindings differ from the registered authority",
+                first_failing_gate="qualification_result_binding",
+                error_code="result_binding_authority_stale",
             )
     validate_platform_smokes(manifest, config)
     derived_pass = (

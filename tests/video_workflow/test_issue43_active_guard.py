@@ -14,6 +14,7 @@ import fitz
 
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
+from tests.video_workflow.test_issue43_global_gate import Issue43GlobalGateTests
 
 PROJECT_ROOT = acceptance_v2_tests.PROJECT_ROOT
 file_sha = acceptance_v2_tests.file_sha
@@ -238,6 +239,74 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.assertEqual("pass", report["status"])
         self.assertEqual("pass", report["acceptance_report_status"])
         self.assertIn("acceptance_report_v2_authority_current", {item["condition"] for item in report["checked_conditions"]})
+
+    def test_active_guard_accepts_run_record_free_legacy_v2_authority(self) -> None:
+        project_root = new_case_dir(self.id(), label="issue43-active-guard-legacy")
+        wrapper = project_root / ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SOURCE_WRAPPER, wrapper)
+        video_root = project_root / "video"
+        original_write_bytes = Path.write_bytes
+        pdf_bytes = self._valid_pdf_bytes()
+
+        def write_fixture_bytes(path: Path, data: bytes) -> int:
+            if path.name == "final.pdf" and data == b"pdf":
+                data = pdf_bytes
+            return original_write_bytes(path, data)
+
+        fixture = Issue43GlobalGateTests()
+        with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
+            _, paths = fixture.legacy_graph(video_root, compile_wrapper=wrapper)
+        adopted, envelope = fixture.adopt(video_root, paths)
+        self.assertEqual(0, adopted.returncode, adopted.stdout + adopted.stderr)
+        workspace = video_root / "review/acceptance"
+        prepared, _ = run_cli(
+            "acceptance-prepare", "--workspace-root", str(workspace),
+            "--input-binding", envelope["data"]["input_set_path"], "--attempt-number", "1",
+            "--prepared-at", "2026-08-03T00:00:00Z",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        fixture.commit_visual(workspace)
+        materialized, _ = fixture.materialize(workspace)
+        self.assertEqual(0, materialized.returncode, materialized.stdout + materialized.stderr)
+        binding = json.loads((workspace / "input-binding.json").read_text(encoding="utf-8"))
+        final_pdf = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"))
+        main_tex = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "main_tex"))
+        rendered_dir = workspace / "rendered_pages"
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        for item in binding["rendered_pages"]["pages"]:
+            shutil.copy2(item["path"], rendered_dir / f"page_{item['page']:04d}.png")
+        gate = binding["global_gate_authority"]
+        target = write_json(workspace / "delivery_target.json", {
+            "schema_version": "1.0", "stage": "accepted", "video_output_dir": ".",
+            "final_pdf": final_pdf.relative_to(video_root).as_posix(),
+            "main_tex": main_tex.relative_to(video_root).as_posix(),
+            "allowed_artifacts_manifest": paths["manifest"].relative_to(video_root).as_posix(),
+            "acceptance_report": "review/acceptance/acceptance_report.json",
+            "delivery_guard_report": "review/acceptance/delivery_guard_report.json",
+            "compile_report": paths["compile"].relative_to(video_root).as_posix(),
+            "global_gate_authority": {
+                "path": Path(gate["path"]).relative_to(project_root).as_posix(), "sha256": gate["file_sha256"],
+            },
+            "attempt_limit": 3,
+        })
+        session_id = f"session-{uuid.uuid4().hex}"
+        current = write_json(project_root / f".codex/delivery-targets/sessions/{session_id}/current.json", {
+            "schema_version": "1.1", "scope": "session", "session_id": session_id,
+            "turn_id": "turn-fixture", "observed_codex_thread_id": "thread-fixture", "stage": "accepted",
+            "video_output_dir": video_root.relative_to(project_root).as_posix(),
+            "target_file": target.relative_to(project_root).as_posix(), "source_skill": "test-fixture",
+            "started_at": "2026-08-03T00:00:00Z", "updated_at": "2026-08-03T00:00:00Z",
+        })
+        completed = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", str(GUARD), "check", "--project-root", str(project_root),
+             "--current-target", str(current)],
+            cwd=project_root, text=True, encoding="utf-8", capture_output=True, check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        report = json.loads((workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
+        self.assertEqual("pass", report["status"])
+        self.assertFalse((video_root / "workflow/run.json").exists())
 
     def test_active_guard_rejects_v1_fallback(self) -> None:
         report_path = self.workspace / "acceptance_report.json"

@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+from scripts import issue43_exit_evidence_contract as issue43_evidence
 
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
@@ -36,6 +37,49 @@ def write_json(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
     return path
+
+
+def activate_test_global_gate(control_store_root: Path) -> Path:
+    mirror_source = control_store_root / "issue43-policy-source.txt"
+    mirror_target = control_store_root / "issue43-policy-mirror.txt"
+    mirror_source.parent.mkdir(parents=True, exist_ok=True)
+    mirror_source.write_bytes(b"active-global-gate")
+    mirror_target.write_bytes(b"active-global-gate")
+    fixed = hashlib.sha256(b"issue43-test-evidence").hexdigest()
+    artifact = {"role": "test-evidence", "path": "evidence/issue43-test.log", "sha256": fixed}
+    commands = [
+        {
+            "test_id": "issue43-global-gate-tests",
+            "command": ["python", *issue43_evidence.QUALIFICATION_TEST_TARGETS],
+            "expected_exit_code": 0, "actual_exit_code": 0, "log": artifact, "conforms": True,
+        },
+        {
+            "test_id": "issue43-exit-evidence-tests",
+            "command": ["python", "tests.video_workflow.test_issue43_exit_evidence"],
+            "expected_exit_code": 0, "actual_exit_code": 0, "log": artifact, "conforms": True,
+        },
+    ]
+    evidence = write_json(control_store_root / "issue43-global-gate-exit-evidence.json", {
+        "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+        "schema_version": 2, "kind": "video-workflow-exit-evidence", "fingerprint_algorithm": "sha256-raw-v1",
+        "slice": {"number": issue43_evidence.SLICE_NUMBER, "name": issue43_evidence.SLICE_NAME},
+        "slice_base_commit": issue43_evidence.SLICE_BASE_COMMIT, "implementation_commit": "0" * 40,
+        "evidence_paths": ["evidence/global-gate/manifest.json", "evidence/global-gate/tests.log"],
+        "generated_at": "2026-08-02T00:00:00Z", "activation_scope": issue43_evidence.ACTIVATION_SCOPE,
+        "atomic_members": list(issue43_evidence.ATOMIC_MEMBERS),
+        "atomic_member_status": issue43_evidence.ATOMIC_MEMBER_STATUS,
+        "mirror_checks": [{"source_path": str(mirror_source.resolve()), "mirror_path": str(mirror_target.resolve()),
+                           "source_sha256": file_sha(mirror_source), "mirror_sha256": file_sha(mirror_target), "status": "equal"}],
+        "policy_status": issue43_evidence.POLICY_STATUS, "commands": commands,
+        "expected_checkpoints": issue43_evidence.EXPECTED_CHECKPOINTS,
+        "fixtures": [artifact], "results": issue43_evidence.RESULTS,
+        "result_bindings": issue43_evidence.RESULT_BINDINGS,
+        "artifact_fingerprints": [artifact], "unresolved_exceptions": [], "overall_decision": "pass",
+    })
+    GlobalGatePublisher().activate(
+        control_store_root=control_store_root, exit_evidence=evidence, activated_at="2026-08-02T00:00:00Z"
+    )
+    return evidence
 
 
 def run_cli(*args: str) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -275,21 +319,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
         for logical_id, value in quality_values.items():
             path = write_json(quality_dir / f"{logical_id}.json", value)
             quality_inputs[logical_id] = {"path": str(path), "sha256": file_sha(path)}
-        mirror_source = control_store_root / "issue43-policy-source.txt"
-        mirror_target = control_store_root / "issue43-policy-mirror.txt"
-        mirror_source.write_bytes(b"active-global-gate")
-        mirror_target.write_bytes(b"active-global-gate")
-        gate_members = sorted({"catalogs", "projections", "criteria_migration", "schemas", "providers", "validators", "hooks", "skills", "project_instructions", "mirrors", "tests", "activation_documentation"})
-        gate_evidence = write_json(control_store_root / "issue43-global-gate-exit-evidence.json", {
-            "schema_name": "global-gate-exit-evidence", "schema_version": "1.0.0", "cutover": "global_acceptance_v2",
-            "overall_decision": "pass", "atomic_members": gate_members,
-            "atomic_member_status": {member: "active" for member in gate_members},
-            "mirror_checks": [{"source_path": str(mirror_source.resolve()), "mirror_path": str(mirror_target.resolve()),
-                               "source_sha256": file_sha(mirror_source), "mirror_sha256": file_sha(mirror_target), "status": "equal"}],
-            "policy_status": "active_global_gate",
-            "results": {"kernel_v2_pass": True, "legacy_v2_pass": True, "v1_rejected": True, "fallback_rejected": True, "translation_rejected": True, "dual_authority_rejected": True, "contract_gap_rejected": True, "unsupported_identity_rejected": True, "synthetic_legacy_run_rejected": True},
-        })
-        GlobalGatePublisher().activate(control_store_root=control_store_root, exit_evidence=gate_evidence, activated_at="2026-08-02T00:00:00Z")
+        activate_test_global_gate(control_store_root)
         global_gate_authority = GlobalGatePublisher().require_current(control_store_root=control_store_root)
         binding = {
             "schema_name": "acceptance-v2-input-binding", "schema_version": "1.0.0",
@@ -356,7 +386,8 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "allowed_repair_types": ["layout_repair"] if decision == "fail" else [],
             "violation_id": violation_by_rule[criterion] if decision == "fail" else None,
         } for criterion in task["criterion_ids"]]
-        page_by_number = {item["page"]: item for item in binding["rendered_pages"]}
+        bound_pages = binding["rendered_pages"]["pages"] if binding.get("input_track") == "legacy" else binding["rendered_pages"]
+        page_by_number = {item["page"]: item for item in bound_pages}
         pages = [{"page": page, "path": page_by_number[page]["path"], "sha256": page_by_number[page]["sha256"],
                   "decision": "pass", "evidence": [{"artifact_logical_id": f"rendered_page:{page}", "location": f"page:{page}"}]}
                  for page in skeleton["required_visual_pages"]]
@@ -372,7 +403,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 {"logical_id": "final_pdf", "path": next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"),
                  "sha256": next(item["sha256"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf")},
                 *[{"logical_id": f"rendered_page:{item['page']}", "path": item["path"], "sha256": item["sha256"]}
-                  for item in binding["rendered_pages"]],
+                  for item in bound_pages],
             ],
             "criterion_results": results, "visual_scan_evidence": {"pages_checked": pages},
             "cross_phase_findings": cross_findings or [],

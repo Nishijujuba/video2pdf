@@ -7,7 +7,10 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from .errors import AcceptanceV2Rejected, ControlStoreUnavailable, GlobalGateFault
+from jsonschema import Draft202012Validator
+
+from .delivery_quality import DeliveryQualityRegistry
+from .errors import AcceptanceV2Rejected, ContractError, ControlStoreUnavailable, GlobalGateFault
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
@@ -18,23 +21,16 @@ ATOMIC_MEMBERS = frozenset({
     "validators", "hooks", "skills", "project_instructions", "mirrors", "tests",
     "activation_documentation",
 })
-REQUIRED_RESULTS = frozenset({
-    "kernel_v2_pass", "legacy_v2_pass", "v1_rejected", "fallback_rejected",
-    "translation_rejected", "dual_authority_rejected", "contract_gap_rejected",
-    "unsupported_identity_rejected", "synthetic_legacy_run_rejected",
-})
-RESULT_ERROR_CODES = {
-    "kernel_v2_pass": "global_gate_kernel_v2_not_proven",
-    "legacy_v2_pass": "global_gate_legacy_v2_not_proven",
-    "v1_rejected": "global_gate_v1_not_rejected",
-    "fallback_rejected": "global_gate_fallback_not_rejected",
-    "translation_rejected": "global_gate_translation_not_rejected",
-    "dual_authority_rejected": "global_gate_dual_authority_not_rejected",
-    "contract_gap_rejected": "global_gate_contract_gap_not_rejected",
-    "unsupported_identity_rejected": "global_gate_unsupported_identity_not_rejected",
-    "synthetic_legacy_run_rejected": "global_gate_synthetic_legacy_run_not_rejected",
-}
+EXIT_EVIDENCE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas/exit-evidence-manifest.v2.schema.json"
+GLOBAL_GATE_SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
+QUALIFICATION_CONTRACT_SHA256 = "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
 ACTIVATION_FAULT_POINTS = frozenset({"after_intent", "after_authority_write", "after_control_commit"})
+REQUIRED_ACCEPTANCE_QUALITY_INPUTS = frozenset({
+    "precompile_quality_report", "precompile_text_seal", "rendered_text_reconciliation",
+    "final_artifact_seal", "final_compile_manifest", "render_evidence_manifest",
+    "rendered_text_object_inventory", "text_origin_manifest",
+})
+OPTIONAL_ACCEPTANCE_QUALITY_INPUTS = frozenset({"text_equivalence_report"})
 
 
 def _fingerprint(value: dict[str, Any], field: str) -> str:
@@ -53,8 +49,29 @@ def _control_reject(message: str, code: str) -> None:
 
 
 def _validate_policy_evidence(evidence: Any) -> dict[str, Any]:
-    if not isinstance(evidence, dict) or evidence.get("schema_name") != "global-gate-exit-evidence" or evidence.get("schema_version") != "1.0.0" or evidence.get("cutover") != "global_acceptance_v2" or evidence.get("overall_decision") != "pass":
-        _reject("Global Gate Exit Evidence schema or decision is invalid", "exit_evidence_schema", "global_gate_exit_evidence_invalid")
+    if not isinstance(evidence, dict):
+        _reject("Global Gate Exit Evidence schema is invalid", "exit_evidence_schema", "global_gate_exit_evidence_invalid")
+    schema = read_json(EXIT_EVIDENCE_SCHEMA)
+    errors = sorted(Draft202012Validator(schema).iter_errors(evidence), key=lambda item: list(item.absolute_path))
+    if errors:
+        _reject(
+            "Global Gate Exit Evidence schema is invalid",
+            "exit_evidence_schema",
+            "global_gate_exit_evidence_invalid",
+            schema_path="/".join(str(item) for item in errors[0].absolute_path),
+        )
+    if evidence.get("slice") != GLOBAL_GATE_SLICE or evidence.get("overall_decision") != "pass":
+        _reject("Global Gate Exit Evidence is not a passing cutover manifest", "exit_evidence_schema", "global_gate_exit_evidence_invalid")
+    scope = evidence.get("activation_scope")
+    if scope != {
+        "kind": "active_global_gate",
+        "runtime_authority_change": True,
+        "components_activated": ["acceptance_report_v2", "delivery_quality_context"],
+        "legacy_track_authority": "acceptance_report_v2",
+        "platform_kernel_authority": "unchanged",
+        "qualification_contract_sha256": QUALIFICATION_CONTRACT_SHA256,
+    }:
+        _reject("Global Gate activation scope is invalid", "activation_scope", "global_gate_activation_scope_invalid")
     if set(evidence.get("atomic_members", [])) != ATOMIC_MEMBERS:
         _reject("Global Gate atomic publication group is incomplete", "atomic_group", "global_gate_atomic_group_incomplete")
     statuses = evidence.get("atomic_member_status")
@@ -80,12 +97,32 @@ def _validate_policy_evidence(evidence: Any) -> dict[str, Any]:
             _reject("Global Gate managed mirrors are stale", "mirror_checks", "global_gate_mirror_stale", source_path=str(source), mirror_path=str(mirror))
     if evidence.get("policy_status") != "active_global_gate":
         _reject("Global Gate policy status is inactive", "policy_status", "global_gate_policy_inactive")
-    results = evidence.get("results")
-    if not isinstance(results, dict) or set(results) != REQUIRED_RESULTS:
-        _reject("Global Gate policy result set is incomplete", "policy_results", "global_gate_results_incomplete")
-    for result in sorted(REQUIRED_RESULTS):
-        if results[result] is not True:
-            _reject("Global Gate required policy rejection or pass is unproven", "policy_results", RESULT_ERROR_CODES[result], result=result)
+    commands = evidence.get("commands", [])
+    if any(
+        command.get("expected_exit_code") != 0
+        or command.get("actual_exit_code") != 0
+        or command.get("conforms") is not True
+        for command in commands
+    ):
+        _reject("Global Gate qualification command failed", "atomic_group", "global_gate_atomic_member_failed")
+    if any(item.get("blocking") for item in evidence.get("unresolved_exceptions", [])):
+        _reject("Global Gate qualification has an unresolved exception", "contract_gap", "global_gate_contract_gap_not_rejected")
+    result_pairs = {
+        (result_id, result_kind)
+        for result_kind, result_ids in evidence.get("results", {}).items()
+        for result_id in result_ids
+    }
+    bindings = evidence.get("result_bindings", [])
+    if hashlib.sha256(canonical_json_bytes(bindings)).hexdigest() != QUALIFICATION_CONTRACT_SHA256:
+        _reject("Global Gate qualification contract is stale", "qualification_result_binding", "global_gate_qualification_contract_stale")
+    binding_pairs = {(item.get("result_id"), item.get("result_kind")) for item in bindings}
+    if len(bindings) != len(binding_pairs) or binding_pairs != result_pairs:
+        _reject("Global Gate result bindings are incomplete", "qualification_result_coverage", "global_gate_results_incomplete")
+    command_by_id = {item.get("test_id"): item for item in commands}
+    for binding in bindings:
+        command = command_by_id.get(binding.get("command_id"))
+        if command is None or binding.get("test_target") not in command.get("command", []):
+            _reject("Global Gate result lacks a public tracer", "qualification_result_binding", "global_gate_result_tracer_invalid", result=binding.get("result_id"))
     return evidence
 
 
@@ -109,7 +146,8 @@ class LegacyAcceptanceProvider:
     def adopt(
         self, *, video_output_dir: Path, final_pdf: Path, main_tex: Path,
         allowed_artifacts_manifest: Path, compile_report: Path, criteria: Path,
-        dimension_map: Path, rendered_pages_manifest: Path, control_store_root: Path, adopted_at: str,
+        dimension_map: Path, rendered_pages_manifest: Path, quality_inputs_manifest: Path,
+        control_store_root: Path, adopted_at: str,
         output: Path | None = None,
     ) -> dict[str, Any]:
         root = video_output_dir.resolve()
@@ -122,6 +160,7 @@ class LegacyAcceptanceProvider:
             "compile_report": _contained_file(root, compile_report, gate="path_boundary", code="legacy_input_path_escape"),
             "dimension_map": _contained_file(root, dimension_map, gate="path_boundary", code="legacy_input_path_escape"),
             "pages_manifest": _contained_file(root, rendered_pages_manifest, gate="path_boundary", code="legacy_input_path_escape"),
+            "quality_manifest": _contained_file(root, quality_inputs_manifest, gate="path_boundary", code="legacy_input_path_escape"),
         }
         criteria_path = criteria.resolve()
         if not criteria_path.is_file() or not criteria_path.is_relative_to(self.project_root):
@@ -164,6 +203,45 @@ class LegacyAcceptanceProvider:
                 _reject("Rendered page is stale", "rendered_page_freshness", "legacy_rendered_page_stale", page=page.get("page"))
             normalized_pages.append({"page": page["page"], "path": str(path), "sha256": page["sha256"]})
 
+        quality_manifest_value = read_json(local["quality_manifest"])
+        quality_inputs = quality_manifest_value.get("quality_inputs") if isinstance(quality_manifest_value, dict) else None
+        if (
+            not isinstance(quality_manifest_value, dict)
+            or quality_manifest_value.get("schema_name") != "legacy-quality-inputs-manifest"
+            or quality_manifest_value.get("schema_version") != "1.0.0"
+            or not isinstance(quality_inputs, dict)
+            or frozenset(quality_inputs) not in {
+                REQUIRED_ACCEPTANCE_QUALITY_INPUTS,
+                REQUIRED_ACCEPTANCE_QUALITY_INPUTS | OPTIONAL_ACCEPTANCE_QUALITY_INPUTS,
+            }
+        ):
+            _reject("Legacy quality input membership is incomplete", "quality_input_membership", "legacy_quality_input_incomplete")
+        normalized_quality_inputs: dict[str, dict[str, str]] = {}
+        quality_schemas = {
+            "precompile_quality_report": "precompile-quality-report",
+            "precompile_text_seal": "precompile-text-seal",
+            "rendered_text_reconciliation": "rendered-text-reconciliation-report",
+            "final_artifact_seal": "final-artifact-seal",
+            "final_compile_manifest": "final-compile-manifest",
+            "render_evidence_manifest": "render-evidence-manifest",
+            "rendered_text_object_inventory": "rendered-text-object-inventory",
+            "text_origin_manifest": "text-origin-manifest",
+            "text_equivalence_report": "text-equivalence-report",
+        }
+        quality_registry = DeliveryQualityRegistry(self.project_root)
+        for logical_id in sorted(quality_inputs):
+            item = quality_inputs[logical_id]
+            if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+                _reject("Legacy quality input binding is unsupported", "quality_input_contract", "legacy_quality_input_contract_invalid", logical_id=logical_id)
+            path = _contained_file(root, Path(item.get("path", "")), gate="quality_input_freshness", code="legacy_quality_input_stale")
+            if sha256_file(path) != item.get("sha256"):
+                _reject("Legacy quality input fingerprint is stale", "quality_input_freshness", "legacy_quality_input_stale", logical_id=logical_id)
+            try:
+                quality_registry.validate(quality_schemas[logical_id], read_json(path))
+            except (ContractError, KeyError):
+                _reject("Legacy quality input contract is unsupported", "quality_input_contract", "legacy_quality_input_contract_invalid", logical_id=logical_id)
+            normalized_quality_inputs[logical_id] = {"path": str(path), "sha256": item["sha256"]}
+
         artifacts = []
         for logical_id, path in (("final_pdf", local["final_pdf"]), ("main_tex", local["main_tex"])):
             digest = sha256_file(path)
@@ -175,6 +253,8 @@ class LegacyAcceptanceProvider:
             "activation_status": "active_global_gate", "input_track": "legacy",
             "input_set_id": hashlib.sha256(f"{root}\0{adopted_at}".encode()).hexdigest()[:32],
             "video_output_dir": str(root), "artifacts": artifacts,
+            "quality_inputs_manifest": {"path": str(local["quality_manifest"]), "sha256": sha256_file(local["quality_manifest"])},
+            "quality_inputs": normalized_quality_inputs,
             "allowed_artifacts_manifest": {"path": str(local["allowed_manifest"]), "sha256": sha256_file(local["allowed_manifest"])},
             "compile_provenance": {"path": str(local["compile_report"]), "sha256": sha256_file(local["compile_report"]), "classification": "guarded_final_compile"},
             "acceptance_criteria": {"path": str(criteria_path), "sha256": sha256_file(criteria_path)},

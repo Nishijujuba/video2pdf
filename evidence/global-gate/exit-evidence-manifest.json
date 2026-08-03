@@ -8,13 +8,13 @@
     "name": "global-acceptance-v2-gate"
   },
   "slice_base_commit": "64f3fb1638f601b533cb0ee4dec908203c1bef71",
-  "implementation_commit": "5b687fe85c6ccdabac989ec9690e8d8e3d0b913b",
+  "implementation_commit": "79321d6bfafef3acb9e9ece0effa167eaba4e527",
   "evidence_paths": [
     "evidence/global-gate/exit-evidence-manifest.json",
     "evidence/global-gate/logs/issue43-global-gate-tests.log",
     "evidence/global-gate/logs/issue43-exit-evidence-tests.log"
   ],
-  "generated_at": "2026-08-03T01:46:39Z",
+  "generated_at": "2026-08-03T02:54:19Z",
   "activation_scope": {
     "kind": "active_global_gate",
     "runtime_authority_change": true,
@@ -23,7 +23,8 @@
       "delivery_quality_context"
     ],
     "legacy_track_authority": "acceptance_report_v2",
-    "platform_kernel_authority": "unchanged"
+    "platform_kernel_authority": "unchanged",
+    "qualification_contract_sha256": "018bd88d1622db84f3faf1e9bdc647bfa4b7e2c89eb75302868f7c8383bb81ed"
   },
   "atomic_members": [
     "catalogs",
@@ -88,16 +89,21 @@
         "-m",
         "unittest",
         "-v",
-        "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests.test_legacy_adoption_materializes_a_fresh_run_record_free_input_set",
+        "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests.test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility",
+        "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_accepts_run_record_free_legacy_v2_authority",
         "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility",
+        "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_accepts_current_passing_v2_authority",
         "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_workflow_policy_check_accepts_current_atomic_policy_authority",
         "tests.video_workflow.test_issue43_active_guard_policy.Issue43ActiveGuardPolicyTests.test_active_global_gate_policy_and_mirrors_are_synchronized",
-        "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_required_negative_policy_results_have_stable_first_gate_codes",
+        "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_v1_fallback",
+        "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_stale_global_gate_authority",
         "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_mirror_and_policy_status_are_distinct_first_gates",
+        "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_unsupported_identity",
+        "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_contract_gap",
         "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_failed_atomic_member_is_first_rejected_by_atomic_member_status",
         "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed",
-        "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_v1_fallback",
         "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_compatibility_translation",
+        "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_synthetic_run",
         "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_dual_authority",
         "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_reconcile_rejects_changed_published_bytes_and_finishes_intact_publication",
         "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_reconcile_finishes_an_intact_interrupted_report_publication",
@@ -109,7 +115,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-global-gate-tests.log",
-        "sha256": "7e8d47d92341ce0ec6dc16b84e7563fbfeb7e9c95687b8120e179feaa5cf4f44"
+        "sha256": "0c49ec406398913016945fea4605288923d14563c36634d753d848bb48298f3d"
       },
       "conforms": true
     },
@@ -130,7 +136,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-exit-evidence-tests.log",
-        "sha256": "c84d5f89c55edc6d06d8e4af042e8ec19a8d12b88c50c73118e6ee3888d42235"
+        "sha256": "3eae252cafe0251a7b373250c4988c61fc99730cefa30a34b62efdb66dc7d2e4"
       },
       "conforms": true
     }
@@ -151,30 +157,27 @@
   ],
   "fixtures": [
     {
-      "role": "global_gate_exit_evidence_contract",
-      "path": "schemas/global-gate/global-gate-exit-evidence.v1.schema.json",
-      "sha256": "49b1647a3415a2bbb24db1671c4927a94bd64426f37d98c0e690708ec376aaa7"
-    },
-    {
       "role": "legacy_acceptance_input_contract",
       "path": "schemas/global-gate/legacy-acceptance-input-set.v1.schema.json",
-      "sha256": "e80d4755c408e13b2bded34d5168b1320c38910c6d17b058e8b48b620fffde56"
+      "sha256": "193007c438f7a0ea4c588af19d41c99f154f14faabfc1d64cde50531ad87a074"
     },
     {
       "role": "acceptance_report_v2_contract",
       "path": "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
-      "sha256": "57bb61e681a7fc26e6ea1b930f5a55524079524da931ac22cc85796a84fb4efd"
+      "sha256": "de748463d59abaecda32f7b291a1e3ff28ded3e62bc44fc02ef36233f756357a"
     },
     {
       "role": "exit_evidence_manifest_contract",
       "path": "schemas/exit-evidence-manifest.v2.schema.json",
-      "sha256": "66452f18cd174753f8c04d12c9312e7fd1805c37a14b2dadb7e4e543338aba1a"
+      "sha256": "4445b9ff5a9cca182aae234a39c96a8fca5b24a00a00fc705b068ed40a7e6d74"
     }
   ],
   "results": {
     "positive": [
       "legacy_run_record_free_v2_pass",
+      "legacy_active_guard_pass",
       "kernel_v2_pass",
+      "kernel_active_guard_pass",
       "active_global_gate_only",
       "mirrors_current"
     ],
@@ -209,13 +212,25 @@
       "result_id": "legacy_run_record_free_v2_pass",
       "result_kind": "positive",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests.test_legacy_adoption_materializes_a_fresh_run_record_free_input_set"
+      "test_target": "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests.test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility"
+    },
+    {
+      "result_id": "legacy_active_guard_pass",
+      "result_kind": "positive",
+      "command_id": "issue43-global-gate-tests",
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_accepts_run_record_free_legacy_v2_authority"
     },
     {
       "result_id": "kernel_v2_pass",
       "result_kind": "positive",
       "command_id": "issue43-global-gate-tests",
       "test_target": "tests.video_workflow.test_acceptance_v2.AcceptanceV2CliTests.test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility"
+    },
+    {
+      "result_id": "kernel_active_guard_pass",
+      "result_kind": "positive",
+      "command_id": "issue43-global-gate-tests",
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_accepts_current_passing_v2_authority"
     },
     {
       "result_id": "active_global_gate_only",
@@ -233,85 +248,113 @@
       "result_id": "v1_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_required_negative_policy_results_have_stable_first_gate_codes"
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_v1_fallback",
+      "expected_first_failing_gate": "acceptance_authority",
+      "expected_error_code": "acceptance_report_v1_rejected"
     },
     {
       "result_id": "stale_legacy_authority_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_mirror_and_policy_status_are_distinct_first_gates"
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_stale_global_gate_authority",
+      "expected_first_failing_gate": "global_gate_authority",
+      "expected_error_code": "global_gate_authority_stale"
     },
     {
       "result_id": "incomplete_mirrors_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_mirror_and_policy_status_are_distinct_first_gates"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_mirror_and_policy_status_are_distinct_first_gates",
+      "expected_first_failing_gate": "mirror_checks",
+      "expected_error_code": "global_gate_mirror_stale"
     },
     {
       "result_id": "unsupported_identity_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_required_negative_policy_results_have_stable_first_gate_codes"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_unsupported_identity",
+      "expected_first_failing_gate": "input_identity",
+      "expected_error_code": "legacy_provider_unsupported"
     },
     {
       "result_id": "contract_gap_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_required_negative_policy_results_have_stable_first_gate_codes"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_contract_gap",
+      "expected_first_failing_gate": "contract_gap",
+      "expected_error_code": "legacy_contract_gap_blocked"
     },
     {
       "result_id": "failed_atomic_member_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_failed_atomic_member_is_first_rejected_by_atomic_member_status"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_failed_atomic_member_is_first_rejected_by_atomic_member_status",
+      "expected_first_failing_gate": "atomic_member_status",
+      "expected_error_code": "global_gate_atomic_member_failed"
     },
     {
       "result_id": "control_store_unavailable_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed",
+      "expected_first_failing_gate": "control_store",
+      "expected_error_code": "global_gate_control_store_unavailable"
     },
     {
       "result_id": "control_store_corrupt_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed",
+      "expected_first_failing_gate": "control_store",
+      "expected_error_code": "global_gate_control_store_corrupt"
     },
     {
       "result_id": "control_store_locked_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed",
+      "expected_first_failing_gate": "control_store",
+      "expected_error_code": "global_gate_control_store_locked"
     },
     {
       "result_id": "control_store_incompatible_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed",
+      "expected_first_failing_gate": "control_store",
+      "expected_error_code": "global_gate_control_store_incompatible"
     },
     {
       "result_id": "fallback_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_v1_fallback"
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_v1_fallback",
+      "expected_first_failing_gate": "acceptance_authority",
+      "expected_error_code": "acceptance_report_v1_rejected"
     },
     {
       "result_id": "translation_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_compatibility_translation"
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_compatibility_translation",
+      "expected_first_failing_gate": "acceptance_authority",
+      "expected_error_code": "acceptance_compatibility_translation_rejected"
     },
     {
       "result_id": "synthetic_legacy_run_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_required_negative_policy_results_have_stable_first_gate_codes"
+      "test_target": "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_legacy_v2_provider_rejects_synthetic_run",
+      "expected_first_failing_gate": "input_identity",
+      "expected_error_code": "legacy_synthetic_run_rejected"
     },
     {
       "result_id": "dual_authority_rejected",
       "result_kind": "negative",
       "command_id": "issue43-global-gate-tests",
-      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_dual_authority"
+      "test_target": "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests.test_active_guard_rejects_dual_authority",
+      "expected_first_failing_gate": "acceptance_authority",
+      "expected_error_code": "acceptance_dual_authority_rejected"
     },
     {
       "result_id": "patch_publication_recovered",
@@ -458,7 +501,12 @@
     {
       "role": "implementation_artifact",
       "path": "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
-      "sha256": "57bb61e681a7fc26e6ea1b930f5a55524079524da931ac22cc85796a84fb4efd"
+      "sha256": "de748463d59abaecda32f7b291a1e3ff28ded3e62bc44fc02ef36233f756357a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/acceptance-v2-attempt-record.v1.schema.json",
+      "sha256": "707a0daf39de214bbf90683963f7c872f72b7a55eb9e1c5bb827009842b45cb9"
     },
     {
       "role": "implementation_artifact",
@@ -478,7 +526,7 @@
     {
       "role": "implementation_artifact",
       "path": "schemas/exit-evidence-manifest.v2.schema.json",
-      "sha256": "66452f18cd174753f8c04d12c9312e7fd1805c37a14b2dadb7e4e543338aba1a"
+      "sha256": "4445b9ff5a9cca182aae234a39c96a8fca5b24a00a00fc705b068ed40a7e6d74"
     },
     {
       "role": "implementation_artifact",
@@ -488,7 +536,7 @@
     {
       "role": "implementation_artifact",
       "path": "schemas/global-gate/legacy-acceptance-input-set.v1.schema.json",
-      "sha256": "7d754b265b34beced5ed6de025fb97aad2b1cdd640196ec9d435498a883b1005"
+      "sha256": "a33c3a90723ee8d92f9e3f3ab755feac3c8cdcc1ccd097be9ae5a47684a91fa0"
     },
     {
       "role": "implementation_artifact",
@@ -498,22 +546,22 @@
     {
       "role": "implementation_artifact",
       "path": "scripts/issue43_exit_evidence_contract.py",
-      "sha256": "1a3047cf4d47d507c8a56456cd250005bb2b9ba83d02e68e5b30f186b1d2c614"
+      "sha256": "4318af4eeeed618278989b0f76968ff438dd5198bb92d3f63d6f3c7d6c0f89d1"
     },
     {
       "role": "implementation_artifact",
       "path": "scripts/validate_slice_exit_evidence.py",
-      "sha256": "0119912f9cd3ed54dec7232ee5c15068df884fcf5f5e31983ea773a71515dfaf"
+      "sha256": "c847a1530e7047200d9379b6655ccaf4b06fc57215bffb9a5090902df24e3b2a"
     },
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/acceptance_v2.py",
-      "sha256": "dc6c7e8be61b93437dbe7f853b3e04ecd1eb6bdce8b840cfaf4a11a3f717069f"
+      "sha256": "9a3d4d74bf26318a6daffe9e638e6de8d1b4f4fd8813fd19518bc72dc64484b5"
     },
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/cli.py",
-      "sha256": "9f5f9ebfcc4ef263d3675ada76d67ef2bba9788bd2c11be5fa958654ecf1db77"
+      "sha256": "9587eb8a6ee9f9430ea9e83ba4d41aead4d52600eb59b940e8455eff7a3d8782"
     },
     {
       "role": "implementation_artifact",
@@ -523,17 +571,17 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/global_gate.py",
-      "sha256": "10c43911761739fe9396ec3a77ad84a44dc48dce5a50d5bd7ae0c7d006fed852"
+      "sha256": "e58c55b29281f3138cae0d16d7ca28f6b292997bb5a2bdf13596d72c9323a6ec"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_acceptance_v2.py",
-      "sha256": "d9d37ef4113af2a2ae9014b4580b5153958b242cf7e0092d0f85dde39b3c180e"
+      "sha256": "f4b47eb0effed97df1cd76e11e1fa878512c8ed2427446f0b6862b7edc014a29"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_active_guard.py",
-      "sha256": "9f9467989760836c858295b4ba925b3c921d4ed5660c53f8063902e009a4af4b"
+      "sha256": "18c58d8d2470747a29b570469bbba30e8cfdf75756cef80c990aede1485600ca"
     },
     {
       "role": "implementation_artifact",
@@ -543,17 +591,17 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_exit_evidence.py",
-      "sha256": "7d297cad4ae7dbd653c231cba48463695b7cafc9d6e1e3f28c175f55b5e94fe6"
+      "sha256": "1d340b3a101815bae5fb2926cff66f7df7aef9a31d7c60dcdd870b461c81bc5d"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_global_gate.py",
-      "sha256": "c29f12764f87fcf1fdda421d63c38fe7be98049a5f385d4336d1b68838144da4"
+      "sha256": "e735c57cd1c202ae66ead1cf3c3685801c738cf2449e3bb483e4dde433c1c976"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_workflow_policy.py",
-      "sha256": "2090eb7515ba1effd992a70fbad4eea0e0ea22998536941649c5a895321cf98d"
+      "sha256": "116fbc34a06b56fb80cc6a350da82d9861ed828f215999b6cfd68efa327b9b70"
     }
   ],
   "unresolved_exceptions": [],

@@ -232,7 +232,8 @@ class Issue43GlobalGateTests(unittest.TestCase):
     def test_global_gate_activation_is_cas_idempotent_and_preserves_kernel_authority(self) -> None:
         root = new_case_dir(self.id(), label="issue43-cutover")
         manifest = self.activate_gate(root)
-        publisher = GlobalGatePublisher(project_root=root / "git-authority")
+        repository = manifest.parents[2]
+        publisher = GlobalGatePublisher(project_root=repository)
         first = publisher.activate(control_store_root=root, exit_evidence=manifest, activated_at="2026-08-02T00:00:00Z")
         second = publisher.activate(control_store_root=root, exit_evidence=manifest, activated_at="2026-08-02T00:00:00Z")
         self.assertTrue(second["idempotent"])

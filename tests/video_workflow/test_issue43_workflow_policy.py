@@ -249,7 +249,7 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         value["evidence_nonce"] = "different-authority"
         # Keep the contract closed: change a governed result order through a second valid file path.
         value.pop("evidence_nonce")
-        alternate = _write(root / "git-authority/alternate-evidence.json", value)
+        alternate = _write(alternate.parents[2] / "alternate-evidence.json", value)
         # A distinct uncommitted byte identity is rejected before it can reach the CAS fence.
         alternate.write_text(alternate.read_text(encoding="utf-8") + " ", encoding="utf-8")
         completed, envelope = self.activate(root, alternate)

@@ -18,6 +18,7 @@ from video2pdf_workflow_kernel.global_gate_exit_evidence import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+AUTHORITY_ROOT = PROJECT_ROOT / "待删除/kernel-test-runs/issue43-authority"
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -40,11 +41,22 @@ def _write_json(path: Path, value: object) -> None:
 
 def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     """Create a real two-commit Issue 43 authority without mutating the source repo."""
-    repository = root / "git-authority"
+    authority_id = hashlib.sha256(
+        str(root.resolve()).casefold().encode("utf-8")
+    ).hexdigest()[:24]
+    repository = AUTHORITY_ROOT / authority_id
+    origin_path = AUTHORITY_ROOT / f"{authority_id}.origin.json"
     manifest = repository / "evidence/global-gate/exit-evidence-manifest.json"
     if manifest.is_file():
+        origin = json.loads(origin_path.read_text(encoding="utf-8"))
+        if origin.get("control_store_root") != str(root.resolve()):
+            raise AssertionError(f"Issue 43 authority id collision: {authority_id}")
         return repository, manifest
-    repository.mkdir(parents=True)
+    repository.mkdir(parents=True, exist_ok=False)
+    _write_json(
+        origin_path,
+        {"authority_id": authority_id, "control_store_root": str(root.resolve())},
+    )
     _git(repository, "init")
     alternates = repository / ".git/objects/info/alternates"
     alternates.parent.mkdir(parents=True, exist_ok=True)

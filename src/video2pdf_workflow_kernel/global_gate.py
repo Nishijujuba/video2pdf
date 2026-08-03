@@ -11,6 +11,10 @@ from jsonschema import Draft202012Validator
 
 from .delivery_quality import DeliveryQualityRegistry
 from .errors import AcceptanceV2Rejected, ContractError, ControlStoreUnavailable, GlobalGateFault
+from .global_gate_exit_evidence import (
+    ExitEvidenceValidationError,
+    validate_global_gate_exit_evidence,
+)
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
@@ -277,6 +281,13 @@ class LegacyAcceptanceProvider:
 class GlobalGatePublisher:
     """Crash-safe CAS publication for the sole active global delivery gate."""
 
+    def __init__(self, *, project_root: Path | None = None) -> None:
+        self.project_root = (
+            project_root.resolve()
+            if project_root is not None
+            else Path(__file__).resolve().parents[2]
+        )
+
     def _connect(self, root: Path) -> sqlite3.Connection:
         if not root.is_dir():
             _control_reject("Global Gate control-store root is unavailable", "global_gate_control_store_unavailable")
@@ -308,11 +319,18 @@ class GlobalGatePublisher:
     def activate(self, *, control_store_root: Path, exit_evidence: Path, activated_at: str, fault_point: str | None = None) -> dict[str, Any]:
         root = control_store_root.resolve()
         evidence_path = exit_evidence.resolve()
-        if not evidence_path.is_file():
-            _reject("Global Gate Exit Evidence is unavailable", "exit_evidence_schema", "global_gate_exit_evidence_unavailable")
-        evidence = read_json(evidence_path)
-        _validate_policy_evidence(evidence)
-        evidence_sha = sha256_file(evidence_path)
+        try:
+            validated = validate_global_gate_exit_evidence(
+                evidence_path,
+                project_root=self.project_root,
+            )
+        except ExitEvidenceValidationError as exc:
+            _reject(
+                str(exc),
+                exc.first_failing_gate,
+                exc.error_code,
+            )
+        evidence_sha = validated.sha256
         authority_path = root / "active_global_gate.json"
         intent_id = hashlib.sha256((evidence_sha + "\0global_acceptance_v2").encode()).hexdigest()
         authority = {"schema_name": "global-gate-authority", "schema_version": "1.0.0", "generation": 1,

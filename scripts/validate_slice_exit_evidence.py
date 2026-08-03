@@ -19,6 +19,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
+from video2pdf_workflow_kernel.global_gate_exit_evidence import (
+    ExitEvidenceValidationError,
+    validate_global_gate_exit_evidence,
+)
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
@@ -925,6 +929,19 @@ def validate_manifest(
         path = "/".join(str(part) for part in exc.absolute_path) or "$"
         raise EvidenceError(f"Schema validation failed at {path}: {exc.message}") from exc
     if schema_only:
+        return
+    if value.get("slice", {}).get("number") == 11 and not pre_publication:
+        try:
+            validate_global_gate_exit_evidence(
+                manifest_path,
+                project_root=PROJECT_ROOT,
+            )
+        except ExitEvidenceValidationError as exc:
+            raise EvidenceError(
+                str(exc),
+                first_failing_gate=exc.first_failing_gate,
+                error_code=exc.error_code,
+            ) from exc
         return
     validate_semantics(value)
     validate_bindings(value, manifest_path)

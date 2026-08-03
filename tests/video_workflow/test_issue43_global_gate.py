@@ -10,6 +10,7 @@ import unittest
 
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -231,14 +232,11 @@ class Issue43GlobalGateTests(unittest.TestCase):
     def test_global_gate_activation_is_cas_idempotent_and_preserves_kernel_authority(self) -> None:
         root = new_case_dir(self.id(), label="issue43-cutover")
         manifest = self.activate_gate(root)
-        completed, first = _run("global-gate-activate", "--control-store-root", str(root),
-                                "--exit-evidence", str(manifest), "--activated-at", "2026-08-02T00:00:00Z")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        completed, second = _run("global-gate-activate", "--control-store-root", str(root),
-                                 "--exit-evidence", str(manifest), "--activated-at", "2026-08-02T00:00:00Z")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertTrue(second["data"]["idempotent"])
-        authority = json.loads(Path(first["data"]["authority_path"]).read_text(encoding="utf-8"))
+        publisher = GlobalGatePublisher(project_root=root / "git-authority")
+        first = publisher.activate(control_store_root=root, exit_evidence=manifest, activated_at="2026-08-02T00:00:00Z")
+        second = publisher.activate(control_store_root=root, exit_evidence=manifest, activated_at="2026-08-02T00:00:00Z")
+        self.assertTrue(second["idempotent"])
+        authority = json.loads(Path(first["authority_path"]).read_text(encoding="utf-8"))
         self.assertEqual(authority["active_global_gate"], "acceptance_report_v2")
         self.assertEqual(authority["platform_kernel_authority"], "unchanged")
 

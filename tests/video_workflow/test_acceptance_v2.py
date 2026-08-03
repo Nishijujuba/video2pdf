@@ -18,6 +18,7 @@ from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 from scripts import issue43_exit_evidence_contract as issue43_evidence
+from tests.video_workflow._issue43_git_authority import build_current_global_gate_authority
 
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
@@ -40,43 +41,8 @@ def write_json(path: Path, value: object) -> Path:
 
 
 def activate_test_global_gate(control_store_root: Path) -> Path:
-    mirror_source = control_store_root / "issue43-policy-source.txt"
-    mirror_target = control_store_root / "issue43-policy-mirror.txt"
-    mirror_source.parent.mkdir(parents=True, exist_ok=True)
-    mirror_source.write_bytes(b"active-global-gate")
-    mirror_target.write_bytes(b"active-global-gate")
-    fixed = hashlib.sha256(b"issue43-test-evidence").hexdigest()
-    artifact = {"role": "test-evidence", "path": "evidence/issue43-test.log", "sha256": fixed}
-    commands = [
-        {
-            "test_id": "issue43-global-gate-tests",
-            "command": ["python", *issue43_evidence.QUALIFICATION_TEST_TARGETS],
-            "expected_exit_code": 0, "actual_exit_code": 0, "log": artifact, "conforms": True,
-        },
-        {
-            "test_id": "issue43-exit-evidence-tests",
-            "command": ["python", "tests.video_workflow.test_issue43_exit_evidence"],
-            "expected_exit_code": 0, "actual_exit_code": 0, "log": artifact, "conforms": True,
-        },
-    ]
-    evidence = write_json(control_store_root / "issue43-global-gate-exit-evidence.json", {
-        "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
-        "schema_version": 2, "kind": "video-workflow-exit-evidence", "fingerprint_algorithm": "sha256-raw-v1",
-        "slice": {"number": issue43_evidence.SLICE_NUMBER, "name": issue43_evidence.SLICE_NAME},
-        "slice_base_commit": issue43_evidence.SLICE_BASE_COMMIT, "implementation_commit": "0" * 40,
-        "evidence_paths": ["evidence/global-gate/manifest.json", "evidence/global-gate/tests.log"],
-        "generated_at": "2026-08-02T00:00:00Z", "activation_scope": issue43_evidence.ACTIVATION_SCOPE,
-        "atomic_members": list(issue43_evidence.ATOMIC_MEMBERS),
-        "atomic_member_status": issue43_evidence.ATOMIC_MEMBER_STATUS,
-        "mirror_checks": [{"source_path": str(mirror_source.resolve()), "mirror_path": str(mirror_target.resolve()),
-                           "source_sha256": file_sha(mirror_source), "mirror_sha256": file_sha(mirror_target), "status": "equal"}],
-        "policy_status": issue43_evidence.POLICY_STATUS, "commands": commands,
-        "expected_checkpoints": issue43_evidence.EXPECTED_CHECKPOINTS,
-        "fixtures": [artifact], "results": issue43_evidence.RESULTS,
-        "result_bindings": issue43_evidence.RESULT_BINDINGS,
-        "artifact_fingerprints": [artifact], "unresolved_exceptions": [], "overall_decision": "pass",
-    })
-    GlobalGatePublisher().activate(
+    repository, evidence = build_current_global_gate_authority(control_store_root)
+    GlobalGatePublisher(project_root=repository).activate(
         control_store_root=control_store_root, exit_evidence=evidence, activated_at="2026-08-02T00:00:00Z"
     )
     return evidence

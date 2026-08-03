@@ -14,7 +14,9 @@ from jsonschema import Draft202012Validator
 from scripts import issue43_exit_evidence_contract as contract
 from scripts import collect_issue43_exit_evidence as collector
 from scripts import validate_slice_exit_evidence as validator
+from tests.video_workflow._issue43_git_authority import build_current_global_gate_authority
 from tests.video_workflow._test_run import new_case_dir
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -158,28 +160,14 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
 
     def test_manifest_v2_is_the_direct_sha_bound_global_gate_activation_contract(self) -> None:
         root = new_case_dir(self.id(), label="issue43-manifest-v2-activation")
-        manifest_path = root / "exit-evidence-manifest.json"
-        manifest_path.write_text(
-            json.dumps(self.manifest(), sort_keys=True, separators=(",", ":")) + "\n",
-            encoding="utf-8",
+        repository, manifest_path = build_current_global_gate_authority(root)
+        result = GlobalGatePublisher(project_root=repository).activate(
+            control_store_root=root,
+            exit_evidence=manifest_path,
+            activated_at="2026-08-03T00:00:00Z",
         )
-        completed = subprocess.run(
-            [
-                sys.executable, "-X", "utf8", "-B", str(CLI),
-                "global-gate-activate", "--control-store-root", str(root),
-                "--exit-evidence", str(manifest_path),
-                "--activated-at", "2026-08-03T00:00:00Z",
-            ],
-            cwd=PROJECT_ROOT,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        envelope = json.loads(completed.stdout)
         authority = json.loads(
-            Path(envelope["data"]["authority_path"]).read_text(encoding="utf-8")
+            Path(result["authority_path"]).read_text(encoding="utf-8")
         )
         self.assertEqual(
             authority["exit_evidence_sha256"],
@@ -425,7 +413,10 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             capture_output=True,
             check=False,
         )
-        self.assertEqual(activated.returncode, 0, activated.stdout + activated.stderr)
+        self.assertNotEqual(activated.returncode, 0)
+        envelope = json.loads(activated.stdout)
+        self.assertEqual(envelope["data"]["first_failing_gate"], "implementation_lineage")
+        self.assertEqual(envelope["data"]["error_code"], "implementation_commit_invalid")
 
 
 if __name__ == "__main__":

@@ -9,11 +9,20 @@ import subprocess
 import sys
 import unittest
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC = PROJECT_ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
 from tests.video_workflow._test_run import new_case_dir
 from scripts import issue43_exit_evidence_contract as contract
+from tests.video_workflow._issue43_git_authority import (
+    build_current_global_gate_authority,
+    commit_later_implementation_change,
+)
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
 ATOMIC_MEMBERS = {
     "catalogs", "projections", "criteria_migration", "schemas", "providers",
@@ -40,48 +49,15 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
     """Public Seam 4 fixtures start valid and mutate one declared policy invariant."""
 
     def evidence(self, root: Path, **changes: object) -> Path:
-        mirror_source = root / "policy-source.txt"
-        mirror_target = root / "policy-mirror.txt"
-        mirror_source.write_text("active-global-gate\n", encoding="utf-8")
-        mirror_target.write_text("active-global-gate\n", encoding="utf-8")
-        mirror_sha = hashlib.sha256(mirror_source.read_bytes()).hexdigest()
-        value = {
-            "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
-            "schema_version": 2, "kind": "video-workflow-exit-evidence",
-            "fingerprint_algorithm": "sha256-raw-v1",
-            "slice": {"number": contract.SLICE_NUMBER, "name": contract.SLICE_NAME},
-            "slice_base_commit": contract.SLICE_BASE_COMMIT,
-            "implementation_commit": "2" * 40,
-            "evidence_paths": ["evidence/global-gate/exit-evidence-manifest.json", "evidence/global-gate/logs/test.log"],
-            "generated_at": "2026-08-03T00:00:00Z",
-            "activation_scope": deepcopy(contract.ACTIVATION_SCOPE),
-            "atomic_members": list(contract.ATOMIC_MEMBERS),
-            "atomic_member_status": deepcopy(contract.ATOMIC_MEMBER_STATUS),
-            "mirror_checks": [{
-                "source_path": str(mirror_source.resolve()), "mirror_path": str(mirror_target.resolve()),
-                "source_sha256": mirror_sha, "mirror_sha256": mirror_sha, "status": "equal",
-            }],
-            "policy_status": "active_global_gate",
-            "commands": [
-                {"test_id": command_id, "command": list(command), "expected_exit_code": code,
-                 "actual_exit_code": code, "log": {"role": "command_log", "path": f"evidence/global-gate/logs/{command_id}.log", "sha256": "1" * 64}, "conforms": True}
-                for command_id, command, code in contract.COMMANDS
-            ],
-            "expected_checkpoints": deepcopy(contract.EXPECTED_CHECKPOINTS),
-            "fixtures": [{"role": role, "path": path, "sha256": "1" * 64} for role, path in contract.FIXTURE_SPECS],
-            "results": deepcopy(contract.RESULTS),
-            "result_bindings": deepcopy(contract.RESULT_BINDINGS),
-            "artifact_fingerprints": [{"role": "implementation_artifact", "path": "src/video2pdf_workflow_kernel/global_gate.py", "sha256": "1" * 64}],
-            "unresolved_exceptions": [],
-            "overall_decision": "pass",
-        }
+        canonical = PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
+        value = json.loads(canonical.read_text(encoding="utf-8"))
         value.update(changes)
         return _write(root / "exit-evidence.json", value)
 
     def activate(self, root: Path, evidence: Path | None = None, *extra: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         return _run(
             "global-gate-activate", "--control-store-root", str(root),
-            "--exit-evidence", str(evidence or self.evidence(root)),
+            "--exit-evidence", str(evidence or PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
             "--activated-at", "2026-08-03T00:00:00Z", *extra,
         )
 
@@ -151,6 +127,67 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(set(envelope["data"]["active_atomic_members"]), ATOMIC_MEMBERS)
         self.assertTrue(envelope["data"]["current"])
 
+    def test_activation_rejects_nonexistent_implementation_commit_before_cas(self) -> None:
+        # scenario_id: nonexistent_implementation_commit
+        # One contradiction: the otherwise accepted policy-shaped manifest names no Git commit.
+        root = new_case_dir(self.id(), label="issue43-policy")
+        completed, envelope = self.activate(root, self.evidence(root, implementation_commit="2" * 40))
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(envelope["data"]["first_failing_gate"], "implementation_lineage")
+        self.assertEqual(envelope["data"]["error_code"], "implementation_commit_invalid")
+        self.assertFalse((root / "global-gate-control.sqlite3").exists())
+
+    def test_activation_rejects_stale_provenance_before_cas(self) -> None:
+        scenarios = (
+            ("command_log_missing", "command_log", "command_log_missing"),
+            ("command_log_sha", "command_log", "command_log_sha256_stale"),
+            ("command_log_marker", "command_log_provenance", "command_log_provenance_invalid"),
+            ("fixture_sha", "fixture_fingerprint", "fixture_sha256_stale"),
+            ("artifact_fingerprint", "artifact_fingerprints", "artifact_fingerprints_stale"),
+        )
+        for scenario, gate, code in scenarios:
+            with self.subTest(scenario=scenario):
+                root = new_case_dir(f"{self.id()}-{scenario}", label="issue43-policy")
+                value = json.loads((PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json").read_text(encoding="utf-8"))
+                if scenario == "command_log_missing":
+                    value["commands"][0]["log"]["path"] = "evidence/global-gate/logs/absent.log"
+                elif scenario == "command_log_sha":
+                    value["commands"][0]["log"]["sha256"] = "0" * 64
+                elif scenario == "command_log_marker":
+                    log = root / "markerless.log"
+                    log.write_text("tests passed without a commit marker\n", encoding="utf-8")
+                    value["commands"][0]["log"] = {
+                        "role": "command_log",
+                        "path": log.relative_to(PROJECT_ROOT).as_posix(),
+                        "sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+                    }
+                elif scenario == "fixture_sha":
+                    value["fixtures"][0]["sha256"] = "0" * 64
+                else:
+                    value["artifact_fingerprints"][0]["sha256"] = "0" * 64
+                evidence = _write(root / "exit-evidence.json", value)
+                completed, envelope = self.activate(root, evidence)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertEqual(envelope["data"]["first_failing_gate"], gate)
+                self.assertEqual(envelope["data"]["error_code"], code)
+                self.assertFalse((root / "global-gate-control.sqlite3").exists())
+
+    def test_activation_rejects_publication_followed_by_an_implementation_commit(self) -> None:
+        # scenario_id: stale_after_publication; the later implementation commit is the only contradiction.
+        root = new_case_dir(self.id(), label="issue43-policy")
+        repository, manifest = build_current_global_gate_authority(root)
+        commit_later_implementation_change(repository)
+        with self.assertRaises(Exception) as raised:
+            GlobalGatePublisher(project_root=repository).activate(
+                control_store_root=root,
+                exit_evidence=manifest,
+                activated_at="2026-08-03T00:00:00Z",
+            )
+        error = raised.exception
+        self.assertEqual(error.data["first_failing_gate"], "implementation_currentness")
+        self.assertEqual(error.data["error_code"], "evidence_publication_not_current")
+        self.assertFalse((root / "global-gate-control.sqlite3").exists())
+
     def test_failed_atomic_member_is_first_rejected_by_atomic_member_status(self) -> None:
         # target: one inactive member; mutation: status before publication; first gate: atomic_member_status.
         root = new_case_dir(self.id(), label="issue43-policy")
@@ -176,7 +213,7 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
 
     def test_activation_interruption_reconciles_and_exact_retry_is_idempotent(self) -> None:
         root = new_case_dir(self.id(), label="issue43-policy")
-        evidence = self.evidence(root)
+        evidence = PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
         interrupted, envelope = self.activate(root, evidence, "--fault-point", "after_authority_write")
         self.assertNotEqual(interrupted.returncode, 0)
         self.assertEqual(envelope["classification"], "injected_global_gate_fault")
@@ -197,12 +234,12 @@ class Issue43WorkflowPolicyTests(unittest.TestCase):
         # Keep the contract closed: change a governed result order through a second valid file path.
         value.pop("evidence_nonce")
         alternate = _write(root / "alternate-evidence.json", value)
-        # A distinct byte identity with the same semantics is still a competing publication.
+        # A distinct uncommitted byte identity is rejected before it can reach the CAS fence.
         alternate.write_text(alternate.read_text(encoding="utf-8") + " ", encoding="utf-8")
         completed, envelope = self.activate(root, alternate)
         self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual(envelope["data"]["first_failing_gate"], "activation_fencing")
-        self.assertEqual(envelope["data"]["error_code"], "global_gate_authority_conflict")
+        self.assertEqual(envelope["data"]["first_failing_gate"], "evidence_paths")
+        self.assertEqual(envelope["data"]["error_code"], "evidence_paths_stale")
 
     def test_control_store_unavailable_corrupt_locked_and_incompatible_fail_closed(self) -> None:
         unavailable = new_case_dir(f"{self.id()}-unavailable", label="issue43-policy") / "missing"

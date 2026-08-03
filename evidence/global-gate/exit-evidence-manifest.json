@@ -8,13 +8,13 @@
     "name": "global-acceptance-v2-gate"
   },
   "slice_base_commit": "64f3fb1638f601b533cb0ee4dec908203c1bef71",
-  "implementation_commit": "eb93a662930bedc8ba1b9bbaf7ee503179c40e42",
+  "implementation_commit": "ee411bdc94c079295f7a9259c3d5cfc88f0ca45e",
   "evidence_paths": [
     "evidence/global-gate/exit-evidence-manifest.json",
     "evidence/global-gate/logs/issue43-global-gate-tests.log",
     "evidence/global-gate/logs/issue43-exit-evidence-tests.log"
   ],
-  "generated_at": "2026-08-03T03:55:42Z",
+  "generated_at": "2026-08-03T04:52:01Z",
   "activation_scope": {
     "kind": "active_global_gate",
     "runtime_authority_change": true,
@@ -115,7 +115,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-global-gate-tests.log",
-        "sha256": "0c3492bd96077eefe7ae181b76aeec512b9523e53c25ef13973e672030b8dec7"
+        "sha256": "42f2243723757957b11fbc0a56d063f9d4e585c99b208cc74fb0c9a903c32cf3"
       },
       "conforms": true
     },
@@ -136,7 +136,7 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-exit-evidence-tests.log",
-        "sha256": "47bf1b66a2710e93de444befdc7e74787a19a722729b003e99b692fa60fc67d1"
+        "sha256": "b6913dcc93ae79617264c84fa467170d9bbf703285b4a0501d8e4b8a59a17373"
       },
       "conforms": true
     }
@@ -581,7 +581,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/_issue43_git_authority.py",
-      "sha256": "ca3c2185fcc9a0f36d2e4eab1f80071ea71580b398482f55867c1294148c9be7"
+      "sha256": "6a2c865169a44af2cce48f26a0966f2d17977fc47322b67f9ed06559ecd3e422"
     },
     {
       "role": "implementation_artifact",
@@ -606,12 +606,12 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_global_gate.py",
-      "sha256": "de5540a3cea8b13f38253723db57b9bbe9b72476685603be87c8004ac4d14b4b"
+      "sha256": "1f7e15f02df694e1acbd8dd168b39d2b2bf884d379d9666a60f43751ee65c13f"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_workflow_policy.py",
-      "sha256": "e3708703d0fa504c4efa38348e64866e588830da5bed1fafa01f20dcbe376368"
+      "sha256": "8d797b2e6e59187fa828cd6606035d5c78af341da648ac9a11b61f2a7a21dfc6"
     }
   ],
   "unresolved_exceptions": [],

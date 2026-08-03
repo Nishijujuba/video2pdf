@@ -20,8 +20,8 @@ test_activation_interruption_reconciles_and_exact_retry_is_idempotent (tests.vid
 test_competing_activation_is_fenced (tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests.test_competing_activation_is_fenced) ... ok
 
 ----------------------------------------------------------------------
-Ran 20 tests in 264.243s
+Ran 20 tests in 305.748s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: eb93a662930bedc8ba1b9bbaf7ee503179c40e42
+EVIDENCE_IMPLEMENTATION_COMMIT: ee411bdc94c079295f7a9259c3d5cfc88f0ca45e

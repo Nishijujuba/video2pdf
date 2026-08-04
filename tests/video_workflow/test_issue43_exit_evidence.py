@@ -16,6 +16,7 @@ from scripts import issue43_exit_evidence_contract as contract
 from scripts import collect_issue43_exit_evidence as collector
 from scripts import validate_slice_exit_evidence as validator
 from tests.video_workflow._issue43_git_authority import (
+    AUTHORITY_DESCRIPTOR_PATH,
     build_current_global_gate_authority,
     commit_later_implementation_change,
 )
@@ -488,6 +489,53 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         GlobalGatePublisher(project_root=rebuilt_repository).activate(
             control_store_root=root,
             exit_evidence=rebuilt_manifest,
+            activated_at="2026-08-03T00:00:00Z",
+        )
+
+    def test_authority_implementation_boundary_is_never_evidence_only(self) -> None:
+        # scenario_id: implementation_boundary_has_real_fixture_authority
+        # authority input: source implementation commit and qualification contract
+        # derived node: deterministic authority descriptor
+        # boundary: evidence-free implementation commit
+        # expected first gate: no failure; implementation has non-evidence authority
+        root = new_case_dir(self.id(), label="issue43-authority-implementation")
+        repository, manifest_path = build_current_global_gate_authority(root)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        implementation = manifest["implementation_commit"]
+        implementation_paths = set(
+            subprocess.check_output(
+                [
+                    "git", "diff-tree", "--no-commit-id", "--name-only", "-r",
+                    implementation,
+                ],
+                cwd=repository,
+                text=True,
+                encoding="utf-8",
+            ).splitlines()
+        )
+        self.assertIn(AUTHORITY_DESCRIPTOR_PATH, implementation_paths)
+        self.assertTrue(
+            implementation_paths - set(manifest["evidence_paths"]),
+            "implementation commit must contain a non-evidence authority path",
+        )
+        descriptor = json.loads(
+            (repository / AUTHORITY_DESCRIPTOR_PATH).read_text(encoding="utf-8")
+        )
+        source_parent = subprocess.check_output(
+            ["git", "rev-parse", f"{implementation}^"],
+            cwd=repository,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        self.assertEqual(contract.QUALIFICATION_CONTRACT_SHA256, descriptor["qualification_contract_sha256"])
+        self.assertEqual(source_parent, descriptor["source_implementation_commit"])
+        self.assertIn(
+            AUTHORITY_DESCRIPTOR_PATH,
+            {item["path"] for item in manifest["artifact_fingerprints"]},
+        )
+        GlobalGatePublisher(project_root=repository).activate(
+            control_store_root=root,
+            exit_evidence=manifest_path,
             activated_at="2026-08-03T00:00:00Z",
         )
 

@@ -27,6 +27,9 @@ _AUTHORITY_BUILD_LOCK = threading.RLock()
 _CURRENT_AUTHORITIES: dict[str, tuple[Path, Path]] = {}
 _AUTHORITY_GENERATIONS: dict[str, int] = {}
 AUTHORITY_ROOT = PROJECT_ROOT / "待删除/kernel-test-runs/issue43-authority"
+AUTHORITY_DESCRIPTOR_PATH = (
+    "tests/video_workflow/fixtures/generated/issue43-authority-descriptor.json"
+)
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -111,6 +114,8 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     _git(repository, "config", "user.name", "Issue43 Test Authority")
     _git(repository, "config", "user.email", "issue43-authority@example.invalid")
 
+    source_implementation_commit = implementation
+
     # Fixture dependency graph:
     # source authority -> evidence-free implementation boundary -> fully
     # rematerialized evidence closure -> publication commit -> manifest paths.
@@ -123,6 +128,24 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         preserved_evidence.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(source_evidence), str(preserved_evidence))
         _git(repository, "add", "-A", EVIDENCE_PREFIX)
+
+    # This generated descriptor is the fixture's real non-evidence
+    # implementation authority. It is intentionally absent from
+    # ``authority_sources`` because its values are authority-instance data,
+    # rather than source-tree files to mirror. The implementation fingerprint
+    # closure includes it like every other non-evidence change.
+    authority_descriptor = repository / AUTHORITY_DESCRIPTOR_PATH
+    _write_json(
+        authority_descriptor,
+        {
+            "schema_name": "issue43-test-authority-descriptor",
+            "schema_version": 1,
+            "authority_id": authority_id,
+            "qualification_contract_sha256": contract.QUALIFICATION_CONTRACT_SHA256,
+            "source_implementation_commit": source_implementation_commit,
+        },
+    )
+    _git(repository, "add", AUTHORITY_DESCRIPTOR_PATH)
 
     authority_sources = (
         "schemas/exit-evidence-manifest.v2.schema.json",

@@ -13,6 +13,7 @@ from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .delivery_quality import DeliveryQualityRegistry
 from .utils import (
+    AtomicJsonReplaceError,
     canonical_json_bytes,
     normalized_physical_path,
     read_json,
@@ -75,6 +76,45 @@ def _fingerprint_without(value: dict[str, Any], field: str) -> str:
 
 def _id(*parts: object, length: int = 32) -> str:
     return hashlib.sha256("\0".join(str(part) for part in parts).encode()).hexdigest()[:length]
+
+
+def _write_competing_prepared_json(
+    path: Path,
+    value: dict[str, Any],
+    *,
+    mutable_lifecycle_fields: tuple[str, ...] = (),
+) -> None:
+    """Publish pre-CAS bytes without mistaking an exact peer for an I/O fault.
+
+    Windows can deny ``os.replace`` while an identical competing writer briefly
+    reads the destination.  The publication is already satisfied only when the
+    destination proves the same immutable identity.  Every other permission or
+    content conflict remains an error for the caller to fail closed.
+    """
+
+    try:
+        write_json_atomic(path, value)
+        return
+    except AtomicJsonReplaceError as error:
+        original = error.original_error
+        if (
+            error.platform != "nt"
+            or getattr(original, "winerror", None) not in {5, 32, 33}
+        ):
+            raise
+        try:
+            current = read_json(path)
+        except (OSError, ValueError):
+            raise error
+        if (
+            set(current) != set(value)
+            or any(
+                current[field] != item
+                for field, item in value.items()
+                if field not in mutable_lifecycle_fields
+            )
+        ):
+            raise error
 
 
 def _artifact_set_sha(artifacts: list[dict[str, Any]], pages: list[dict[str, Any]]) -> str:
@@ -569,8 +609,12 @@ class AcceptanceV2Provider:
             "canonical_path": str(committed_path),
             "committed_at": committed_at,
         }
-        write_json_atomic(intent_path, intent)
-        write_json_atomic(committed_path, patch)
+        _write_competing_prepared_json(
+            intent_path,
+            intent,
+            mutable_lifecycle_fields=("state",),
+        )
+        _write_competing_prepared_json(committed_path, patch)
         if fault_point == "after_patch_file_prepare":
             raise AcceptanceV2Fault(fault_point)
         with self._connect_control(root) as control:
@@ -609,15 +653,13 @@ class AcceptanceV2Provider:
                 or claim["task_envelope_sha256"] != sha256_file(task_envelope_path)
                 or not prepared_files_match
             ):
-                rejected_intent = {
-                    **intent,
-                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
-                }
-                try:
-                    write_json_atomic(intent_path, rejected_intent)
-                except Exception:
-                    control.execute("ROLLBACK")
-                    raise
+                if existing_same_intent is None:
+                    rejected_intent = {**intent, "state": "ABORTED"}
+                    try:
+                        write_json_atomic(intent_path, rejected_intent)
+                    except Exception:
+                        control.execute("ROLLBACK")
+                        raise
                 control.execute("ROLLBACK")
                 _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
             control.execute(
@@ -634,15 +676,13 @@ class AcceptanceV2Provider:
                 (patch["task_id"],),
             )
             if acquired.rowcount != 1:
-                rejected_intent = {
-                    **intent,
-                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
-                }
-                try:
-                    write_json_atomic(intent_path, rejected_intent)
-                except Exception:
-                    control.execute("ROLLBACK")
-                    raise
+                if existing_same_intent is None:
+                    rejected_intent = {**intent, "state": "ABORTED"}
+                    try:
+                        write_json_atomic(intent_path, rejected_intent)
+                    except Exception:
+                        control.execute("ROLLBACK")
+                        raise
                 control.execute("ROLLBACK")
                 _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
             control.execute("COMMIT")
@@ -926,11 +966,21 @@ class AcceptanceV2Provider:
             _reject("a competing Acceptance Report publication already owns this execution", "report_fencing", "acceptance_report_conflict")
         if pending:
             _reject("acceptance publication intent is non-terminal", "publication_recovery", "acceptance_reconcile_required")
-        write_json_atomic(intent_path, intent)
+        _write_competing_prepared_json(
+            intent_path,
+            intent,
+            mutable_lifecycle_fields=("state",),
+        )
         staged_report_path.parent.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(staged_report_path, report)
-        write_json_atomic(staged_report_path.parent / "attempt-record.json", attempt_record)
-        write_json_atomic(staged_report_path.parent / "repair-ledger.json", ledger)
+        _write_competing_prepared_json(staged_report_path, report)
+        _write_competing_prepared_json(
+            staged_report_path.parent / "attempt-record.json",
+            attempt_record,
+        )
+        _write_competing_prepared_json(
+            staged_report_path.parent / "repair-ledger.json",
+            ledger,
+        )
         if fault_point == "after_report_file_prepare":
             raise AcceptanceV2Fault(fault_point)
         with self._connect_control(root) as control:
@@ -953,15 +1003,13 @@ class AcceptanceV2Provider:
                 (execution["execution_id"],),
             ).fetchone()[0]
             if authority is None or authority["execution_revision"] != execution["execution_revision"] or active_claims or prepared_publications or not prepared_files_match:
-                rejected_intent = {
-                    **intent,
-                    "state": "ABORTED" if existing_same_intent is None else existing_same_intent["state"],
-                }
-                try:
-                    write_json_atomic(intent_path, rejected_intent)
-                except Exception:
-                    control.execute("ROLLBACK")
-                    raise
+                if existing_same_intent is None:
+                    rejected_intent = {**intent, "state": "ABORTED"}
+                    try:
+                        write_json_atomic(intent_path, rejected_intent)
+                    except Exception:
+                        control.execute("ROLLBACK")
+                        raise
                 control.execute("ROLLBACK")
                 _reject("report publication lacks terminal Reviewer Claims or current revision", "report_fencing", "acceptance_report_fencing_stale")
             control.execute(

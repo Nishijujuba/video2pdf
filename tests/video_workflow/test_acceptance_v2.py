@@ -12,6 +12,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
+from unittest import mock
 
 from tests.video_workflow._test_run import new_case_dir
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,8 +24,10 @@ from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 import video2pdf_workflow_kernel.acceptance_v2 as acceptance_v2_module
+import video2pdf_workflow_kernel.utils as utils_module
 from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
 from video2pdf_workflow_kernel.errors import AcceptanceV2Rejected
+from video2pdf_workflow_kernel.utils import AtomicJsonReplaceError
 from scripts import issue43_exit_evidence_contract as issue43_evidence
 from tests.video_workflow._issue43_git_authority import build_current_global_gate_authority
 
@@ -1112,6 +1115,304 @@ class AcceptanceV2CliTests(unittest.TestCase):
             self.assertEqual("report_fencing", loser["data"]["first_failing_gate"])
         pending = [json.loads(path.read_text(encoding="utf-8")) for path in (Path(current["execution_root"]) / "intents").glob("*.json")]
         self.assertFalse(any(item["state"] == "PREPARED" for item in pending))
+
+    def test_exact_competing_patch_publish_survives_windows_replace_denial(self) -> None:
+        workspace, _ = self.prepare()
+        staged_path = self.patch(workspace)
+        original_write = acceptance_v2_module.write_json_atomic
+        denial_injected = False
+
+        def publish_then_deny(path: Path, value: object) -> str:
+            nonlocal denial_injected
+            if (
+                not denial_injected
+                and path.name == "judgment-patch.json"
+                and "committed" in path.parts
+            ):
+                denial_injected = True
+                original_write(path, value)
+                denial = PermissionError(13, "simulated Windows destination sharing denial")
+                denial.winerror = 5
+                raise AtomicJsonReplaceError(
+                    path=path,
+                    temp_path=path.with_name(".simulated.kernel-new"),
+                    original_error=denial,
+                    platform="nt",
+                )
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = publish_then_deny
+        try:
+            result = AcceptanceV2Provider(PROJECT_ROOT).commit_patch(
+                workspace_root=workspace,
+                dimension="visual_quality",
+                patch_path=staged_path,
+                committed_at="2026-08-02T00:10:00Z",
+            )
+        finally:
+            acceptance_v2_module.write_json_atomic = original_write
+
+        self.assertTrue(denial_injected)
+        self.assertFalse(result["idempotent"])
+        execution = json.loads((workspace / "execution.json").read_text(encoding="utf-8"))
+        committed = execution["committed_patches"]["visual_quality"]
+        self.assertEqual(result["patch_sha256"], committed["patch_sha256"])
+
+    def test_competing_prepared_write_rejects_wrong_stage_platform_code_and_content(self) -> None:
+        root = new_case_dir("acceptance-atomic-stage")
+        path = write_json(root / "intent.json", {"intent_id": "same", "state": "PREPARED"})
+        expected = {"intent_id": "same", "state": "PREPARED"}
+
+        with mock.patch.object(
+            acceptance_v2_module,
+            "write_json_atomic",
+            side_effect=PermissionError(13, "pre-replace write denied"),
+        ):
+            with self.assertRaises(PermissionError):
+                acceptance_v2_module._write_competing_prepared_json(path, expected)
+
+        def structured(*, platform: str, winerror: int) -> AtomicJsonReplaceError:
+            original = PermissionError(13, "replace denied")
+            original.winerror = winerror
+            return AtomicJsonReplaceError(
+                path=path,
+                temp_path=path.with_name(".simulated.kernel-new"),
+                original_error=original,
+                platform=platform,
+            )
+
+        for error in (
+            structured(platform="posix", winerror=5),
+            structured(platform="nt", winerror=87),
+        ):
+            with self.subTest(platform=error.platform, winerror=error.original_error.winerror):
+                with mock.patch.object(
+                    acceptance_v2_module, "write_json_atomic", side_effect=error,
+                ):
+                    with self.assertRaises(AtomicJsonReplaceError):
+                        acceptance_v2_module._write_competing_prepared_json(path, expected)
+
+        write_json(path, {"intent_id": "different", "state": "PREPARED"})
+        mismatch = structured(platform="nt", winerror=32)
+        with mock.patch.object(
+            acceptance_v2_module, "write_json_atomic", side_effect=mismatch,
+        ):
+            with self.assertRaises(AtomicJsonReplaceError):
+                acceptance_v2_module._write_competing_prepared_json(path, expected)
+
+        unreadable = structured(platform="nt", winerror=33)
+        missing_path = root / "missing-intent.json"
+        with mock.patch.object(
+            acceptance_v2_module, "write_json_atomic", side_effect=unreadable,
+        ):
+            with self.assertRaises(AtomicJsonReplaceError):
+                acceptance_v2_module._write_competing_prepared_json(
+                    missing_path, expected,
+                )
+
+    def test_atomic_json_stage_classification_and_owned_temp_cleanup(self) -> None:
+        root = new_case_dir("atomic-json-cleanup")
+        target = root / "value.json"
+
+        with mock.patch.object(
+            Path,
+            "open",
+            side_effect=PermissionError(13, "temp open denied"),
+        ):
+            with self.assertRaisesRegex(PermissionError, "temp open denied"):
+                utils_module.write_json_atomic(target, {"value": 0})
+
+        handle = mock.MagicMock()
+        handle.__enter__.return_value = handle
+        handle.write.side_effect = PermissionError(13, "temp write denied")
+        with mock.patch.object(Path, "open", return_value=handle):
+            with self.assertRaisesRegex(PermissionError, "temp write denied"):
+                utils_module.write_json_atomic(target, {"value": 0})
+
+        with mock.patch.object(
+            utils_module.os,
+            "fsync",
+            side_effect=PermissionError(13, "fsync denied"),
+        ):
+            with self.assertRaises(PermissionError):
+                utils_module.write_json_atomic(target, {"value": 1})
+        self.assertEqual([], list(root.glob("*.kernel-new")))
+
+        replace_denial = OSError(
+            13,
+            "replace denied",
+            "source.kernel-new",
+            5,
+            "target.json",
+        )
+        with mock.patch.object(
+            utils_module.os,
+            "replace",
+            side_effect=replace_denial,
+        ):
+            try:
+                utils_module.write_json_atomic(target, {"value": 2})
+            except OSError as caught:
+                raised = caught
+            else:
+                self.fail("replace-stage error did not preserve OSError compatibility")
+        self.assertIsInstance(raised, AtomicJsonReplaceError)
+        self.assertIs(replace_denial, raised.original_error)
+        self.assertEqual(replace_denial.args, raised.args)
+        self.assertEqual(replace_denial.errno, raised.errno)
+        self.assertEqual(replace_denial.winerror, raised.winerror)
+        self.assertEqual(replace_denial.filename, raised.filename)
+        self.assertEqual(replace_denial.filename2, raised.filename2)
+        self.assertEqual(str(replace_denial), str(raised))
+        self.assertIs(replace_denial, raised.__cause__)
+        self.assertEqual([], list(root.glob("*.kernel-new")))
+
+        replace_cleanup_denial = OSError(
+            13,
+            "replace primary",
+            "source.kernel-new",
+            32,
+            "target.json",
+        )
+        with mock.patch.object(
+            utils_module.os,
+            "replace",
+            side_effect=replace_cleanup_denial,
+        ), mock.patch.object(
+            Path,
+            "unlink",
+            side_effect=PermissionError(13, "cleanup secondary"),
+        ):
+            with self.assertRaises(AtomicJsonReplaceError) as raised:
+                utils_module.write_json_atomic(target, {"value": 2})
+        self.assertIs(replace_cleanup_denial, raised.exception.original_error)
+        self.assertIs(replace_cleanup_denial, raised.exception.__cause__)
+        self.assertTrue(
+            any("cleanup secondary" in note for note in raised.exception.__notes__)
+        )
+
+        cleanup_failure = PermissionError(13, "cleanup denied")
+        with mock.patch.object(
+            utils_module.os,
+            "fsync",
+            side_effect=PermissionError(13, "fsync primary"),
+        ), mock.patch.object(Path, "unlink", side_effect=cleanup_failure):
+            with self.assertRaises(PermissionError) as raised:
+                utils_module.write_json_atomic(target, {"value": 3})
+        self.assertIn("fsync primary", str(raised.exception))
+        self.assertTrue(
+            any("temporary cleanup failed" in note for note in raised.exception.__notes__)
+        )
+
+    def test_exact_competing_report_bundle_publish_survives_windows_replace_denial(self) -> None:
+        targets = (
+            "intent",
+            "acceptance_report.json",
+            "attempt-record.json",
+            "repair-ledger.json",
+        )
+        for target in targets:
+            with self.subTest(target=target):
+                workspace, _ = self.prepare()
+                self.commit_visual(workspace)
+                original_write = acceptance_v2_module.write_json_atomic
+                denial_injected = False
+
+                def publish_then_deny(path: Path, value: object) -> str:
+                    nonlocal denial_injected
+                    is_report_intent = (
+                        target == "intent"
+                        and path.parent.name == "intents"
+                        and path.name.startswith("report-")
+                    )
+                    is_staged_member = (
+                        target != "intent"
+                        and "staged-reports" in path.parts
+                        and path.name == target
+                    )
+                    if not denial_injected and (is_report_intent or is_staged_member):
+                        denial_injected = True
+                        original_write(path, value)
+                        denial = OSError(
+                            13,
+                            "simulated report bundle sharing denial",
+                            ".simulated.kernel-new",
+                            32,
+                            str(path),
+                        )
+                        raise AtomicJsonReplaceError(
+                            path=path,
+                            temp_path=path.with_name(".simulated.kernel-new"),
+                            original_error=denial,
+                            platform="nt",
+                        )
+                    return original_write(path, value)
+
+                acceptance_v2_module.write_json_atomic = publish_then_deny
+                try:
+                    result = AcceptanceV2Provider(PROJECT_ROOT).materialize(
+                        workspace_root=workspace,
+                        provider_id="acceptance-v2-provider",
+                        provider_version="1.0.0",
+                        materialized_at="2026-08-02T00:20:00Z",
+                    )
+                finally:
+                    acceptance_v2_module.write_json_atomic = original_write
+
+                self.assertTrue(denial_injected)
+                self.assertFalse(result["idempotent"])
+                self.assertEqual(
+                    result["report_sha256"],
+                    json.loads(
+                        (workspace / "acceptance_report.json").read_text(
+                            encoding="utf-8",
+                        )
+                    )["report_sha256"],
+                )
+
+    def test_competing_report_bundle_conflicting_content_fails_closed(self) -> None:
+        workspace, _ = self.prepare()
+        self.commit_visual(workspace)
+        original_write = acceptance_v2_module.write_json_atomic
+        conflict_injected = False
+
+        def publish_conflict_then_deny(path: Path, value: object) -> str:
+            nonlocal conflict_injected
+            if (
+                not conflict_injected
+                and "staged-reports" in path.parts
+                and path.name == "attempt-record.json"
+            ):
+                conflict_injected = True
+                conflicting = {**value, "attempt_number": value["attempt_number"] + 1}
+                original_write(path, conflicting)
+                denial = OSError(
+                    13,
+                    "simulated conflicting report bundle denial",
+                    ".simulated.kernel-new",
+                    5,
+                    str(path),
+                )
+                raise AtomicJsonReplaceError(
+                    path=path,
+                    temp_path=path.with_name(".simulated.kernel-new"),
+                    original_error=denial,
+                    platform="nt",
+                )
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = publish_conflict_then_deny
+        try:
+            with self.assertRaises(AtomicJsonReplaceError):
+                AcceptanceV2Provider(PROJECT_ROOT).materialize(
+                    workspace_root=workspace,
+                    provider_id="acceptance-v2-provider",
+                    provider_version="1.0.0",
+                    materialized_at="2026-08-02T00:20:00Z",
+                )
+        finally:
+            acceptance_v2_module.write_json_atomic = original_write
+        self.assertTrue(conflict_injected)
 
     def test_distinct_report_writer_is_fenced_while_exact_interrupted_publication_requires_recovery(self) -> None:
         workspace, _ = self.prepare()

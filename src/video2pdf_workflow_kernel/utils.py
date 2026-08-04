@@ -13,6 +13,32 @@ from .evidence import sha256_file
 from .errors import KernelError
 
 
+class AtomicJsonReplaceError(OSError):
+    """An atomic JSON write failed specifically at the final replace stage."""
+
+    def __init__(
+        self,
+        *,
+        path: Path,
+        temp_path: Path,
+        original_error: OSError,
+        platform: str | None = None,
+    ) -> None:
+        super().__init__(*original_error.args)
+        self.errno = original_error.errno
+        self.strerror = original_error.strerror
+        if original_error.filename is not None:
+            self.filename = original_error.filename
+        if original_error.filename2 is not None:
+            self.filename2 = original_error.filename2
+        if hasattr(original_error, "winerror"):
+            self.winerror = original_error.winerror
+        self.path = path
+        self.temp_path = temp_path
+        self.original_error = original_error
+        self.platform = os.name if platform is None else platform
+
+
 def utf16_units(value: str | Path) -> int:
     return len(str(value).encode("utf-16-le")) // 2
 
@@ -31,11 +57,33 @@ def canonical_json_bytes(value: Any) -> bytes:
 def write_json_atomic(path: Path, value: Any) -> str:
     data = canonical_json_bytes(value)
     temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.kernel-new")
-    with temp.open("wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, path)
+    primary_error: BaseException | None = None
+    try:
+        with temp.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.replace(temp, path)
+        except OSError as error:
+            raise AtomicJsonReplaceError(
+                path=path,
+                temp_path=temp,
+                original_error=error,
+            ) from error
+    except BaseException as error:
+        primary_error = error
+        raise
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                "owned atomic JSON temporary cleanup failed: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
     return sha256_bytes(data)
 
 

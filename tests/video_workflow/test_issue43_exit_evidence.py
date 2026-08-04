@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import hashlib
 import json
@@ -14,7 +15,10 @@ from jsonschema import Draft202012Validator
 from scripts import issue43_exit_evidence_contract as contract
 from scripts import collect_issue43_exit_evidence as collector
 from scripts import validate_slice_exit_evidence as validator
-from tests.video_workflow._issue43_git_authority import build_current_global_gate_authority
+from tests.video_workflow._issue43_git_authority import (
+    build_current_global_gate_authority,
+    commit_later_implementation_change,
+)
 from tests.video_workflow._test_run import new_case_dir
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
@@ -449,6 +453,80 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         self.assertEqual(
             authority["exit_evidence_sha256"],
             hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        )
+
+    def test_authority_fixture_rebuilds_a_polluted_cache_before_qualification_reuse(self) -> None:
+        # scenario_id: authority_cache_pollution_rebuild
+        # authority input: source checkout and control-store identity
+        # derived nodes: implementation boundary, evidence closure, publication
+        # boundary: publication commit
+        # target contradiction: cached HEAD no longer equals that publication
+        # rematerialized nodes: complete authority graph in a new repository
+        # expected first gate after repair: no failure; publication paths are exact
+        root = new_case_dir(self.id(), label="issue43-authority-cache-order")
+        repository, manifest_path = build_current_global_gate_authority(root)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        publication_paths = set(
+            subprocess.check_output(
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+                cwd=repository,
+                text=True,
+                encoding="utf-8",
+            ).splitlines()
+        )
+        self.assertEqual(set(manifest["evidence_paths"]), publication_paths)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            concurrent_results = list(
+                executor.map(lambda _: build_current_global_gate_authority(root), range(8))
+            )
+        self.assertEqual({repository}, {item[0] for item in concurrent_results})
+
+        commit_later_implementation_change(repository)
+        rebuilt_repository, rebuilt_manifest = build_current_global_gate_authority(root)
+        self.assertNotEqual(repository, rebuilt_repository)
+        GlobalGatePublisher(project_root=rebuilt_repository).activate(
+            control_store_root=root,
+            exit_evidence=rebuilt_manifest,
+            activated_at="2026-08-03T00:00:00Z",
+        )
+
+    def test_authority_fixture_rebuilds_dirty_uncommitted_evidence(self) -> None:
+        # scenario_id: dirty_evidence_worktree_rebuild
+        # target contradiction: one governed evidence blob differs from HEAD
+        # rematerialized nodes: complete authority graph in a new repository
+        # expected first gate after repair: no failure
+        self._assert_dirty_authority_rebuilt(
+            "evidence/global-gate/logs/issue43-global-gate-tests.log"
+        )
+
+    def test_authority_fixture_rebuilds_dirty_uncommitted_implementation(self) -> None:
+        # scenario_id: dirty_implementation_worktree_rebuild
+        # target contradiction: one tracked implementation file differs from HEAD
+        # rematerialized nodes: complete authority graph in a new repository
+        # expected first gate after repair: no failure
+        self._assert_dirty_authority_rebuilt(
+            "src/video2pdf_workflow_kernel/global_gate.py"
+        )
+
+    def _assert_dirty_authority_rebuilt(self, relative_path: str) -> None:
+        root = new_case_dir(
+            f"{self.id()}-{relative_path}",
+            label="issue43-authority-dirty-worktree",
+        )
+        repository, _ = build_current_global_gate_authority(root)
+        dirty_path = repository / relative_path
+        dirty_path.write_text(
+            dirty_path.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+
+        rebuilt_repository, rebuilt_manifest = build_current_global_gate_authority(root)
+        self.assertNotEqual(repository, rebuilt_repository)
+        GlobalGatePublisher(project_root=rebuilt_repository).activate(
+            control_store_root=root,
+            exit_evidence=rebuilt_manifest,
+            activated_at="2026-08-03T00:00:00Z",
         )
 
     def test_negative_result_bindings_require_public_failure_diagnostics(self) -> None:

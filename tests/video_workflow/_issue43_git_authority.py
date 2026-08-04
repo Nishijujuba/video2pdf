@@ -6,9 +6,12 @@ from copy import deepcopy
 from pathlib import Path
 import shutil
 import subprocess
+import threading
+import uuid
 
 from scripts import issue43_exit_evidence_contract as contract
 from video2pdf_workflow_kernel.evidence import (
+    EvidenceSupportError,
     fingerprint_implementation_changes,
     sha256_git_blob,
 )
@@ -19,6 +22,10 @@ from video2pdf_workflow_kernel.global_gate_exit_evidence import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_AUTHORITY_SESSION_ID = uuid.uuid4().hex
+_AUTHORITY_BUILD_LOCK = threading.RLock()
+_CURRENT_AUTHORITIES: dict[str, tuple[Path, Path]] = {}
+_AUTHORITY_GENERATIONS: dict[str, int] = {}
 AUTHORITY_ROOT = PROJECT_ROOT / "待删除/kernel-test-runs/issue43-authority"
 
 
@@ -42,26 +49,44 @@ def _write_json(path: Path, value: object) -> None:
 
 def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     """Create a real two-commit Issue 43 authority without mutating the source repo."""
-    authority_id = hashlib.sha256(
+    with _AUTHORITY_BUILD_LOCK:
+        return _build_current_global_gate_authority(root)
+
+
+def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
+    """Materialize one process-isolated authority and reuse it within its test case."""
+    root_identity = str(root.resolve()).casefold()
+    cached = _CURRENT_AUTHORITIES.get(root_identity)
+    if cached is not None and _authority_is_reusable(*cached):
+        return cached
+    _CURRENT_AUTHORITIES.pop(root_identity, None)
+
+    authority_base = hashlib.sha256(
         (
-            str(root.resolve()).casefold()
+            root_identity
             + "\0"
             + contract.QUALIFICATION_CONTRACT_SHA256
-            + "\0spec-gap-v3"
+            + "\0fixture-graph-v4\0"
+            + _AUTHORITY_SESSION_ID
         ).encode("utf-8")
     ).hexdigest()[:24]
+    generation = _AUTHORITY_GENERATIONS.get(root_identity, 0)
+    authority_id = f"{authority_base}-{generation:02d}"
+    while (AUTHORITY_ROOT / authority_id).exists():
+        generation += 1
+        authority_id = f"{authority_base}-{generation:02d}"
+    _AUTHORITY_GENERATIONS[root_identity] = generation + 1
     repository = AUTHORITY_ROOT / authority_id
     origin_path = AUTHORITY_ROOT / f"{authority_id}.origin.json"
     manifest = repository / "evidence/global-gate/exit-evidence-manifest.json"
-    if manifest.is_file():
-        origin = json.loads(origin_path.read_text(encoding="utf-8"))
-        if origin.get("control_store_root") != str(root.resolve()):
-            raise AssertionError(f"Issue 43 authority id collision: {authority_id}")
-        return repository, manifest
     repository.mkdir(parents=True, exist_ok=False)
     _write_json(
         origin_path,
-        {"authority_id": authority_id, "control_store_root": str(root.resolve())},
+        {
+            "authority_id": authority_id,
+            "authority_session_id": _AUTHORITY_SESSION_ID,
+            "control_store_root": str(root.resolve()),
+        },
     )
     _git(repository, "init")
     alternates = repository / ".git/objects/info/alternates"
@@ -85,6 +110,19 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     _git(repository, "checkout", "--detach", implementation)
     _git(repository, "config", "user.name", "Issue43 Test Authority")
     _git(repository, "config", "user.email", "issue43-authority@example.invalid")
+
+    # Fixture dependency graph:
+    # source authority -> evidence-free implementation boundary -> fully
+    # rematerialized evidence closure -> publication commit -> manifest paths.
+    # Preserve source evidence under the disposable fixture's 待删除 boundary,
+    # then remove it from the implementation tree. This makes every governed
+    # member part of the publication commit, including byte-identical files.
+    source_evidence = repository / EVIDENCE_PREFIX
+    if source_evidence.exists():
+        preserved_evidence = repository / "待删除/source-global-gate-evidence"
+        preserved_evidence.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_evidence), str(preserved_evidence))
+        _git(repository, "add", "-A", EVIDENCE_PREFIX)
 
     authority_sources = (
         "schemas/exit-evidence-manifest.v2.schema.json",
@@ -249,7 +287,72 @@ def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
     _write_json(manifest, template)
     _git(repository, "add", "-f", "evidence/global-gate")
     _git(repository, "commit", "-m", "Publish test Global Gate evidence")
+    _CURRENT_AUTHORITIES[root_identity] = (repository, manifest)
     return repository, manifest
+
+
+def _authority_is_reusable(repository: Path, manifest: Path) -> bool:
+    """Accept a cache hit only while its complete publication graph is intact."""
+    if not manifest.is_file():
+        return False
+    try:
+        # The governed cache closure is every tracked file. Preserved source
+        # evidence under 待删除 is intentionally ignored/untracked fixture
+        # history and is outside this authority boundary.
+        if _git(repository, "status", "--porcelain=v1", "--untracked-files=no"):
+            return False
+        value = json.loads(manifest.read_text(encoding="utf-8"))
+        publication_paths = set(
+            filter(
+                None,
+                _git(
+                    repository,
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    "HEAD",
+                ).splitlines(),
+            )
+        )
+        if publication_paths != set(value["evidence_paths"]):
+            return False
+        repository_root = repository.resolve()
+        for relative in value["evidence_paths"]:
+            artifact = (repository / relative).resolve()
+            artifact.relative_to(repository_root)
+            if not artifact.is_file():
+                return False
+            head_blob = _git(repository, "rev-parse", f"HEAD:{relative}")
+            worktree_blob = _git(
+                repository,
+                "hash-object",
+                f"--path={relative}",
+                "--",
+                relative,
+            )
+            if worktree_blob != head_blob:
+                return False
+        parents = _git(repository, "rev-list", "--parents", "-n", "1", "HEAD").split()
+        implementation = value["implementation_commit"]
+        if len(parents) != 2 or parents[1] != implementation:
+            return False
+        expected_fingerprints = fingerprint_implementation_changes(
+            repository,
+            SLICE_BASE_COMMIT,
+            implementation,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
+        return value["artifact_fingerprints"] == expected_fingerprints
+    except (
+        AssertionError,
+        EvidenceSupportError,
+        KeyError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return False
 
 
 def commit_later_implementation_change(repository: Path) -> str:

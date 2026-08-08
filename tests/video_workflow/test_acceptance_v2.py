@@ -11,7 +11,6 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 from unittest import mock
 
 from tests.video_workflow._test_run import new_case_dir
@@ -757,7 +756,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             return original_write(path, value)
 
         acceptance_v2_module.write_json_atomic = blocked_abort_write
-        initial_mtime = intent_path.stat().st_mtime_ns
+        initial_mtime_ns = intent_path.stat().st_mtime_ns
         try:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 reconcile_future = pool.submit(
@@ -766,11 +765,63 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 )
                 self.assertTrue(entered_abort_write.wait(timeout=10))
                 writer_future = pool.submit(run_cli, *writer_arguments)
+                # Deterministic barrier: the writer must re-publish its PREPARED
+                # intent (proving it is blocked on reconcile's BEGIN IMMEDIATE)
+                # before the abort-write barrier is released.
                 deadline = time.monotonic() + 10
-                while intent_path.stat().st_mtime_ns == initial_mtime:
+                while intent_path.stat().st_mtime_ns == initial_mtime_ns:
                     if time.monotonic() >= deadline:
-                        self.fail("writer did not republish PREPARED intent before the barrier deadline")
+                        self.fail(
+                            "writer did not republish its PREPARED intent before the barrier deadline"
+                        )
                     time.sleep(0.01)
+                release_abort_write.set()
+                recovery = reconcile_future.result(timeout=30)
+                writer_completed, writer_envelope = writer_future.result(timeout=30)
+        finally:
+            release_abort_write.set()
+            acceptance_v2_module.write_json_atomic = original_write
+        return recovery, writer_completed, writer_envelope
+
+    def reconcile_while_patch_writer_waits_on_lock(
+        self,
+        workspace: Path,
+        intent_path: Path,
+        writer_arguments: tuple[str, ...],
+    ) -> tuple[dict, subprocess.CompletedProcess[str], dict]:
+        # Patch-side file preparation lives inside the writer's BEGIN IMMEDIATE
+        # transaction, so the writer cannot re-publish the intent file while
+        # reconcile holds the Control Store write lock.  The deterministic
+        # ordering barrier is entered_abort_write: reconcile's BEGIN IMMEDIATE
+        # is proven before the writer is submitted, and the writer stays
+        # lock-blocked until reconcile commits the abort, so the release timing
+        # cannot change the outcome.
+        entered_abort_write = threading.Event()
+        release_abort_write = threading.Event()
+        original_write = acceptance_v2_module.write_json_atomic
+
+        def blocked_abort_write(path: Path, value: object) -> str:
+            if (
+                path.resolve() == intent_path.resolve()
+                and isinstance(value, dict)
+                and value.get("state") == "ABORTED"
+                and not entered_abort_write.is_set()
+            ):
+                entered_abort_write.set()
+                if not release_abort_write.wait(timeout=10):
+                    raise TimeoutError("reconcile abort-write barrier was not released")
+            return original_write(path, value)
+
+        acceptance_v2_module.write_json_atomic = blocked_abort_write
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                reconcile_future = pool.submit(
+                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
+                    workspace_root=workspace,
+                )
+                self.assertTrue(entered_abort_write.wait(timeout=10))
+                writer_future = pool.submit(run_cli, *writer_arguments)
+                self.assertFalse(writer_future.done())
                 release_abort_write.set()
                 recovery = reconcile_future.result(timeout=30)
                 writer_completed, writer_envelope = writer_future.result(timeout=30)
@@ -785,125 +836,63 @@ class AcceptanceV2CliTests(unittest.TestCase):
         intent_path: Path,
         writer_arguments: tuple[str, ...],
     ) -> tuple[subprocess.CompletedProcess[str], dict, dict]:
-        blocker = sqlite3.connect(
-            workspace / "acceptance-control.sqlite3",
-            timeout=30,
-            isolation_level=None,
-        )
-        blocker.execute("BEGIN IMMEDIATE")
-        initial_mtime = intent_path.stat().st_mtime_ns
-        try:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                writer_future = pool.submit(run_cli, *writer_arguments)
-                deadline = time.monotonic() + 10
-                while intent_path.stat().st_mtime_ns == initial_mtime:
-                    if time.monotonic() >= deadline:
-                        self.fail("writer did not reach its first-CAS barrier")
-                    time.sleep(0.01)
-                reconcile_future = pool.submit(
-                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
-                    workspace_root=workspace,
-                )
-                time.sleep(0.2)
-                blocker.execute("COMMIT")
-                writer_completed, writer_envelope = writer_future.result(timeout=30)
-                recovery = reconcile_future.result(timeout=30)
-        finally:
-            try:
-                blocker.execute("ROLLBACK")
-            except sqlite3.OperationalError:
-                pass
-            blocker.close()
+        # Deterministic barrier: the writer's PREPARED republish is proven by
+        # the intent mtime change before the waiting reconcile is submitted, so
+        # reconcile can never abort an intent the writer has not re-published.
+        initial_mtime_ns = intent_path.stat().st_mtime_ns
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer_future = pool.submit(run_cli, *writer_arguments)
+            deadline = time.monotonic() + 10
+            while intent_path.stat().st_mtime_ns == initial_mtime_ns:
+                if time.monotonic() >= deadline:
+                    self.fail(
+                        "writer did not republish its PREPARED intent before the barrier deadline"
+                    )
+                time.sleep(0.01)
+            reconcile_future = pool.submit(
+                AcceptanceV2Provider(PROJECT_ROOT).reconcile,
+                workspace_root=workspace,
+            )
+            writer_completed, writer_envelope = writer_future.result(timeout=30)
+            recovery = reconcile_future.result(timeout=30)
         return writer_completed, writer_envelope, recovery
 
-    def reconcile_then_two_writers_compete_at_reauthorization(
+    def run_rendezvousing_competing_writers(
         self,
-        workspace: Path,
-        intent_path: Path,
-        first_writer: Callable[[], dict],
-        second_writer_arguments: tuple[str, ...],
-    ) -> tuple[dict, AcceptanceV2Rejected, subprocess.CompletedProcess[str], dict]:
-        reconcile_abort_entered = threading.Event()
-        release_reconcile_abort = threading.Event()
-        first_writer_abort_entered = threading.Event()
-        release_first_writer_abort = threading.Event()
-        abort_write_lock = threading.Lock()
-        abort_write_count = 0
-        original_write = acceptance_v2_module.write_json_atomic
+        writer: object,
+    ) -> list[tuple[int, dict]]:
+        # Deterministic rendezvous barrier: both the patch-commit and the
+        # report-materialize publication paths route through
+        # AcceptanceV2Provider._controlled_pending_file_intents immediately
+        # before the first-CAS / file-prepare step, so patching that seam
+        # proves BOTH competing writers are inside their publication attempt
+        # before either is released into the competitive fencing race.  Each
+        # outcome is shaped like a CLI result: (returncode, {"data": ...}).
+        rendezvous = threading.Barrier(2)
+        original_pending = AcceptanceV2Provider._controlled_pending_file_intents
 
-        def blocked_abort_write(path: Path, value: object) -> str:
-            nonlocal abort_write_count
-            if (
-                path.resolve() == intent_path.resolve()
-                and isinstance(value, dict)
-                and value.get("state") == "ABORTED"
-            ):
-                with abort_write_lock:
-                    abort_write_count += 1
-                    current_abort_write = abort_write_count
-                if current_abort_write == 1:
-                    reconcile_abort_entered.set()
-                    if not release_reconcile_abort.wait(timeout=10):
-                        raise TimeoutError("reconcile abort-write barrier was not released")
-                elif current_abort_write == 2:
-                    first_writer_abort_entered.set()
-                    if not release_first_writer_abort.wait(timeout=10):
-                        raise TimeoutError("first-writer abort-write barrier was not released")
-            return original_write(path, value)
-
-        acceptance_v2_module.write_json_atomic = blocked_abort_write
-        initial_mtime = intent_path.stat().st_mtime_ns
-        intent_id = json.loads(intent_path.read_text(encoding="utf-8"))["intent_id"]
-        try:
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                reconcile_future = pool.submit(
-                    AcceptanceV2Provider(PROJECT_ROOT).reconcile,
-                    workspace_root=workspace,
+        def rendezvousing_pending(provider: AcceptanceV2Provider, *args: object) -> object:
+            try:
+                rendezvous.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                self.fail(
+                    "competing writers did not rendezvous before the barrier deadline"
                 )
-                self.assertTrue(reconcile_abort_entered.wait(timeout=10))
-                first_writer_future = pool.submit(first_writer)
-                deadline = time.monotonic() + 10
-                while intent_path.stat().st_mtime_ns == initial_mtime:
-                    if time.monotonic() >= deadline:
-                        self.fail("first writer did not reach its reauthorization barrier")
-                    time.sleep(0.01)
-                release_reconcile_abort.set()
-                recovery = reconcile_future.result(timeout=30)
-                self.assertTrue(first_writer_abort_entered.wait(timeout=10))
+            return original_pending(provider, *args)
 
-                before_second_writer = intent_path.stat().st_mtime_ns
-                second_writer_future = pool.submit(run_cli, *second_writer_arguments)
-                deadline = time.monotonic() + 10
-                while (
-                    intent_path.stat().st_mtime_ns == before_second_writer
-                    or json.loads(intent_path.read_text(encoding="utf-8"))["state"] != "PREPARED"
-                ):
-                    if time.monotonic() >= deadline:
-                        self.fail("second writer did not reach its first-CAS barrier")
-                    time.sleep(0.01)
-                control_deadline = time.monotonic() + 5
-                while time.monotonic() < control_deadline and not second_writer_future.done():
-                    with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
-                        controlled = database.execute(
-                            "SELECT state FROM publication_intents WHERE intent_id=?",
-                            (intent_id,),
-                        ).fetchone()
-                    if controlled is not None:
-                        break
-                    time.sleep(0.01)
-                release_first_writer_abort.set()
-                try:
-                    first_writer_future.result(timeout=30)
-                except AcceptanceV2Rejected as error:
-                    first_writer_error = error
-                else:
-                    self.fail("first writer unexpectedly passed stale reauthorization")
-                second_writer_completed, second_writer_envelope = second_writer_future.result(timeout=30)
-        finally:
-            release_reconcile_abort.set()
-            release_first_writer_abort.set()
-            acceptance_v2_module.write_json_atomic = original_write
-        return recovery, first_writer_error, second_writer_completed, second_writer_envelope
+        def run_writer() -> tuple[int, dict]:
+            try:
+                return 0, {"data": writer()}
+            except AcceptanceV2Rejected as error:
+                return 1, {"data": dict(error.data)}
+
+        with mock.patch.object(
+            AcceptanceV2Provider,
+            "_controlled_pending_file_intents",
+            new=rendezvousing_pending,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                return list(pool.map(lambda _: run_writer(), (1, 2)))
 
     def test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility(self) -> None:
         workspace, _ = self.prepare()
@@ -1076,7 +1065,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             envelope["data"] for completed, envelope in outcomes
             if completed.returncode == 0
         ]
-        self.assertIn(len(successful_patches), {1, 2})
+        self.assertIn(len(successful_patches), {1, 2}, outcomes)
         if len(successful_patches) == 2:
             self.assertEqual(
                 [False, True],
@@ -1089,7 +1078,9 @@ class AcceptanceV2CliTests(unittest.TestCase):
                 if completed.returncode != 0
             )
             self.assertIn("first_failing_gate", loser["data"], loser)
-            self.assertEqual("patch_fencing", loser["data"]["first_failing_gate"], loser)
+            # The same-intent loser observes the winner's committed publication
+            # intent row and is rejected before any file preparation.
+            self.assertEqual("publication_recovery", loser["data"]["first_failing_gate"], loser)
         current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
         execution = json.loads((workspace / "execution.json").read_text(encoding="utf-8"))
         committed_path = Path(execution["committed_patches"]["visual_quality"]["path"])
@@ -1115,6 +1106,73 @@ class AcceptanceV2CliTests(unittest.TestCase):
             self.assertEqual("report_fencing", loser["data"]["first_failing_gate"])
         pending = [json.loads(path.read_text(encoding="utf-8")) for path in (Path(current["execution_root"]) / "intents").glob("*.json")]
         self.assertFalse(any(item["state"] == "PREPARED" for item in pending))
+
+    def test_patch_loser_cannot_touch_shared_files_after_winner_first_cas(self) -> None:
+        # scenario_id: patch_loser_fenced_after_winner_first_cas
+        # target invariant: once the winner's first CAS owns the Reviewer Claim,
+        #   a competing loser cannot prepare, abort, or overwrite the shared
+        #   intent file or canonical Patch bytes
+        # barrier: the winner is proven inside _finish_patch_intent (publication
+        #   control commit already committed) before the loser is admitted
+        # expected first gate/code: publication_recovery/acceptance_reconcile_required
+        #   (the same-intent loser observes the winner's committed publication
+        #   intent row and is rejected before any file preparation; only
+        #   reconcile may resolve the in-flight same-intent publication)
+        workspace, _ = self.prepare()
+        staged_path = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(staged_path),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        winner_entered_finish = threading.Event()
+        release_winner = threading.Event()
+        original_finish = AcceptanceV2Provider._finish_patch_intent
+
+        def blocked_finish(provider: AcceptanceV2Provider, *args: object, **kwargs: object) -> None:
+            winner_entered_finish.set()
+            if not release_winner.wait(timeout=60):
+                raise TimeoutError("winner finish barrier was not released")
+            original_finish(provider, *args, **kwargs)
+
+        with mock.patch.object(
+            AcceptanceV2Provider,
+            "_finish_patch_intent",
+            new=blocked_finish,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                winner_future = pool.submit(
+                    AcceptanceV2Provider(PROJECT_ROOT).commit_patch,
+                    workspace_root=workspace,
+                    dimension="visual_quality",
+                    patch_path=staged_path,
+                    committed_at="2026-08-02T00:10:00Z",
+                )
+                self.assertTrue(winner_entered_finish.wait(timeout=20))
+                loser_completed, loser_envelope = run_cli(*arguments)
+                self.assertNotEqual(0, loser_completed.returncode)
+                self.assertEqual(
+                    "publication_recovery",
+                    loser_envelope["data"]["first_failing_gate"],
+                    loser_envelope,
+                )
+                self.assertEqual(
+                    "acceptance_reconcile_required",
+                    loser_envelope["data"]["error_code"],
+                    loser_envelope,
+                )
+                release_winner.set()
+                winner = winner_future.result(timeout=60)
+
+        self.assertFalse(winner["idempotent"])
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        intent_path = next(
+            Path(current["execution_root"]).joinpath("intents").glob("patch-*.json")
+        )
+        self.assertEqual(
+            "COMMITTED",
+            json.loads(intent_path.read_text(encoding="utf-8"))["state"],
+        )
 
     def test_exact_competing_patch_publish_survives_windows_replace_denial(self) -> None:
         workspace, _ = self.prepare()
@@ -1413,6 +1471,41 @@ class AcceptanceV2CliTests(unittest.TestCase):
         finally:
             acceptance_v2_module.write_json_atomic = original_write
         self.assertTrue(conflict_injected)
+
+    def test_patch_interrupted_publication_retry_requires_recovery(self) -> None:
+        # scenario_id: patch_interrupted_publication_retry_recovery
+        # target invariant: a same-intent retry of an interrupted controlled
+        #   Patch publication cannot self-authorize completion; reconcile must
+        #   publish the committed intent before any retry is admitted
+        # mutation seam: after first SQLite commit (publication_intents PREPARED,
+        #   Reviewer Claim COMMITTING), before final publication control commit
+        # expected first gate/code: publication_recovery/acceptance_reconcile_required
+        workspace, _ = self.prepare()
+        patch = self.patch(workspace)
+        arguments = (
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(patch),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        failed, fault = run_cli(
+            *arguments, "--fault-point", "after_patch_intent_control_commit",
+        )
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual("after_patch_intent_control_commit", fault["data"]["fault_point"])
+
+        retried, retry = run_cli(*arguments)
+        self.assertNotEqual(0, retried.returncode)
+        self.assertEqual("publication_recovery", retry["data"]["first_failing_gate"])
+        self.assertEqual("acceptance_reconcile_required", retry["data"]["error_code"])
+
+        reconciled, recovery = run_cli(
+            "acceptance-reconcile", "--workspace-root", str(workspace),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stderr)
+        self.assertEqual(["committed_patch:visual_quality"], recovery["data"]["actions"])
+        completed, envelope = run_cli(*arguments)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertTrue(envelope["data"]["idempotent"])
 
     def test_distinct_report_writer_is_fenced_while_exact_interrupted_publication_requires_recovery(self) -> None:
         workspace, _ = self.prepare()
@@ -1932,26 +2025,39 @@ class AcceptanceV2CliTests(unittest.TestCase):
         current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
         intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
 
-        recovery, writer, writer_envelope = self.reconcile_while_writer_waits_on_abort(
+        recovery, writer, writer_envelope = self.reconcile_while_patch_writer_waits_on_lock(
             workspace, intent_path, arguments,
         )
         self.assertEqual(
             ["aborted_uncommitted:acceptance_patch_publication"],
             recovery["actions"],
         )
-        self.assertNotEqual(0, writer.returncode)
-        self.assertEqual("patch_fencing", writer_envelope["data"]["first_failing_gate"])
-        self.assertEqual("ABORTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
+        self.assertEqual(0, writer.returncode, writer.stderr)
+        self.assertFalse(writer_envelope["data"]["idempotent"])
+        self.assertEqual("COMMITTED", json.loads(intent_path.read_text(encoding="utf-8"))["state"])
         with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
-            self.assertIsNone(database.execute(
+            self.assertEqual(("COMMITTED",), database.execute(
                 "SELECT state FROM publication_intents WHERE intent_id=?",
                 (json.loads(intent_path.read_text(encoding="utf-8"))["intent_id"],),
             ).fetchone())
         retried, retry = run_cli(*arguments)
         self.assertEqual(0, retried.returncode, retried.stderr)
-        self.assertFalse(retry["data"]["idempotent"])
+        self.assertTrue(retry["data"]["idempotent"])
 
     def test_patch_writer_commit_is_not_overwritten_by_waiting_reconcile(self) -> None:
+        # scenario_id: patch_writer_commit_vs_waiting_reconcile
+        # target invariant: a committed patch publication is never overwritten
+        #   by a reconcile that waited behind the writer's first CAS
+        # barrier: the writer's PREPARED republish is proven (intent mtime)
+        #   before the waiting reconcile is submitted
+        # widened oracle: reconcile may legitimately report no action (the
+        #   writer committed and finished first), committed_patch:visual_quality
+        #   (it completed the writer's controlled publication), or
+        #   aborted_uncommitted:acceptance_patch_publication (it aborted the
+        #   control-less intent before the writer's republish landed and the
+        #   writer legitimately re-published and won, because a control-less
+        #   abort is not a tombstone); an abort after the writer's commit is
+        #   impossible because a stored PREPARED row takes the completion path
         workspace, _ = self.prepare()
         patch = self.patch(workspace)
         arguments = (
@@ -1969,7 +2075,14 @@ class AcceptanceV2CliTests(unittest.TestCase):
             workspace, intent_path, arguments,
         )
         self.assertEqual(0, writer.returncode, writer.stderr)
-        self.assertIn(recovery["actions"], ([], ["committed_patch:visual_quality"]))
+        self.assertIn(
+            recovery["actions"],
+            (
+                [],
+                ["committed_patch:visual_quality"],
+                ["aborted_uncommitted:acceptance_patch_publication"],
+            ),
+        )
         intent = json.loads(intent_path.read_text(encoding="utf-8"))
         self.assertEqual("COMMITTED", intent["state"])
         with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
@@ -1980,7 +2093,11 @@ class AcceptanceV2CliTests(unittest.TestCase):
 
     def test_patch_failed_writer_cannot_abort_a_later_competing_writer(self) -> None:
         # scenario_id: patch_reconcile_stale_writer_competing_writer
-        # order: reconcile aborts, W1 fails locked reauthorization, W2 waits on W1's lock
+        # order: reconcile aborts the control-less intent, then two retries compete
+        # target invariant: one retry owns file preparation and CAS; its peer cannot abort it
+        # barrier: both writers rendezvous at the shared pre-first-CAS seam
+        #   (_controlled_pending_file_intents) so each is proven inside its
+        #   publication attempt before either is released into the fencing race
         workspace, _ = self.prepare()
         patch = self.patch(workspace)
         arguments = (
@@ -1993,36 +2110,43 @@ class AcceptanceV2CliTests(unittest.TestCase):
         current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
         intent_path = next((Path(current["execution_root"]) / "intents").glob("patch-*.json"))
 
-        recovery, first_error, second_completed, second_envelope = (
-            self.reconcile_then_two_writers_compete_at_reauthorization(
-                workspace,
-                intent_path,
-                lambda: AcceptanceV2Provider(PROJECT_ROOT).commit_patch(
-                    workspace_root=workspace,
-                    dimension="visual_quality",
-                    patch_path=patch,
-                    committed_at="2026-08-02T00:10:00Z",
-                ),
-                arguments,
-            )
+        recovery = AcceptanceV2Provider(PROJECT_ROOT).reconcile(
+            workspace_root=workspace,
         )
         self.assertEqual(
             ["aborted_uncommitted:acceptance_patch_publication"],
             recovery["actions"],
         )
-        self.assertEqual("patch_fencing", first_error.data["first_failing_gate"])
-        self.assertNotEqual(0, second_completed.returncode)
-        self.assertEqual("patch_fencing", second_envelope["data"]["first_failing_gate"])
-        intent = json.loads(intent_path.read_text(encoding="utf-8"))
-        self.assertEqual("ABORTED", intent["state"])
-        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
-            self.assertIsNone(database.execute(
-                "SELECT state FROM publication_intents WHERE intent_id=?",
-                (intent["intent_id"],),
-            ).fetchone())
-        retried, retry = run_cli(*arguments)
-        self.assertEqual(0, retried.returncode, retried.stderr)
-        self.assertFalse(retry["data"]["idempotent"])
+
+        def writer() -> dict:
+            return AcceptanceV2Provider(PROJECT_ROOT).commit_patch(
+                workspace_root=workspace,
+                dimension="visual_quality",
+                patch_path=patch,
+                committed_at="2026-08-02T00:10:00Z",
+            )
+
+        outcomes = self.run_rendezvousing_competing_writers(writer)
+        successful = [
+            envelope for returncode, envelope in outcomes
+            if returncode == 0
+        ]
+        self.assertIn(len(successful), {1, 2}, outcomes)
+        if len(successful) == 1:
+            loser = next(
+                envelope for returncode, envelope in outcomes
+                if returncode != 0
+            )
+            # The same-intent loser observes the winner's committed publication
+            # intent row and is rejected before any file preparation; only
+            # reconcile may resolve the in-flight same-intent publication.
+            self.assertEqual("publication_recovery", loser["data"]["first_failing_gate"])
+            self.assertEqual("acceptance_reconcile_required", loser["data"]["error_code"])
+        else:
+            self.assertEqual(
+                [False, True],
+                sorted(item["data"]["idempotent"] for item in successful),
+            )
         committed_intent = json.loads(intent_path.read_text(encoding="utf-8"))
         self.assertEqual("COMMITTED", committed_intent["state"])
 
@@ -2324,6 +2448,19 @@ class AcceptanceV2CliTests(unittest.TestCase):
         self.assertFalse(retry["data"]["idempotent"])
 
     def test_report_writer_commit_is_not_overwritten_by_waiting_reconcile(self) -> None:
+        # scenario_id: report_writer_commit_vs_waiting_reconcile
+        # target invariant: a committed report publication is never overwritten
+        #   by a reconcile that waited behind the writer's first CAS
+        # barrier: the writer's PREPARED republish is proven (intent mtime)
+        #   before the waiting reconcile is submitted
+        # widened oracle: reconcile may legitimately report no action (the
+        #   writer committed and finished first), committed_report (it completed
+        #   the writer's controlled publication), or
+        #   aborted_uncommitted:acceptance_report_publication (it aborted the
+        #   control-less intent before the writer's republish landed and the
+        #   writer legitimately re-published and won, because a control-less
+        #   abort is not a tombstone); an abort after the writer's commit is
+        #   impossible because a stored PREPARED row takes the completion path
         workspace, _ = self.prepare()
         self.commit_visual(workspace)
         arguments = (
@@ -2341,7 +2478,14 @@ class AcceptanceV2CliTests(unittest.TestCase):
             workspace, intent_path, arguments,
         )
         self.assertEqual(0, writer.returncode, writer.stderr)
-        self.assertIn(recovery["actions"], ([], ["committed_report"]))
+        self.assertIn(
+            recovery["actions"],
+            (
+                [],
+                ["committed_report"],
+                ["aborted_uncommitted:acceptance_report_publication"],
+            ),
+        )
         intent = json.loads(intent_path.read_text(encoding="utf-8"))
         self.assertEqual("COMMITTED", intent["state"])
         with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
@@ -2352,7 +2496,19 @@ class AcceptanceV2CliTests(unittest.TestCase):
 
     def test_report_failed_writer_cannot_abort_a_later_competing_writer(self) -> None:
         # scenario_id: report_reconcile_stale_writer_competing_writer
-        # order: reconcile aborts, W1 fails locked reauthorization, W2 waits on W1's lock
+        # order: reconcile aborts the control-less intent, then two retries compete
+        # target invariant: one retry owns file preparation and CAS; its peer cannot abort it
+        # widened oracle: exactly one success means the loser was fenced without
+        #   touching the winner's files, either at the report_fencing first-CAS
+        #   gate (it lost the in-transaction race) or at the
+        #   publication_recovery pending-intent gate (it observed the winner's
+        #   in-flight same-intent publication before preparing); two successes
+        #   mean the second writer observed the winner's committed report and
+        #   answered the idempotent retry, because an aborted control-less
+        #   intent is not a tombstone
+        # barrier: both writers rendezvous at the shared pre-first-CAS seam
+        #   (_controlled_pending_file_intents) so each is proven inside its
+        #   publication attempt before either is released into the fencing race
         workspace, _ = self.prepare()
         self.commit_visual(workspace)
         arguments = (
@@ -2365,36 +2521,43 @@ class AcceptanceV2CliTests(unittest.TestCase):
         current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
         intent_path = next((Path(current["execution_root"]) / "intents").glob("report-*.json"))
 
-        recovery, first_error, second_completed, second_envelope = (
-            self.reconcile_then_two_writers_compete_at_reauthorization(
-                workspace,
-                intent_path,
-                lambda: AcceptanceV2Provider(PROJECT_ROOT).materialize(
-                    workspace_root=workspace,
-                    provider_id="acceptance-v2-provider",
-                    provider_version="1.0.0",
-                    materialized_at="2026-08-02T00:20:00Z",
-                ),
-                arguments,
-            )
+        recovery = AcceptanceV2Provider(PROJECT_ROOT).reconcile(
+            workspace_root=workspace,
         )
         self.assertEqual(
             ["aborted_uncommitted:acceptance_report_publication"],
             recovery["actions"],
         )
-        self.assertEqual("report_fencing", first_error.data["first_failing_gate"])
-        self.assertNotEqual(0, second_completed.returncode)
-        self.assertEqual("report_fencing", second_envelope["data"]["first_failing_gate"])
-        intent = json.loads(intent_path.read_text(encoding="utf-8"))
-        self.assertEqual("ABORTED", intent["state"])
-        with sqlite3.connect(workspace / "acceptance-control.sqlite3") as database:
-            self.assertIsNone(database.execute(
-                "SELECT state FROM publication_intents WHERE intent_id=?",
-                (intent["intent_id"],),
-            ).fetchone())
-        retried, retry = run_cli(*arguments)
-        self.assertEqual(0, retried.returncode, retried.stderr)
-        self.assertFalse(retry["data"]["idempotent"])
+
+        def writer() -> dict:
+            return AcceptanceV2Provider(PROJECT_ROOT).materialize(
+                workspace_root=workspace,
+                provider_id="acceptance-v2-provider",
+                provider_version="1.0.0",
+                materialized_at="2026-08-02T00:20:00Z",
+            )
+
+        outcomes = self.run_rendezvousing_competing_writers(writer)
+        successful = [
+            envelope for returncode, envelope in outcomes
+            if returncode == 0
+        ]
+        self.assertIn(len(successful), {1, 2}, outcomes)
+        if len(successful) == 1:
+            loser = next(
+                envelope for returncode, envelope in outcomes
+                if returncode != 0
+            )
+            self.assertIn(
+                loser["data"]["first_failing_gate"],
+                ("report_fencing", "publication_recovery"),
+                loser,
+            )
+        else:
+            self.assertEqual(
+                [False, True],
+                sorted(item["data"]["idempotent"] for item in successful),
+            )
         committed_intent = json.loads(intent_path.read_text(encoding="utf-8"))
         self.assertEqual("COMMITTED", committed_intent["state"])
         guarded, guard = run_cli(

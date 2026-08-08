@@ -165,6 +165,28 @@ def _reject(message: str, gate: str, code: str, **data: Any) -> None:
     )
 
 
+def _abort_intent_and_reject(
+    control: sqlite3.Connection,
+    intent_path: Path,
+    intent: dict[str, Any],
+    message: str,
+) -> None:
+    """Fail closed inside the publication transaction.
+
+    The ABORTED file intent is published before the ROLLBACK so a later
+    reconcile never mistakes the abandoned preparation for a live one; a
+    failed abort publication must roll the transaction back and propagate.
+    """
+    rejected_intent = {**intent, "state": "ABORTED"}
+    try:
+        write_json_atomic(intent_path, rejected_intent)
+    except Exception:
+        control.execute("ROLLBACK")
+        raise
+    control.execute("ROLLBACK")
+    _reject(message, "patch_fencing", "acceptance_patch_fencing_stale")
+
+
 def _require_shape(value: Any, required: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or not required <= set(value):
         _reject(f"{label} has missing fields", "contract_shape", "acceptance_contract_invalid")
@@ -609,14 +631,6 @@ class AcceptanceV2Provider:
             "canonical_path": str(committed_path),
             "committed_at": committed_at,
         }
-        _write_competing_prepared_json(
-            intent_path,
-            intent,
-            mutable_lifecycle_fields=("state",),
-        )
-        _write_competing_prepared_json(committed_path, patch)
-        if fault_point == "after_patch_file_prepare":
-            raise AcceptanceV2Fault(fault_point)
         with self._connect_control(root) as control:
             control.execute("BEGIN IMMEDIATE")
             authority = control.execute("SELECT * FROM execution_authority WHERE singleton=1").fetchone()
@@ -625,6 +639,54 @@ class AcceptanceV2Provider:
                 "SELECT * FROM publication_intents WHERE intent_id=?",
                 (intent["intent_id"],),
             ).fetchone()
+            authority_matches = bool(
+                authority is not None
+                and authority["execution_id"] == execution["execution_id"]
+                and authority["execution_revision"] == execution["execution_revision"]
+                and claim is not None
+                and claim["state"] == "ACTIVE"
+                and claim["claim_generation"] == patch["claim_generation"]
+                and claim["fencing_token"] == patch["fencing_token"]
+                and claim["execution_id"] == execution["execution_id"]
+                and claim["attempt_id"] == patch["attempt_id"]
+                and claim["expected_execution_revision"]
+                == task_envelope["expected_execution_revision"]
+                and claim["coordinator_session"]
+                == task_envelope["coordinator_session"]
+                and claim["declared_write_set_json"]
+                == canonical_json_bytes(
+                    task_envelope["declared_write_set"]
+                ).decode("utf-8")
+                and claim["task_envelope_sha256"]
+                == sha256_file(task_envelope_path)
+            )
+            if existing_same_intent is not None:
+                control.execute("ROLLBACK")
+                _reject(
+                    "an earlier Acceptance publication requires reconciliation",
+                    "publication_recovery",
+                    "acceptance_reconcile_required",
+                )
+            if not authority_matches:
+                control.execute("ROLLBACK")
+                _reject(
+                    "Reviewer Claim fencing authority is stale",
+                    "patch_fencing",
+                    "acceptance_patch_fencing_stale",
+                )
+            try:
+                _write_competing_prepared_json(
+                    intent_path,
+                    intent,
+                    mutable_lifecycle_fields=("state",),
+                )
+                _write_competing_prepared_json(committed_path, patch)
+            except Exception:
+                control.execute("ROLLBACK")
+                raise
+            if fault_point == "after_patch_file_prepare":
+                control.execute("ROLLBACK")
+                raise AcceptanceV2Fault(fault_point)
             current_file_intent = (
                 read_json(intent_path) if intent_path.is_file() else None
             )
@@ -637,31 +699,13 @@ class AcceptanceV2Provider:
                 and current_canonical_patch.get("patch_sha256")
                 == _fingerprint_without(current_canonical_patch, "patch_sha256")
             )
-            if (
-                authority is None
-                or authority["execution_id"] != execution["execution_id"]
-                or authority["execution_revision"] != execution["execution_revision"]
-                or claim is None
-                or claim["state"] != "ACTIVE"
-                or claim["claim_generation"] != patch["claim_generation"]
-                or claim["fencing_token"] != patch["fencing_token"]
-                or claim["execution_id"] != execution["execution_id"]
-                or claim["attempt_id"] != patch["attempt_id"]
-                or claim["expected_execution_revision"] != task_envelope["expected_execution_revision"]
-                or claim["coordinator_session"] != task_envelope["coordinator_session"]
-                or claim["declared_write_set_json"] != canonical_json_bytes(task_envelope["declared_write_set"]).decode("utf-8")
-                or claim["task_envelope_sha256"] != sha256_file(task_envelope_path)
-                or not prepared_files_match
-            ):
-                if existing_same_intent is None:
-                    rejected_intent = {**intent, "state": "ABORTED"}
-                    try:
-                        write_json_atomic(intent_path, rejected_intent)
-                    except Exception:
-                        control.execute("ROLLBACK")
-                        raise
-                control.execute("ROLLBACK")
-                _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
+            if not prepared_files_match:
+                _abort_intent_and_reject(
+                    control,
+                    intent_path,
+                    intent,
+                    "Reviewer Claim fencing authority is stale",
+                )
             control.execute(
                 "INSERT OR IGNORE INTO publication_intents(intent_id,execution_id,expected_revision,kind,state,artifact_sha256,prior_execution_sha256) VALUES(?,?,?,?,?,?,?)",
                 (
@@ -676,15 +720,12 @@ class AcceptanceV2Provider:
                 (patch["task_id"],),
             )
             if acquired.rowcount != 1:
-                if existing_same_intent is None:
-                    rejected_intent = {**intent, "state": "ABORTED"}
-                    try:
-                        write_json_atomic(intent_path, rejected_intent)
-                    except Exception:
-                        control.execute("ROLLBACK")
-                        raise
-                control.execute("ROLLBACK")
-                _reject("Reviewer Claim fencing authority is stale", "patch_fencing", "acceptance_patch_fencing_stale")
+                _abort_intent_and_reject(
+                    control,
+                    intent_path,
+                    intent,
+                    "Reviewer Claim fencing authority is stale",
+                )
             control.execute("COMMIT")
         if fault_point == "after_patch_intent_control_commit":
             raise AcceptanceV2Fault(fault_point)

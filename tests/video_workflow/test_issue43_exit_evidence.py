@@ -5,10 +5,12 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
 from unittest import mock
+import uuid
 
 from jsonschema import Draft202012Validator
 
@@ -16,7 +18,11 @@ from scripts import issue43_exit_evidence_contract as contract
 from scripts import collect_issue43_exit_evidence as collector
 from scripts import validate_slice_exit_evidence as validator
 from tests.video_workflow._issue43_git_authority import (
+    AUTHORITY_ROOT,
     AUTHORITY_DESCRIPTOR_PATH,
+    AUTHORITY_OVERLAY_PATHS,
+    _freeze_authority_overlay,
+    _shared_git_objects_directory,
     build_current_global_gate_authority,
     commit_later_implementation_change,
 )
@@ -538,6 +544,326 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             exit_evidence=manifest_path,
             activated_at="2026-08-03T00:00:00Z",
         )
+
+    def test_authority_fixture_reads_frozen_tree_from_real_gitfile_worktree(self) -> None:
+        # scenario_id: linked_worktree_shared_object_authority
+        # authority input: a frozen source commit reached through a gitfile worktree
+        # derived nodes: alternate object path, implementation, evidence publication
+        # boundary: source HEAD before authority materialization
+        # expected first gate: no failure; the frozen tree remains readable
+        retained = (
+            AUTHORITY_ROOT
+            / "linked-worktree-regressions"
+            / uuid.uuid4().hex
+        )
+        shared_clone = retained / "shared-clone"
+        linked_worktree = retained / "linked-worktree"
+        retained.mkdir(parents=True, exist_ok=False)
+        subprocess.check_call(
+            ["git", "init", str(shared_clone)]
+        )
+        source_objects = _shared_git_objects_directory(PROJECT_ROOT)
+        source_alternates = shared_clone / ".git/objects/info/alternates"
+        source_alternates.parent.mkdir(parents=True, exist_ok=True)
+        source_alternates.write_bytes(
+            str(source_objects).encode("utf-8") + b"\n"
+        )
+        source_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        subprocess.check_call(
+            [
+                "git", "-C", str(shared_clone), "update-ref",
+                "refs/heads/fixture", source_head,
+            ]
+        )
+        subprocess.check_call(
+            [
+                "git", "-C", str(shared_clone), "worktree", "add", "--detach",
+                "--no-checkout", str(linked_worktree), source_head,
+            ]
+        )
+        self.assertTrue((linked_worktree / ".git").is_file())
+        resolved_objects = _shared_git_objects_directory(linked_worktree)
+        self.assertEqual(
+            (shared_clone / ".git/objects").resolve(),
+            resolved_objects,
+        )
+
+        root = new_case_dir(self.id(), label="issue43-gitfile-authority")
+        repository, manifest_path = build_current_global_gate_authority(
+            root,
+            source_git_repository=linked_worktree,
+        )
+        self.assertEqual(
+            str(resolved_objects),
+            (repository / ".git/objects/info/alternates")
+            .read_text(encoding="utf-8")
+            .strip(),
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        descriptor = json.loads(
+            subprocess.check_output(
+                [
+                    "git", "show",
+                    f"{manifest['implementation_commit']}:{AUTHORITY_DESCRIPTOR_PATH}",
+                ],
+                cwd=repository,
+                text=True,
+                encoding="utf-8",
+            )
+        )
+        frozen_commit = descriptor["source_implementation_commit"]
+        frozen_contract = subprocess.check_output(
+            [
+                "git", "show",
+                f"{frozen_commit}:scripts/issue43_exit_evidence_contract.py",
+            ],
+            cwd=repository,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            subprocess.check_output(
+                [
+                    "git", "show",
+                    f"{frozen_commit}:scripts/issue43_exit_evidence_contract.py",
+                ],
+                cwd=linked_worktree,
+                text=True,
+                encoding="utf-8",
+            ),
+            frozen_contract,
+        )
+
+        subprocess.check_call(
+            ["git", "config", "user.name", "Issue43 Source Fixture"],
+            cwd=linked_worktree,
+        )
+        subprocess.check_call(
+            ["git", "config", "user.email", "issue43-source@example.invalid"],
+            cwd=linked_worktree,
+        )
+        subprocess.check_call(
+            ["git", "read-tree", "HEAD"],
+            cwd=linked_worktree,
+        )
+        advanced_path = linked_worktree / "src/issue43_cache_freshness.py"
+        advanced_path.parent.mkdir(parents=True, exist_ok=True)
+        advanced_path.write_text("SOURCE_HEAD_ADVANCED = True\n", encoding="utf-8")
+        subprocess.check_call(
+            ["git", "add", "src/issue43_cache_freshness.py"],
+            cwd=linked_worktree,
+        )
+        subprocess.check_call(
+            ["git", "commit", "-m", "Advance fixture source implementation"],
+            cwd=linked_worktree,
+        )
+        advanced_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=linked_worktree,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+
+        rebuilt_repository, rebuilt_manifest_path = (
+            build_current_global_gate_authority(
+                root,
+                source_git_repository=linked_worktree,
+            )
+        )
+        self.assertNotEqual(repository, rebuilt_repository)
+        rebuilt_manifest = json.loads(
+            rebuilt_manifest_path.read_text(encoding="utf-8")
+        )
+        rebuilt_implementation = rebuilt_manifest["implementation_commit"]
+        self.assertEqual(
+            advanced_head,
+            subprocess.check_output(
+                ["git", "rev-parse", f"{rebuilt_implementation}^"],
+                cwd=rebuilt_repository,
+                text=True,
+                encoding="utf-8",
+            ).strip(),
+        )
+        rebuilt_descriptor = json.loads(
+            subprocess.check_output(
+                [
+                    "git", "show",
+                    f"{rebuilt_implementation}:{AUTHORITY_DESCRIPTOR_PATH}",
+                ],
+                cwd=rebuilt_repository,
+                text=True,
+                encoding="utf-8",
+            )
+        )
+        self.assertEqual(
+            advanced_head,
+            rebuilt_descriptor["source_implementation_commit"],
+        )
+        self.assertIn(
+            "src/issue43_cache_freshness.py",
+            {item["path"] for item in rebuilt_manifest["artifact_fingerprints"]},
+        )
+        rebuilt_origin = json.loads(
+            (AUTHORITY_ROOT / f"{rebuilt_repository.name}.origin.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(advanced_head, rebuilt_origin["source_head"])
+        self.assertEqual(
+            advanced_head,
+            rebuilt_origin["source_implementation_commit"],
+        )
+
+    def test_authority_overlay_identity_and_bytes_refresh_the_cache(self) -> None:
+        # scenario_id: authority_overlay_cache_freshness
+        # authority inputs: frozen Git source plus complete WIP overlay bytes
+        # boundaries: cache lookup, implementation commit, evidence publication
+        # expected first gate: no failure; each overlay identity is materialized
+        retained = AUTHORITY_ROOT / "overlay-regressions" / uuid.uuid4().hex
+        first_overlay = retained / "overlay-one"
+        second_overlay = retained / "overlay-two"
+        for overlay in (first_overlay, second_overlay):
+            for relative in AUTHORITY_OVERLAY_PATHS:
+                target = overlay / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(PROJECT_ROOT / relative, target)
+
+        root = new_case_dir(self.id(), label="issue43-overlay-authority")
+        first_repository, first_manifest_path = build_current_global_gate_authority(
+            root,
+            authority_overlay_root=first_overlay,
+        )
+        second_repository, second_manifest_path = build_current_global_gate_authority(
+            root,
+            authority_overlay_root=second_overlay,
+        )
+        self.assertNotEqual(first_repository, second_repository)
+        first_origin = json.loads(
+            (AUTHORITY_ROOT / f"{first_repository.name}.origin.json")
+            .read_text(encoding="utf-8")
+        )
+        second_origin = json.loads(
+            (AUTHORITY_ROOT / f"{second_repository.name}.origin.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertNotEqual(
+            first_origin["authority_overlay_root"],
+            second_origin["authority_overlay_root"],
+        )
+        self.assertEqual(
+            first_origin["authority_overlay_sha256"],
+            second_origin["authority_overlay_sha256"],
+        )
+
+        target_relative = "src/video2pdf_workflow_kernel/global_gate.py"
+        target_path = second_overlay / target_relative
+        target_path.write_bytes(
+            target_path.read_bytes()
+            + b"\n# retained Issue 43 overlay cache freshness probe\n"
+        )
+        third_repository, third_manifest_path = build_current_global_gate_authority(
+            root,
+            authority_overlay_root=second_overlay,
+        )
+        self.assertNotEqual(second_repository, third_repository)
+        second_manifest = json.loads(
+            second_manifest_path.read_text(encoding="utf-8")
+        )
+        third_manifest = json.loads(
+            third_manifest_path.read_text(encoding="utf-8")
+        )
+        second_fingerprints = {
+            item["path"]: item["sha256"]
+            for item in second_manifest["artifact_fingerprints"]
+        }
+        third_fingerprints = {
+            item["path"]: item["sha256"]
+            for item in third_manifest["artifact_fingerprints"]
+        }
+        expected_target_sha256 = hashlib.sha256(target_path.read_bytes()).hexdigest()
+        self.assertNotEqual(
+            second_fingerprints[target_relative],
+            third_fingerprints[target_relative],
+        )
+        self.assertEqual(
+            expected_target_sha256,
+            third_fingerprints[target_relative],
+        )
+        third_implementation = third_manifest["implementation_commit"]
+        self.assertEqual(
+            target_path.read_text(encoding="utf-8"),
+            subprocess.check_output(
+                ["git", "show", f"{third_implementation}:{target_relative}"],
+                cwd=third_repository,
+                text=True,
+                encoding="utf-8",
+            ),
+        )
+        third_descriptor = json.loads(
+            subprocess.check_output(
+                [
+                    "git", "show",
+                    f"{third_implementation}:{AUTHORITY_DESCRIPTOR_PATH}",
+                ],
+                cwd=third_repository,
+                text=True,
+                encoding="utf-8",
+            )
+        )
+        third_origin = json.loads(
+            (AUTHORITY_ROOT / f"{third_repository.name}.origin.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertNotEqual(
+            second_origin["authority_overlay_sha256"],
+            third_origin["authority_overlay_sha256"],
+        )
+        self.assertEqual(
+            third_origin["authority_overlay_sha256"],
+            third_descriptor["authority_overlay_sha256"],
+        )
+
+    def test_git_and_overlay_source_resolution_fail_closed(self) -> None:
+        missing_repository = (
+            new_case_dir(self.id(), label="issue43-missing-git-common-dir")
+            / "missing"
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "cannot resolve shared Git directory",
+        ):
+            _shared_git_objects_directory(missing_repository)
+
+        root = new_case_dir(self.id(), label="issue43-nondirectory-objects")
+        common_dir = root / "common"
+        common_dir.mkdir()
+        (common_dir / "objects").write_text("not a directory\n", encoding="utf-8")
+        completed = subprocess.CompletedProcess(
+            args=["git", "rev-parse", "--git-common-dir"],
+            returncode=0,
+            stdout=str(common_dir),
+            stderr="",
+        )
+        with mock.patch("subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "shared Git object path is not a directory",
+            ):
+                _shared_git_objects_directory(PROJECT_ROOT)
+
+        incomplete_overlay = new_case_dir(
+            self.id(),
+            label="issue43-incomplete-authority-overlay",
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "authority overlay path is unavailable",
+        ):
+            _freeze_authority_overlay(incomplete_overlay)
 
     def test_authority_fixture_rebuilds_dirty_uncommitted_evidence(self) -> None:
         # scenario_id: dirty_evidence_worktree_rebuild

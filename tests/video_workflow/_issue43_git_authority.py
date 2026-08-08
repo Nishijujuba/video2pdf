@@ -30,6 +30,20 @@ AUTHORITY_ROOT = PROJECT_ROOT / "待删除/kernel-test-runs/issue43-authority"
 AUTHORITY_DESCRIPTOR_PATH = (
     "tests/video_workflow/fixtures/generated/issue43-authority-descriptor.json"
 )
+AUTHORITY_OVERLAY_PATHS = (
+    "schemas/exit-evidence-manifest.v2.schema.json",
+    "schemas/delivery-quality/registry.v1.json",
+    "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
+    "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
+    "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
+    "delivery-quality/v1/acceptance-report-v2.example.v1.json",
+    "scripts/issue43_exit_evidence_contract.py",
+    "src/video2pdf_workflow_kernel/global_gate.py",
+    "src/video2pdf_workflow_kernel/global_gate_exit_evidence.py",
+    "tests/video_workflow/_issue43_git_authority.py",
+    "tests/video_workflow/test_issue43_activation_fencing.py",
+    "tests/video_workflow/test_issue43_spec_gap_contracts.py",
+)
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -42,6 +56,75 @@ def _git(root: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def _shared_git_objects_directory(repository: Path) -> Path:
+    """Resolve the object database shared by normal and linked worktrees."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=repository,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+    except OSError as error:
+        raise AssertionError(
+            f"cannot resolve shared Git directory for {repository}"
+        ) from error
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise AssertionError(
+            f"cannot resolve shared Git directory for {repository}: {detail}"
+        )
+    common_dir_text = completed.stdout.strip()
+    if not common_dir_text:
+        raise AssertionError(
+            f"Git returned an empty shared directory for {repository}"
+        )
+    common_dir = Path(common_dir_text)
+    if not common_dir.is_absolute():
+        common_dir = repository / common_dir
+    try:
+        common_dir = common_dir.resolve(strict=True)
+        objects = (common_dir / "objects").resolve(strict=True)
+    except OSError as error:
+        raise AssertionError(
+            f"shared Git object directory is unavailable for {repository}"
+        ) from error
+    if not common_dir.is_dir() or not objects.is_dir():
+        raise AssertionError(
+            f"shared Git object path is not a directory for {repository}: {objects}"
+        )
+    return objects
+
+
+def _freeze_authority_overlay(
+    overlay_root: Path,
+) -> tuple[dict[str, bytes], list[dict[str, str]], str]:
+    """Read and fingerprint the complete WIP authority overlay exactly once."""
+    frozen: dict[str, bytes] = {}
+    fingerprints: list[dict[str, str]] = []
+    aggregate = hashlib.sha256()
+    for relative in AUTHORITY_OVERLAY_PATHS:
+        path = overlay_root / relative
+        try:
+            if not path.is_file():
+                raise OSError(f"overlay path is not a file: {path}")
+            payload = path.read_bytes()
+        except OSError as error:
+            raise AssertionError(
+                f"authority overlay path is unavailable: {path}"
+            ) from error
+        payload_sha256 = hashlib.sha256(payload).hexdigest()
+        frozen[relative] = payload
+        fingerprints.append({"path": relative, "sha256": payload_sha256})
+        aggregate.update(relative.encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(payload_sha256.encode("ascii"))
+        aggregate.update(b"\n")
+    return frozen, fingerprints, aggregate.hexdigest()
+
+
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -50,15 +133,81 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
-def build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
-    """Create a real two-commit Issue 43 authority without mutating the source repo."""
+def build_current_global_gate_authority(
+    root: Path,
+    *,
+    source_git_repository: Path = PROJECT_ROOT,
+    authority_overlay_root: Path = PROJECT_ROOT,
+) -> tuple[Path, Path]:
+    """Build from a frozen Git tree plus a frozen WIP authority overlay."""
     with _AUTHORITY_BUILD_LOCK:
-        return _build_current_global_gate_authority(root)
+        return _build_current_global_gate_authority(
+            root,
+            source_git_repository,
+            authority_overlay_root,
+        )
 
 
-def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
+def _build_current_global_gate_authority(
+    root: Path,
+    source_git_repository: Path,
+    authority_overlay_root: Path,
+) -> tuple[Path, Path]:
     """Materialize one process-isolated authority and reuse it within its test case."""
-    root_identity = str(root.resolve()).casefold()
+    source_git_repository = source_git_repository.resolve(strict=True)
+    authority_overlay_root = authority_overlay_root.resolve(strict=True)
+    source_head = _git(
+        source_git_repository,
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
+    )
+    source_head_paths = set(
+        filter(
+            None,
+            _git(
+                source_git_repository,
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                source_head,
+            ).splitlines(),
+        )
+    )
+    source_implementation_commit = (
+        _git(
+            source_git_repository,
+            "rev-parse",
+            "--verify",
+            f"{source_head}^",
+        )
+        if source_head_paths
+        and all(path.startswith(EVIDENCE_PREFIX) for path in source_head_paths)
+        else source_head
+    )
+    overlay_bytes, overlay_fingerprints, overlay_sha256 = (
+        _freeze_authority_overlay(authority_overlay_root)
+    )
+    # Bind both generations. An evidence-only HEAD still selects its parent as
+    # implementation authority, while a later evidence publication at the same
+    # path must not reuse a fixture built from an older observed HEAD.
+    root_identity = (
+        str(root.resolve()).casefold()
+        + "\0"
+        + str(source_git_repository).casefold()
+        + "\0"
+        + source_head
+        + "\0"
+        + source_implementation_commit
+        + "\0"
+        + str(authority_overlay_root).casefold()
+        + "\0"
+        + "\0".join(
+            f"{item['path']}\0{item['sha256']}"
+            for item in overlay_fingerprints
+        )
+    )
     cached = _CURRENT_AUTHORITIES.get(root_identity)
     if cached is not None and _authority_is_reusable(*cached):
         return cached
@@ -89,13 +238,20 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
             "authority_id": authority_id,
             "authority_session_id": _AUTHORITY_SESSION_ID,
             "control_store_root": str(root.resolve()),
+            "source_head": source_head,
+            "source_implementation_commit": source_implementation_commit,
+            "source_git_repository": str(source_git_repository),
+            "authority_overlay_root": str(authority_overlay_root),
+            "authority_overlay_sha256": overlay_sha256,
+            "authority_overlay_fingerprints": overlay_fingerprints,
         },
     )
     _git(repository, "init")
     alternates = repository / ".git/objects/info/alternates"
     alternates.parent.mkdir(parents=True, exist_ok=True)
     alternates.write_bytes(
-        str((PROJECT_ROOT / ".git/objects").resolve()).encode("utf-8") + b"\n"
+        str(_shared_git_objects_directory(source_git_repository)).encode("utf-8")
+        + b"\n"
     )
     _git(repository, "config", "core.longpaths", "true")
     _git(repository, "sparse-checkout", "init", "--cone")
@@ -103,13 +259,7 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
         repository, "sparse-checkout", "set",
         "schemas", "delivery-quality", ".agents", ".claude", "src", "scripts", "tests", "evidence/global-gate",
     )
-    source_head = _git(PROJECT_ROOT, "rev-parse", "HEAD")
-    changed = set(filter(None, _git(PROJECT_ROOT, "diff-tree", "--no-commit-id", "--name-only", "-r", source_head).splitlines()))
-    implementation = (
-        _git(PROJECT_ROOT, "rev-parse", f"{source_head}^")
-        if changed and all(path.startswith(EVIDENCE_PREFIX) for path in changed)
-        else source_head
-    )
+    implementation = source_implementation_commit
     _git(repository, "checkout", "--detach", implementation)
     _git(repository, "config", "user.name", "Issue43 Test Authority")
     _git(repository, "config", "user.email", "issue43-authority@example.invalid")
@@ -131,7 +281,7 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
 
     # This generated descriptor is the fixture's real non-evidence
     # implementation authority. It is intentionally absent from
-    # ``authority_sources`` because its values are authority-instance data,
+    # ``AUTHORITY_OVERLAY_PATHS`` because its values are authority-instance data,
     # rather than source-tree files to mirror. The implementation fingerprint
     # closure includes it like every other non-evidence change.
     authority_descriptor = repository / AUTHORITY_DESCRIPTOR_PATH
@@ -143,30 +293,16 @@ def _build_current_global_gate_authority(root: Path) -> tuple[Path, Path]:
             "authority_id": authority_id,
             "qualification_contract_sha256": contract.QUALIFICATION_CONTRACT_SHA256,
             "source_implementation_commit": source_implementation_commit,
+            "authority_overlay_sha256": overlay_sha256,
         },
     )
     _git(repository, "add", AUTHORITY_DESCRIPTOR_PATH)
 
-    authority_sources = (
-        "schemas/exit-evidence-manifest.v2.schema.json",
-        "schemas/delivery-quality/registry.v1.json",
-        "schemas/delivery-quality/v1/acceptance-v2-input-binding.v1.schema.json",
-        "schemas/delivery-quality/v1/acceptance-report-v2.v1.schema.json",
-        "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
-        "delivery-quality/v1/acceptance-report-v2.example.v1.json",
-        "scripts/issue43_exit_evidence_contract.py",
-        "src/video2pdf_workflow_kernel/global_gate.py",
-        "src/video2pdf_workflow_kernel/global_gate_exit_evidence.py",
-        "tests/video_workflow/_issue43_git_authority.py",
-        "tests/video_workflow/test_issue43_activation_fencing.py",
-        "tests/video_workflow/test_issue43_spec_gap_contracts.py",
-    )
-    for relative in authority_sources:
-        source = PROJECT_ROOT / relative
+    for relative, payload in overlay_bytes.items():
         target = repository / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-    _git(repository, "add", *authority_sources)
+        target.write_bytes(payload)
+    _git(repository, "add", *AUTHORITY_OVERLAY_PATHS)
     if _git(repository, "status", "--porcelain=v1"):
         _git(repository, "commit", "-m", "Materialize test implementation authority")
         implementation = _git(repository, "rev-parse", "HEAD")

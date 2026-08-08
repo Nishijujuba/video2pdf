@@ -3,18 +3,24 @@
 ## Resume boundary
 
 Issue #43 remains in progress on branch `video-workflow-2.0` at committed HEAD
-`49124f289149d309b0829daa75294a2ea1826de4`. The Issue #43 working set contains
-an uncommitted Windows concurrency repair in these files:
+`06c205e4921addab1af0863b723d4e9b5c0ffa54`. That commit contains the reviewed
+Windows Patch/Report concurrency repair. The current uncommitted Issue #43
+working set is exactly:
 
 - `src/video2pdf_workflow_kernel/acceptance_v2.py`
-- `src/video2pdf_workflow_kernel/utils.py`
 - `tests/video_workflow/test_acceptance_v2.py`
+- `tests/video_workflow/_issue43_git_authority.py`
+- `tests/video_workflow/test_issue43_exit_evidence.py`
+- this handoff (`docs/handoffs/issue43-global-gate-cutover-20260804.md`)
 
-This handoff document is an additional untracked Issue #43 artifact until it is
+This handoff document is a tracked but intentionally unstaged Issue #43 artifact until it is
 staged intentionally. The shared worktree currently also contains unrelated
-video-task activity in `.codex/delivery-targets/task-index.json` and under
-`workspace/`; those paths are outside Issue #43 and must remain untouched. No
-final validator, evidence publication, push, or GitHub issue closure should be
+activity in `.codex/delivery-targets/task-index.json`, `.gitignore`, and under
+`workspace/**`; those paths are outside Issue #43 and must remain untouched.
+The isolated `q` worktree and its branch `codex/issue43-final-evidence-20260805`
+remain at `06c205e` with failed diagnostic collections under ignored
+`q/待删除/`; `q/` must not be staged or modified from this worktree. No final
+validator, evidence publication, push, or GitHub issue closure should be
 inferred from this handoff.
 
 Authoritative requirements remain GitHub
@@ -31,115 +37,175 @@ supplement. The approved execution order is:
 Any code repair after a review or validator failure returns to step 1. A full
 repository test suite is outside the task scope.
 
-## Current repair
+## Current uncommitted set
+
+### Committed 06c205e context: Windows Patch/Report concurrency repair
 
 The final evidence run exposed real Windows races in
 `AcceptanceV2CliTests.test_two_writers_are_fenced_at_patch_and_report_publication`.
 Two `acceptance-patch-commit` processes could reach `os.replace` for the same
-content-addressed destination before the SQLite CAS. Windows returned
+content-addressed destination before the SQLite CAS; Windows returned
 `PermissionError [WinError 5]`, which escaped as `kernel_error` instead of a
-contractual fencing result. Review then found the same pre-CAS risk in Report
-intent and staged bundle publication.
+contractual fencing result, and review found the same pre-CAS risk in Report
+intent and staged bundle publication. The committed `06c205e` repair adds
+`AtomicJsonReplaceError(OSError)` to distinguish only the final `os.replace`
+stage; accepts a competing pre-CAS publication only for Windows replace errors
+5, 32, or 33 and only when the destination proves the same complete JSON
+identity; applies that boundary to Patch publication, Report intent, and all
+three staged Report bundle members (`acceptance_report.json`,
+`attempt-record.json`, `repair-ledger.json`); keeps temp write failures, POSIX
+errors, other Windows errors, unreadable targets, and content conflicts
+fail-closed; prevents a losing writer from overwriting a winner's intent; and
+cleans only the UUID temporary file owned by the current atomic write.
 
-The current diff:
+### Linked-worktree fixture repair
 
-- adds `AtomicJsonReplaceError(OSError)` to distinguish only the final
-  `os.replace` stage while preserving existing `except OSError` behavior and
-  the original error identity;
-- accepts a competing pre-CAS publication only for Windows replace errors 5,
-  32, or 33 and only when the destination proves the same complete JSON
-  identity;
-- applies that boundary to Patch publication, Report intent, and all three
-  staged Report bundle members (`acceptance_report.json`,
-  `attempt-record.json`, and `repair-ledger.json`);
-- leaves temp open/write/flush/fsync failures, POSIX errors, other Windows
-  errors, missing or unreadable targets, and content conflicts fail-closed;
-- prevents a losing writer from overwriting a winner's already controlled
-  intent;
-- cleans only the UUID temporary file owned by the current atomic write and
-  preserves the primary exception if cleanup also fails;
-- adds deterministic positive and negative tests for stage classification,
-  content identity, platform/error-code boundaries, cleanup, and `OSError`
-  compatibility.
+`_issue43_git_authority.py` assumed the source object database was
+`PROJECT_ROOT/.git/objects`; a linked worktree uses a `.git` gitfile and shares
+the main repository object database, so synthetic fixture repositories could
+not read the frozen implementation tree. The repair resolves the shared
+directory through `git rev-parse --git-common-dir`, handles relative and
+absolute results, fails closed for Git errors, empty output, missing paths, or
+non-directory object paths, freezes one `HEAD^{commit}` snapshot per authority
+construction, and binds cache identity to the explicit source repository,
+observed source HEAD, and selected implementation boundary. A real gitfile
+linked-worktree regression in `test_issue43_exit_evidence.py` advances HEAD at
+the same source path and proves a new authority generation is built.
 
-Inspect the exact implementation with:
+### Patch-ownership repair (new in this set)
 
-```powershell
-git diff 49124f289149d309b0829daa75294a2ea1826de4 -- `
-  src/video2pdf_workflow_kernel/acceptance_v2.py `
-  src/video2pdf_workflow_kernel/utils.py `
-  tests/video_workflow/test_acceptance_v2.py
-```
+Patch intent and patch file publication moved inside the SQLite
+`BEGIN IMMEDIATE` transaction in `acceptance-patch-commit`. Fencing
+(execution authority, active claim, claim generation, fencing token, and
+existing intent state) is now evaluated before any patch file write, so a
+stale or unfenced writer never touches the content-addressed destination. On
+fencing failure the new module helper `_abort_intent_and_reject` publishes an
+`ABORTED` intent file before `ROLLBACK` — a later reconcile never mistakes the
+abandoned preparation for a live one — and a failed abort publication rolls
+the transaction back and propagates.
+
+### Classification split (new in this set)
+
+Outcomes that previously collapsed into one stale-fencing rejection are now
+split: a same-intent retry of an interrupted publication rejects with gate
+`publication_recovery` / code `acceptance_reconcile_required`, while genuinely
+stale authority keeps gate `patch_fencing` / code
+`acceptance_patch_fencing_stale`. `_abort_intent_and_reject` centralizes the
+fail-closed abort path for the stale case.
+
+### Report-side concurrency test rewrite (new in this set)
+
+`test_acceptance_v2.py` report-side concurrency tests were rewritten for
+determinism: mtime-poll and event barriers replace bare sleeps, and oracles
+were widened with scenario records so each interleaving asserts its exact
+observable outcome. Report-side production code was deliberately NOT
+restructured; see Reviewed decisions.
+
+## Reviewed decisions (dual-axis review, 2026-08-08)
+
+1. Patch/report publication-boundary asymmetry is accepted. The report side
+   retains the committed `06c205e` semantics — pre-transaction prepare plus
+   `AtomicJsonReplaceError` competing-publication acceptance; a reconcile
+   abort is not a tombstone, and a slow writer may legitimately republish and
+   win — because that boundary already passes its interruption, fencing,
+   idempotency, and reconciliation tests, and restructuring it would require
+   another full review plus evidence cycle.
+2. The previous version of this handoff understated the uncommitted working
+   set (it listed only the two fixture files while `acceptance_v2.py` and
+   `test_acceptance_v2.py` were also modified). That is recorded here as a
+   corrected documentation defect.
 
 ## Valid current test evidence
 
-The latest code state passed:
+Each run below binds the code state at HEAD `06c205e` plus the five-file
+working set as of 2026-08-08 morning. After these runs, round-2 review applied
+test-only amendments to `test_acceptance_v2.py` (scenario record
+`patch_writer_commit_vs_waiting_reconcile`; deterministic rendezvous barrier
+`run_rendezvousing_competing_writers` in the two failed-writer twins); each
+touched test was re-run twice individually with exit 0, and the focused
+concurrency set was re-run after the amendment (see the
+`issue43_post_a3_focused_*` run when present). The authoritative full-suite
+evidence is refreshed by the Phase 6 collection against the frozen commit.
+The pre-amendment runs:
 
-- focused Patch/Report concurrency and error-contract set: 16 tests,
-  680.968 seconds,
-  exit 0, `no_secret_detected`, evidence eligible;
-  `待删除/long-running/issue43_report_race_focused_20260804_222102_6ce4a605`
-- affected Workflow modules: 136 tests, 5004.064 seconds, exit 0,
-  `no_secret_detected`, evidence eligible;
-  `待删除/long-running/issue43_report_race_workflow_modules_20260804_223238_79959e01`
-- affected Delivery Guard modules: 60 tests, 2595.035 seconds, exit 0,
-  `no_secret_detected`, evidence eligible;
-  `待删除/long-running/issue43_report_race_delivery_guard_20260804_235616_17c5a18f`
-- fast contract checks: 30 positive and 30 expected-negative Delivery Quality
-  contracts, plus 5 focused atomic/report contracts, all passed.
+- focused concurrency/fencing set: 27 tests, 1363.681 seconds, exit 0;
+  `待删除/long-running/issue43_repair_r1r3_focused_20260808_084340_fe09d015`
+- exit-evidence / linked-worktree authority set: 28 tests, 155.272 seconds,
+  exit 0;
+  `待删除/long-running/issue43_r1r3_exit_evidence_20260808_091133_53bc11d2`
+- affected Workflow modules: 141 tests, 4036.391 seconds, exit 0;
+  `待删除/long-running/issue43_r1r3_workflow_modules_20260808_091430_72db2e73`
+- affected Delivery Guard modules: 60 tests, 1663.704 seconds, exit 0;
+  `待删除/long-running/issue43_r1r3_delivery_guard_20260808_103301_baffd552`
+- fast checks 2026-08-08: `git diff --check` clean; `py_compile` clean;
+  delivery-quality-contracts-check exit 0 (30 positive / 30 negative,
+  catalog_sha256
+  `b25dd274bf2072f75db1f26f9e26892a2e2718de70a358804937e773601f455f`); 5
+  focused atomic/report contract tests pass in 154.336 seconds.
 
 ## Evidence that must not be reused
 
-The following results predate the latest compatibility change and are useful
-only for diagnosis:
+The following results predate the latest code state and are useful only for
+diagnosis:
 
 - Delivery Guard pass before the latest change:
   `待删除/long-running/issue43_windows_race_postreview_delivery_guard_20260804_152615_454368d0`
 - fast checks before the latest change;
-- the earlier spec-axis PASS and release-axis FAIL that produced the structured
-  replace-stage repair;
-- failed final collection:
+- the earlier spec-axis PASS and release-axis FAIL that produced the
+  structured replace-stage repair;
+- failed final collections in the main and isolated checkouts:
   `待删除/exit-evidence-refresh/global-gate/20260804_040425_407169/collection.json`
-  (its first two stages passed, and `issue43-complete-acceptance-v2` failed on
-  the Windows race).
+  (first two stages passed, `issue43-complete-acceptance-v2` failed on the
+  Windows race), plus
+  `q/待删除/exit-evidence-refresh/global-gate/20260804_165759_403503/collection.json`
+  (missing runtime parent) and
+  `q/待删除/exit-evidence-refresh/global-gate/20260804_170003_137482/collection.json`
+  (invalid linked-worktree alternate object path);
+- all three `issue43_source_head_cache_*` runs (pre-patch-ownership code
+  state), including
+  `待删除/long-running/issue43_source_head_cache_freshness_exit_evidence_20260805_032608_d0c61388`,
+  `待删除/long-running/issue43_source_head_cache_workflow_modules_20260805_033008_88977246`,
+  and
+  `待删除/long-running/issue43_source_head_cache_delivery_guard_20260805_044038_1ec51620`;
+- all `issue43_authority_overlay_*` runs (failed, pre-repair);
+- all `issue43_patch_ownership_*` runs (failed full-suite run plus pre-review
+  focused pass).
 
-Do not resume that collection. A fresh collection must bind the eventual clean
-implementation HEAD.
+Do not resume any of those collections. A fresh collection must bind the next
+reviewed commit.
 
 ## Exact next steps
 
-1. Preserve the unrelated `.codex/delivery-targets/task-index.json` and
-   `workspace/` activity; do not stage or modify those paths for Issue #43.
-2. Run two independent subagents in parallel:
-   - spec/requirements axis against Issues #43 and #41;
-   - repository standards plus release/security/evidence axis.
-3. If both axes pass, stage the reviewed implementation and tests. Preserve
-   this repository handoff; include it intentionally in a commit or place it in
-   a separate documented commit before evidence collection. Commit only the
-   four Issue #43 paths.
-4. Before evidence collection, require the complete shared worktree to be
-   clean or use an explicitly approved isolated checkout. Do not hide, reset,
-   move, or absorb the unrelated active-task changes.
-5. Start a new collection with
+1. Run a dual-axis independent re-review of the FULL uncommitted diff — spec
+   axis against Issues #43 and #41, plus a standards/release/security/evidence
+   axis. Re-review is required because the code changed after the first
+   review.
+2. If both axes pass without code change, commit ONLY the five Issue #43
+   files listed in Resume boundary. Commit message convention:
+   `fix: ...(#43)`, matching the existing `git log` style.
+3. Fast-forward the isolated `q` worktree/branch
+   `codex/issue43-final-evidence-20260805` to the new commit; preserve the
+   ignored failed collections under `q/待删除/`; confirm `q` is Git-clean.
+4. Ensure `q/待删除/kernel-test-runs` exists as the direct-unittest runtime
+   compatibility parent, then start a fresh collection with
    `scripts/collect_issue43_exit_evidence.py collect`. Run its five persisted
    stages sequentially, finalize only after all are terminal passes, publish
    the evidence-only child commit, then run the final validator from the
    published evidence commit.
-6. If the validator changes no code, no new dual-axis review is required. If it
-   requires a code repair, return to affected tests.
-7. Push and update/close Issue #43 only after current final evidence and remote
-   SHA verification succeed.
+5. If the validator changes no code, no new dual-axis review is required. If
+   it requires a code repair, return to affected tests.
+6. Push and update/close Issue #43 only after final evidence and remote SHA
+   verification succeed.
 
 ## Operational constraints
 
-- Use subagents for each stage. Every spawn must set
-  `model="gpt-5.6-sol"`, `reasoning_effort="medium"`, and a non-`all`
-  `fork_turns` value.
-- Commands expected to exceed five minutes, expensive reruns, and evidence
-  commands must use `scripts/persisted_command.py`.
-- Run persisted stages sequentially. Report a task name and `run_dir` once,
-  then emit updates only for terminal, security, milestone, error, or decision
-  events.
+- Use subagents for each stage.
+- Commands expected to exceed five minutes, expensive reruns, and
+  evidence-bearing commands must use `scripts/persisted_command.py`
+  (`start` → record `data.run_dir` → `wait`/`show`; report the task name and
+  `run_dir` once, then emit updates only for terminal, security, milestone,
+  error, or decision events).
+- Run persisted stages sequentially.
 - Preserve all unrelated work. Permanent deletion is forbidden; material for
   later cleanup belongs under `待删除/`.
 - GitHub operations must use `gh`.
@@ -150,6 +216,6 @@ implementation HEAD.
 - `implement`: resume the approved Issue #43 implementation workflow and keep
   affected-test scope bounded.
 - `code-review`: perform the required independent standards/release and spec
-  reviews after fast checks pass.
+  re-reviews of the full uncommitted diff.
 - `handoff`: refresh this document only if another session boundary occurs
   before completion.

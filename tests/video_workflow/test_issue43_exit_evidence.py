@@ -27,7 +27,17 @@ from tests.video_workflow._issue43_git_authority import (
     commit_later_implementation_change,
 )
 from tests.video_workflow._test_run import new_case_dir
+from video2pdf_workflow_kernel.evidence import (
+    fingerprint_implementation_changes,
+    sha256_git_blob,
+)
 from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+from video2pdf_workflow_kernel.global_gate_exit_evidence import (
+    EVIDENCE_PREFIX,
+    SLICE_BASE_COMMIT,
+    ExitEvidenceValidationError,
+    validate_global_gate_exit_evidence,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -199,14 +209,16 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             ).encode("utf-8")).hexdigest(),
         )
 
-    def _synthetic_terminal_collection(self, root: Path) -> tuple[dict, Path, Path]:
+    def _synthetic_terminal_collection(
+        self, root: Path, *, run_id_prefix: str = "00000000-0000-4000-8000"
+    ) -> tuple[dict, Path, Path]:
         run_root = root / "runs"
         evidence_dir = root / "evidence/global-gate"
         runs = []
         for index, (command_id, command, expected_exit_code) in enumerate(contract.COMMANDS, 1):
-            run_id = f"00000000-0000-4000-8000-{index:012d}"
+            run_id = f"{run_id_prefix}-{index:012d}"
             run_dir = run_root / command_id
-            run_dir.mkdir(parents=True)
+            run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "command.json").write_text(json.dumps({
                 "schema_name": "persisted-command",
                 "schema_version": "1.0.0",
@@ -1107,6 +1119,7 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             mock.patch.object(collector, "LOG_DIR", logs),
             mock.patch.object(collector, "MANIFEST_PATH", manifest_path),
             mock.patch.object(collector, "git", side_effect=fake_git),
+            mock.patch.object(collector, "sha256_git_blob", return_value=sha256),
             mock.patch.object(collector, "preserve_previous_evidence"),
             mock.patch.object(collector, "require_collection_terminal"),
             mock.patch.object(collector, "finalize_commands", return_value=commands),
@@ -1143,6 +1156,488 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
         envelope = json.loads(activated.stdout)
         self.assertEqual(envelope["data"]["first_failing_gate"], "implementation_lineage")
         self.assertEqual(envelope["data"]["error_code"], "implementation_commit_invalid")
+
+    def _repo_git(self, repository: Path, *arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", *arguments],
+            cwd=repository,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode:
+            self.fail(
+                f"git {' '.join(arguments)} failed: {completed.stdout}{completed.stderr}"
+            )
+        return completed.stdout.strip()
+
+    def _init_finalize_repository(
+        self,
+        label: str,
+        *,
+        autocrlf: str = "false",
+        fixture_bytes: bytes = b"specimen line one\nspecimen line two\n",
+    ) -> tuple[Path, Path]:
+        case = new_case_dir(self.id(), label=label)
+        repository = case / "repository"
+        repository.mkdir()
+        self._repo_git(repository, "init")
+        self._repo_git(repository, "config", "user.name", "Issue43 Collector Test")
+        self._repo_git(
+            repository, "config", "user.email", "issue43-collector@example.invalid"
+        )
+        self._repo_git(repository, "config", "core.autocrlf", autocrlf)
+        (repository / ".gitignore").write_text("runs/\n", encoding="utf-8")
+        fixture = repository / "fixtures/specimen.txt"
+        fixture.parent.mkdir(parents=True)
+        fixture.write_bytes(fixture_bytes)
+        self._repo_git(repository, "add", "-A")
+        self._repo_git(repository, "commit", "-m", "Materialize implementation authority")
+        return case, repository
+
+    def _run_finalize(
+        self, case: Path, repository: Path, collection: dict, collection_name: str
+    ) -> dict:
+        collection["implementation_commit"] = self._repo_git(
+            repository, "rev-parse", "HEAD"
+        )
+        collection_path = case / collection_name
+        collection_path.write_text(
+            json.dumps(collection) + "\n", encoding="utf-8"
+        )
+        evidence_dir = repository / "evidence/global-gate"
+        original_git = collector.git
+
+        def git_proxy(*arguments: str) -> str:
+            if arguments[:2] == ("merge-base", "--is-ancestor"):
+                return ""
+            return original_git(*arguments)
+
+        with (
+            mock.patch.object(collector, "PROJECT_ROOT", repository),
+            mock.patch.object(collector, "EVIDENCE_DIR", evidence_dir),
+            mock.patch.object(collector, "LOG_DIR", evidence_dir / "logs"),
+            mock.patch.object(
+                collector,
+                "MANIFEST_PATH",
+                evidence_dir / "exit-evidence-manifest.json",
+            ),
+            mock.patch.object(collector, "REFRESH_ROOT", case / "refresh"),
+            mock.patch.object(collector, "MIRROR_SPECS", ()),
+            mock.patch.object(
+                collector,
+                "FIXTURE_SPECS",
+                (("fixture_specimen", "fixtures/specimen.txt"),),
+            ),
+            mock.patch.object(collector, "git", side_effect=git_proxy),
+            mock.patch.object(
+                collector, "fingerprint_implementation_changes", return_value=[]
+            ),
+        ):
+            self.assertEqual(0, collector.finalize(collection_path))
+        return json.loads(
+            (evidence_dir / "exit-evidence-manifest.json").read_text(encoding="utf-8")
+        )
+
+    def _publish_and_diff(self, repository: Path) -> set[str]:
+        self._repo_git(repository, "add", "-f", "evidence/global-gate")
+        self._repo_git(
+            repository, "commit", "-m", "Publish test Global Gate evidence"
+        )
+        return set(
+            filter(
+                None,
+                self._repo_git(
+                    repository,
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    "HEAD",
+                ).splitlines(),
+            )
+        )
+
+    def test_finalize_first_publication_lists_the_complete_evidence_set(self) -> None:
+        # scenario_id: first_publication_complete_evidence_set
+        # authority input: implementation HEAD without any prior evidence generation
+        # derived node: manifest evidence_paths
+        # boundary: publication commit; the validator's historical_evidence
+        #   gate requires diff-tree paths to stay within evidence_paths while
+        #   every declared path resolves as a regular publication-tree blob
+        # mutation: none; regression guard for the full 21-path first publication
+        # expected first gate after repair: no failure; publication paths are exact
+        case, repository = self._init_finalize_repository("issue43-first-publication")
+        collection, _, _ = self._synthetic_terminal_collection(repository)
+        manifest = self._run_finalize(case, repository, collection, "collection.json")
+        expected = {
+            "evidence/global-gate/exit-evidence-manifest.json",
+            *(
+                f"evidence/global-gate/logs/{command_id}.log"
+                for command_id, _, _ in contract.COMMANDS
+            ),
+            *(
+                f"evidence/global-gate/persisted/{command_id}/{filename}"
+                for command_id, _, _ in contract.COMMANDS
+                for filename in ("command.json", "status.json", "exit-code.txt")
+            ),
+        }
+        self.assertEqual(21, len(expected))
+        actual = set(manifest["evidence_paths"])
+        self.assertEqual(expected, actual)
+        self.assertEqual(expected, self._publish_and_diff(repository))
+
+    def _stage_second_generation(self, root: Path) -> tuple[Path, Path]:
+        """Advance a dedicated authority fixture to a second evidence generation.
+
+        Rotated run identities change every log and persisted artifact except
+        the five immutable ``"0\\n"`` exit-code blobs, which the second
+        publication tree inherits unchanged from the first generation. The
+        staged publication is left uncommitted so tests can mutate it.
+        """
+        repository, _ = build_current_global_gate_authority(root)
+        commit_later_implementation_change(repository)
+        implementation = self._repo_git(repository, "rev-parse", "HEAD")
+        manifest_path = (
+            repository / "evidence/global-gate/exit-evidence-manifest.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["implementation_commit"] = implementation
+        for index, command in enumerate(manifest["commands"], 1):
+            log_path = repository / command["log"]["path"]
+            log_path.write_bytes(
+                (
+                    f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation}\n"
+                    f"qualified command: {command['test_id']}\n"
+                ).encode("utf-8")
+            )
+            command["log"]["sha256"] = hashlib.sha256(
+                log_path.read_bytes()
+            ).hexdigest()
+            persisted = command["persisted_run"]
+            run_id = f"22222222-2222-4222-8222-{index:012d}"
+            persisted["run_id"] = run_id
+            for key in ("command_record", "terminal_status"):
+                artifact = persisted[key]
+                artifact_path = repository / artifact["path"]
+                record = json.loads(artifact_path.read_text(encoding="utf-8"))
+                record["run_id"] = run_id
+                artifact_path.write_bytes(
+                    (
+                        json.dumps(
+                            record,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                )
+                artifact["sha256"] = hashlib.sha256(
+                    artifact_path.read_bytes()
+                ).hexdigest()
+        for fixture in manifest["fixtures"]:
+            fixture["sha256"] = sha256_git_blob(
+                repository, implementation, fixture["path"]
+            )
+        manifest["artifact_fingerprints"] = fingerprint_implementation_changes(
+            repository,
+            SLICE_BASE_COMMIT,
+            implementation,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
+        manifest_path.write_bytes(
+            (
+                json.dumps(
+                    manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        self._repo_git(repository, "add", "-f", "evidence/global-gate")
+        return repository, manifest_path
+
+    def _commit_publication(self, repository: Path) -> set[str]:
+        self._repo_git(
+            repository, "commit", "-m", "Republish test Global Gate evidence"
+        )
+        return set(
+            filter(
+                None,
+                self._repo_git(
+                    repository,
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    "HEAD",
+                ).splitlines(),
+            )
+        )
+
+    def test_validator_accepts_republication_inheriting_byte_identical_blobs(self) -> None:
+        # scenario_id: republication_inherits_byte_identical_exit_codes
+        # authority input: a first-generation committed evidence closure
+        # derived nodes: second implementation commit, rotated run identities
+        # boundary: second publication commit; the validator's
+        #   historical_evidence gate requires diff-tree paths to stay within
+        #   evidence_paths while every declared path resolves as a regular
+        #   publication-tree blob bound to its manifest fingerprint
+        # target contradiction: the five byte-identical exit-code blobs can
+        #   never appear in a second publication diff
+        # rematerialized nodes: none; the publication tree inherits them
+        # expected first gate after repair: no failure
+        root = new_case_dir(self.id(), label="issue43-republication")
+        repository, manifest_path = self._stage_second_generation(root)
+        publication_paths = self._commit_publication(repository)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        evidence_paths = set(manifest["evidence_paths"])
+        exit_code_paths = {
+            f"evidence/global-gate/persisted/{command_id}/exit-code.txt"
+            for command_id, _, _ in contract.COMMANDS
+        }
+        self.assertEqual(5, len(exit_code_paths))
+        self.assertTrue(exit_code_paths <= evidence_paths)
+        self.assertTrue(exit_code_paths.isdisjoint(publication_paths))
+        self.assertEqual(evidence_paths - exit_code_paths, publication_paths)
+        validated = validate_global_gate_exit_evidence(
+            manifest_path, project_root=repository
+        )
+        self.assertEqual(
+            manifest["implementation_commit"],
+            validated.value["implementation_commit"],
+        )
+
+    def test_validator_accepts_the_complete_first_publication(self) -> None:
+        # scenario_id: first_publication_real_validator_pass
+        # authority input: the complete first-generation evidence closure
+        # boundary: publication commit == HEAD == direct implementation child
+        # expected first gate after repair: no failure
+        root = new_case_dir(
+            self.id(), label="issue43-first-publication-validation"
+        )
+        repository, manifest_path = build_current_global_gate_authority(root)
+        validated = validate_global_gate_exit_evidence(
+            manifest_path, project_root=repository
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["implementation_commit"],
+            validated.value["implementation_commit"],
+        )
+
+    def test_validator_rejects_smuggled_publication_paths(self) -> None:
+        # scenario_id: smuggled_publication_paths
+        # mutation: one evidence-prefix and one non-evidence path smuggled
+        #   into the second publication commit
+        # expected_first_gate: historical_evidence
+        # expected_error_code: historical_evidence_paths_stale
+        root = new_case_dir(self.id(), label="issue43-smuggled-publication")
+        repository, manifest_path = self._stage_second_generation(root)
+        smuggled = (
+            "evidence/global-gate/smuggled-evidence.log",
+            "src/smuggled_non_evidence.py",
+        )
+        (repository / smuggled[0]).write_text(
+            "smuggled evidence\n", encoding="utf-8"
+        )
+        (repository / smuggled[1]).write_text(
+            "SMUGGLED = True\n", encoding="utf-8"
+        )
+        self._repo_git(repository, "add", "-f", *smuggled)
+        publication_paths = self._commit_publication(repository)
+        self.assertTrue(set(smuggled) <= publication_paths)
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "historical_evidence", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "historical_evidence_paths_stale", raised.exception.error_code
+        )
+
+    def test_validator_rejects_a_listed_path_never_published(self) -> None:
+        # scenario_id: listed_evidence_path_unpublished
+        # mutation: one declared exit-code artifact exists on disk with a
+        #   matching fingerprint but was never added to any commit
+        # expected_first_gate: historical_evidence
+        # expected_error_code: historical_evidence_path_unpublished
+        root = new_case_dir(self.id(), label="issue43-unpublished-evidence")
+        repository, manifest_path = build_current_global_gate_authority(root)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        missing = (
+            f"evidence/global-gate/persisted/"
+            f"{contract.COMMANDS[0][0]}/exit-code.txt"
+        )
+        self._repo_git(
+            repository, "reset", "--soft", manifest["implementation_commit"]
+        )
+        self._repo_git(repository, "rm", "--cached", "--", missing)
+        publication_paths = self._commit_publication(repository)
+        self.assertNotIn(missing, publication_paths)
+        self.assertTrue((repository / missing).is_file())
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "historical_evidence", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "historical_evidence_path_unpublished", raised.exception.error_code
+        )
+
+    def test_validator_rejects_a_listed_path_deleted_in_publication(self) -> None:
+        # scenario_id: listed_evidence_path_deleted_in_publication
+        # mutation: one declared log stays on disk with a matching
+        #   fingerprint but the second publication deletes it from the tree
+        # expected_first_gate: historical_evidence
+        # expected_error_code: historical_evidence_paths_stale
+        root = new_case_dir(self.id(), label="issue43-deleted-evidence")
+        repository, manifest_path = self._stage_second_generation(root)
+        deleted = f"evidence/global-gate/logs/{contract.COMMANDS[0][0]}.log"
+        self._repo_git(repository, "rm", "--cached", "--", deleted)
+        publication_paths = self._commit_publication(repository)
+        self.assertIn(deleted, publication_paths)
+        self.assertTrue((repository / deleted).is_file())
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "historical_evidence", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "historical_evidence_paths_stale", raised.exception.error_code
+        )
+
+    def test_validator_rejects_blob_bytes_differing_from_declared_fingerprint(self) -> None:
+        # scenario_id: publication_blob_bytes_differ_from_fingerprint
+        # authority input: a second-generation staged publication
+        # mutation: one persisted artifact is committed with an extra byte
+        #   while the on-disk copy keeps the manifest-declared bytes, so the
+        #   disk binding gates pass and only the committed blob differs
+        # expected_first_gate: historical_evidence
+        # expected_error_code: historical_evidence_paths_stale
+        root = new_case_dir(self.id(), label="issue43-blob-byte-binding")
+        repository, manifest_path = self._stage_second_generation(root)
+        target = (
+            f"evidence/global-gate/persisted/"
+            f"{contract.COMMANDS[0][0]}/status.json"
+        )
+        declared_bytes = (repository / target).read_bytes()
+        (repository / target).write_bytes(declared_bytes + b"\n")
+        self._repo_git(repository, "add", "-f", "--", target)
+        (repository / target).write_bytes(declared_bytes)
+        publication_paths = self._commit_publication(repository)
+        self.assertIn(target, publication_paths)
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "historical_evidence", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "historical_evidence_paths_stale", raised.exception.error_code
+        )
+
+    def test_validator_rejects_a_symlink_at_a_declared_path(self) -> None:
+        # scenario_id: symlink_at_declared_evidence_path
+        # mutation: one declared persisted artifact enters the publication
+        #   commit as a symlink (mode 120000) staged directly in the index;
+        #   the on-disk copy keeps the manifest-declared regular bytes
+        # expected_first_gate: historical_evidence
+        # expected_error_code: historical_evidence_paths_stale
+        root = new_case_dir(self.id(), label="issue43-symlink-evidence")
+        repository, manifest_path = self._stage_second_generation(root)
+        target = (
+            f"evidence/global-gate/persisted/"
+            f"{contract.COMMANDS[0][0]}/exit-code.txt"
+        )
+        blob_sha = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=repository,
+            input=b"0\n",
+            capture_output=True,
+            check=True,
+        ).stdout.decode("ascii").strip()
+        self._repo_git(
+            repository,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"120000,{blob_sha},{target}",
+        )
+        publication_paths = self._commit_publication(repository)
+        self.assertIn(target, publication_paths)
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "historical_evidence", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "historical_evidence_paths_stale", raised.exception.error_code
+        )
+
+    def test_finalize_fingerprints_fixtures_from_git_blob_bytes(self) -> None:
+        # scenario_id: fixture_fingerprint_blob_byte_authority
+        # authority input: fixture git blob bytes at implementation_commit
+        # derived node: manifest fixtures[].sha256
+        # boundary: clean-tree CRLF disk drift under core.autocrlf=true; the
+        #   validator fixture_fingerprint gate hashes blob bytes via
+        #   evidence.sha256_git_blob
+        # target contradiction: raw on-disk fixture bytes hashed instead of
+        #   blob bytes (fixture_sha256_stale on CRLF hosts)
+        # rematerialized nodes: fixture fingerprint from the git blob
+        # expected first gate after repair: fixture_fingerprint passes
+        case, repository = self._init_finalize_repository(
+            "issue43-fixture-blob-fingerprint",
+            autocrlf="true",
+            # Committed from CRLF disk bytes under core.autocrlf=true: the blob
+            # keeps LF bytes while the clean worktree file carries CRLF bytes,
+            # exactly the drift state of the failing Windows host.
+            fixture_bytes=b"specimen line one\r\nspecimen line two\r\n",
+        )
+        fixture = repository / "fixtures/specimen.txt"
+        self.assertEqual(
+            "",
+            self._repo_git(
+                repository, "status", "--porcelain=v1", "--untracked-files=all"
+            ),
+        )
+        head = self._repo_git(repository, "rev-parse", "HEAD")
+        blob_bytes = subprocess.run(
+            ["git", "cat-file", "blob", f"{head}:fixtures/specimen.txt"],
+            cwd=repository,
+            capture_output=True,
+            check=True,
+        ).stdout
+        self.assertEqual(b"specimen line one\nspecimen line two\n", blob_bytes)
+        self.assertNotEqual(blob_bytes, fixture.read_bytes())
+
+        collection, _, _ = self._synthetic_terminal_collection(repository)
+        manifest = self._run_finalize(case, repository, collection, "collection.json")
+        entry = next(
+            item
+            for item in manifest["fixtures"]
+            if item["path"] == "fixtures/specimen.txt"
+        )
+        # Mirror of the validator gate: evidence.sha256_git_blob at
+        # implementation_commit must equal the recorded fingerprint.
+        self.assertEqual(
+            sha256_git_blob(repository, head, "fixtures/specimen.txt"),
+            entry["sha256"],
+        )
+        self.assertEqual(hashlib.sha256(blob_bytes).hexdigest(), entry["sha256"])
+        self.assertNotEqual(
+            hashlib.sha256(fixture.read_bytes()).hexdigest(), entry["sha256"]
+        )
 
 
 if __name__ == "__main__":

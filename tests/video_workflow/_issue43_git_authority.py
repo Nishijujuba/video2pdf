@@ -127,9 +127,10 @@ def _freeze_authority_overlay(
 
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
+    # Fixture evidence must be LF-only on disk so disk bytes equal the blob
+    # bytes stored under the tree's eol=lf attribute (C4 byte binding).
+    path.write_bytes(
+        (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     )
 
 
@@ -254,6 +255,7 @@ def _build_current_global_gate_authority(
         + b"\n"
     )
     _git(repository, "config", "core.longpaths", "true")
+    _git(repository, "config", "core.autocrlf", "false")
     _git(repository, "sparse-checkout", "init", "--cone")
     _git(
         repository, "sparse-checkout", "set",
@@ -345,10 +347,11 @@ def _build_current_global_gate_authority(
     for command in commands:
         log_path = repository / command["log"]["path"]
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(
-            f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation}\n"
-            f"qualified command: {command['test_id']}\n",
-            encoding="utf-8",
+        log_path.write_bytes(
+            (
+                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation}\n"
+                f"qualified command: {command['test_id']}\n"
+            ).encode("utf-8")
         )
         command["log"]["sha256"] = hashlib.sha256(log_path.read_bytes()).hexdigest()
         run_id = command["persisted_run"]["run_id"]
@@ -380,7 +383,7 @@ def _build_current_global_gate_authority(
             artifact["sha256"] = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         exit_artifact = command["persisted_run"]["exit_code"]
         exit_path = repository / exit_artifact["path"]
-        exit_path.write_text(f"{command['actual_exit_code']}\n", encoding="utf-8")
+        exit_path.write_bytes(f"{command['actual_exit_code']}\n".encode("utf-8"))
         exit_artifact["sha256"] = hashlib.sha256(exit_path.read_bytes()).hexdigest()
 
     artifact_fingerprints = fingerprint_implementation_changes(
@@ -474,7 +477,12 @@ def _authority_is_reusable(repository: Path, manifest: Path) -> bool:
                 ).splitlines(),
             )
         )
-        if publication_paths != set(value["evidence_paths"]):
+        # Mirror of the validator's historical_evidence publication gate:
+        # the publication diff must stay within the declared evidence set (a
+        # republication inherits byte-identical blobs, so the diff is a
+        # subset, not an equality), and the per-path loop below still proves
+        # every declared path exists at HEAD through rev-parse HEAD:<path>.
+        if not publication_paths <= set(value["evidence_paths"]):
             return False
         repository_root = repository.resolve()
         for relative in value["evidence_paths"]:

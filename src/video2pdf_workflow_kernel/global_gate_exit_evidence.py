@@ -301,8 +301,62 @@ def _validate_publication(project_root: Path, value: dict[str, Any], manifest_pa
     parents = _git(project_root, "rev-list", "--parents", "-n", "1", publication, gate="historical_evidence", code="historical_evidence_lineage_invalid").split()
     if len(parents) != 2 or parents[1] != value["implementation_commit"]:
         _fail("evidence publication is not the direct child of implementation commit", "historical_evidence", "historical_evidence_lineage_invalid")
-    if _commit_paths(project_root, publication) != set(value["evidence_paths"]):
-        _fail("evidence publication paths differ from manifest", "historical_evidence", "historical_evidence_paths_stale")
+    evidence_paths = set(value["evidence_paths"])
+    publication_paths = _commit_paths(project_root, publication)
+    if not publication_paths <= evidence_paths:
+        _fail("evidence publication contains undeclared paths", "historical_evidence", "historical_evidence_paths_stale")
+    # Gate-ordering dependency: the evidence_paths canonical-set gate in
+    # _validate_bindings runs first, so every declared path is already the
+    # canonical manifest, log, or persisted-artifact path and is safe to use
+    # as an exact pathspec here. A republication inherits byte-identical
+    # blobs from its parent tree, so the publication diff is only required to
+    # stay within the declared set, while every declared path must still
+    # resolve as a regular blob (never a symlink or gitlink) in the
+    # publication tree.
+    published: dict[str, tuple[str, str]] = {}
+    for line in _git(
+        project_root, "ls-tree", "-r", publication, "--", *sorted(evidence_paths),
+        gate="historical_evidence", code="historical_evidence_lineage_invalid",
+    ).splitlines():
+        mode, kind, _, path = line.split(None, 3)
+        published[path] = (mode, kind)
+    for relative_path in sorted(evidence_paths):
+        entry = published.get(relative_path)
+        if entry is not None and entry[0] in {"100644", "100755"} and entry[1] == "blob":
+            continue
+        if relative_path in publication_paths:
+            _fail(
+                f"evidence path is not a regular blob in the publication tree: {relative_path}",
+                "historical_evidence", "historical_evidence_paths_stale",
+            )
+        _fail(
+            f"evidence path does not resolve to a regular blob in the publication tree: {relative_path}",
+            "historical_evidence", "historical_evidence_path_unpublished",
+        )
+    # Byte binding: the publication-tree blob bytes of every non-manifest
+    # evidence path must hash to the manifest-declared fingerprint, closing
+    # the dirty-worktree window between on-disk bytes and committed bytes.
+    declared_fingerprints = {
+        item["log"]["path"]: item["log"]["sha256"] for item in value["commands"]
+    }
+    for item in value["commands"]:
+        for key, artifact in item["persisted_run"].items():
+            if key != "run_id":
+                declared_fingerprints[artifact["path"]] = artifact["sha256"]
+    for relative_path, expected_sha256 in sorted(declared_fingerprints.items()):
+        try:
+            actual = sha256_git_blob(project_root, publication, relative_path)
+        except EvidenceSupportError as exc:
+            raise ExitEvidenceValidationError(
+                str(exc),
+                first_failing_gate="historical_evidence",
+                error_code="historical_evidence_lineage_invalid",
+            ) from exc
+        if actual != expected_sha256:
+            _fail(
+                f"evidence publication bytes differ from the manifest fingerprint: {relative_path}",
+                "historical_evidence", "historical_evidence_paths_stale",
+            )
     if not (_commit_paths(project_root, value["implementation_commit"]) - set(value["evidence_paths"])):
         _fail("implementation commit is evidence-only", "historical_evidence", "implementation_commit_evidence_only")
 

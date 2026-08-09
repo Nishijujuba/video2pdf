@@ -37,6 +37,7 @@ from video2pdf_workflow_kernel.evidence import (
     fingerprint_implementation_changes,
     git_output,
     sha256_file,
+    sha256_git_blob,
 )
 
 
@@ -379,7 +380,19 @@ def finalize(collection_path: Path) -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     command_evidence = finalize_commands(collection, implementation_commit)
     fixtures = [
-        {"role": role, "path": path, "sha256": sha256_file(PROJECT_ROOT / path)}
+        {
+            "role": role,
+            "path": path,
+            # Validator gate served: fixture_fingerprint
+            # (global_gate_exit_evidence, error code fixture_sha256_stale)
+            # binds fixture identity to the GIT BLOB bytes at
+            # implementation_commit via evidence.sha256_git_blob. Mirror that
+            # exact algorithm here: finalize guarantees HEAD ==
+            # implementation_commit with a clean tree, so the blob bytes are
+            # the canonical content and on-disk drift (e.g. CRLF checkout)
+            # cannot stale the fingerprint.
+            "sha256": sha256_git_blob(PROJECT_ROOT, implementation_commit, path),
+        }
         for role, path in FIXTURE_SPECS
     ]
     decision = "pass" if all(item["conforms"] for item in command_evidence) else "fail"

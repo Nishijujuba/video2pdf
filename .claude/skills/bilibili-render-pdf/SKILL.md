@@ -41,6 +41,22 @@ The skill owns teaching intent, Bilibili-specific semantic choices, role briefs,
 
 Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance source and production through `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
 
+### Cold-start cutover bootstrap
+
+The published `active_kernel` statement above describes the authority after a successful Bilibili cutover. A repository with no confirmed Bilibili platform authority must use the one-candidate public bootstrap seam below. The provisional candidate is bounded evidence-generation authority for one exact Run; it is not `active_kernel` and cannot admit an ordinary `init-run`.
+
+1. Run `bootstrap-probe` for the selected Bilibili source and retain the exact probe, Run identity, source identity, and candidate session identity.
+2. Run `platform-kernel-prepare` with the current implementation commit, the exact probe, and the candidate session. This creates one durable `PREPARED` candidate binding without publishing platform authority.
+3. Run `init-cutover-candidate` for that same probe and session. This is the only initialization path available before confirmation; ordinary `init-run` remains fail-closed.
+4. Advance the candidate through the normal Kernel source, production, and final-compile operations, then transition it to `ready_for_delivery` with current final-artifact evidence.
+5. At `ready_for_delivery`, materialize a provider-current passing Acceptance Report v2. Run `platform-kernel-candidate-activate` for that exact ready candidate. The resulting `PROVISIONAL` state authorizes only that candidate to continue; it does not authorize any second Run or ordinary initialization.
+6. Transition the same candidate to `accepted`, generate a fresh current Delivery Guard, and use that Guard to transition to `delivered`. Then use `scripts/collect_issue13_exit_evidence.py collect` and `finalize` plus the formal Exit Evidence validator to collect and publish fingerprint-bound Slice 12 evidence for that delivered Run.
+7. Run `platform-kernel-activate` with the published Exit Evidence Manifest. Activation succeeds only when the manifest identifies the same delivered candidate and returns `CONFIRMED`. After confirmation, run `workflow-policy-check` and the platform-authority reconciliation/confirmation checks. Only `CONFIRMED` opens ordinary Bilibili `init-run` admission.
+
+At every intermediate state (`PREPARED`, `INITIALIZED`, or `PROVISIONAL`), startup and recovery must preserve the single candidate binding and reject ordinary Bilibili Run creation. Existing Bilibili directories remain Legacy throughout this bootstrap and cannot be converted into the candidate by synthesizing a Run Record.
+
+Canonical order: `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` never constitute `active_kernel`.
+
 ## Semantic Roles
 
 - **Data Preparation agent**: judges subtitle usefulness, source-language priority, acquisition limitations, and semantic adequacy from the Kernel-provided source task and returns only its bounded Judgment Patch.

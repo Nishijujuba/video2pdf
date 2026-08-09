@@ -4,6 +4,8 @@ Status: active domain language. Component runtime activation is recorded in the 
 
 New Bilibili Runs use the `active_kernel` lifecycle. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`. Final-quality authority remains the Delivery Quality `active_global_gate`.
 
+This status is the post-publication state. During a cold-start cutover, one exact Bilibili Run may be bound as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are bounded candidate states and do not constitute `active_kernel`; ordinary `init-run` remains closed until final activation records `CONFIRMED` for the matching delivered candidate and its published Exit Evidence.
+
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 
 The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and the Pyramid Gate Report. The Final Acceptance Context owns acceptance criteria, Reviewer judgment, and the final semantic delivery decision; this context consumes those published decisions and owns their invocation timing, freshness consequences, repair routing, and delivery mechanics.
@@ -39,6 +41,20 @@ An atomic activation of one shared gate contract across every affected execution
 ## Platform Kernel Cutover
 
 An atomic transfer of new-run lifecycle authority for one source platform to the Video Workflow Kernel.
+
+## Platform Cutover Candidate
+
+The one exact platform Run identity, source identity, implementation commit, Global Gate binding, and coordinator session durably selected to generate real guarded-delivery evidence before platform confirmation. Candidate preparation and initialization grant no ordinary Run-admission authority.
+
+## Provisional Candidate Authority
+
+The candidate-only state published after the bound Run reaches `ready_for_delivery` with a provider-current passing Acceptance Report v2. It permits only that Run to advance to `accepted`, obtain a fresh current Delivery Guard, and use that Guard to reach `delivered` for Exit Evidence collection. It is not `active_kernel` and cannot initialize another Run.
+
+## Confirmed Platform Kernel Authority
+
+The final platform authority recorded only after a published Exit Evidence Manifest identifies the same delivered candidate and passes formal validation. `CONFIRMED` opens ordinary new-run initialization and realizes the platform's `active_kernel` status.
+
+The cutover lifecycle follows `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain outside `active_kernel`.
 
 ## Contract Schema Version
 

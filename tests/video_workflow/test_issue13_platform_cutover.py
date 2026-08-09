@@ -129,11 +129,19 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
         *,
         status_overrides: dict[str, str] | None = None,
         components_activated: list[str] | None = None,
+        control_store_root: Path | None = None,
+        global_gate_binding: dict[str, object] | None = None,
     ) -> tuple[Path, Path]:
-        case_root = new_case_dir(self.id(), label="issue13-platform-cutover")
-        control_store_root = case_root / "control-store"
-        control_store_root.mkdir(parents=True)
-        global_gate_binding = self._write_stub_global_gate(control_store_root)
+        if control_store_root is None:
+            case_root = new_case_dir(self.id(), label="issue13-platform-cutover")
+            control_store_root = case_root / "control-store"
+            control_store_root.mkdir(parents=True)
+        else:
+            control_store_root = control_store_root.resolve()
+            control_store_root.mkdir(parents=True, exist_ok=True)
+            case_root = control_store_root
+        if global_gate_binding is None:
+            global_gate_binding = self._write_stub_global_gate(control_store_root)
         exit_evidence = case_root / "exit-evidence-manifest.json"
         manifest = {
                     "$schema": (
@@ -380,6 +388,7 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
 
         def write_bound(name: str, payload: bytes) -> tuple[Path, dict[str, str]]:
             path = guarded_root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
             return path, {
                 "path": path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix(),
@@ -522,6 +531,181 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        candidate_root = guarded_root / "candidate-run"
+        source_path = candidate_root / "source" / "manifest.json"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(
+            json.dumps(
+                {"run_id": run_id, "source_identity": "s" * 64},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        video_path = candidate_root / "review" / "acceptance" / "delivery_target.json"
+        session_path = candidate_root / "delivery-session-target.json"
+        index_path = candidate_root / "delivery-task-index.json"
+        video = {
+            "run_id": run_id,
+            "stage": "delivered",
+            "artifacts": {
+                "acceptance_report": {
+                    "path": str(role_files["acceptance_report_v2"][0].resolve()),
+                    "sha256": role_files["acceptance_report_v2"][1]["sha256"],
+                },
+                "delivery_guard_report": {
+                    "path": str(role_files["delivery_guard_report"][0].resolve()),
+                    "sha256": role_files["delivery_guard_report"][1]["sha256"],
+                },
+                "final_pdf": {
+                    "path": str(role_files["final_pdf"][0].resolve()),
+                    "sha256": role_files["final_pdf"][1]["sha256"],
+                },
+            },
+            "global_gate_authority": {
+                "path": global_gate_binding["authority_path"],
+                "generation": global_gate_binding["generation"],
+                "sha256": global_gate_binding["authority_sha256"],
+            },
+        }
+        session = {"run_id": run_id, "stage": "delivered"}
+        index = {"entries": [{"run_id": run_id, "stage": "delivered"}]}
+        for path, value in (
+            (video_path, video),
+            (session_path, session),
+            (index_path, index),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+        run_path = candidate_root / "workflow" / "run.json"
+        run_path.parent.mkdir(parents=True, exist_ok=True)
+        run_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "4.0.0",
+                    "canonical_platform": "bilibili",
+                    "run_id": run_id,
+                    "output_path": str(candidate_root.resolve()),
+                    "source_identity": "s" * 64,
+                    "artifact_generations": {
+                        "source_manifest": {
+                            "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                        },
+                    },
+                    "delivery": {
+                        "stage": "delivered",
+                        "ownership": {"session_id": "candidate-session"},
+                        "projections": {
+                            "video_target": {
+                                "path": str(video_path.resolve()),
+                                "sha256": hashlib.sha256(video_path.read_bytes()).hexdigest(),
+                            },
+                            "session_target": {
+                                "path": str(session_path.resolve()),
+                                "sha256": hashlib.sha256(session_path.read_bytes()).hexdigest(),
+                            },
+                            "task_index": {
+                                "path": str(index_path.resolve()),
+                                "sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
+                            },
+                        },
+                    },
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # Rematerialize every node reachable from the delivered candidate. This
+        # preserves one contradiction per negative scenario after the snapshot
+        # and guarded-delivery validation gates were strengthened.
+        def current_binding(path: Path) -> dict[str, str]:
+            return {
+                "path": path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+
+        role_files.update(
+            {
+                "run_record": (run_path, current_binding(run_path)),
+                "source_manifest": (source_path, current_binding(source_path)),
+                "video_delivery_target": (video_path, current_binding(video_path)),
+                "session_delivery_target": (session_path, current_binding(session_path)),
+                "delivery_task_index": (index_path, current_binding(index_path)),
+            }
+        )
+        collection["artifacts"] = {
+            role: {"path": str(path.resolve()), "sha256": binding["sha256"]}
+            for role, (path, binding) in role_files.items()
+        }
+        collection_path.write_text(
+            json.dumps(collection, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        collection_binding = current_binding(collection_path)
+        manifest["guarded_delivery_evidence"]["collection"].update(
+            collection_binding
+        )
+        manifest["guarded_delivery_evidence"]["artifacts"] = [
+            {"role": role, **binding}
+            for role, (_path, binding) in role_files.items()
+        ]
+        exit_evidence.write_text(
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # Fixture graph: the SQL columns are authority inputs and candidate_json
+        # is their frozen snapshot. Activation is the first gate; each negative
+        # scenario mutates only its declared downstream evidence contradiction.
+        candidate = {
+            "candidate_run_id": run_id,
+            "candidate_run_dir": str(candidate_root.resolve()),
+            "source_identity": "s" * 64,
+            "candidate_session_id": "candidate-session",
+            "global_gate_binding": {
+                "authority_sha256": global_gate_binding["authority_sha256"],
+            },
+            "implementation_commit": implementation_commit,
+            "probe_sha256": "p" * 64,
+            "state": "PROVISIONAL",
+        }
+        with sqlite3.connect(
+            control_store_root / "platform-kernel-control.sqlite3"
+        ) as platform_db:
+            platform_db.execute(
+                "CREATE TABLE IF NOT EXISTS platform_cutover_candidates ("
+                "platform TEXT PRIMARY KEY, candidate_run_id TEXT NOT NULL, "
+                "source_identity TEXT NOT NULL, session_id TEXT NOT NULL, "
+                "global_gate_sha256 TEXT NOT NULL, implementation_commit TEXT NOT NULL, "
+                "probe_sha256 TEXT NOT NULL, candidate_json TEXT NOT NULL, "
+                "state TEXT NOT NULL CHECK(state IN "
+                "('PREPARED','INITIALIZED','PROVISIONAL','CONFIRMED')))"
+            )
+            platform_db.execute(
+                "INSERT INTO platform_cutover_candidates VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    "bilibili",
+                    run_id,
+                    "s" * 64,
+                    "candidate-session",
+                    global_gate_binding["authority_sha256"],
+                    implementation_commit,
+                    "p" * 64,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                    "PROVISIONAL",
+                ),
+            )
         return control_store_root, exit_evidence
 
     def _write_schema_valid_slice12_manifest(self) -> tuple[Path, Path]:
@@ -570,13 +754,27 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
         if not database.is_file():
             return
         with sqlite3.connect(database) as connection:
-            authority_count = connection.execute(
-                "SELECT COUNT(*) FROM platform_cutover_authority"
-            ).fetchone()[0]
-            committed_intent_count = connection.execute(
-                "SELECT COUNT(*) FROM platform_cutover_intents "
-                "WHERE state='COMMITTED'"
-            ).fetchone()[0]
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            authority_count = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM platform_cutover_authority"
+                ).fetchone()[0]
+                if "platform_cutover_authority" in tables
+                else 0
+            )
+            committed_intent_count = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM platform_cutover_intents "
+                    "WHERE state='COMMITTED'"
+                ).fetchone()[0]
+                if "platform_cutover_intents" in tables
+                else 0
+            )
         self.assertEqual(0, authority_count)
         self.assertEqual(0, committed_intent_count)
 
@@ -1030,7 +1228,15 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
             exit_evidence=global_evidence,
             activated_at="2026-08-09T00:00:00Z",
         )
-        _, platform_evidence = self._write_valid_cutover_manifest()
+        _, platform_evidence = self._write_valid_cutover_manifest(
+            control_store_root=root,
+            global_gate_binding={
+                "activation_status": "active_global_gate",
+                "authority_path": global_authority["authority_path"],
+                "authority_sha256": global_authority["authority_sha256"],
+                "generation": global_authority["generation"],
+            },
+        )
         self.assertEqual(global_authority["generation"], 1)
         activated = _run_cli(
             "platform-kernel-activate",

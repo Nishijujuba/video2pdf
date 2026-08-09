@@ -10,6 +10,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, ValidationError
 
+from .acceptance_v2 import AcceptanceV2Provider
 from .errors import (
     ContractError,
     ControlStoreUnavailable,
@@ -19,10 +20,17 @@ from .errors import (
 from .evidence import EvidenceSupportError, git_output, sha256_git_blob
 from .global_gate import GlobalGatePublisher
 from .guarded_delivery import (
+    require_current_kernel_guarded_decision,
     validate_acceptance_report,
     validate_delivery_guard_report,
 )
-from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
+from .utils import (
+    canonical_json_bytes,
+    read_json,
+    require_safe_path_segment,
+    sha256_file,
+    write_json_atomic,
+)
 
 
 PLATFORM_KERNEL_DB = "platform-kernel-control.sqlite3"
@@ -393,13 +401,976 @@ class BilibiliPlatformCutoverPublisher:
                 "CREATE TABLE IF NOT EXISTS platform_cutover_intents ("
                 "intent_id TEXT PRIMARY KEY, platform TEXT NOT NULL UNIQUE, "
                 "evidence_sha256 TEXT NOT NULL, authority_json TEXT NOT NULL, "
+                "candidate_snapshot_sha256 TEXT, "
                 "state TEXT NOT NULL CHECK(state IN ('PREPARED','COMMITTED')))"
             )
+            intent_columns = {
+                str(column["name"])
+                for column in connection.execute(
+                    "PRAGMA table_info(platform_cutover_intents)"
+                ).fetchall()
+            }
+            if "candidate_snapshot_sha256" not in intent_columns:
+                connection.execute(
+                    "ALTER TABLE platform_cutover_intents "
+                    "ADD COLUMN candidate_snapshot_sha256 TEXT"
+                )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS platform_cutover_candidates ("
+                "platform TEXT PRIMARY KEY, candidate_run_id TEXT NOT NULL, "
+                "source_identity TEXT NOT NULL, session_id TEXT NOT NULL, "
+                "global_gate_sha256 TEXT NOT NULL, implementation_commit TEXT NOT NULL, "
+                "probe_sha256 TEXT NOT NULL, candidate_json TEXT NOT NULL, "
+                "state TEXT NOT NULL CHECK(state IN "
+                "('PREPARED','INITIALIZING','INITIALIZED','PROVISIONAL','CONFIRMED')))"
+            )
+            candidate_table = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' "
+                "AND name='platform_cutover_candidates'"
+            ).fetchone()
+            if candidate_table is not None and "'INITIALIZING'" not in str(
+                candidate_table["sql"]
+            ):
+                connection.execute("BEGIN EXCLUSIVE")
+                try:
+                    connection.execute(
+                        "ALTER TABLE platform_cutover_candidates "
+                        "RENAME TO platform_cutover_candidates_v1"
+                    )
+                    connection.execute(
+                        "CREATE TABLE platform_cutover_candidates ("
+                        "platform TEXT PRIMARY KEY, candidate_run_id TEXT NOT NULL, "
+                        "source_identity TEXT NOT NULL, session_id TEXT NOT NULL, "
+                        "global_gate_sha256 TEXT NOT NULL, implementation_commit TEXT NOT NULL, "
+                        "probe_sha256 TEXT NOT NULL, candidate_json TEXT NOT NULL, "
+                        "state TEXT NOT NULL CHECK(state IN "
+                        "('PREPARED','INITIALIZING','INITIALIZED','PROVISIONAL','CONFIRMED')))"
+                    )
+                    connection.execute(
+                        "INSERT INTO platform_cutover_candidates SELECT * "
+                        "FROM platform_cutover_candidates_v1"
+                    )
+                    connection.execute("DROP TABLE platform_cutover_candidates_v1")
+                    connection.execute("COMMIT")
+                except Exception:
+                    connection.execute("ROLLBACK")
+                    raise
             return connection
         except (OSError, sqlite3.DatabaseError) as exc:
             raise ControlStoreUnavailable(
                 "Platform cutover control store is unavailable"
             ) from exc
+
+    @staticmethod
+    def _candidate_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            candidate = json.loads(row["candidate_json"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise KernelConflict(
+                "Bilibili candidate snapshot cannot be decoded",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_snapshot_invalid",
+                },
+            ) from exc
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("state") != row["state"]
+            or candidate.get("candidate_run_id") != row["candidate_run_id"]
+            or candidate.get("source_identity") != row["source_identity"]
+            or candidate.get("candidate_session_id") != row["session_id"]
+            or candidate.get("implementation_commit") != row["implementation_commit"]
+            or candidate.get("probe_sha256") != row["probe_sha256"]
+            or not isinstance(candidate.get("global_gate_binding"), dict)
+            or candidate["global_gate_binding"].get("authority_sha256")
+            != row["global_gate_sha256"]
+        ):
+            raise KernelConflict(
+                "Bilibili candidate SQL and JSON states differ",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_state_inconsistent",
+                },
+            )
+        return candidate
+
+    @classmethod
+    def _confirmation_snapshot_fingerprint(
+        cls, row: sqlite3.Row, evidence: dict[str, Any]
+    ) -> str:
+        candidate = cls._candidate_snapshot(row)
+        guarded = evidence.get("guarded_delivery_evidence")
+        artifacts = guarded.get("artifacts") if isinstance(guarded, dict) else None
+        if not isinstance(artifacts, list) or len(artifacts) != 9:
+            raise KernelConflict(
+                "Bilibili candidate confirmation snapshot is incomplete"
+            )
+        current_artifacts = []
+        for item in sorted(artifacts, key=lambda value: str(value.get("role", ""))):
+            if not isinstance(item, dict):
+                raise KernelConflict(
+                    "Bilibili candidate confirmation snapshot is invalid"
+                )
+            raw_path = Path(str(item.get("path", "")))
+            path = (
+                raw_path.resolve()
+                if raw_path.is_absolute()
+                else (PROJECT_ROOT / raw_path).resolve()
+            )
+            if not path.is_file():
+                raise KernelConflict(
+                    "Bilibili candidate confirmation artifact is unavailable"
+                )
+            current_artifacts.append(
+                {
+                    "role": item.get("role"),
+                    "path": str(path),
+                    "sha256": sha256_file(path),
+                }
+            )
+        return hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "candidate": candidate,
+                    "run_id": guarded.get("run_id"),
+                    "artifacts": current_artifacts,
+                }
+            )
+        ).hexdigest()
+
+    def prepare_candidate(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        implementation_commit: str,
+        candidate_probe: Path,
+        candidate_session_id: str,
+        prepared_at: str,
+    ) -> dict[str, Any]:
+        """Durably bind the single pre-confirmation Run without activating it."""
+
+        if platform != SUPPORTED_PLATFORM:
+            raise ContractError("Only a Bilibili cutover candidate can be prepared")
+        session_id = require_safe_path_segment(
+            candidate_session_id,
+            purpose="cutover candidate session_id",
+            error_type=ContractError,
+        )
+        probe_path = candidate_probe.resolve()
+        if not probe_path.is_file():
+            raise ContractError("Bilibili cutover candidate probe is unavailable")
+        probe = read_json(probe_path)
+        adapter = probe.get("adapter")
+        if (
+            probe.get("schema_name") != "bootstrap-record"
+            or probe.get("schema_version") != "2.0.0"
+            or probe.get("status") != "probe_complete"
+            or not isinstance(adapter, dict)
+            or adapter.get("canonical_platform") != platform
+            or probe.get("canonical_platform") != platform
+            or not isinstance(probe.get("run_id"), str)
+            or len(probe["run_id"]) != 32
+            or not isinstance(probe.get("source_identity"), str)
+            or len(probe["source_identity"]) != 64
+        ):
+            raise ContractError("Bilibili cutover candidate probe identity is invalid")
+        try:
+            git_output(
+                PROJECT_ROOT,
+                "cat-file",
+                "-e",
+                f"{implementation_commit}^{{commit}}",
+            )
+            if git_output(PROJECT_ROOT, "rev-parse", "HEAD") != implementation_commit:
+                raise EvidenceSupportError(
+                    "cutover candidate implementation commit is not current HEAD"
+                )
+        except EvidenceSupportError as exc:
+            raise ContractError(
+                "Bilibili cutover candidate implementation lineage is invalid",
+                data={
+                    "first_failing_gate": "implementation_artifacts",
+                    "error_code": "bilibili_candidate_implementation_invalid",
+                },
+            ) from exc
+
+        root = control_store_root.resolve()
+        global_gate = GlobalGatePublisher().require_current(control_store_root=root)
+        candidate = {
+            "schema_name": "platform-kernel-cutover-candidate",
+            "schema_version": "1.0.0",
+            "platform": platform,
+            "candidate_run_id": probe["run_id"],
+            "source_identity": probe["source_identity"],
+            "candidate_session_id": session_id,
+            "global_gate_binding": {
+                "activation_status": "active_global_gate",
+                "authority_path": global_gate["path"],
+                "authority_sha256": global_gate["file_sha256"],
+                "generation": global_gate["generation"],
+            },
+            "implementation_commit": implementation_commit,
+            "probe_path": str(probe_path),
+            "probe_sha256": sha256_file(probe_path),
+            "prepared_at": prepared_at,
+            "state": "PREPARED",
+        }
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT 1 FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if active is not None:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili Platform Kernel is already confirmed",
+                    data={
+                        "first_failing_gate": "platform_kernel_authority",
+                        "error_code": "bilibili_platform_authority_already_confirmed",
+                    },
+                )
+            existing = connection.execute(
+                "SELECT * FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if existing is not None:
+                self._candidate_snapshot(existing)
+                if existing["state"] != "PREPARED" or existing["candidate_json"] != encoded:
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "A different Bilibili cutover candidate is already prepared"
+                    )
+                connection.execute("COMMIT")
+                idempotent = True
+            else:
+                connection.execute(
+                    "INSERT INTO platform_cutover_candidates("
+                    "platform,candidate_run_id,source_identity,session_id,"
+                    "global_gate_sha256,implementation_commit,probe_sha256,"
+                    "candidate_json,state) VALUES(?,?,?,?,?,?,?,?, 'PREPARED')",
+                    (
+                        platform,
+                        candidate["candidate_run_id"],
+                        candidate["source_identity"],
+                        session_id,
+                        candidate["global_gate_binding"]["authority_sha256"],
+                        implementation_commit,
+                        candidate["probe_sha256"],
+                        encoded,
+                    ),
+                )
+                connection.execute("COMMIT")
+                idempotent = False
+        return {
+            "authority_status": "prepared_candidate",
+            "candidate_run_id": candidate["candidate_run_id"],
+            "candidate_session_id": session_id,
+            "source_identity": candidate["source_identity"],
+            "global_gate_binding": candidate["global_gate_binding"],
+            "implementation_commit": implementation_commit,
+            "platform_statuses": {
+                "bilibili": "active_legacy",
+                "youtube": "active_legacy",
+            },
+            "idempotent": idempotent,
+        }
+
+    def require_prepared_candidate(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        candidate_probe: Path,
+        candidate_session_id: str,
+    ) -> dict[str, Any]:
+        if platform != SUPPORTED_PLATFORM:
+            raise ContractError("Only a Bilibili cutover candidate can initialize")
+        root = control_store_root.resolve()
+        with self._connect(root) as connection:
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+        if row is None or row["state"] not in {"PREPARED", "INITIALIZING", "INITIALIZED"}:
+            raise KernelConflict(
+                "Bilibili cutover candidate is absent or already confirmed",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_unavailable",
+                },
+            )
+        probe_path = candidate_probe.resolve()
+        if not probe_path.is_file():
+            raise KernelConflict(
+                "Bilibili cutover candidate probe is unavailable",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_binding_mismatch",
+                },
+            )
+        probe = read_json(probe_path)
+        candidate = self._candidate_snapshot(row)
+        global_gate = candidate["global_gate_binding"]
+        global_gate_path = Path(global_gate["authority_path"]).resolve()
+        current_global_gate = GlobalGatePublisher().require_current(
+            control_store_root=root
+        )
+        if (
+            row["candidate_run_id"] != probe.get("run_id")
+            or row["source_identity"] != probe.get("source_identity")
+            or row["session_id"] != candidate_session_id
+            or row["probe_sha256"] != sha256_file(probe_path)
+            or row["implementation_commit"]
+            != git_output(PROJECT_ROOT, "rev-parse", "HEAD")
+            or not global_gate_path.is_relative_to(root)
+            or not global_gate_path.is_file()
+            or row["global_gate_sha256"] != sha256_file(global_gate_path)
+            or global_gate["authority_path"] != current_global_gate["path"]
+            or global_gate["authority_sha256"]
+            != current_global_gate["file_sha256"]
+            or global_gate["generation"] != current_global_gate["generation"]
+        ):
+            raise KernelConflict(
+                "Bilibili cutover candidate binding differs from its prepared authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_binding_mismatch",
+                },
+            )
+        return candidate
+
+    def begin_candidate_initialization(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        candidate_probe: Path,
+        candidate_session_id: str,
+        workspace_root: Path,
+    ) -> dict[str, Any]:
+        candidate = self.require_prepared_candidate(
+            platform=platform,
+            control_store_root=control_store_root,
+            candidate_probe=candidate_probe,
+            candidate_session_id=candidate_session_id,
+        )
+        root = control_store_root.resolve()
+        workspace = workspace_root.resolve()
+        candidate["workspace_root"] = str(workspace)
+        candidate["state"] = "INITIALIZING"
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if row is None:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili cutover candidate disappeared")
+            current = self._candidate_snapshot(row)
+            if row["state"] != "PREPARED":
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili cutover candidate initialization is already owned",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_initialization_in_progress",
+                    },
+                )
+            if current["candidate_run_id"] != candidate["candidate_run_id"]:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili cutover candidate identity changed")
+            connection.execute(
+                "UPDATE platform_cutover_candidates "
+                "SET candidate_json=?,state='INITIALIZING' "
+                "WHERE platform=? AND state='PREPARED'",
+                (encoded, platform),
+            )
+            connection.execute("COMMIT")
+        return candidate
+
+    def record_candidate_initialized(
+        self, *, platform: str, control_store_root: Path, candidate_run_dir: Path
+    ) -> None:
+        root = control_store_root.resolve()
+        run_dir = candidate_run_dir.resolve()
+        run_path = run_dir / "workflow" / "run.json"
+        if not run_path.is_file():
+            raise KernelConflict("Bilibili cutover candidate Run Record is unavailable")
+        run = read_json(run_path)
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if (
+                row is None
+                or row["state"] not in {"INITIALIZING", "INITIALIZED"}
+                or run.get("schema_version") != "4.0.0"
+                or run.get("canonical_platform") != platform
+                or run.get("run_id") != row["candidate_run_id"]
+                or Path(str(run.get("output_path", ""))).resolve() != run_dir
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili cutover candidate lost its durable fence")
+            candidate = self._candidate_snapshot(row)
+            prior_run_dir = candidate.get("candidate_run_dir")
+            if prior_run_dir is not None and Path(prior_run_dir).resolve() != run_dir:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili cutover candidate Run binding changed")
+            candidate["candidate_run_dir"] = str(run_dir)
+            candidate["state"] = "INITIALIZED"
+            connection.execute(
+                "UPDATE platform_cutover_candidates "
+                "SET candidate_json=?,state='INITIALIZED' WHERE platform=? "
+                "AND state IN ('INITIALIZING','INITIALIZED')",
+                (
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                    platform,
+                ),
+            )
+            connection.execute("COMMIT")
+
+    def rollback_unstarted_candidate_initialization(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        candidate_run_id: str,
+        workspace_root: Path,
+    ) -> None:
+        root = control_store_root.resolve()
+        workspace = workspace_root.resolve()
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if row is None or row["state"] != "INITIALIZING":
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate initialization rollback lost its fence"
+                )
+            candidate = self._candidate_snapshot(row)
+            if (
+                row["candidate_run_id"] != candidate_run_id
+                or Path(str(candidate.get("workspace_root", ""))).resolve()
+                != workspace
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate initialization rollback binding changed"
+                )
+            candidate.pop("workspace_root", None)
+            candidate.pop("candidate_run_dir", None)
+            candidate["state"] = "PREPARED"
+            changed = connection.execute(
+                "UPDATE platform_cutover_candidates SET candidate_json=?,state='PREPARED' "
+                "WHERE platform=? AND candidate_run_id=? AND state='INITIALIZING'",
+                (
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                    platform,
+                    candidate_run_id,
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate initialization rollback lost its CAS fence"
+                )
+            connection.execute("COMMIT")
+
+    @staticmethod
+    def _projection_path(
+        binding: Any, *, base: Path, allowed_root: Path, label: str
+    ) -> Path:
+        if not isinstance(binding, dict):
+            raise KernelConflict(f"Bilibili candidate {label} binding is absent")
+        raw = binding.get("path")
+        expected = binding.get("sha256")
+        if not isinstance(raw, str) or not isinstance(expected, str):
+            raise KernelConflict(f"Bilibili candidate {label} binding is invalid")
+        candidate = Path(raw)
+        path = (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        if (
+            not path.is_relative_to(allowed_root.resolve())
+            or not path.is_file()
+            or sha256_file(path) != expected
+        ):
+            if not path.is_relative_to(allowed_root.resolve()):
+                raise KernelConflict(
+                    f"Bilibili candidate {label} escapes its projection root",
+                    data={
+                        "first_failing_gate": "path_boundary",
+                        "error_code": "bilibili_candidate_projection_escape",
+                    },
+                )
+            raise KernelConflict(f"Bilibili candidate {label} binding is stale")
+        return path
+
+    def _current_candidate_run(
+        self,
+        *,
+        root: Path,
+        row: sqlite3.Row,
+        expected_stage: str,
+    ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+        candidate = self._candidate_snapshot(row)
+        declared = candidate.get("candidate_run_dir")
+        if not isinstance(declared, str):
+            raise KernelConflict("Bilibili candidate Run binding is absent")
+        run_dir = Path(declared).resolve()
+        run_path = run_dir / "workflow" / "run.json"
+        if not run_path.is_file():
+            raise KernelConflict("Bilibili candidate Run Record is unavailable")
+        run = read_json(run_path)
+        delivery = run.get("delivery")
+        if (
+            run.get("schema_version") != "4.0.0"
+            or run.get("canonical_platform") != SUPPORTED_PLATFORM
+            or run.get("run_id") != row["candidate_run_id"]
+            or Path(str(run.get("output_path", ""))).resolve() != run_dir
+            or not isinstance(delivery, dict)
+            or delivery.get("stage") != expected_stage
+        ):
+            raise KernelConflict(
+                "Bilibili candidate Run is not at the required delivery stage",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_not_ready_for_activation",
+                },
+            )
+        if run.get("source_identity") != row["source_identity"]:
+            raise KernelConflict(
+                "Bilibili candidate source identity differs from preparation",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_source_binding_mismatch",
+                },
+            )
+        ownership = delivery.get("ownership")
+        if (
+            not isinstance(ownership, dict)
+            or ownership.get("session_id") != row["session_id"]
+        ):
+            raise KernelConflict(
+                "Bilibili candidate session differs from preparation",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_session_binding_mismatch",
+                },
+            )
+        projections = delivery.get("projections")
+        if not isinstance(projections, dict):
+            raise KernelConflict("Bilibili candidate delivery projections are absent")
+        video_path = self._projection_path(
+            projections.get("video_target"),
+            base=run_dir,
+            allowed_root=run_dir,
+            label="video target",
+        )
+        project_root = run_dir.parents[1]
+        session_path = self._projection_path(
+            projections.get("session_target"),
+            base=run_dir,
+            allowed_root=project_root,
+            label="session target",
+        )
+        index_path = self._projection_path(
+            projections.get("task_index"),
+            base=run_dir,
+            allowed_root=project_root,
+            label="task index",
+        )
+        video = read_json(video_path)
+        session = read_json(session_path)
+        index = read_json(index_path)
+        run_id = run["run_id"]
+        matching = [
+            item for item in index.get("entries", []) if item.get("run_id") == run_id
+        ]
+        if (
+            video.get("run_id") != run_id
+            or video.get("stage") != expected_stage
+            or session.get("run_id") != run_id
+            or session.get("stage") != expected_stage
+            or len(matching) != 1
+            or matching[0].get("stage") != expected_stage
+        ):
+            raise KernelConflict("Bilibili candidate delivery projections are not current")
+        gate = video.get("global_gate_authority")
+        current_gate = GlobalGatePublisher().require_current(control_store_root=root)
+        if (
+            not isinstance(gate, dict)
+            or gate.get("path") != current_gate["path"]
+            or gate.get("generation") != current_gate["generation"]
+            or gate.get("sha256") != current_gate["file_sha256"]
+        ):
+            raise KernelConflict("Bilibili candidate Global Gate binding is stale")
+        return run_dir, run, video
+
+    def activate_candidate(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        candidate_run_dir: Path,
+        activated_at: str,
+    ) -> dict[str, Any]:
+        if platform != SUPPORTED_PLATFORM:
+            raise ContractError("Only a Bilibili cutover candidate can activate")
+        root = control_store_root.resolve()
+        with self._connect(root) as connection:
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+        if row is None or row["state"] not in {"INITIALIZED", "PROVISIONAL"}:
+            raise KernelConflict(
+                "Bilibili cutover candidate is not initialized",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_unavailable",
+                },
+            )
+        if row["implementation_commit"] != git_output(
+            PROJECT_ROOT, "rev-parse", "HEAD"
+        ):
+            raise KernelConflict(
+                "Bilibili candidate implementation is no longer current",
+                data={
+                    "first_failing_gate": "implementation_artifacts",
+                    "error_code": "bilibili_candidate_implementation_stale",
+                },
+            )
+        self._candidate_snapshot(row)
+        run_dir, run, video = self._current_candidate_run(
+            root=root, row=row, expected_stage="ready_for_delivery"
+        )
+        if run_dir != candidate_run_dir.resolve():
+            raise KernelConflict("Bilibili candidate activation targets another Run")
+        artifacts = video.get("artifacts")
+        acceptance_binding = (
+            artifacts.get("acceptance_report") if isinstance(artifacts, dict) else None
+        )
+        guard_binding = (
+            artifacts.get("delivery_guard_report") if isinstance(artifacts, dict) else None
+        )
+        acceptance_path = run_dir / "review" / "acceptance" / "acceptance_report.json"
+        if (
+            not isinstance(acceptance_binding, dict)
+            or guard_binding is not None
+            or Path(str(acceptance_binding.get("path", ""))).resolve()
+            != acceptance_path.resolve()
+            or not acceptance_path.is_file()
+            or acceptance_binding.get("sha256") != sha256_file(acceptance_path)
+        ):
+            raise KernelConflict(
+                "Bilibili candidate guarded decision is not bound to the ready target",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_guarded_decision_unbound",
+                },
+            )
+        try:
+            report = validate_acceptance_report(
+                project_root=PROJECT_ROOT,
+                report_path=acceptance_path,
+                run_id=run["run_id"],
+                coordination_revision=run["coordination_revision"],
+            )
+            eligibility = AcceptanceV2Provider(run_dir.parents[1]).guard_eligibility(
+                workspace_root=acceptance_path.parent
+            )
+            if (
+                eligibility.get("eligible") is not True
+                or eligibility.get("delivery_authority") is not True
+                or eligibility.get("report_sha256") != report.get("report_sha256")
+            ):
+                raise ContractError(
+                    "Acceptance Report v2 lacks committed provider authority"
+                )
+        except (ContractError, KernelConflict, OSError, KeyError, TypeError, ValueError) as exc:
+            raise KernelConflict(
+                "Bilibili candidate lacks a passing Acceptance decision",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_guarded_decision_invalid",
+                },
+            ) from exc
+        candidate = json.loads(row["candidate_json"])
+        candidate.update(
+            {
+                "state": "PROVISIONAL",
+                "provisional_activated_at": activated_at,
+                "acceptance_report_sha256": sha256_file(acceptance_path),
+            }
+        )
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT * FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if current is None or current["state"] not in {"INITIALIZED", "PROVISIONAL"}:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili candidate activation lost its fence")
+            self._candidate_snapshot(current)
+            if current["state"] == "PROVISIONAL" and current["candidate_json"] != encoded:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Bilibili candidate provisional authority conflicts")
+            connection.execute(
+                "UPDATE platform_cutover_candidates "
+                "SET candidate_json=?,state='PROVISIONAL' WHERE platform=?",
+                (encoded, platform),
+            )
+            connection.execute("COMMIT")
+        return {
+            "platform": platform,
+            "cutover_state": "PROVISIONAL",
+            "candidate_run_id": run["run_id"],
+            "candidate_run_dir": str(run_dir),
+            "platform_statuses": {
+                "bilibili": "active_legacy",
+                "youtube": "active_legacy",
+            },
+        }
+
+    def authorize_delivery_transition(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        run_dir: Path,
+        run_id: str,
+        to_stage: str,
+    ) -> None:
+        if to_stage not in {"accepted", "delivered"}:
+            return
+        root = control_store_root.resolve()
+        if not (root / PLATFORM_KERNEL_DB).is_file():
+            raise KernelConflict(
+                "Bilibili delivery transition lacks Platform Kernel authority",
+                data={
+                    "first_failing_gate": "platform_kernel_authority",
+                    "error_code": "bilibili_platform_authority_stale",
+                },
+            )
+        with self._connect(root) as connection:
+            active = connection.execute(
+                "SELECT 1 FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+        if active is not None:
+            self.require_current(platform=platform, control_store_root=root)
+            return
+        if candidate is not None and candidate["state"] == "PROVISIONAL":
+            value = self._candidate_snapshot(candidate)
+            if (
+                candidate["candidate_run_id"] == run_id
+                and Path(str(value.get("candidate_run_dir", ""))).resolve()
+                == run_dir.resolve()
+            ):
+                if to_stage == "delivered":
+                    try:
+                        guarded = require_current_kernel_guarded_decision(
+                            project_root=run_dir.resolve().parents[1],
+                            run_dir=run_dir.resolve(),
+                        )
+                    except (ContractError, OSError, KeyError, TypeError, ValueError) as exc:
+                        raise KernelConflict(
+                            "Bilibili candidate guarded delivery authority is stale",
+                            data={
+                                "first_failing_gate": "platform_kernel_candidate",
+                                "error_code": "bilibili_candidate_guarded_decision_stale",
+                            },
+                        ) from exc
+                    if (
+                        guarded.get("run_id") != run_id
+                        or guarded.get("acceptance_report", {}).get("sha256")
+                        != value.get("acceptance_report_sha256")
+                    ):
+                        raise KernelConflict(
+                            "Bilibili candidate guarded delivery authority is stale",
+                            data={
+                                "first_failing_gate": "platform_kernel_candidate",
+                                "error_code": "bilibili_candidate_guarded_decision_stale",
+                            },
+                        )
+                return
+        raise KernelConflict(
+            "Bilibili delivery transition lacks confirmed or provisional authority",
+            data={
+                "first_failing_gate": "platform_kernel_candidate",
+                "error_code": "bilibili_candidate_delivery_not_authorized",
+            },
+        )
+
+    def reject_candidate_handoff(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        run_id: str,
+    ) -> None:
+        root = control_store_root.resolve()
+        if not (root / PLATFORM_KERNEL_DB).is_file():
+            return
+        with self._connect(root) as connection:
+            candidate = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+        if candidate is None:
+            return
+        self._candidate_snapshot(candidate)
+        if (
+            candidate["candidate_run_id"] == run_id
+            and candidate["state"] != "CONFIRMED"
+        ):
+            raise KernelConflict(
+                "Bilibili cutover candidate cannot be handed off before confirmation",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_handoff_forbidden",
+                },
+            )
+
+    def _require_confirmable_candidate(
+        self,
+        *,
+        root: Path,
+        evidence: dict[str, Any],
+        candidate_row: sqlite3.Row | None = None,
+    ) -> sqlite3.Row:
+        row = candidate_row
+        if row is None:
+            with self._connect(root) as connection:
+                row = connection.execute(
+                    "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                    (SUPPORTED_PLATFORM,),
+                ).fetchone()
+        guarded = evidence.get("guarded_delivery_evidence")
+        guarded_run_id = guarded.get("run_id") if isinstance(guarded, dict) else None
+        if row is None or row["state"] not in {"PROVISIONAL", "CONFIRMED"}:
+            raise KernelConflict(
+                "Bilibili activation requires one provisional candidate",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_provisional_candidate_absent",
+                },
+            )
+        if evidence.get("implementation_commit") != row["implementation_commit"]:
+            raise KernelConflict(
+                "Bilibili activation evidence differs from the candidate implementation",
+                data={
+                    "first_failing_gate": "implementation_artifacts",
+                    "error_code": "bilibili_candidate_implementation_evidence_mismatch",
+                },
+            )
+        run_dir, run, video = self._current_candidate_run(
+            root=root, row=row, expected_stage="delivered"
+        )
+        if guarded_run_id != row["candidate_run_id"] or run["run_id"] != guarded_run_id:
+            raise KernelConflict(
+                "Bilibili guarded delivery differs from the delivered candidate",
+                data={
+                    "first_failing_gate": "guarded_delivery_candidate_binding",
+                    "error_code": (
+                        "bilibili_guarded_run_differs_from_delivered_candidate"
+                    ),
+                },
+            )
+        manifest_artifacts = {
+            item.get("role"): item
+            for item in guarded.get("artifacts", [])
+            if isinstance(item, dict)
+        }
+        source = run.get("artifact_generations", {}).get("source_manifest")
+        projections = run["delivery"]["projections"]
+        expected_paths = {
+            "run_record": run_dir / "workflow" / "run.json",
+            "source_manifest": run_dir / "source" / "manifest.json",
+            "acceptance_report_v2": Path(
+                str(video.get("artifacts", {}).get("acceptance_report", {}).get("path", ""))
+            ),
+            "delivery_guard_report": Path(
+                str(video.get("artifacts", {}).get("delivery_guard_report", {}).get("path", ""))
+            ),
+            "video_delivery_target": self._projection_path(
+                projections["video_target"],
+                base=run_dir,
+                allowed_root=run_dir,
+                label="video target",
+            ),
+            "session_delivery_target": self._projection_path(
+                projections["session_target"],
+                base=run_dir,
+                allowed_root=run_dir.parents[1],
+                label="session target",
+            ),
+            "delivery_task_index": self._projection_path(
+                projections["task_index"],
+                base=run_dir,
+                allowed_root=run_dir.parents[1],
+                label="task index",
+            ),
+            "global_gate_authority": Path(
+                str(video.get("global_gate_authority", {}).get("path", ""))
+            ),
+            "final_pdf": Path(
+                str(video.get("artifacts", {}).get("final_pdf", {}).get("path", ""))
+            ),
+        }
+        if (
+            not isinstance(source, dict)
+            or not expected_paths["source_manifest"].is_file()
+            or source.get("sha256")
+            != sha256_file(expected_paths["source_manifest"])
+        ):
+            raise KernelConflict(
+                "Bilibili candidate source manifest authority is absent or stale",
+                data={
+                    "first_failing_gate": "guarded_delivery_candidate_binding",
+                    "error_code": "bilibili_candidate_source_manifest_stale",
+                },
+            )
+        for role, expected_path in expected_paths.items():
+            binding = manifest_artifacts.get(role)
+            resolved = expected_path.resolve()
+            if (
+                not isinstance(binding, dict)
+                or not resolved.is_file()
+                or (
+                    Path(str(binding.get("path", ""))).resolve()
+                    if Path(str(binding.get("path", ""))).is_absolute()
+                    else (PROJECT_ROOT / Path(str(binding.get("path", "")))).resolve()
+                )
+                != resolved
+                or binding.get("sha256") != sha256_file(resolved)
+            ):
+                raise KernelConflict(
+                    f"Bilibili guarded delivery role differs from candidate: {role}",
+                    data={
+                        "first_failing_gate": "guarded_delivery_candidate_binding",
+                        "error_code": "bilibili_guarded_candidate_role_mismatch",
+                        "role": role,
+                    },
+                )
+        return row
 
     def activate(
         self,
@@ -421,6 +1392,12 @@ class BilibiliPlatformCutoverPublisher:
         root = control_store_root.resolve()
         global_gate = GlobalGatePublisher().require_current(
             control_store_root=root
+        )
+        confirmable_candidate = self._require_confirmable_candidate(
+            root=root, evidence=evidence
+        )
+        candidate_snapshot_sha256 = self._confirmation_snapshot_fingerprint(
+            confirmable_candidate, evidence
         )
         binding = {
             "activation_status": "active_global_gate",
@@ -480,6 +1457,7 @@ class BilibiliPlatformCutoverPublisher:
                         "bilibili": "active_kernel",
                         "youtube": "active_legacy",
                     },
+                    "cutover_state": "CONFIRMED",
                     "idempotent": True,
                 }
             pending = connection.execute(
@@ -492,8 +1470,9 @@ class BilibiliPlatformCutoverPublisher:
                 )
             connection.execute(
                 "INSERT INTO platform_cutover_intents("
-                "intent_id,platform,evidence_sha256,authority_json,state) "
-                "VALUES(?,?,?,?, 'PREPARED')",
+                "intent_id,platform,evidence_sha256,authority_json,"
+                "candidate_snapshot_sha256,state) "
+                "VALUES(?,?,?,?,?, 'PREPARED')",
                 (
                     intent_id,
                     platform,
@@ -501,6 +1480,7 @@ class BilibiliPlatformCutoverPublisher:
                     __import__("json").dumps(
                         authority, sort_keys=True, separators=(",", ":")
                     ),
+                    candidate_snapshot_sha256,
                 ),
             )
             connection.execute("COMMIT")
@@ -512,6 +1492,28 @@ class BilibiliPlatformCutoverPublisher:
         file_sha256 = sha256_file(authority_path)
         with self._connect(root) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            candidate = connection.execute(
+                "SELECT * FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            intent = connection.execute(
+                "SELECT * FROM platform_cutover_intents WHERE intent_id=? "
+                "AND state='PREPARED'",
+                (intent_id,),
+            ).fetchone()
+            if candidate is None or (
+                candidate["state"] != "PROVISIONAL"
+                or candidate["candidate_run_id"]
+                != evidence["guarded_delivery_evidence"]["run_id"]
+                or intent is None
+                or intent["candidate_snapshot_sha256"]
+                != self._confirmation_snapshot_fingerprint(candidate, evidence)
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili activation evidence differs from its prepared candidate"
+                )
             connection.execute(
                 "INSERT INTO platform_cutover_authority("
                 "platform,generation,evidence_sha256,authority_sha256) "
@@ -522,6 +1524,19 @@ class BilibiliPlatformCutoverPublisher:
                 "UPDATE platform_cutover_intents SET state='COMMITTED' "
                 "WHERE intent_id=?",
                 (intent_id,),
+            )
+            confirmed_candidate = json.loads(candidate["candidate_json"])
+            confirmed_candidate["state"] = "CONFIRMED"
+            connection.execute(
+                "UPDATE platform_cutover_candidates "
+                "SET state='CONFIRMED',candidate_json=? "
+                "WHERE platform=? AND state='PROVISIONAL'",
+                (
+                    json.dumps(
+                        confirmed_candidate, sort_keys=True, separators=(",", ":")
+                    ),
+                    platform,
+                ),
             )
             connection.execute("COMMIT")
         if fault_point == "after_control_commit":
@@ -535,6 +1550,7 @@ class BilibiliPlatformCutoverPublisher:
                 "bilibili": "active_kernel",
                 "youtube": "active_legacy",
             },
+            "cutover_state": "CONFIRMED",
             "idempotent": False,
         }
 
@@ -567,7 +1583,7 @@ class BilibiliPlatformCutoverPublisher:
                 raise KernelConflict(
                     "Interrupted Bilibili Platform Kernel Exit Evidence drifted"
                 )
-            _validate_evidence(read_json(evidence_path))
+            evidence = _validate_evidence(read_json(evidence_path))
             _require_formal_exit_evidence(evidence_path)
             global_gate_binding = authority.get("global_gate_binding")
             if not isinstance(global_gate_binding, dict):
@@ -597,6 +1613,62 @@ class BilibiliPlatformCutoverPublisher:
                 authority_path.parent.mkdir(parents=True, exist_ok=True)
                 write_json_atomic(authority_path, authority)
             file_sha256 = sha256_file(authority_path)
+            candidate = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if candidate is None:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili provisional candidate is absent during reconciliation",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_provisional_candidate_absent",
+                    },
+                )
+            if (
+                candidate["state"] != "PROVISIONAL"
+                or candidate["candidate_run_id"]
+                != evidence["guarded_delivery_evidence"]["run_id"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Interrupted activation candidate snapshot drifted",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_confirmation_snapshot_drift",
+                    },
+                )
+            current_snapshot_sha256 = self._confirmation_snapshot_fingerprint(
+                candidate, evidence
+            )
+            prepared_snapshot_sha256 = intent["candidate_snapshot_sha256"]
+            if prepared_snapshot_sha256 is None:
+                self._require_confirmable_candidate(
+                    root=root, evidence=evidence, candidate_row=candidate
+                )
+                changed = connection.execute(
+                    "UPDATE platform_cutover_intents "
+                    "SET candidate_snapshot_sha256=? "
+                    "WHERE intent_id=? AND state='PREPARED' "
+                    "AND candidate_snapshot_sha256 IS NULL",
+                    (current_snapshot_sha256, intent["intent_id"]),
+                ).rowcount
+                if changed != 1:
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Interrupted activation snapshot backfill lost its CAS fence"
+                    )
+                prepared_snapshot_sha256 = current_snapshot_sha256
+            if prepared_snapshot_sha256 != current_snapshot_sha256:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Interrupted activation candidate snapshot drifted",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_confirmation_snapshot_drift",
+                    },
+                )
             current = connection.execute(
                 "SELECT * FROM platform_cutover_authority WHERE platform=?",
                 (platform,),
@@ -621,6 +1693,23 @@ class BilibiliPlatformCutoverPublisher:
                 "WHERE intent_id=?",
                 (intent["intent_id"],),
             )
+            confirmed_candidate = self._candidate_snapshot(candidate)
+            self._current_candidate_run(
+                root=root, row=candidate, expected_stage="delivered"
+            )
+            confirmed_candidate["state"] = "CONFIRMED"
+            connection.execute(
+                "UPDATE platform_cutover_candidates "
+                "SET state='CONFIRMED',candidate_json=? WHERE platform=?",
+                (
+                    json.dumps(
+                        confirmed_candidate,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    platform,
+                ),
+            )
             connection.execute("COMMIT")
         return {
             "platform": platform,
@@ -628,6 +1717,7 @@ class BilibiliPlatformCutoverPublisher:
             "authority_path": str(authority_path),
             "authority_sha256": file_sha256,
             "authority_status": "current",
+            "cutover_state": "CONFIRMED",
             "current": True,
             "reconciled": True,
         }
@@ -644,9 +1734,21 @@ class BilibiliPlatformCutoverPublisher:
                 "SELECT * FROM platform_cutover_authority WHERE platform=?",
                 (platform,),
             ).fetchone()
+            candidate = connection.execute(
+                "SELECT state FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
             pending = connection.execute(
                 "SELECT COUNT(*) FROM platform_cutover_intents WHERE state='PREPARED'"
             ).fetchone()[0]
+        if current is None and candidate is not None and candidate["state"] != "CONFIRMED":
+            raise KernelConflict(
+                "Bilibili Platform Kernel candidate awaits confirmation",
+                data={
+                    "first_failing_gate": "platform_kernel_authority",
+                    "error_code": "bilibili_platform_authority_pending_confirmation",
+                },
+            )
         if (
             current is None
             or pending

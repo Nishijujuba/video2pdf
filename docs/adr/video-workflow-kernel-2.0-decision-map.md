@@ -30,10 +30,18 @@ The shared final-quality gate has `active_global_gate` status. New Bilibili Runs
 
 Kernel coordination is active only for new Bilibili Runs. Delivery Quality Slices A-D supply the active global quality policy, precompile assurance, final evidence, Acceptance Report v2, and Guard eligibility for Kernel and Legacy inputs. Existing Bilibili directories and YouTube retain Legacy platform coordination.
 
+The table records the post-publication authority. During a cold start, `platform-kernel-prepare` and `init-cutover-candidate` bind one exact Bilibili evidence candidate while ordinary `init-run` remains closed. `platform-kernel-candidate-activate` requires that candidate to be `ready_for_delivery` with a provider-current passing Acceptance Report v2 and produces `PROVISIONAL`, which is candidate-only continuation authority and does not mean `active_kernel`. The candidate then advances to `accepted`, obtains a fresh current Delivery Guard, and uses that Guard to reach `delivered`; its evidence must then be collected, formally validated, and published. `platform-kernel-activate` confirms only that matching delivered candidate. `CONFIRMED` is the sole state that opens ordinary Bilibili initialization and realizes the `active_kernel` status shown here.
+
+Canonical order: `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`.
+
 ```mermaid
 flowchart TD
     U["Video URL or verified source import"] --> BP["Bootstrap Probe"]
-    BP --> IR["Run Initialization and complete Scaffold"]
+    BP --> CS{"Platform authority confirmed?"}
+    CS -->|"yes"| IR["Ordinary Run Initialization and complete Scaffold"]
+    CS -->|"cold-start candidate"| PR["Prepare one bound cutover candidate"]
+    PR --> CI["Initialize candidate through public seam"]
+    CI --> IR
     IR --> SM{"Source Acquisition Mode"}
     SM -->|"fresh download"| SA["Source Acquisition Agent"]
     SM -->|"verified import"| VI["Deterministic verified import"]
@@ -131,7 +139,7 @@ The Kernel creates every governed directory, including `workflow/tasks/`, `sourc
 Build completion and runtime activation are separate. The following activation surfaces change together:
 
 1. Global Gate Cutover — completed by ADR 0064: Acceptance v2 schemas, Legacy Input Set, Acceptance Execution Context, task authority, Patch/report publication, materializer, validator, Delivery Guard, skills, instructions, mirrors, and tests now form the active global gate.
-2. Bilibili Platform Kernel Cutover — active: Bilibili adapter, scaffold and task ownership, production and compile providers, Bilibili skill/instructions, final evidence, lifecycle integration, policy checks, and tests. Its activation scope covers new Bilibili Runs only.
+2. Bilibili Platform Kernel Cutover — active: Bilibili adapter, scaffold and task ownership, production and compile providers, Bilibili skill/instructions, final evidence, lifecycle integration, policy checks, and tests. Its activation scope covers new Bilibili Runs only. Cold-start publication passes through one `PREPARED`/`INITIALIZED` candidate, candidate-only `PROVISIONAL` delivery completion, published Exit Evidence, and final `CONFIRMED` authority; only the final state admits ordinary Runs.
 3. YouTube Platform Kernel Cutover: the corresponding YouTube adapter and ownership surfaces after Bilibili evidence passes.
 4. Batch Cutover: Batch Supervisor, Batch projections, Batch skill, recovery tests, and removal of global `--concurrency`, free-form child workflows, and PDF-existence success. Resource Admission is already implemented and tested before live single-video providers.
 5. Each cutover requires a schema-valid Exit Evidence Manifest; inactive provider code and schemas cannot claim authority merely because they exist.

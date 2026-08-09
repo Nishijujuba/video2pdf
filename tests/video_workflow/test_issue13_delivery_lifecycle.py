@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import copy
+from contextlib import redirect_stdout
+import io
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -29,6 +31,8 @@ from video2pdf_workflow_kernel.delivery_lifecycle import (
 from video2pdf_workflow_kernel.errors import KernelConflict
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 from video2pdf_workflow_kernel.models import ProductionBootstrapResult
+from video2pdf_workflow_kernel.platform_kernel import BilibiliPlatformCutoverPublisher
+from video2pdf_workflow_kernel.cli import main as workflow_cli_main
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -127,6 +131,36 @@ def _run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         encoding="utf-8",
         capture_output=True,
         check=False,
+    )
+    return completed, json.loads(completed.stdout)
+
+
+def _run_cli_with_formal_platform_authority(
+    *arguments: str,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """Run one lifecycle command with an explicit current-authority test seam.
+
+    These lifecycle fixtures predate the independently published Platform Kernel
+    authority graph.  They exercise lifecycle persistence rather than platform
+    publication, so the test supplies only the formal ``require_current`` result
+    while leaving all lifecycle and decision validators active.
+    """
+
+    stdout = io.StringIO()
+    with patch.object(
+        BilibiliPlatformCutoverPublisher,
+        "require_current",
+        return_value={
+            "platform": "bilibili",
+            "authority_status": "current",
+        },
+    ), redirect_stdout(stdout):
+        returncode = workflow_cli_main(list(arguments))
+    completed = subprocess.CompletedProcess(
+        args=list(arguments),
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr="",
     )
     return completed, json.loads(completed.stdout)
 
@@ -317,6 +351,19 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
         _write_json(render_manifest, {"status": "pass", "page_count": 1})
         gate = project / ".workflow-control" / "active_global_gate.json"
         _write_json(gate, {"active_global_gate": "acceptance_report_v2", "generation": 1})
+        with sqlite3.connect(
+            project / ".workflow-control" / "platform-kernel-control.sqlite3"
+        ) as platform_control:
+            platform_control.execute(
+                "CREATE TABLE IF NOT EXISTS platform_cutover_authority ("
+                "platform TEXT PRIMARY KEY, generation INTEGER NOT NULL, "
+                "evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)"
+            )
+            platform_control.execute(
+                "INSERT OR REPLACE INTO platform_cutover_authority "
+                "VALUES('bilibili',1,?,?)",
+                ("e" * 64, "a" * 64),
+            )
         evidence_path = run_dir / "review" / "acceptance" / "delivery-transition-evidence.json"
         _write_json(
             evidence_path,
@@ -510,7 +557,7 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
                 to_stage=to_stage,
                 artifacts=artifacts,
             )
-            completed, envelope = _run_cli(
+            completed, envelope = _run_cli_with_formal_platform_authority(
                 "delivery-transition",
                 "--run-dir",
                 str(run_dir),
@@ -600,7 +647,7 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
             to_stage="accepted",
             artifacts={"acceptance_report": acceptance_report},
         )
-        accepted, accepted_envelope = _run_cli(
+        accepted, accepted_envelope = _run_cli_with_formal_platform_authority(
             "delivery-transition",
             "--run-dir",
             str(run_dir),
@@ -1721,44 +1768,6 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
     def test_active_bilibili_init_and_delivery_transition_share_task_index_fence(
         self,
     ) -> None:
-        from tests.video_workflow.test_issue13_platform_cutover import (
-            Issue13PlatformCutoverTests,
-            _run_cli as run_platform_cli,
-        )
-        from video2pdf_workflow_kernel.platform_kernel import (
-            BilibiliPlatformCutoverPublisher,
-        )
-        import video2pdf_workflow_kernel.platform_kernel as platform_kernel_module
-
-        authority_fixture = Issue13PlatformCutoverTests(
-            "test_bilibili_activation_publishes_single_platform_authority"
-        )
-        authority_root, exit_evidence = authority_fixture._write_valid_cutover_manifest()
-        activated = run_platform_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(authority_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-        with patch.object(
-            platform_kernel_module,
-            "_require_formal_exit_evidence",
-            return_value=None,
-        ):
-            platform = BilibiliPlatformCutoverPublisher().require_current(
-                platform="bilibili",
-                control_store_root=authority_root,
-            )
-        platform_authority = json.loads(
-            Path(platform["authority_path"]).read_text(encoding="utf-8")
-        )
-
         case = new_case_dir(self.id(), label="issue13-init-transition-task-index")
         project = case / "project"
         existing_run, transition_evidence = self._make_generating_run(
@@ -1767,6 +1776,15 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
             session_id="session-existing",
             run_id="13131313131313131313131313131313",
         )
+        transition_gate = json.loads(
+            transition_evidence.read_text(encoding="utf-8")
+        )["global_gate_authority"]
+        current_global_gate_binding = {
+            "activation_status": "active_global_gate",
+            "authority_path": transition_gate["path"],
+            "authority_sha256": transition_gate["sha256"],
+            "generation": transition_gate["generation"],
+        }
         workspace = project / "workspace"
         new_run_id = "24242424242424242424242424242424"
         new_item_id = "BV1Issue13InitTransition"
@@ -1847,7 +1865,7 @@ class Issue13DeliveryLifecycleTests(unittest.TestCase):
                 result = VideoWorkflowKernel(workspace).initialize_production_source(
                     probe,
                     session_id="session-new",
-                    global_gate_binding=platform_authority["global_gate_binding"],
+                    global_gate_binding=current_global_gate_binding,
                 )
             except Exception as error:
                 return "error", error

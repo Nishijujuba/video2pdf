@@ -17,7 +17,13 @@ The implementation and activation order is:
 2. YouTube single-video runs;
 3. Batch supervision over independent Kernel Track runs.
 
-Before a platform is activated, Kernel development for that platform is limited to repository fixtures and explicitly identified manual pilots without delivery authority. A pilot cannot create an accepted or delivered target.
+Before a platform is activated, ordinary Kernel Run admission for that platform remains closed. Repository fixtures carry no delivery authority. A cold-start cutover may bind exactly one production candidate through the public two-stage seam: `platform-kernel-prepare` records the implementation commit, probe identity, Run identity, source identity, and session without publishing platform authority; `init-cutover-candidate` initializes only that binding. No ordinary `init-run` is admitted in this state.
+
+The candidate must reach `ready_for_delivery` through the normal Kernel lifecycle with a provider-current passing Acceptance Report v2. `platform-kernel-candidate-activate` may then publish a `PROVISIONAL` candidate-only state. That state permits only the bound candidate to advance to `accepted`, obtain a fresh current Delivery Guard, and use that Guard to advance to `delivered` so the guarded delivery can support the Exit Evidence Manifest. It does not transfer platform authority, admit a second candidate, or classify the platform as `active_kernel`.
+
+After the delivered candidate's evidence is collected, formally validated, and published, `platform-kernel-activate` must bind that exact Run and produce `CONFIRMED`. Only `CONFIRMED` transfers ordinary new-run authority and opens the platform's regular `init-run` path. Reconciliation preserves the same fail-closed distinction among `PREPARED`, `INITIALIZED`, `PROVISIONAL`, and `CONFIRMED`.
+
+The normative sequence is `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain non-active candidate states throughout this sequence.
 
 After activation, every new run for that platform is a Kernel Track run. Existing output directories remain on the Legacy Track. One run cannot switch tracks, combine state writers, receive dual status updates, or gain a synthesized `workflow/run.json` through ordinary reconciliation.
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from pathlib import Path
+import sys
 from typing import Any
 
+from .acceptance_v2 import AcceptanceV2Provider
 from .delivery_quality import DeliveryQualityRegistry
-from .errors import ContractError
-from .utils import canonical_json_bytes, read_json
+from .errors import ContractError, KernelError
+from .utils import canonical_json_bytes, read_json, sha256_file
 
 
 REQUIRED_GUARD_CONDITIONS = frozenset(
@@ -58,7 +61,11 @@ def validate_acceptance_report(
     return report
 
 
-def validate_delivery_guard_report(*, report_path: Path) -> dict[str, Any]:
+def validate_delivery_guard_report(
+    *, report_path: Path, expected_stage: str = "accepted"
+) -> dict[str, Any]:
+    if expected_stage not in {"ready_for_delivery", "accepted"}:
+        raise ContractError("Delivery Guard expected stage is unsupported")
     report = read_json(report_path.resolve())
     checked_conditions = report.get("checked_conditions")
     condition_statuses = (
@@ -85,7 +92,7 @@ def validate_delivery_guard_report(*, report_path: Path) -> dict[str, Any]:
     if (
         report.get("schema_version") != "1.0"
         or report.get("status") != "pass"
-        or report.get("stage") != "accepted"
+        or report.get("stage") != expected_stage
         or report.get("validated_by") != "delivery_guard.py"
         or report.get("acceptance_report_status") != "pass"
         or not fingerprints_valid
@@ -96,3 +103,234 @@ def validate_delivery_guard_report(*, report_path: Path) -> dict[str, Any]:
             "Delivery Guard Report is not a complete passing mechanical decision"
         )
     return report
+
+
+def _load_active_delivery_guard(project_root: Path) -> Any:
+    """Load the active read-only Guard implementation from its canonical surface."""
+
+    guard_path = (
+        project_root.resolve()
+        / ".agents"
+        / "skills"
+        / "final-delivery-acceptance"
+        / "scripts"
+        / "delivery_guard.py"
+    )
+    if not guard_path.is_file():
+        raise ContractError("Active Delivery Guard implementation is unavailable")
+    module_name = (
+        "video2pdf_active_delivery_guard_"
+        + hashlib.sha256(str(guard_path).encode("utf-8")).hexdigest()[:16]
+    )
+    spec = importlib.util.spec_from_file_location(module_name, guard_path)
+    if spec is None or spec.loader is None:
+        raise ContractError("Active Delivery Guard implementation cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    guard_script_dir = str(guard_path.parent)
+    added_guard_script_dir = guard_script_dir not in sys.path
+    if added_guard_script_dir:
+        sys.path.insert(0, guard_script_dir)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        sys.modules.pop(module_name, None)
+        raise ContractError("Active Delivery Guard implementation cannot be loaded") from exc
+    finally:
+        if added_guard_script_dir:
+            try:
+                sys.path.remove(guard_script_dir)
+            except ValueError:
+                pass
+    for name in ("resolve_delivery_target", "guard_report_is_fresh"):
+        if not callable(getattr(module, name, None)):
+            raise ContractError("Active Delivery Guard read-only API is incomplete")
+    return module
+
+
+def _bound_file(
+    binding: Any,
+    *,
+    base: Path,
+    allowed_root: Path,
+    label: str,
+) -> Path:
+    if not isinstance(binding, dict) or set(binding) < {"path", "sha256"}:
+        raise ContractError(f"Kernel guarded decision {label} binding is invalid")
+    raw = binding.get("path")
+    expected_sha = binding.get("sha256")
+    if not isinstance(raw, str) or not isinstance(expected_sha, str):
+        raise ContractError(f"Kernel guarded decision {label} binding is invalid")
+    candidate = Path(raw)
+    path = candidate.resolve() if candidate.is_absolute() else (base / candidate).resolve()
+    if (
+        not path.is_relative_to(allowed_root.resolve())
+        or not path.is_file()
+        or sha256_file(path) != expected_sha
+    ):
+        raise ContractError(f"Kernel guarded decision {label} binding is stale")
+    return path
+
+
+def require_current_kernel_guarded_decision(
+    *,
+    project_root: Path,
+    run_dir: Path,
+) -> dict[str, Any]:
+    """Require the provider-committed Acceptance and fresh Guard for an accepted Run.
+
+    This is the read-only accepted-to-delivered authority boundary.  Candidate
+    activation at ``ready_for_delivery`` requires the Acceptance provider only;
+    a Guard cannot be current until the accepted projection exists.
+    """
+
+    project = project_root.resolve()
+    run_root = run_dir.resolve()
+    if not run_root.is_relative_to(project):
+        raise ContractError("Kernel guarded decision Run escapes the project root")
+    run_path = run_root / "workflow" / "run.json"
+    if not run_path.is_file():
+        raise ContractError("Kernel guarded decision Run Record is unavailable")
+    run = read_json(run_path)
+    delivery = run.get("delivery")
+    if (
+        run.get("schema_name") != "run-record"
+        or run.get("schema_version") != "4.0.0"
+        or run.get("canonical_platform") != "bilibili"
+        or run.get("platform_adapter") != "bilibili"
+        or Path(str(run.get("output_path", ""))).resolve() != run_root
+        or not isinstance(delivery, dict)
+        or delivery.get("stage") != "accepted"
+    ):
+        raise ContractError("Kernel guarded decision requires an accepted Bilibili Run v4")
+    projections = delivery.get("projections")
+    if not isinstance(projections, dict):
+        raise ContractError("Kernel guarded decision projections are absent")
+    video_path = _bound_file(
+        projections.get("video_target"),
+        base=run_root,
+        allowed_root=run_root,
+        label="video target",
+    )
+    session_path = _bound_file(
+        projections.get("session_target"),
+        base=project,
+        allowed_root=project,
+        label="session target",
+    )
+    video = read_json(video_path)
+    session = read_json(session_path)
+    run_id = run.get("run_id")
+    run_revision = run.get("coordination_revision")
+    ownership = delivery.get("ownership")
+    if (
+        not isinstance(run_id, str)
+        or video.get("run_id") != run_id
+        or session.get("run_id") != run_id
+        or video.get("stage") != "accepted"
+        or session.get("stage") != "accepted"
+        or video.get("run_revision") != run_revision
+        or session.get("run_revision") != run_revision
+        or video.get("ownership") != ownership
+        or not isinstance(ownership, dict)
+        or session.get("session_id") != ownership.get("session_id")
+        or session.get("ownership_generation") != ownership.get("generation")
+        or session.get("owner_status") != "active"
+    ):
+        raise ContractError("Kernel guarded decision projection identity is stale")
+    session_video = session.get("video_target")
+    if (
+        not isinstance(session_video, dict)
+        or Path(str(session_video.get("path", ""))).resolve() != video_path
+        or session_video.get("projection_revision")
+        != video.get("projection_revision")
+        or session_video.get("sha256") != sha256_file(video_path)
+    ):
+        raise ContractError("Kernel guarded decision session-to-video binding is stale")
+    artifacts = video.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ContractError("Kernel guarded decision artifact bindings are absent")
+    acceptance_path = _bound_file(
+        artifacts.get("acceptance_report"),
+        base=run_root,
+        allowed_root=run_root,
+        label="Acceptance Report v2",
+    )
+    # At the accepted predecessor the Guard has been written at its canonical
+    # path, while the video-target artifact slot is committed by the succeeding
+    # delivered transition.  The active Guard resolver below is the authority
+    # that binds this canonical pre-transition path.
+    guard_path = (
+        run_root / "review" / "acceptance" / "delivery_guard_report.json"
+    ).resolve()
+    if not guard_path.is_file():
+        raise ContractError("Kernel guarded decision Delivery Guard Report is absent")
+
+    try:
+        eligibility = AcceptanceV2Provider(project).guard_eligibility(
+            workspace_root=acceptance_path.parent
+        )
+    except (KernelError, OSError, KeyError, TypeError, ValueError) as exc:
+        raise ContractError(
+            "Kernel guarded decision lacks committed Acceptance provider authority"
+        ) from exc
+    report = read_json(acceptance_path)
+    if (
+        eligibility.get("eligible") is not True
+        or eligibility.get("delivery_authority") is not True
+        or eligibility.get("report_sha256") != report.get("report_sha256")
+    ):
+        raise ContractError(
+            "Kernel guarded decision lacks committed Acceptance provider authority"
+        )
+    validate_acceptance_report(
+        project_root=project,
+        report_path=acceptance_path,
+        run_id=run_id,
+        coordination_revision=run_revision,
+    )
+
+    active_guard = _load_active_delivery_guard(project)
+    try:
+        target = active_guard.resolve_delivery_target(
+            project_root=project,
+            current_target_path=session_path,
+            require_session_scope=True,
+        )
+        guard_fresh = active_guard.guard_report_is_fresh(target)
+    except Exception as exc:
+        raise ContractError("Kernel guarded decision cannot resolve active Guard authority") from exc
+    if (
+        target.video_output_dir.resolve() != run_root
+        or target.current_target_path.resolve() != session_path
+        or target.target_file.resolve() != video_path
+        or target.acceptance_report_path.resolve() != acceptance_path
+        or target.guard_report_path.resolve() != guard_path
+        or target.stage != "accepted"
+        or guard_fresh is not True
+    ):
+        raise ContractError("Kernel guarded decision Delivery Guard authority is stale")
+    validate_delivery_guard_report(
+        report_path=guard_path,
+        expected_stage="accepted",
+    )
+    return {
+        "run_id": run_id,
+        "stage": "accepted",
+        "acceptance_report": {
+            "path": str(acceptance_path),
+            "sha256": sha256_file(acceptance_path),
+        },
+        "delivery_guard_report": {
+            "path": str(guard_path),
+            "sha256": sha256_file(guard_path),
+        },
+        "video_target": {
+            "path": str(video_path),
+            "sha256": sha256_file(video_path),
+        },
+        "session_target": {
+            "path": str(session_path),
+            "sha256": sha256_file(session_path),
+        },
+    }

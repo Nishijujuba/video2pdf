@@ -2,6 +2,10 @@
 
 Status: `active_global_gate`. It succeeded the Final Acceptance Context at the Global Gate Cutover. New Bilibili Runs are `active_kernel`, existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`.
 
+The Bilibili status describes confirmed post-publication authority. A cold-start cutover candidate consumes a provider-current passing Acceptance Report v2 to reach `PROVISIONAL`; after it reaches `accepted`, it obtains a fresh current Delivery Guard and uses that Guard to reach `delivered`. This bounded use of the `active_global_gate` contracts does not activate the platform or admit ordinary Runs; only final `CONFIRMED` platform authority does so.
+
+The authority sequence is `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are not `active_kernel`.
+
 This target context owns canonical delivery-blocking quality policy, Language Profiles, Role Projections, semantic decision ownership, evidence sufficiency, implementation conformance, precompile quality judgments, text sealing, rendered-text reconciliation, and final semantic materialization.
 
 ## Delivery Quality Rule Catalog
@@ -92,3 +96,5 @@ fidelity failures from Contract Gaps and performs no semantic reinterpretation.
 ## Migration boundary
 
 Acceptance Report v2 is the sole active final semantic delivery decision. Acceptance Report v1, fallback, translation, dual authority, and synthetic Legacy Run Records are rejected. The Bilibili Platform Kernel Cutover changes new Bilibili Run coordination to `active_kernel`; it leaves existing Bilibili directories on the Legacy Track and YouTube `active_legacy`. The Global Gate authority stays `active_global_gate` and unchanged in scope.
+
+Cold-start candidate preparation does not change this migration boundary. The one bound candidate must use the active v2 provider at `ready_for_delivery`, obtain its fresh Guard only after `accepted`, publish real guarded-delivery Exit Evidence after `delivered`, and reach final `CONFIRMED` platform authority before ordinary Bilibili `init-run` becomes valid. Legacy Bilibili directories cannot be substituted for that candidate or given synthetic Run Records.

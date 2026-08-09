@@ -11,7 +11,13 @@ from .contracts import ContractRegistry
 from .delivery_quality import DeliveryQualityRegistry
 from .control_store import ControlStore
 from .control_store_recovery import ControlStoreRecovery
-from .errors import CliUsageError, ControlStoreUnavailable, KernelError
+from .errors import (
+    CliUsageError,
+    ControlStoreUnavailable,
+    InitializationFault,
+    KernelConflict,
+    KernelError,
+)
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult, ProductionBootstrapResult
 from .source_live_smoke import run_source_live_smoke
@@ -255,6 +261,30 @@ def _parser() -> argparse.ArgumentParser:
     workflow_policy_check = commands.add_parser("workflow-policy-check")
     workflow_policy_check.add_argument("--control-store-root", required=True, type=Path)
 
+    platform_kernel_prepare = commands.add_parser("platform-kernel-prepare")
+    platform_kernel_prepare.add_argument("--platform", required=True)
+    platform_kernel_prepare.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    platform_kernel_prepare.add_argument("--implementation-commit", required=True)
+    platform_kernel_prepare.add_argument(
+        "--candidate-probe", required=True, type=Path
+    )
+    platform_kernel_prepare.add_argument("--candidate-session-id", required=True)
+    platform_kernel_prepare.add_argument("--prepared-at", required=True)
+
+    platform_kernel_candidate_activate = commands.add_parser(
+        "platform-kernel-candidate-activate"
+    )
+    platform_kernel_candidate_activate.add_argument("--platform", required=True)
+    platform_kernel_candidate_activate.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    platform_kernel_candidate_activate.add_argument(
+        "--candidate-run-dir", required=True, type=Path
+    )
+    platform_kernel_candidate_activate.add_argument("--activated-at", required=True)
+
     platform_kernel_activate = commands.add_parser("platform-kernel-activate")
     platform_kernel_activate.add_argument("--platform", required=True)
     platform_kernel_activate.add_argument(
@@ -354,6 +384,36 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--control-store-root", type=Path)
     init.add_argument("--session-id")
     init.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
+
+    cutover_candidate_init = commands.add_parser("init-cutover-candidate")
+    cutover_candidate_init.add_argument("--workspace-root", required=True, type=Path)
+    cutover_candidate_init.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    cutover_candidate_init.add_argument("--probe", required=True, type=Path)
+    cutover_candidate_init.add_argument("--session-id", required=True)
+    cutover_candidate_init.add_argument(
+        "--fault-point", choices=sorted(FAULT_POINTS | {"after_candidate_begin"})
+    )
+
+    cutover_candidate_reconcile = commands.add_parser(
+        "platform-kernel-candidate-reconcile"
+    )
+    cutover_candidate_reconcile.add_argument(
+        "--platform", required=True, choices=("bilibili",)
+    )
+    cutover_candidate_reconcile.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    cutover_candidate_reconcile.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    cutover_candidate_reconcile.add_argument(
+        "--candidate-probe", required=True, type=Path
+    )
+    cutover_candidate_reconcile.add_argument(
+        "--candidate-session-id", required=True
+    )
 
     source_import = commands.add_parser("source-import")
     source_import.add_argument("--workspace-root", required=True, type=Path)
@@ -652,6 +712,28 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "youtube": "active_legacy",
             }
         return _ok(command, "workflow_policy_current", result, result["global_gate_authority"]["path"])
+    if command == "platform-kernel-prepare":
+        result = BilibiliPlatformCutoverPublisher().prepare_candidate(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            implementation_commit=args.implementation_commit,
+            candidate_probe=args.candidate_probe,
+            candidate_session_id=args.candidate_session_id,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(
+            command,
+            "platform_kernel_candidate_prepared",
+            result,
+        )
+    if command == "platform-kernel-candidate-activate":
+        result = BilibiliPlatformCutoverPublisher().activate_candidate(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            candidate_run_dir=args.candidate_run_dir,
+            activated_at=args.activated_at,
+        )
+        return _ok(command, "platform_kernel_candidate_activated", result)
     if command == "platform-kernel-activate":
         result = BilibiliPlatformCutoverPublisher().activate(
             platform=args.platform,
@@ -1150,6 +1232,175 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 ],
             },
             str(result.manifest_path),
+        )
+    if command == "init-cutover-candidate":
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        kernel.control_store = ControlStore.initialize(
+            args.workspace_root, kernel.contracts
+        )
+        probe = _production_probe_from_path(args.probe, kernel.contracts)
+        if probe.canonical_platform != "bilibili":
+            raise CliUsageError(
+                "cutover candidate init is active only for Bilibili"
+            )
+        publisher = BilibiliPlatformCutoverPublisher()
+        candidate = publisher.begin_candidate_initialization(
+            platform="bilibili",
+            control_store_root=args.control_store_root,
+            candidate_probe=args.probe,
+            candidate_session_id=args.session_id,
+            workspace_root=args.workspace_root,
+        )
+        if args.fault_point == "after_candidate_begin":
+            raise InitializationFault("after_candidate_begin")
+        result = kernel.initialize_production_source(
+            probe,
+            session_id=args.session_id,
+            global_gate_binding=candidate["global_gate_binding"],
+            fault_point=args.fault_point,
+        )
+        publisher.record_candidate_initialized(
+            platform="bilibili",
+            control_store_root=args.control_store_root,
+            candidate_run_dir=result.run_dir,
+        )
+        return _ok(
+            command,
+            "cutover_candidate_initialized",
+            {
+                "run_id": result.run_id,
+                "run_dir": str(result.run_dir),
+                "platform": "bilibili",
+                "stage": "generating",
+                "session_id": args.session_id,
+            },
+            str(result.run_dir / "workflow/run.json"),
+        )
+    if command == "platform-kernel-candidate-reconcile":
+        publisher = BilibiliPlatformCutoverPublisher()
+        candidate = publisher.require_prepared_candidate(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            candidate_probe=args.candidate_probe,
+            candidate_session_id=args.candidate_session_id,
+        )
+        if candidate.get("state") != "INITIALIZING":
+            raise KernelConflict(
+                "Bilibili cutover candidate has no interrupted initialization",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_initialization_not_reconcilable",
+                },
+            )
+        if Path(str(candidate.get("workspace_root", ""))).resolve() != args.workspace_root.resolve():
+            raise KernelConflict(
+                "Bilibili cutover candidate workspace binding changed",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_binding_mismatch",
+                },
+            )
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        kernel.control_store = ControlStore.initialize(
+            args.workspace_root, kernel.contracts
+        )
+        intent = kernel.control_store.intent_for_run(candidate["candidate_run_id"])
+        binding = kernel.control_store.binding_for_run(candidate["candidate_run_id"])
+        if intent is None and binding is None:
+            candidate_outputs = []
+            for marker in args.workspace_root.rglob("*.json"):
+                if marker.name not in {"run.json", "prepared-run.json"}:
+                    continue
+                try:
+                    if read_json(marker).get("run_id") == candidate["candidate_run_id"]:
+                        candidate_outputs.append(marker)
+                except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                    candidate_outputs.append(marker)
+            if candidate_outputs:
+                raise KernelConflict(
+                    "Bilibili candidate has unbound initialization output",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_initialization_state_ambiguous",
+                    },
+                )
+            publisher.rollback_unstarted_candidate_initialization(
+                platform=args.platform,
+                control_store_root=args.control_store_root,
+                candidate_run_id=candidate["candidate_run_id"],
+                workspace_root=args.workspace_root,
+            )
+            return _ok(
+                command,
+                "candidate_initialization_rolled_back",
+                {
+                    "run_id": candidate["candidate_run_id"],
+                    "platform": args.platform,
+                    "state": "PREPARED",
+                },
+                None,
+            )
+        if intent is None or binding is None:
+            raise KernelConflict(
+                "Bilibili candidate initialization state is contradictory",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_initialization_state_ambiguous",
+                },
+            )
+        result = kernel.reconcile_initialization(candidate["candidate_run_id"])
+        if result.outcome == "old_state_complete":
+            reconciled_intent = kernel.control_store.intent_for_run(
+                candidate["candidate_run_id"]
+            )
+            reconciled_binding = kernel.control_store.binding_for_run(
+                candidate["candidate_run_id"]
+            )
+            if (
+                reconciled_intent is None
+                or reconciled_intent["state"] != "ABORTED"
+                or reconciled_binding is not None
+                or result.run_dir.exists()
+            ):
+                raise KernelConflict(
+                    "Bilibili candidate aborted initialization is contradictory",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_initialization_state_ambiguous",
+                    },
+                )
+            publisher.rollback_unstarted_candidate_initialization(
+                platform=args.platform,
+                control_store_root=args.control_store_root,
+                candidate_run_id=candidate["candidate_run_id"],
+                workspace_root=args.workspace_root,
+            )
+            return _ok(
+                command,
+                "candidate_initialization_rolled_back",
+                {
+                    "run_id": candidate["candidate_run_id"],
+                    "platform": args.platform,
+                    "state": "PREPARED",
+                    "kernel_initialization_state": "ABORTED",
+                },
+                None,
+            )
+        publisher.record_candidate_initialized(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            candidate_run_dir=result.run_dir,
+        )
+        return _ok(
+            command,
+            "candidate_initialization_reconciled",
+            {
+                "run_id": result.run_id,
+                "run_dir": str(result.run_dir),
+                "platform": args.platform,
+                "reconcile_classification": result.outcome,
+            },
+            str(result.run_dir / "workflow/run.json"),
         )
     if command == "init-run" and args.fixture is None:
         if args.control_store_root is None or not args.session_id:

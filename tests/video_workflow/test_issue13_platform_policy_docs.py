@@ -6,8 +6,28 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
+COLD_START_CUTOVER_SEQUENCE = (
+    "`ready_for_delivery` with a provider-current passing Acceptance Report v2 -> "
+    "`PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> "
+    "published Slice 12 Exit Evidence -> `CONFIRMED`"
+)
+
 
 class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
+    def test_cold_start_cutover_order_is_consistent_across_authority_docs(self) -> None:
+        paths = (
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+            "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
+            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+            "docs/contexts/video-workflow/CONTEXT.md",
+            "docs/contexts/delivery-quality/CONTEXT.md",
+        )
+        for relative in paths:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(COLD_START_CUTOVER_SEQUENCE, text)
+
     def test_platform_activation_authority_is_consistent_across_active_docs(self) -> None:
         paths = (
             "AGENTS.md",
@@ -30,6 +50,11 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         authority = (ROOT / ".agents/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")
         mirror = (ROOT / ".claude/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(authority, mirror)
+        self.assertIn(
+            "Run `platform-kernel-candidate-activate` for that exact ready candidate.",
+            authority,
+        )
+        self.assertNotIn("that exact accepted candidate", authority)
         for command in (
             "bootstrap-probe",
             "init-run",

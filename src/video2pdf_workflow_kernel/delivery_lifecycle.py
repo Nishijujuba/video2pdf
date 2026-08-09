@@ -24,6 +24,7 @@ from .guarded_delivery import (
     validate_acceptance_report,
     validate_delivery_guard_report,
 )
+from .platform_kernel import BilibiliPlatformCutoverPublisher
 from .utils import (
     canonical_json_bytes,
     normalized_physical_path,
@@ -623,6 +624,27 @@ class DeliveryLifecycleProvider:
         )
         video_target = read_json(video_path)
         session_target = read_json(session_path)
+        if to_stage in {"accepted", "delivered"}:
+            committed_gate = video_target.get("global_gate_authority")
+            if evidence["global_gate_authority"] != committed_gate:
+                _reject(
+                    "Delivery transition Global Gate differs from the current video target",
+                    "global_gate_authority",
+                    "delivery_global_gate_binding_conflict",
+                )
+            if not isinstance(committed_gate, dict):
+                _reject(
+                    "Current video target lacks Global Gate authority",
+                    "global_gate_authority",
+                    "delivery_global_gate_binding_invalid",
+                )
+            BilibiliPlatformCutoverPublisher().authorize_delivery_transition(
+                platform=run_record["canonical_platform"],
+                control_store_root=Path(committed_gate["path"]).resolve().parent,
+                run_dir=run_dir,
+                run_id=run_record["run_id"],
+                to_stage=to_stage,
+            )
         task_index_path = self._validate_task_index_binding(
             projections["task_index"],
             run_record=run_record,
@@ -1133,6 +1155,13 @@ class DeliveryLifecycleProvider:
         )
         old_video = read_json(video_path)
         old_session = read_json(old_session_path)
+        committed_gate = old_video.get("global_gate_authority")
+        if isinstance(committed_gate, dict):
+            BilibiliPlatformCutoverPublisher().reject_candidate_handoff(
+                platform=run_record["canonical_platform"],
+                control_store_root=Path(committed_gate["path"]).resolve().parent,
+                run_id=run_record["run_id"],
+            )
         task_index_path = self._validate_task_index_binding(
             projections["task_index"],
             run_record=run_record,

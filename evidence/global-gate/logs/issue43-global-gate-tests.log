@@ -27,8 +27,8 @@ test_two_writers_are_fenced_at_patch_and_report_publication (tests.video_workflo
 test_distinct_valid_activation_authorities_reach_the_cas_fence (tests.video_workflow.test_issue43_activation_fencing.Issue43ActivationFencingTests.test_distinct_valid_activation_authorities_reach_the_cas_fence) ... ok
 
 ----------------------------------------------------------------------
-Ran 27 tests in 542.769s
+Ran 27 tests in 959.393s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: 666d0942f4c71cc3854fdc4ca58df006af17f761
+EVIDENCE_IMPLEMENTATION_COMMIT: b1e926e6d829a3adcd9da38e408461b199d72af7

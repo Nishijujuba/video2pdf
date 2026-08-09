@@ -8,7 +8,7 @@
     "name": "global-acceptance-v2-gate"
   },
   "slice_base_commit": "64f3fb1638f601b533cb0ee4dec908203c1bef71",
-  "implementation_commit": "666d0942f4c71cc3854fdc4ca58df006af17f761",
+  "implementation_commit": "b1e926e6d829a3adcd9da38e408461b199d72af7",
   "evidence_paths": [
     "evidence/global-gate/exit-evidence-manifest.json",
     "evidence/global-gate/logs/issue43-global-gate-tests.log",
@@ -32,7 +32,7 @@
     "evidence/global-gate/persisted/issue43-complete-delivery-guard/status.json",
     "evidence/global-gate/persisted/issue43-complete-delivery-guard/exit-code.txt"
   ],
-  "generated_at": "2026-08-03T11:09:45Z",
+  "generated_at": "2026-08-09T06:39:38Z",
   "activation_scope": {
     "kind": "active_global_gate",
     "runtime_authority_change": true,
@@ -74,31 +74,31 @@
   },
   "mirror_checks": [
     {
-      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\.agents\\skills\\final-delivery-acceptance\\SKILL.md",
-      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\.claude\\skills\\final-delivery-acceptance\\SKILL.md",
-      "source_sha256": "b8b73b79ad5decf8c934b444f1a89f3c5e85ae83d723c6b240dba864a4ee613c",
-      "mirror_sha256": "b8b73b79ad5decf8c934b444f1a89f3c5e85ae83d723c6b240dba864a4ee613c",
+      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.agents\\skills\\final-delivery-acceptance\\SKILL.md",
+      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.claude\\skills\\final-delivery-acceptance\\SKILL.md",
+      "source_sha256": "d854df71be24eab210290264b21e8ecad9f9b3f2ff71a5169c1f1e4294843f40",
+      "mirror_sha256": "d854df71be24eab210290264b21e8ecad9f9b3f2ff71a5169c1f1e4294843f40",
       "status": "equal"
     },
     {
-      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\.agents\\skills\\bilibili-render-pdf\\SKILL.md",
-      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\.claude\\skills\\bilibili-render-pdf\\SKILL.md",
-      "source_sha256": "8e3c252280c78c2a08bf16b4fe005f9d3f4ba909a8fc7ae5ee13bdd86e9a01f5",
-      "mirror_sha256": "8e3c252280c78c2a08bf16b4fe005f9d3f4ba909a8fc7ae5ee13bdd86e9a01f5",
+      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.agents\\skills\\bilibili-render-pdf\\SKILL.md",
+      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.claude\\skills\\bilibili-render-pdf\\SKILL.md",
+      "source_sha256": "5fb166207c6c7d2392a241cac5bc6ef5ead0c8289e55b73076dd8bee88dbc43a",
+      "mirror_sha256": "5fb166207c6c7d2392a241cac5bc6ef5ead0c8289e55b73076dd8bee88dbc43a",
       "status": "equal"
     },
     {
-      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\.agents\\skills\\youtube-render-pdf\\SKILL.md",
-      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\.claude\\skills\\youtube-render-pdf\\SKILL.md",
-      "source_sha256": "56dd68db8a4e0b02d637213f4af6527f07335cf6a0a7ceaa1cec41d51299f14c",
-      "mirror_sha256": "56dd68db8a4e0b02d637213f4af6527f07335cf6a0a7ceaa1cec41d51299f14c",
+      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.agents\\skills\\youtube-render-pdf\\SKILL.md",
+      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.claude\\skills\\youtube-render-pdf\\SKILL.md",
+      "source_sha256": "6dfb80960ca5d2657bce3ce05a87076b67f2e9e3b96c7f1254ba9fe0dfe8decc",
+      "mirror_sha256": "6dfb80960ca5d2657bce3ce05a87076b67f2e9e3b96c7f1254ba9fe0dfe8decc",
       "status": "equal"
     },
     {
-      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\.agents\\skills\\final-delivery-acceptance\\scripts\\delivery_guard.py",
-      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\.claude\\skills\\final-delivery-acceptance\\scripts\\delivery_guard.py",
-      "source_sha256": "2869486e2c6d34199c3766f268a8a5d5e23e26359482924bdc5a2b94521c8703",
-      "mirror_sha256": "2869486e2c6d34199c3766f268a8a5d5e23e26359482924bdc5a2b94521c8703",
+      "source_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.agents\\skills\\final-delivery-acceptance\\scripts\\delivery_guard.py",
+      "mirror_path": "D:\\Project\\video2pdf\\newskill-kimi\\q\\.claude\\skills\\final-delivery-acceptance\\scripts\\delivery_guard.py",
+      "source_sha256": "4a7785576066fc216e5153525bf7bde2b22c3f29e8feeca4eafd5b2809a2aabb",
+      "mirror_sha256": "4a7785576066fc216e5153525bf7bde2b22c3f29e8feeca4eafd5b2809a2aabb",
       "status": "equal"
     }
   ],
@@ -147,19 +147,19 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-global-gate-tests.log",
-        "sha256": "e217d4729ec8f84915d5a92b8ac83831e6f8c6688ca0ccffc61757351df1dae3"
+        "sha256": "261a9f648f181a2b06eacb763fc76fcbc5428d911b41d4f49a8d5dcaac0d32b9"
       },
       "persisted_run": {
-        "run_id": "1b850912-25e2-4fd2-8892-5d068d577721",
+        "run_id": "c519f170-b4d8-462c-be42-2e5f9604c428",
         "command_record": {
           "role": "persisted_command_record",
           "path": "evidence/global-gate/persisted/issue43-global-gate-tests/command.json",
-          "sha256": "ab6f915e76a1f1111583a86ac740a866151c2cc8a8b6f43c7f67bd5923022a84"
+          "sha256": "8d5cc784165975695973117e39864a52136fa8e6d26b14fd9345856e94456167"
         },
         "terminal_status": {
           "role": "persisted_terminal_status",
           "path": "evidence/global-gate/persisted/issue43-global-gate-tests/status.json",
-          "sha256": "3690a93993f0ef603f6156ce75fd6a43c699e7fca64be5fe2f5cd843ce0d8b37"
+          "sha256": "c5de3110cd8a77692f6f24a08cdfdab115d7ed6c148c4ef5e4bd26819d39dd00"
         },
         "exit_code": {
           "role": "persisted_exit_code",
@@ -186,19 +186,19 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-exit-evidence-tests.log",
-        "sha256": "021b6d04fc902fdd176552e66fb1d3540d42e6149c49e264e9faadc4556456e5"
+        "sha256": "bf51ab3d24a15a9b84d50cda9282e9ec5c3c07c1bc10be75d7dbfed488756804"
       },
       "persisted_run": {
-        "run_id": "8b45936c-8456-4298-adeb-ea48425b030c",
+        "run_id": "70026460-c08a-4867-b89a-242b3cfa4f97",
         "command_record": {
           "role": "persisted_command_record",
           "path": "evidence/global-gate/persisted/issue43-exit-evidence-tests/command.json",
-          "sha256": "5cb1e16beb99606d241a024428c2875472ff18d913108da8a48206eb69d60e31"
+          "sha256": "61e4ede6f868fd25615db3685d081572ad98cc5932378d3b2185b431117526dd"
         },
         "terminal_status": {
           "role": "persisted_terminal_status",
           "path": "evidence/global-gate/persisted/issue43-exit-evidence-tests/status.json",
-          "sha256": "946a521930d99f7a9a0754a2e45a553219ca64fb4522f624aefaba0c47b7dfc9"
+          "sha256": "b7c17b87f7bd3061f0cc5229c830c9836fe9e0253ca3eedc60aeed47dc74b8a6"
         },
         "exit_code": {
           "role": "persisted_exit_code",
@@ -225,19 +225,19 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-complete-acceptance-v2.log",
-        "sha256": "b662d8eff37f4c8515aa7caf9640950549e27f517015ea2d74f2d83733f3b2b8"
+        "sha256": "76b7c9ea3fbcfe252f47d1f00dcdf29722a19399a4ed3c99c5b6b031d8912e76"
       },
       "persisted_run": {
-        "run_id": "e05bc080-cf4d-42df-92e7-9590f48b7e23",
+        "run_id": "5228d4b0-eeae-4324-9d39-e2d2b2289811",
         "command_record": {
           "role": "persisted_command_record",
           "path": "evidence/global-gate/persisted/issue43-complete-acceptance-v2/command.json",
-          "sha256": "a0ce5f098099a90b2c138b48c7bb437193c33270b99ba986c4450d2938bb4925"
+          "sha256": "f3bdf4df4c9b748492fe06c2322c451b546f1e396caec89436fdad012e92225f"
         },
         "terminal_status": {
           "role": "persisted_terminal_status",
           "path": "evidence/global-gate/persisted/issue43-complete-acceptance-v2/status.json",
-          "sha256": "3f833c3438f627a570ecb2a475f4cfde432e739495f847ca92156a5b00aaf674"
+          "sha256": "7823c64ae90b241ac98b7c2491cba31b5c598330a932039d13cd1b64bec5205e"
         },
         "exit_code": {
           "role": "persisted_exit_code",
@@ -264,19 +264,19 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-complete-active-guard.log",
-        "sha256": "bdf86b1838a8f8b61f1eb9e5a594a9e1f898ce22d33b609d2f1b136c4354f2e1"
+        "sha256": "91d10fa91e1f028fb91da3136b29bf23f1b535b8645b42ccdeb115c241205853"
       },
       "persisted_run": {
-        "run_id": "0bf71b55-5419-4a0c-b837-b9ba2b6b323e",
+        "run_id": "dfd5af65-a535-4679-aac7-118656f84e89",
         "command_record": {
           "role": "persisted_command_record",
           "path": "evidence/global-gate/persisted/issue43-complete-active-guard/command.json",
-          "sha256": "3e4183e1ee58f6163c1ece72232a44fcc2adb8965386a97682f5333e49bb5f18"
+          "sha256": "fce21e70742c246a28a5f008bc60353bfdadfce8139118dadb0755bc01575eb5"
         },
         "terminal_status": {
           "role": "persisted_terminal_status",
           "path": "evidence/global-gate/persisted/issue43-complete-active-guard/status.json",
-          "sha256": "4c68ece40af67af3feef6adaee97943eecb0f5d3e4a2ee0d4390726c116e1b1d"
+          "sha256": "03ff9befde9703c4830903b7e3043f648dc460f30f7255af612fa71264620e2f"
         },
         "exit_code": {
           "role": "persisted_exit_code",
@@ -307,19 +307,19 @@
       "log": {
         "role": "command_log",
         "path": "evidence/global-gate/logs/issue43-complete-delivery-guard.log",
-        "sha256": "bebc51e76977cfcb7fb3e68dd2021c918f8f71c75e34ec9839ef4696d5b3d7c4"
+        "sha256": "b0a739662cd896131352c80e41009d3cce9d09c8031a7a317998fd8c1b95a078"
       },
       "persisted_run": {
-        "run_id": "92d03697-f0e6-45f8-bcf2-f717ee95384b",
+        "run_id": "d689d8fa-77c8-4b0a-9638-4e0f93be90bf",
         "command_record": {
           "role": "persisted_command_record",
           "path": "evidence/global-gate/persisted/issue43-complete-delivery-guard/command.json",
-          "sha256": "9290f1a54a825dcceff5b770cd451f1a4c0aeece63a7aeb9874f13bb2e9e9cb1"
+          "sha256": "dacda134f178f2ca0de1473908f88ae2d501b51b533b5a39ab40ad8f6940246d"
         },
         "terminal_status": {
           "role": "persisted_terminal_status",
           "path": "evidence/global-gate/persisted/issue43-complete-delivery-guard/status.json",
-          "sha256": "1899d80c911f3d0f643cc4d11864d552f2454926aa7b33c858f32581f13f129c"
+          "sha256": "6dc73513f6d42f726a79cd3fb638d2bd49b9c6571e5d03c2c4cc72ab72eb4995"
         },
         "exit_code": {
           "role": "persisted_exit_code",
@@ -673,12 +673,12 @@
     {
       "role": "implementation_artifact",
       "path": ".agents/skills/bilibili-render-pdf/SKILL.md",
-      "sha256": "362ca0046e0f56ec7bffa459f0e4de316e6df7f277dfb9de6efae2ec239a1081"
+      "sha256": "5fb166207c6c7d2392a241cac5bc6ef5ead0c8289e55b73076dd8bee88dbc43a"
     },
     {
       "role": "implementation_artifact",
       "path": ".agents/skills/final-delivery-acceptance/SKILL.md",
-      "sha256": "7362d5bc45b684f97886615d5c56d726b86e6c116925070d05edc68e1d0f4c42"
+      "sha256": "d854df71be24eab210290264b21e8ecad9f9b3f2ff71a5169c1f1e4294843f40"
     },
     {
       "role": "implementation_artifact",
@@ -688,27 +688,27 @@
     {
       "role": "implementation_artifact",
       "path": ".agents/skills/final-delivery-acceptance/scripts/test_delivery_guard.py",
-      "sha256": "2edfff42a40b3078250027192292e9672f533a458c217fa342040b75ef966293"
+      "sha256": "0787752a1ae03c561f8492e888315263770e6c443704abafc23b736b41e927c9"
     },
     {
       "role": "implementation_artifact",
       "path": ".agents/skills/final-delivery-acceptance/scripts/test_skill_contracts.py",
-      "sha256": "53f89a213e7a33bd5f840aaaffa77be8b30f66155ac2361ed1ec388a51f99877"
+      "sha256": "dc61b39659cdbf6bd0064eb91183ee2dda40bdabef7cb88ec58b38b86eddd23e"
     },
     {
       "role": "implementation_artifact",
       "path": ".agents/skills/youtube-render-pdf/SKILL.md",
-      "sha256": "5900bff6d97c12fa552cdae6cd877a176861a3a402f23bdfc1b7b6093787ad32"
+      "sha256": "6dfb80960ca5d2657bce3ce05a87076b67f2e9e3b96c7f1254ba9fe0dfe8decc"
     },
     {
       "role": "implementation_artifact",
       "path": ".claude/skills/bilibili-render-pdf/SKILL.md",
-      "sha256": "362ca0046e0f56ec7bffa459f0e4de316e6df7f277dfb9de6efae2ec239a1081"
+      "sha256": "5fb166207c6c7d2392a241cac5bc6ef5ead0c8289e55b73076dd8bee88dbc43a"
     },
     {
       "role": "implementation_artifact",
       "path": ".claude/skills/final-delivery-acceptance/SKILL.md",
-      "sha256": "7362d5bc45b684f97886615d5c56d726b86e6c116925070d05edc68e1d0f4c42"
+      "sha256": "d854df71be24eab210290264b21e8ecad9f9b3f2ff71a5169c1f1e4294843f40"
     },
     {
       "role": "implementation_artifact",
@@ -723,7 +723,7 @@
     {
       "role": "implementation_artifact",
       "path": ".claude/skills/youtube-render-pdf/SKILL.md",
-      "sha256": "5900bff6d97c12fa552cdae6cd877a176861a3a402f23bdfc1b7b6093787ad32"
+      "sha256": "6dfb80960ca5d2657bce3ce05a87076b67f2e9e3b96c7f1254ba9fe0dfe8decc"
     },
     {
       "role": "implementation_artifact",
@@ -757,8 +757,18 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "delivery-quality/v1/acceptance-v2-attempt-record.example.v1.json",
+      "sha256": "2c6c746ec54e17b0cfbfedb884943b4d5b9114d7d6251f4f896b8ceaa99978ec"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "delivery-quality/v1/acceptance-v2-input-binding.example.v1.json",
       "sha256": "45a2f9c2619ca308129f5a019df1d2451ba919c56cebf0955e24d051fa14e0d6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/acceptance-v2-task-envelope.example.v1.json",
+      "sha256": "b54082c88dded5ce610dfa9775ccfd5444ac18db6fda7b6bc26894725c127517"
     },
     {
       "role": "implementation_artifact",
@@ -797,8 +807,13 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "docs/handoffs/issue43-global-gate-cutover-20260804.md",
+      "sha256": "4672926d48a691424d4e85a16d2aa9c45fdd48bc907522dfc1b5645f85c52f8a"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "schemas/delivery-quality/registry.v1.json",
-      "sha256": "8d99766507c3f4050f6b2a659aea3148915d3c2abb75c385dd0ed82f797b6d8e"
+      "sha256": "facbf4f4f0e4294fa3f4656119c1aac2a0977563594ed5604b0ea5449fdfb5de"
     },
     {
       "role": "implementation_artifact",
@@ -827,6 +842,11 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",
+      "sha256": "a09c2187add8fa0fed0edfee13d070629337288d83f3ea22f06cc621c53b74b8"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "schemas/exit-evidence-manifest.v2.schema.json",
       "sha256": "b4cb88ea9af0221f5d5368077e4d83dc8c56950296576689cdb8e73f9b6e4d68"
     },
@@ -843,7 +863,7 @@
     {
       "role": "implementation_artifact",
       "path": "scripts/collect_issue43_exit_evidence.py",
-      "sha256": "f55e3112885b3ecc6623b89c696aabca6af5d744da9561b9bce4b0d0b3cbda12"
+      "sha256": "555aa4754895e8b7986bdb71368fa0d3b4bda1875e18e81cc5376db342037870"
     },
     {
       "role": "implementation_artifact",
@@ -858,12 +878,17 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/acceptance_v2.py",
-      "sha256": "a11b6553e262081af3269d0718072a4da4cb33f8c1033bf254ddddc0641e4004"
+      "sha256": "32882bfd88f173800d74bfc994c856a1cc3ad4ed0056bb891f8c3a8cc0339686"
     },
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/cli.py",
-      "sha256": "9587eb8a6ee9f9430ea9e83ba4d41aead4d52600eb59b940e8455eff7a3d8782"
+      "sha256": "408e7dbae38c94fa113c098b6e81d19f8b881419e3c19d344f5828228614156b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/delivery_quality.py",
+      "sha256": "bbf4477d733012f41e55930b7fbc41575611da29a18bc7468cf74b7cfd8a86a1"
     },
     {
       "role": "implementation_artifact",
@@ -878,12 +903,17 @@
     {
       "role": "implementation_artifact",
       "path": "src/video2pdf_workflow_kernel/global_gate_exit_evidence.py",
-      "sha256": "5fdb1967b76c7fd351ab9829d71f124e4e59f1b3d1a389c9dd3fb0606f218717"
+      "sha256": "2dc98d082bc6bbbc81fab14c46aed50f244b3a3548a0c06a62b4e350ad784234"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/utils.py",
+      "sha256": "95bcd230427ea856260fcd5c8e6c2ef6f3c15f81adbbc96bc16be46c4bd960b6"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/_issue43_git_authority.py",
-      "sha256": "af4094bc06d67d9a177cd51d7f142591ecabb746871841c63ffe50c4f75fbb58"
+      "sha256": "0692662409a248efcbe752b810f7f203f50a797ae7d255fa3a527f0e7e0b527a"
     },
     {
       "role": "implementation_artifact",
@@ -892,13 +922,28 @@
     },
     {
       "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-attempt-record.invalid.json",
+      "sha256": "f3a48fdad61a9e7e62a8dcfe5b9481102c1712ea643d6dc6e6476b0370b45228"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-input-binding.invalid.json",
       "sha256": "a6aa30b698dec5cbce06d7ddbb9f0b92080516f305572f215532110813a92af9"
     },
     {
       "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-task-envelope.invalid.json",
+      "sha256": "da0a0dbf109d37afde0053e4178487b52b2d8d9e8fdc3a31bf2c49e4e187b1d0"
+    },
+    {
+      "role": "implementation_artifact",
       "path": "tests/video_workflow/test_acceptance_v2.py",
-      "sha256": "e0d1c2510a5734310453cc9bdd1f5d976fcebb916012f45ef7a974ccf2bf6a23"
+      "sha256": "e48109a586b61eb7d1e8b6059df162d25d6ab01aca7265a55482809576cc29a7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_delivery_quality_contracts.py",
+      "sha256": "ded96b002e86984c51b6fa5bebc6dda4201a4186990835880b346094553bdb70"
     },
     {
       "role": "implementation_artifact",
@@ -908,7 +953,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_active_guard.py",
-      "sha256": "d0588398b466dc5df6b9bdbbf59d47eeba93e93f81f6d3a5f184513f8ba4d4dc"
+      "sha256": "bd0b053164239cae1db486a8792bd2ae0bc2d2c8fe84793be3c93bbee4e4573f"
     },
     {
       "role": "implementation_artifact",
@@ -918,12 +963,12 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_exit_evidence.py",
-      "sha256": "e876124ef408f9f97d5b38e75d0ab155e2f76b6a361c78d7adef8f1a910ad777"
+      "sha256": "998cc3d9855672eda9af3362c2c11aacd0cd1cc55d2a2cd9a2f3a06cd3c07c0f"
     },
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_global_gate.py",
-      "sha256": "1f7e15f02df694e1acbd8dd168b39d2b2bf884d379d9666a60f43751ee65c13f"
+      "sha256": "6c98a0cb8197f7ede0e91cbbf8cf98b2fe12db7ceb9c94c60fc6ecb5f370f966"
     },
     {
       "role": "implementation_artifact",
@@ -933,7 +978,7 @@
     {
       "role": "implementation_artifact",
       "path": "tests/video_workflow/test_issue43_workflow_policy.py",
-      "sha256": "8a14f51aa7a5451cfe5aeeb21756d264265b332c3af1f80bb33e4f36ecf3bb69"
+      "sha256": "800d81866221f4a68dcd1a7bc45db7bef3f463532a36dc38975fa94739630223"
     }
   ],
   "unresolved_exceptions": [],

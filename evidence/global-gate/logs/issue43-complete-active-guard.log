@@ -21,8 +21,8 @@ test_legacy_guard_eligibility_rejects_stale_adopted_artifact_without_key_error (
 test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility (tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests.test_run_record_free_legacy_completes_provider_chain_and_guard_eligibility) ... ok
 
 ----------------------------------------------------------------------
-Ran 21 tests in 718.505s
+Ran 21 tests in 1117.381s
 
 OK
 
-EVIDENCE_IMPLEMENTATION_COMMIT: 666d0942f4c71cc3854fdc4ca58df006af17f761
+EVIDENCE_IMPLEMENTATION_COMMIT: b1e926e6d829a3adcd9da38e408461b199d72af7

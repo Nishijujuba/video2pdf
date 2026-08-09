@@ -12,8 +12,34 @@ COLD_START_CUTOVER_SEQUENCE = (
     "published Slice 12 Exit Evidence -> `CONFIRMED`"
 )
 
+CURRENT_BILIBILI_STATUS = (
+    "Bilibili remains `active_legacy`; the Platform Kernel implementation and "
+    "one-candidate cutover seam are available."
+)
+CONFIRMED_BILIBILI_STATUS = (
+    "`active_kernel` begins only after runtime `CONFIRMED` platform authority "
+    "and published Slice 12 Exit Evidence."
+)
+
 
 class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
+    def test_current_bilibili_status_requires_runtime_confirmation(self) -> None:
+        paths = (
+            "AGENTS.md",
+            "CLAUDE.md",
+            "CONTEXT-MAP.md",
+            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+            "docs/contexts/video-workflow/CONTEXT.md",
+            "docs/contexts/delivery-quality/CONTEXT.md",
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+        )
+        for relative in paths:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(CURRENT_BILIBILI_STATUS, text)
+                self.assertIn(CONFIRMED_BILIBILI_STATUS, text)
+
     def test_cold_start_cutover_order_is_consistent_across_authority_docs(self) -> None:
         paths = (
             ".agents/skills/bilibili-render-pdf/SKILL.md",
@@ -65,7 +91,7 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
             "delivery-archive",
         ):
             self.assertIn(command, authority)
-        self.assertIn("New Bilibili Runs are `active_kernel`", authority)
+        self.assertIn(CURRENT_BILIBILI_STATUS, authority)
         self.assertIn("Existing Bilibili directories remain Legacy", authority)
         self.assertIn("YouTube remains `active_legacy`", authority)
         self.assertIn("Global Gate remains `active_global_gate`", authority)

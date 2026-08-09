@@ -2,9 +2,9 @@
 
 Status: active domain language. Component runtime activation is recorded in the [Video Workflow Kernel 2.0 decision map](../../adr/video-workflow-kernel-2.0-decision-map.md).
 
-New Bilibili Runs use the `active_kernel` lifecycle. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`. Final-quality authority remains the Delivery Quality `active_global_gate`.
+Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`. Final-quality authority remains the Delivery Quality `active_global_gate`.
 
-This status is the post-publication state. During a cold-start cutover, one exact Bilibili Run may be bound as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are bounded candidate states and do not constitute `active_kernel`; ordinary `init-run` remains closed until final activation records `CONFIRMED` for the matching delivered candidate and its published Exit Evidence.
+During the cold-start cutover, one exact Bilibili Run may be bound as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are bounded candidate states and do not constitute `active_kernel`; ordinary `init-run` remains closed until final activation records `CONFIRMED` for the matching delivered candidate and its published Exit Evidence.
 
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 

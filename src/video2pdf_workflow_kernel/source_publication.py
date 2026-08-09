@@ -151,8 +151,8 @@ class SourcePublicationSaga:
         )
         record = read_json(self.run_path)
         self.contracts.validate_run_record(record)
-        if record.get("schema_version") != "3.0.0":
-            raise ContractError("Source publication requires Run Record v3")
+        if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+            raise ContractError("Source publication requires Run Record v3 or v4")
         if Path(record["output_path"]).resolve() != self.run_dir:
             raise KernelConflict("Source publication Run path binding differs")
         return record, sha256_file(self.run_path)

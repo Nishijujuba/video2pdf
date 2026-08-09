@@ -24,7 +24,13 @@ except ImportError as exc:  # pragma: no cover - exercised by startup environmen
     ) from exc
 
 from .errors import ContractError, UnknownContractVersion, UnresolvedSchemaReference
-from .utils import canonical_json_bytes, read_json, sha256_bytes, sha256_file
+from .utils import (
+    canonical_json_bytes,
+    read_json,
+    require_safe_path_segment,
+    sha256_bytes,
+    sha256_file,
+)
 
 
 JSONSCHEMA_VERSION = "4.26.0"
@@ -117,6 +123,11 @@ KNOWN_INVARIANTS = frozenset(
         "run-record-freshness-v1",
         "run-record-freshness-v2",
         "run-record-freshness-v3",
+        "run-record-delivery-v4",
+        "kernel-delivery-target-v1",
+        "kernel-session-delivery-target-v1",
+        "kernel-delivery-task-index-v1",
+        "kernel-delivery-target-archive-v1",
         "scaffold-contract-directories-v1",
         "source-manifest-paths-and-fingerprints-v1",
         "source-candidate-inventory-v1",
@@ -337,6 +348,11 @@ def _validate_artifact_plan_v2(instance: dict[str, Any]) -> None:
             artifact["generator"], actual_dependencies,
             artifact["earliest_checkpoint"], artifact["condition"],
         )
+        if (
+            logical_id == "run_record"
+            and artifact["schema_version"] == "4.0.0"
+        ):
+            schema_version = "4.0.0"
         wanted = (schema_name, schema_version, generator, dependencies, earliest, condition)
         if actual != wanted:
             raise ContractError(f"Artifact Plan v2 binding is invalid for {logical_id!r}")
@@ -1081,6 +1097,127 @@ def _validate_run_record_v3(instance: dict[str, Any]) -> None:
         raise ContractError("pre-source Run phase is not source_acquisition")
 
 
+def _validate_run_record_v4(instance: dict[str, Any]) -> None:
+    _validate_run_record_v3(instance)
+    delivery = instance["delivery"]
+    require_safe_path_segment(
+        delivery["ownership"]["session_id"],
+        purpose="Run delivery session identity",
+        error_type=ContractError,
+    )
+    projections = delivery["projections"]
+    stage = delivery["stage"]
+    session = projections["session_target"]
+    archive = projections["archive"]
+    if archive is not None and (stage != "delivered" or session is not None):
+        raise ContractError(
+            "archived Run delivery requires delivered stage and no active session projection"
+        )
+    if archive is None and session is None:
+        raise ContractError("active Run delivery lacks a session projection")
+    if session is not None:
+        session_path = session["path"].replace("\\", "/")
+        expected_suffix = (
+            "/.codex/delivery-targets/sessions/"
+            f"{delivery['ownership']['session_id']}/current.json"
+        )
+        if not session_path.endswith(expected_suffix):
+            raise ContractError(
+                "Run delivery owner session differs from its active projection path"
+            )
+    _validate_project_relative_path(
+        projections["video_target"]["path"], prefix="review"
+    )
+    for name in ("session_target", "task_index", "archive"):
+        binding = projections[name]
+        if binding is not None:
+            _validate_canonical_absolute_path(binding["path"])
+    paths = [
+        binding["path"]
+        for binding in projections.values()
+        if binding is not None
+    ]
+    if len(paths) != len(set(paths)):
+        raise ContractError("Run delivery projection paths must be unique")
+
+
+def _validate_kernel_delivery_target(instance: dict[str, Any]) -> None:
+    require_safe_path_segment(
+        instance["ownership"]["session_id"],
+        purpose="Delivery target session identity",
+        error_type=ContractError,
+    )
+    _validate_canonical_absolute_path(instance["video_output_dir"])
+    stage = instance["stage"]
+    artifacts = instance["artifacts"]
+    required = set()
+    if stage in {"ready_for_delivery", "accepted", "delivered"}:
+        required.update({"final_pdf", "main_tex", "final_compile_report"})
+    if stage in {"accepted", "delivered"}:
+        required.add("acceptance_report")
+    if stage == "delivered":
+        required.add("delivery_guard_report")
+    missing = sorted(name for name in required if artifacts[name] is None)
+    if missing:
+        raise ContractError(
+            f"delivery stage lacks required artifact bindings: {missing}"
+        )
+
+
+def _validate_kernel_session_delivery_target(instance: dict[str, Any]) -> None:
+    require_safe_path_segment(
+        instance["session_id"],
+        purpose="Session target identity",
+        error_type=ContractError,
+    )
+    _validate_canonical_absolute_path(instance["video_output_dir"])
+    _validate_canonical_absolute_path(instance["video_target"]["path"])
+    _validate_canonical_absolute_path(instance["projection_path"])
+    target_path = instance["video_target"]["path"].replace("\\", "/")
+    if not target_path.endswith("/review/acceptance/delivery_target.json"):
+        raise ContractError("Session target video projection path is not canonical")
+    expected_suffix = (
+        "/.codex/delivery-targets/sessions/"
+        f"{instance['session_id']}/current.json"
+    )
+    if not instance["projection_path"].replace("\\", "/").endswith(
+        expected_suffix
+    ):
+        raise ContractError("Session target owner session differs from its projection")
+
+
+def _validate_kernel_delivery_task_index(instance: dict[str, Any]) -> None:
+    run_ids = [entry["run_id"] for entry in instance["entries"]]
+    if run_ids != sorted(run_ids) or len(run_ids) != len(set(run_ids)):
+        raise ContractError("Delivery Task Index entries must be unique and sorted")
+    for entry in instance["entries"]:
+        require_safe_path_segment(
+            entry["session_id"],
+            purpose="Delivery Task Index session identity",
+            error_type=ContractError,
+        )
+        session = entry["session_target"]
+        archive = entry["archive"]
+        if archive is not None and (
+            entry["stage"] != "delivered" or session is not None
+        ):
+            raise ContractError(
+                "archived task index entry requires delivered stage and no active session"
+            )
+        if archive is None and session is None:
+            raise ContractError("active task index entry lacks a session target")
+
+
+def _validate_kernel_delivery_target_archive(instance: dict[str, Any]) -> None:
+    require_safe_path_segment(
+        instance["session_id"],
+        purpose="Delivery archive session identity",
+        error_type=ContractError,
+    )
+    for field in ("archived_from", "video_target", "delivery_guard_report"):
+        _validate_canonical_absolute_path(instance[field]["path"])
+
+
 def _validate_task_envelope(instance: dict[str, Any]) -> None:
     task_id = instance["task_id"]
     expected_root = f"workflow/tasks/{task_id}"
@@ -1487,6 +1624,11 @@ INVARIANT_VALIDATORS = {
     "run-record-freshness-v1": _validate_run_record,
     "run-record-freshness-v2": _validate_task_capable_run_record,
     "run-record-freshness-v3": _validate_run_record_v3,
+    "run-record-delivery-v4": _validate_run_record_v4,
+    "kernel-delivery-target-v1": _validate_kernel_delivery_target,
+    "kernel-session-delivery-target-v1": _validate_kernel_session_delivery_target,
+    "kernel-delivery-task-index-v1": _validate_kernel_delivery_task_index,
+    "kernel-delivery-target-archive-v1": _validate_kernel_delivery_target_archive,
     "resource-admission-configuration-v1": _validate_resource_admission_configuration,
     "resource-lease-resolution-evidence-v1": _validate_resource_lease_resolution_evidence,
     "scaffold-contract-directories-v1": _validate_scaffold_contract,

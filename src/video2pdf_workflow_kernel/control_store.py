@@ -33,7 +33,7 @@ from .utils import (
 )
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 BUSY_TIMEOUT_MS = 5000
 RESOURCE_CLASSES = frozenset(
     {
@@ -196,6 +196,57 @@ SOURCE_PUBLICATION_REVISION_INDEX_SQL = (
     "CREATE UNIQUE INDEX IF NOT EXISTS one_source_publication_revision_per_run "
     "ON source_publication_intents(run_id, expected_run_revision) "
     "WHERE state!='ABORTED'"
+)
+DELIVERY_LIFECYCLE_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS delivery_lifecycle_intents ("
+    "intent_id TEXT PRIMARY KEY, "
+    "run_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+    "session_id TEXT NOT NULL, "
+    "expected_run_revision INTEGER NOT NULL CHECK(expected_run_revision >= 1), "
+    "expected_ownership_generation INTEGER NOT NULL "
+    "CHECK(expected_ownership_generation >= 1), "
+    "prior_stage TEXT NOT NULL CHECK(prior_stage IN "
+    "('generating','ready_for_delivery','accepted','delivered','blocked')), "
+    "target_stage TEXT NOT NULL CHECK(target_stage IN "
+    "('generating','ready_for_delivery','accepted','delivered','blocked')), "
+    "operation TEXT NOT NULL CHECK(operation IN "
+    "('transition','handoff','archive')), "
+    "prior_run_record_sha256 TEXT NOT NULL, "
+    "replacement_run_record_sha256 TEXT NOT NULL, "
+    "replacement_run_record_json TEXT NOT NULL, "
+    "state TEXT NOT NULL CHECK(state IN "
+    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED','COMMITTED','ABORTED')), "
+    "intent_identity TEXT NOT NULL UNIQUE)"
+)
+DELIVERY_LIFECYCLE_ACTIVE_RUN_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS "
+    "one_nonterminal_delivery_lifecycle_per_run "
+    "ON delivery_lifecycle_intents(run_id) "
+    "WHERE state IN ('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')"
+)
+DELIVERY_LIFECYCLE_REVISION_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS "
+    "one_delivery_lifecycle_revision_per_run "
+    "ON delivery_lifecycle_intents(run_id, expected_run_revision) "
+    "WHERE state!='ABORTED'"
+)
+PROJECTION_PUBLICATION_SLOTS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS projection_publication_slots ("
+    "slot_id TEXT PRIMARY KEY, "
+    "intent_id TEXT NOT NULL REFERENCES delivery_lifecycle_intents(intent_id), "
+    "normalized_path TEXT NOT NULL, "
+    "expected_state TEXT NOT NULL CHECK(expected_state IN ('absent','present')), "
+    "expected_sha256 TEXT, "
+    "proposed_state TEXT NOT NULL CHECK(proposed_state IN ('absent','present')), "
+    "proposed_sha256 TEXT, "
+    "state TEXT NOT NULL CHECK(state IN ('HELD','RELEASED')), "
+    "slot_identity TEXT NOT NULL UNIQUE, "
+    "UNIQUE(intent_id, normalized_path))"
+)
+PROJECTION_PUBLICATION_ACTIVE_PATH_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS "
+    "one_held_projection_publication_slot_per_path "
+    "ON projection_publication_slots(normalized_path) WHERE state='HELD'"
 )
 TASK_RECLAIM_TRANSITIONS_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS task_reclaim_transitions ("
@@ -570,6 +621,8 @@ class ControlStore:
                 if version >= 9:
                     self._validate_source_publication_table(connection)
                     self._validate_source_publication_rows(connection)
+                if version >= 10:
+                    self._validate_delivery_lifecycle_tables(connection)
                 plan = planner(connection)
                 connection.execute("COMMIT")
                 if not self._begin_immediate_if_snapshot_unchanged(
@@ -644,6 +697,7 @@ class ControlStore:
             self._create_task_tables(connection)
             self._create_resource_tables(connection)
             self._create_source_publication_table(connection)
+            self._create_delivery_lifecycle_tables(connection)
             self._insert_resource_configuration(
                 connection,
                 resource_configuration,
@@ -663,6 +717,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (7)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (8)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (9)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (10)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -854,6 +909,138 @@ class ControlStore:
         connection.execute(SOURCE_PUBLICATION_EPOCH_INDEX_SQL)
         connection.execute(SOURCE_PUBLICATION_REVISION_INDEX_SQL)
         ControlStore._validate_source_publication_table(connection)
+
+    @staticmethod
+    def _create_delivery_lifecycle_tables(
+        connection: sqlite3.Connection,
+    ) -> None:
+        connection.execute(DELIVERY_LIFECYCLE_TABLE_SQL)
+        connection.execute(DELIVERY_LIFECYCLE_ACTIVE_RUN_INDEX_SQL)
+        connection.execute(DELIVERY_LIFECYCLE_REVISION_INDEX_SQL)
+        connection.execute(PROJECTION_PUBLICATION_SLOTS_TABLE_SQL)
+        connection.execute(PROJECTION_PUBLICATION_ACTIVE_PATH_INDEX_SQL)
+        ControlStore._validate_delivery_lifecycle_tables(connection)
+
+    @staticmethod
+    def _require_delivery_lifecycle_schema_absent(
+        connection: sqlite3.Connection,
+    ) -> None:
+        delivery_objects = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE name IN ("
+                "'delivery_lifecycle_intents',"
+                "'projection_publication_slots',"
+                "'one_nonterminal_delivery_lifecycle_per_run',"
+                "'one_delivery_lifecycle_revision_per_run',"
+                "'one_held_projection_publication_slot_per_path')"
+            ).fetchall()
+        }
+        if delivery_objects:
+            raise ControlStoreUnavailable(
+                "Control Store v9 has a partial v10 Delivery Lifecycle migration"
+            )
+
+    @staticmethod
+    def _validate_delivery_lifecycle_tables(
+        connection: sqlite3.Connection,
+    ) -> None:
+        expected_columns = {
+            "delivery_lifecycle_intents": {
+                "intent_id",
+                "run_id",
+                "session_id",
+                "expected_run_revision",
+                "expected_ownership_generation",
+                "prior_stage",
+                "target_stage",
+                "operation",
+                "prior_run_record_sha256",
+                "replacement_run_record_sha256",
+                "replacement_run_record_json",
+                "state",
+                "intent_identity",
+            },
+            "projection_publication_slots": {
+                "slot_id",
+                "intent_id",
+                "normalized_path",
+                "expected_state",
+                "expected_sha256",
+                "proposed_state",
+                "proposed_sha256",
+                "state",
+                "slot_identity",
+            },
+        }
+        for table, expected in expected_columns.items():
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
+            }
+            if columns != expected:
+                raise ControlStoreUnavailable(
+                    f"Control Store {table} table is incomplete"
+                )
+
+        expected_sql = {
+            "delivery_lifecycle_intents": DELIVERY_LIFECYCLE_TABLE_SQL,
+            "projection_publication_slots": (
+                PROJECTION_PUBLICATION_SLOTS_TABLE_SQL
+            ),
+            "one_nonterminal_delivery_lifecycle_per_run": (
+                DELIVERY_LIFECYCLE_ACTIVE_RUN_INDEX_SQL
+            ),
+            "one_delivery_lifecycle_revision_per_run": (
+                DELIVERY_LIFECYCLE_REVISION_INDEX_SQL
+            ),
+            "one_held_projection_publication_slot_per_path": (
+                PROJECTION_PUBLICATION_ACTIVE_PATH_INDEX_SQL
+            ),
+        }
+        for name, expected in expected_sql.items():
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name=?", (name,)
+            ).fetchone()
+            if row is None or _normalized_sql(row[0]) != _normalized_sql(expected):
+                raise ControlStoreUnavailable(
+                    f"Control Store SQL authority differs for {name}"
+                )
+
+        allowed_objects = {
+            ("table", "delivery_lifecycle_intents"),
+            ("table", "projection_publication_slots"),
+            ("index", "one_nonterminal_delivery_lifecycle_per_run"),
+            ("index", "one_delivery_lifecycle_revision_per_run"),
+            ("index", "one_held_projection_publication_slot_per_path"),
+        }
+        actual_objects = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                "SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL "
+                "AND (name LIKE '%delivery_lifecycle%' "
+                "OR name LIKE '%projection_publication%')"
+            ).fetchall()
+        }
+        if actual_objects != allowed_objects:
+            raise ControlStoreUnavailable(
+                "Control Store has unsupported Delivery Lifecycle schema objects"
+            )
+
+    def _validate_delivery_lifecycle_rows(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        run_ids = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT run_id FROM delivery_lifecycle_intents "
+                "WHERE state='COMMITTED'"
+            ).fetchall()
+        }
+        for run_id in run_ids:
+            self._current_run_record_sha(connection, run_id)
 
     @staticmethod
     def _validate_source_publication_table(
@@ -3530,7 +3717,7 @@ class ControlStore:
                 or mutation["mutation_id"] != legacy_identity
                 or mutation["mutation_identity"] != legacy_identity
                 or (
-                    replacement.get("schema_version") in {"2.0.0", "3.0.0"}
+                    replacement.get("schema_version") in {"2.0.0", "3.0.0", "4.0.0"}
                     and replacement.get("last_mutation_intent_id")
                     != legacy_identity
                 )
@@ -3812,6 +3999,17 @@ class ControlStore:
                     self._validate_resource_tables(connection)
                     self._validate_source_publication_table(connection)
                     self._validate_source_publication_rows(connection)
+                    self._require_delivery_lifecycle_schema_absent(connection)
+                    self._create_delivery_lifecycle_tables(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (10)"
+                    )
+                    version = 10
+                if version == 10:
+                    self._validate_resource_tables(connection)
+                    self._validate_source_publication_table(connection)
+                    self._validate_source_publication_rows(connection)
+                    self._validate_delivery_lifecycle_tables(connection)
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -4085,6 +4283,11 @@ class ControlStore:
             self._create_source_publication_table(connection)
             connection.execute("INSERT INTO schema_migrations(version) VALUES (9)")
             version = 9
+        if version == 9:
+            self._require_delivery_lifecycle_schema_absent(connection)
+            self._create_delivery_lifecycle_tables(connection)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (10)")
+            version = 10
         self._ensure_maintenance_indexes(connection)
         if version != SCHEMA_VERSION or self._migration_versions(connection) != list(
             range(1, SCHEMA_VERSION + 1)
@@ -4344,6 +4547,8 @@ class ControlStore:
                     "task_promotion_intents",
                     "task_reclaim_transitions",
                     "source_publication_intents",
+                    "delivery_lifecycle_intents",
+                    "projection_publication_slots",
                     "resource_configurations",
                     "resource_sequences",
                     "resource_queue_entries",
@@ -4365,6 +4570,9 @@ class ControlStore:
                     "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED') "
                     "UNION ALL "
                     "SELECT run_id FROM source_publication_intents WHERE state IN "
+                    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED') "
+                    "UNION ALL "
+                    "SELECT run_id FROM delivery_lifecycle_intents WHERE state IN "
                     "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')) "
                     "GROUP BY run_id HAVING COUNT(*) > 1"
                 ).fetchall()
@@ -4395,6 +4603,8 @@ class ControlStore:
                 self._validate_resource_tables(connection)
                 self._validate_source_publication_table(connection)
                 self._validate_source_publication_rows(connection)
+                self._validate_delivery_lifecycle_tables(connection)
+                self._validate_delivery_lifecycle_rows(connection)
                 if not self._maintenance_index_is_valid(connection):
                     raise ControlStoreUnavailable(
                         "Control Store Task Claim maintenance index is invalid"
@@ -4811,7 +5021,7 @@ class ControlStore:
             or mutation["mutation_identity"] != expected_mutation_id
             or version["row_identity"] != expected_row_identity
             or (
-                replacement.get("schema_version") in {"2.0.0", "3.0.0"}
+                replacement.get("schema_version") in {"2.0.0", "3.0.0", "4.0.0"}
                 and replacement.get("last_mutation_intent_id")
                 != expected_mutation_id
             )
@@ -4942,7 +5152,7 @@ class ControlStore:
             or replacement_sha != publication["replacement_run_record_sha256"]
             or publication["intent_id"] != expected_intent_id
             or publication["intent_identity"] != expected_identity
-            or replacement.get("schema_version") != "3.0.0"
+            or replacement.get("schema_version") not in {"3.0.0", "4.0.0"}
             or replacement.get("run_id") != publication["run_id"]
             or replacement.get("coordination_revision")
             != int(publication["expected_run_revision"]) + 1
@@ -5055,8 +5265,60 @@ class ControlStore:
                     ],
                 }
             )
+        delivery_table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='delivery_lifecycle_intents'"
+        ).fetchone() is not None
+        delivery_rows = (
+            connection.execute(
+                "SELECT * FROM delivery_lifecycle_intents "
+                "WHERE run_id=? AND state='COMMITTED' "
+                "ORDER BY expected_run_revision",
+                (run_id,),
+            ).fetchall()
+            if delivery_table_exists
+            else []
+        )
+        delivery_mutations = []
+        for row in delivery_rows:
+            replacement_json = str(row["replacement_run_record_json"])
+            try:
+                replacement = json.loads(replacement_json)
+            except (TypeError, ValueError) as exc:
+                raise ControlStoreUnavailable(
+                    "Delivery Lifecycle replacement Run Record is invalid"
+                ) from exc
+            if (
+                canonical_json_bytes(replacement).decode("utf-8")
+                != replacement_json
+                or hashlib.sha256(canonical_json_bytes(replacement)).hexdigest()
+                != row["replacement_run_record_sha256"]
+                or replacement.get("run_id") != run_id
+                or int(replacement.get("coordination_revision", -1))
+                != int(row["expected_run_revision"]) + 1
+                or replacement.get("last_mutation_intent_id") != row["intent_id"]
+            ):
+                raise ControlStoreUnavailable(
+                    "Delivery Lifecycle replacement Run Record is invalid"
+                )
+            delivery_mutations.append(
+                {
+                    "expected_run_revision": row["expected_run_revision"],
+                    "predecessor_committed_sha256": row[
+                        "prior_run_record_sha256"
+                    ],
+                    "replacement_run_record_sha256": row[
+                        "replacement_run_record_sha256"
+                    ],
+                }
+            )
         mutations = sorted(
-            [*run_state_mutations, *task_mutations, *source_publications],
+            [
+                *run_state_mutations,
+                *task_mutations,
+                *source_publications,
+                *delivery_mutations,
+            ],
             key=lambda row: int(row["expected_run_revision"]),
         )
         for mutation in mutations:
@@ -5079,6 +5341,11 @@ class ControlStore:
             "AND name='source_publication_intents'"
         ).fetchone() is not None:
             tables.append("source_publication_intents")
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='delivery_lifecycle_intents'"
+        ).fetchone() is not None:
+            tables.append("delivery_lifecycle_intents")
         revisions = [
             int(row[0])
             for table in tables
@@ -5126,6 +5393,19 @@ class ControlStore:
                 ("source_publication", str(row[0]))
                 for row in connection.execute(
                     "SELECT intent_id FROM source_publication_intents "
+                    "WHERE run_id=? AND state IN "
+                    "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
+                    (run_id,),
+                ).fetchall()
+            )
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='delivery_lifecycle_intents'"
+        ).fetchone() is not None:
+            slots.extend(
+                ("delivery_lifecycle", str(row[0]))
+                for row in connection.execute(
+                    "SELECT intent_id FROM delivery_lifecycle_intents "
                     "WHERE run_id=? AND state IN "
                     "('PREPARED','FILES_PUBLISHED','RECORD_COMMITTED')",
                     (run_id,),
@@ -5192,7 +5472,7 @@ class ControlStore:
             replacement_run_record_sha256=replacement_sha,
         )
         if (
-            replacement_run_record.get("schema_version") in {"2.0.0", "3.0.0"}
+            replacement_run_record.get("schema_version") in {"2.0.0", "3.0.0", "4.0.0"}
             and replacement_run_record.get("last_mutation_intent_id")
             != mutation_id
         ):
@@ -5336,7 +5616,7 @@ class ControlStore:
             or mutation["old_run_record_sha256"] != predecessor
             or mutation["predecessor_committed_sha256"] != predecessor
             or (
-                replacement.get("schema_version") in {"2.0.0", "3.0.0"}
+                replacement.get("schema_version") in {"2.0.0", "3.0.0", "4.0.0"}
                 and replacement.get("last_mutation_intent_id")
                 != mutation["mutation_id"]
             )
@@ -5439,7 +5719,7 @@ class ControlStore:
             "artifact_generations", {}
         ).get("source_manifest")
         if (
-            replacement_run_record.get("schema_version") != "3.0.0"
+            replacement_run_record.get("schema_version") not in {"3.0.0", "4.0.0"}
             or replacement_run_record.get("run_id") != run_id
             or replacement_run_record.get("coordination_revision")
             != expected_run_revision + 1

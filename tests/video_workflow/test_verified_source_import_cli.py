@@ -37,17 +37,43 @@ def create_directory_link(link: Path, target: Path) -> None:
 
 
 class VerifiedSourceImportCliTests(unittest.TestCase):
-    def _current_prior_package(self):
+    def _current_prior_package(
+        self,
+        *,
+        run_record_version: str = "3.0.0",
+        platform: str = "youtube",
+    ):
         from tests.video_workflow.test_source_publication_integration import (
             build_decision_ready_authority,
         )
 
-        kernel, prior_run_dir, _ = build_decision_ready_authority()
+        kernel, prior_run_dir, _ = build_decision_ready_authority(
+            run_record_version=run_record_version,
+            platform=platform,
+        )
         published = kernel.finalize_production_source(
             prior_run_dir,
             published_at="2026-07-18T12:00:00+08:00",
         )
         return kernel, prior_run_dir, published
+
+    def test_public_source_import_accepts_current_bilibili_kernel_v4_package(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.utils import read_json
+
+        _, prior_run_dir, prior_publication = self._current_prior_package(
+            run_record_version="4.0.0",
+            platform="bilibili",
+        )
+
+        completed, payload, _ = self._run_import(prior_run_dir)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        self.assertEqual(payload["classification"], "verified_source_imported")
+        imported = read_json(Path(payload["data"]["run_dir"]) / "source/manifest.json")
+        self.assertEqual(imported["canonical_platform"], "bilibili")
+        self.assertEqual(imported["source_version"], prior_publication.source_version)
 
     def _run_import(self, prior_run_dir: Path):
         workspace = new_workflow_workspace(self.id(), label="source-import")

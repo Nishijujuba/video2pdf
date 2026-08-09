@@ -14,7 +14,7 @@ This skill extends the `youtube-render-pdf` workflow with Bilibili-specific adap
 | Aspect | Handling |
 |--------|----------|
 | **Subtitle scarcity** | Try cookie-assisted CC subtitle probing first → then inspect metadata → fall back to Whisper speech-to-text → visual-only mode |
-| **Login-gated HD** | 1080P+ requires cookies; invoke `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp` with the required cookie flags |
+| **Login-gated HD** | 1080P+ commonly requires cookies; declare that constraint to the Kernel source-acquisition operation |
 | **Multi-part videos** | Detect 分P videos and ask the user which parts to process |
 | **URL formats** | Support `bilibili.com/video/BVxxxxxxx` and `b23.tv` short links |
 | **Danmaku** | Do not use danmaku as a teaching content source (too noisy); use only CC subtitles or Whisper output |
@@ -33,19 +33,23 @@ The output must:
 - be a complete `.tex` document from `\documentclass` to `\end{document}`
 - be compiled successfully to PDF as part of the final delivery
 
-## Local Environment On This Machine
+## Active Authority Boundary
 
-When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
+New Bilibili Runs are `active_kernel`. Existing Bilibili directories remain Legacy unless a separate explicit migration authority is activated. YouTube remains `active_legacy`. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both tracks.
 
-- Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
-- Whisper CLI for subtitle fallback: `D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe`
-- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
-- `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
-- `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
-- ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
-- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
+The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
 
-Use the shared `kimi` uv environment as the default local runtime for Python-based helper work, and use the `whisper.exe` path above whenever the CC subtitle path is unavailable.
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance source and production through `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+
+## Semantic Roles
+
+- **Data Preparation agent**: judges subtitle usefulness, source-language priority, acquisition limitations, and semantic adequacy from the Kernel-provided source task and returns only its bounded Judgment Patch.
+- **Outline agent**: defines the teaching goal, chapter hierarchy, terminology contract, figure plan, and reader progression.
+- **Writer agents**: write complete, source-faithful `section_*.tex` drafts inside their declared task write sets.
+- **Figure agents**: select and explain high-value frames, crops, or teaching diagrams with timestamp provenance.
+- **Consistency agent**: checks terminology, notation, transitions, references, and Delivery Glossary conformance.
+- **Independent review agent**: compares the integrated teaching content with the validated source package and reports omissions or distortions.
+- **Acceptance Reviewer**: performs independent read-only Visual Quality judgment from the provider-created Task Envelope and writes only the bounded Judgment Patch.
 
 ## Pedagogical Standard
 

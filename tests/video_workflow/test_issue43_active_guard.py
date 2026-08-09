@@ -5,6 +5,7 @@ import gc
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -28,6 +29,10 @@ if str(SRC) not in sys.path:
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.utils import (
+    canonical_json_bytes,
+    normalized_physical_path,
+)
 
 
 GUARD = PROJECT_ROOT / ".agents/skills/final-delivery-acceptance/scripts/delivery_guard.py"
@@ -55,9 +60,40 @@ class Issue43ActiveGuardTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
+        record["schema_version"] = "4.0.0"
         record["run_id"] = hashlib.md5(str(root).encode()).hexdigest()
         record["output_path"] = str(root.resolve())
         record["initialization_intent_id"] = f"acceptance-fixture-{record['run_id']}"
+        record["coordination_revision"] = 1
+        record["delivery"] = {
+            "stage": "ready_for_delivery",
+            "ownership": {"session_id": "acceptance-fixture", "generation": 1},
+            "projections": {
+                "video_target": {
+                    "path": "review/acceptance/delivery_target.json",
+                    "projection_revision": 1,
+                    "sha256": "b" * 64,
+                },
+                "session_target": {
+                    "path": str(
+                        (
+                            root.parent
+                            / ".codex/delivery-targets/sessions/acceptance-fixture/current.json"
+                        ).resolve()
+                    ),
+                    "projection_revision": 1,
+                    "sha256": "c" * 64,
+                },
+                "task_index": {
+                    "path": str(
+                        (root.parent / ".codex/delivery-targets/task-index.json").resolve()
+                    ),
+                    "projection_revision": 1,
+                    "sha256": "d" * 64,
+                },
+                "archive": None,
+            },
+        }
         write_json(run_path, record)
         digest = file_sha(run_path)
         store = ControlStore.initialize(control_root, ContractRegistry(PROJECT_ROOT))
@@ -140,7 +176,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.wrapper = self.project_root / ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
         self.wrapper.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE_WRAPPER, self.wrapper)
-        self.video_root = self.project_root / "video"
+        self.video_root = self.project_root / "workspace" / "video"
         self.workspace = self.video_root / "review/acceptance"
         binding_path = self.build_binding(self.video_root, 1)
         prepared, envelope = run_cli(
@@ -275,6 +311,614 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             capture_output=True,
             check=False,
         )
+
+    def kernelize_bilibili_target(self) -> tuple[Path, Path]:
+        session_target_path = self.current
+        task_index_path = (
+            self.project_root / ".codex" / "delivery-targets" / "task-index.json"
+        )
+        run_path = self.video_root / "workflow" / "run.json"
+        intent_id = hashlib.sha256(
+            f"kernel-guard:{self.id()}".encode("utf-8")
+        ).hexdigest()
+        predecessor = json.loads(run_path.read_text(encoding="utf-8"))
+        predecessor_sha = file_sha(run_path)
+        run_id = predecessor["run_id"]
+        predecessor_revision = predecessor["coordination_revision"]
+        successor_revision = predecessor_revision + 1
+        legacy_target = json.loads(self.target.read_text(encoding="utf-8"))
+        gate_path = (
+            self.project_root / legacy_target["global_gate_authority"]["path"]
+        ).resolve()
+        artifact_paths = {
+            "final_pdf": self.final_pdf,
+            "main_tex": self.main_tex,
+            "final_compile_report": self.video_root
+            / legacy_target["compile_report"],
+            "acceptance_report": self.workspace / "acceptance_report.json",
+        }
+        video_target = {
+            "schema_name": "kernel-delivery-target",
+            "schema_version": "1.0.0",
+            "projection_kind": "video_target",
+            "projection_revision": 2,
+            "run_id": run_id,
+            "run_revision": successor_revision,
+            "lifecycle_intent_id": intent_id,
+            "video_output_dir": str(self.video_root.resolve()),
+            "stage": "accepted",
+            "ownership": {"session_id": self.session_id, "generation": 1},
+            "artifacts": {
+                role: {"path": str(path.resolve()), "sha256": file_sha(path)}
+                for role, path in artifact_paths.items()
+            }
+            | {"delivery_guard_report": None},
+            "global_gate_authority": {
+                "path": str(gate_path),
+                "generation": 1,
+                "sha256": file_sha(gate_path),
+            },
+        }
+        write_json(self.target, video_target)
+        session_target = {
+            "schema_name": "kernel-session-delivery-target",
+            "schema_version": "1.0.0",
+            "projection_kind": "session_target",
+            "projection_revision": 2,
+            "projection_path": str(session_target_path.resolve()),
+            "session_id": self.session_id,
+            "run_id": run_id,
+            "run_revision": successor_revision,
+            "lifecycle_intent_id": intent_id,
+            "stage": "accepted",
+            "ownership_generation": 1,
+            "owner_status": "active",
+            "video_output_dir": str(self.video_root.resolve()),
+            "video_target": {
+                "path": str(self.target.resolve()),
+                "projection_revision": 2,
+                "sha256": file_sha(self.target),
+            },
+        }
+        write_json(session_target_path, session_target)
+        task_index = {
+            "schema_name": "kernel-delivery-task-index",
+            "schema_version": "1.0.0",
+            "projection_kind": "task_index",
+            "projection_revision": 2,
+            "entries": [
+                {
+                    "run_id": run_id,
+                    "canonical_platform": "bilibili",
+                    "video_output_dir": str(self.video_root.resolve()),
+                    "run_revision": successor_revision,
+                    "lifecycle_intent_id": intent_id,
+                    "stage": "accepted",
+                    "session_id": self.session_id,
+                    "ownership_generation": 1,
+                    "video_target": {
+                        "path": str(self.target.resolve()),
+                        "projection_revision": 2,
+                        "sha256": file_sha(self.target),
+                    },
+                    "session_target": {
+                        "path": str(session_target_path.resolve()),
+                        "projection_revision": 2,
+                        "sha256": file_sha(session_target_path),
+                    },
+                    "archive": None,
+                }
+            ],
+        }
+        write_json(task_index_path, task_index)
+        run_record = predecessor
+        run_record.update(
+            {
+                "run_id": run_id,
+                "platform_adapter": "bilibili",
+                "canonical_platform": "bilibili",
+                "output_path": str(self.video_root.resolve()),
+                "coordination_revision": successor_revision,
+                "last_mutation_intent_id": intent_id,
+                "delivery": {
+                    "stage": "accepted",
+                    "ownership": {"session_id": self.session_id, "generation": 1},
+                    "projections": {
+                        "video_target": {
+                            "path": "review/acceptance/delivery_target.json",
+                            "projection_revision": 2,
+                            "sha256": file_sha(self.target),
+                        },
+                        "session_target": {
+                            "path": str(session_target_path.resolve()),
+                            "projection_revision": 2,
+                            "sha256": file_sha(session_target_path),
+                        },
+                        "task_index": {
+                            "path": str(task_index_path.resolve()),
+                            "projection_revision": 2,
+                            "sha256": file_sha(task_index_path),
+                        },
+                        "archive": None,
+                    },
+                },
+            }
+        )
+        run_path.parent.mkdir(parents=True, exist_ok=True)
+        run_path.write_bytes(canonical_json_bytes(run_record))
+        store = ControlStore(
+            Path(self.binding["run"]["control_store_root"]),
+            ContractRegistry(PROJECT_ROOT),
+        )
+        with sqlite3.connect(store.path) as connection:
+            connection.execute(
+                "INSERT INTO delivery_lifecycle_intents("
+                "intent_id,run_id,session_id,expected_run_revision,"
+                "expected_ownership_generation,prior_stage,target_stage,operation,"
+                "prior_run_record_sha256,replacement_run_record_sha256,"
+                "replacement_run_record_json,state,intent_identity) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    intent_id,
+                    run_id,
+                    self.session_id,
+                    predecessor_revision,
+                    1,
+                    "ready_for_delivery",
+                    "accepted",
+                    "transition",
+                    predecessor_sha,
+                    file_sha(run_path),
+                    canonical_json_bytes(run_record).decode("utf-8"),
+                    "COMMITTED",
+                    intent_id,
+                ),
+            )
+            normalized_task_index = normalized_physical_path(task_index_path)
+            slot_id = hashlib.sha256(
+                (intent_id + "\0" + normalized_task_index).encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO projection_publication_slots("
+                "slot_id,intent_id,normalized_path,expected_state,expected_sha256,"
+                "proposed_state,proposed_sha256,state,slot_identity) "
+                "VALUES(?,?,?,'present',?,'present',?,'RELEASED',?)",
+                (
+                    slot_id,
+                    intent_id,
+                    normalized_task_index,
+                    file_sha(task_index_path),
+                    file_sha(task_index_path),
+                    slot_id,
+                ),
+            )
+        return store.path, task_index_path
+
+    def publish_other_run_task_index_revision(
+        self, store_path: Path, task_index_path: Path
+    ) -> str:
+        other_run_id = "24242424242424242424242424242424"
+        other_session_id = "session-other-run"
+        other_run_root = self.project_root / "workspace" / "other-video"
+        other_target_path = (
+            other_run_root / "review" / "acceptance" / "delivery_target.json"
+        )
+        other_session_path = (
+            self.project_root
+            / ".codex"
+            / "delivery-targets"
+            / "sessions"
+            / other_session_id
+            / "current.json"
+        )
+        intent_id = hashlib.sha256(b"other-run-task-index-publication").hexdigest()
+
+        own_target = json.loads(self.target.read_text(encoding="utf-8"))
+        other_target = {
+            **own_target,
+            "run_id": other_run_id,
+            "run_revision": 2,
+            "lifecycle_intent_id": intent_id,
+            "video_output_dir": str(other_run_root.resolve()),
+            "ownership": {"session_id": other_session_id, "generation": 1},
+        }
+        write_json(other_target_path, other_target)
+        own_session = json.loads(self.current.read_text(encoding="utf-8"))
+        other_session = {
+            **own_session,
+            "projection_path": str(other_session_path.resolve()),
+            "session_id": other_session_id,
+            "run_id": other_run_id,
+            "run_revision": 2,
+            "lifecycle_intent_id": intent_id,
+            "video_output_dir": str(other_run_root.resolve()),
+            "video_target": {
+                "path": str(other_target_path.resolve()),
+                "projection_revision": other_target["projection_revision"],
+                "sha256": file_sha(other_target_path),
+            },
+        }
+        write_json(other_session_path, other_session)
+
+        prior_index_sha = file_sha(task_index_path)
+        task_index = json.loads(task_index_path.read_text(encoding="utf-8"))
+        task_index["projection_revision"] += 1
+        task_index["entries"] = sorted(
+            [
+                *task_index["entries"],
+                {
+                    "run_id": other_run_id,
+                    "canonical_platform": "bilibili",
+                    "video_output_dir": str(other_run_root.resolve()),
+                    "run_revision": 2,
+                    "lifecycle_intent_id": intent_id,
+                    "stage": "accepted",
+                    "session_id": other_session_id,
+                    "ownership_generation": 1,
+                    "video_target": {
+                        "path": str(other_target_path.resolve()),
+                        "projection_revision": other_target["projection_revision"],
+                        "sha256": file_sha(other_target_path),
+                    },
+                    "session_target": {
+                        "path": str(other_session_path.resolve()),
+                        "projection_revision": other_session["projection_revision"],
+                        "sha256": file_sha(other_session_path),
+                    },
+                    "archive": None,
+                },
+            ],
+            key=lambda entry: entry["run_id"],
+        )
+        write_json(task_index_path, task_index)
+
+        own_run = json.loads(
+            (self.video_root / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        initialization_intent_id = "initialize-other-delivery-run"
+        predecessor = {
+            **own_run,
+            "run_id": other_run_id,
+            "output_path": str(other_run_root.resolve()),
+            "initialization_intent_id": initialization_intent_id,
+            "coordination_revision": 1,
+            "last_mutation_intent_id": None,
+            "delivery": {
+                "stage": "ready_for_delivery",
+                "ownership": {"session_id": other_session_id, "generation": 1},
+                "projections": {
+                    "video_target": {
+                        "path": "review/acceptance/delivery_target.json",
+                        "projection_revision": 1,
+                        "sha256": "a" * 64,
+                    },
+                    "session_target": {
+                        "path": str(other_session_path.resolve()),
+                        "projection_revision": 1,
+                        "sha256": "b" * 64,
+                    },
+                    "task_index": {
+                        "path": str(task_index_path.resolve()),
+                        "projection_revision": task_index["projection_revision"] - 1,
+                        "sha256": prior_index_sha,
+                    },
+                    "archive": None,
+                },
+            },
+        }
+        other_run_path = other_run_root / "workflow" / "run.json"
+        other_run_path.parent.mkdir(parents=True, exist_ok=True)
+        other_run_path.write_bytes(canonical_json_bytes(predecessor))
+        predecessor_sha = file_sha(other_run_path)
+        store = ControlStore(
+            Path(self.binding["run"]["control_store_root"]),
+            ContractRegistry(PROJECT_ROOT),
+        )
+        store.prepare_initialization(
+            run_id=other_run_id,
+            output_path=other_run_root,
+            intent_id=initialization_intent_id,
+            staging_path=store.workspace_root / "staging" / other_run_id,
+        )
+        store.bind_publication_expectations(
+            initialization_intent_id,
+            expected_run_record_sha256=predecessor_sha,
+            canonical_platform=predecessor["canonical_platform"],
+            canonical_item_id=predecessor["canonical_item_id"],
+            source_identity=predecessor["source_identity"],
+            source_manifest_sha256="f" * 64,
+        )
+        for expected, new in (
+            ("PREPARED", "PUBLISHED"),
+            ("PUBLISHED", "RECORD_COMMITTED"),
+            ("RECORD_COMMITTED", "COMMITTED"),
+        ):
+            store.transition_intent(
+                initialization_intent_id,
+                expected_state=expected,
+                new_state=new,
+                run_record_sha256=predecessor_sha,
+            )
+
+        successor = json.loads(json.dumps(predecessor))
+        successor["coordination_revision"] = 2
+        successor["last_mutation_intent_id"] = intent_id
+        successor["delivery"] = {
+            "stage": "accepted",
+            "ownership": {"session_id": other_session_id, "generation": 1},
+            "projections": {
+                "video_target": {
+                    "path": "review/acceptance/delivery_target.json",
+                    "projection_revision": other_target["projection_revision"],
+                    "sha256": file_sha(other_target_path),
+                },
+                "session_target": {
+                    "path": str(other_session_path.resolve()),
+                    "projection_revision": other_session["projection_revision"],
+                    "sha256": file_sha(other_session_path),
+                },
+                "task_index": {
+                    "path": str(task_index_path.resolve()),
+                    "projection_revision": task_index["projection_revision"],
+                    "sha256": file_sha(task_index_path),
+                },
+                "archive": None,
+            },
+        }
+        other_run_path.write_bytes(canonical_json_bytes(successor))
+        normalized_task_index = normalized_physical_path(task_index_path)
+        slot_id = hashlib.sha256(
+            (intent_id + "\0" + normalized_task_index).encode("utf-8")
+        ).hexdigest()
+        with sqlite3.connect(store_path) as connection:
+            connection.execute(
+                "INSERT INTO delivery_lifecycle_intents("
+                "intent_id,run_id,session_id,expected_run_revision,"
+                "expected_ownership_generation,prior_stage,target_stage,operation,"
+                "prior_run_record_sha256,replacement_run_record_sha256,"
+                "replacement_run_record_json,state,intent_identity) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    intent_id,
+                    other_run_id,
+                    other_session_id,
+                    1,
+                    1,
+                    "ready_for_delivery",
+                    "accepted",
+                    "transition",
+                    predecessor_sha,
+                    file_sha(other_run_path),
+                    canonical_json_bytes(successor).decode("utf-8"),
+                    "COMMITTED",
+                    intent_id,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO projection_publication_slots("
+                "slot_id,intent_id,normalized_path,expected_state,expected_sha256,"
+                "proposed_state,proposed_sha256,state,slot_identity) "
+                "VALUES(?,?,?,'present',?,'present',?,'RELEASED',?)",
+                (
+                    slot_id,
+                    intent_id,
+                    normalized_task_index,
+                    prior_index_sha,
+                    file_sha(task_index_path),
+                    slot_id,
+                ),
+            )
+        return slot_id
+
+    @staticmethod
+    def tree_fingerprints(root: Path) -> dict[str, str]:
+        return {
+            path.relative_to(root).as_posix(): file_sha(path)
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+    def test_active_guard_accepts_committed_bilibili_kernel_authority_read_only(
+        self,
+    ) -> None:
+        store_path, task_index_path = self.kernelize_bilibili_target()
+        authority_paths = (
+            self.video_root / "workflow" / "run.json",
+            self.target,
+            self.current,
+            task_index_path,
+            store_path,
+        )
+        before = {str(path): file_sha(path) for path in authority_paths}
+
+        completed = self.run_guard()
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("PASS", completed.stdout)
+        self.assertEqual(
+            before, {str(path): file_sha(path) for path in authority_paths}
+        )
+        guard_report_path = (
+            self.video_root / "review" / "acceptance" / "delivery_guard_report.json"
+        )
+        guard_report = json.loads(guard_report_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {
+                "schema_version": "1.0",
+                "status": "pass",
+                "stage": "accepted",
+                "validated_by": "delivery_guard.py",
+                "acceptance_report_status": "pass",
+            },
+            {
+                field: guard_report[field]
+                for field in (
+                    "schema_version",
+                    "status",
+                    "stage",
+                    "validated_by",
+                    "acceptance_report_status",
+                )
+            },
+        )
+
+    def test_active_guard_rejects_uncommitted_bilibili_kernel_intent_read_only(
+        self,
+    ) -> None:
+        store_path, _ = self.kernelize_bilibili_target()
+        with sqlite3.connect(store_path) as connection:
+            connection.execute(
+                "UPDATE delivery_lifecycle_intents SET state='FILES_PUBLISHED'"
+            )
+        before = self.tree_fingerprints(self.project_root)
+
+        completed = self.run_guard()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("committed Delivery Lifecycle", completed.stderr)
+        self.assertEqual(before, self.tree_fingerprints(self.project_root))
+
+    def test_active_guard_accepts_committed_shared_task_index_advance_and_rejects_held_slot(
+        self,
+    ) -> None:
+        store_path, task_index_path = self.kernelize_bilibili_target()
+        slot_id = self.publish_other_run_task_index_revision(
+            store_path, task_index_path
+        )
+        authority_before = {
+            "control_store": file_sha(store_path),
+            "task_index": file_sha(task_index_path),
+        }
+
+        committed = self.run_guard()
+
+        self.assertEqual(0, committed.returncode, committed.stdout + committed.stderr)
+        self.assertIn("PASS", committed.stdout)
+        self.assertEqual(
+            authority_before,
+            {
+                "control_store": file_sha(store_path),
+                "task_index": file_sha(task_index_path),
+            },
+        )
+
+        with sqlite3.connect(store_path) as connection:
+            connection.execute(
+                "UPDATE projection_publication_slots SET state='HELD' WHERE slot_id=?",
+                (slot_id,),
+            )
+
+        held = self.run_guard()
+
+        self.assertEqual(2, held.returncode, held.stdout + held.stderr)
+        self.assertIn("projection", held.stderr.lower())
+
+    def test_active_guard_rejects_stale_bilibili_kernel_projection_read_only(
+        self,
+    ) -> None:
+        self.kernelize_bilibili_target()
+        session = json.loads(self.current.read_text(encoding="utf-8"))
+        session["run_revision"] = 1
+        write_json(self.current, session)
+        before = self.tree_fingerprints(self.project_root)
+
+        completed = self.run_guard()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn("projection", completed.stderr.lower())
+        self.assertEqual(before, self.tree_fingerprints(self.project_root))
+
+    def test_bilibili_kernel_target_rejects_legacy_guard_mutation_commands(
+        self,
+    ) -> None:
+        _, task_index = self.kernelize_bilibili_target()
+        commands = {
+            "task-claim": [
+                "--session-id", self.session_id, "--video-output-dir", str(self.video_root),
+                "--target-file", str(self.target), "--stage", "accepted",
+            ],
+            "task-update": [
+                "--session-id", self.session_id, "--video-output-dir", str(self.video_root),
+                "--stage", "accepted", "--owner-status", "active",
+            ],
+            "clear-target": [
+                "--session-id", self.session_id, "--video-output-dir", str(self.video_root),
+            ],
+            "task-handoff": [
+                "--from-session-id", self.session_id, "--to-session-id", "session-b",
+                "--video-output-dir", str(self.video_root), "--target-file", str(self.target),
+                "--stage", "accepted", "--previous-owner-status", "superseded",
+            ],
+        }
+        for command, arguments in commands.items():
+            with self.subTest(command=command):
+                before = self.tree_fingerprints(self.project_root)
+                completed = subprocess.run(
+                    [
+                        sys.executable, "-X", "utf8", "-B", str(GUARD), command,
+                        "--project-root", str(self.project_root),
+                        "--current-target", str(self.current),
+                        "--task-index", str(task_index), *arguments,
+                    ],
+                    cwd=self.project_root,
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+                self.assertIn("Kernel delivery authority is read-only", completed.stderr)
+                self.assertEqual(before, self.tree_fingerprints(self.project_root))
+
+    def test_old_pdf_prepare_rejects_bilibili_kernel_run_before_authority_mutation(
+        self,
+    ) -> None:
+        (self.video_root / "main.tex").write_text(
+            self.main_tex.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        store_path, task_index_path = self.kernelize_bilibili_target()
+        authority_paths = {
+            "video_target": self.target,
+            "session_target": self.current,
+            "task_index": task_index_path,
+            "control_store": store_path,
+        }
+        before = {name: file_sha(path) for name, path in authority_paths.items()}
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(GUARD),
+                "old-pdf-prepare",
+                str(self.final_pdf),
+                "--session-id",
+                self.session_id,
+                "--video-output-dir",
+                str(self.video_root),
+                "--project-root",
+                str(self.project_root),
+                "--current-target",
+                str(self.current),
+                "--task-index",
+                str(task_index_path),
+            ],
+            cwd=self.project_root,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            before,
+            {name: file_sha(path) for name, path in authority_paths.items()},
+        )
+        # This Guard command exposes prose rather than structured gate codes.
+        self.assertIn("Bilibili Kernel Run", completed.stderr)
 
     def assert_cached_hook_passes(self) -> None:
         checked = self.run_guard()

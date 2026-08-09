@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -49,20 +49,31 @@
     "activation_scope": {
       "oneOf": [
         {"$ref": "#/$defs/inactiveActivationScope"},
-        {"$ref": "#/$defs/globalGateActivationScope"}
+        {"$ref": "#/$defs/globalGateActivationScope"},
+        {"$ref": "#/$defs/bilibiliPlatformActivationScope"}
       ]
     },
+    "platform_statuses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bilibili", "youtube"],
+      "properties": {
+        "bilibili": {"enum": ["active_kernel", "active_legacy"]},
+        "youtube": {"enum": ["active_kernel", "active_legacy"]}
+      }
+    },
+    "guarded_delivery_evidence": {"$ref": "#/$defs/guardedDeliveryEvidence"},
     "atomic_members": {
       "type": "array",
       "minItems": 12,
-      "maxItems": 12,
+      "maxItems": 14,
       "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[a-z][a-z_]{2,79}$"}
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$"}
     },
     "atomic_member_status": {
       "type": "object",
       "minProperties": 12,
-      "maxProperties": 12,
+      "maxProperties": 14,
       "additionalProperties": {"enum": ["active", "failed"]}
     },
     "mirror_checks": {
@@ -317,6 +328,8 @@
         "slice": {"properties": {"number": {"const": 11}, "name": {"const": "global-acceptance-v2-gate"}}},
         "slice_base_commit": {"const": "64f3fb1638f601b533cb0ee4dec908203c1bef71"},
         "activation_scope": {"$ref": "#/$defs/globalGateActivationScope"},
+        "atomic_members": {"minItems": 12, "maxItems": 12},
+        "atomic_member_status": {"minProperties": 12, "maxProperties": 12},
         "result_bindings": {
           "minItems": 37,
           "maxItems": 37,
@@ -334,6 +347,23 @@
         "fault_points": false,
         "platform_smokes": false
       }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "platform_statuses", "guarded_delivery_evidence"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 12}, "name": {"const": "bilibili-platform-kernel-cutover"}}},
+        "slice_base_commit": {"const": "2e80c5d1d83bb40cf7ef47a9cc01685728cd615c"},
+        "activation_scope": {"$ref": "#/$defs/bilibiliPlatformActivationScope"},
+        "platform_statuses": {
+          "const": {"bilibili": "active_kernel", "youtube": "active_legacy"}
+        },
+        "atomic_members": {"minItems": 14, "maxItems": 14},
+        "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
+        "fault_points": false,
+        "platform_smokes": false,
+        "mirror_checks": false,
+        "policy_status": false
+      }
     }
   ],
   "allOf": [
@@ -343,6 +373,14 @@
       },
       "then": {
         "properties": {"activation_scope": {"$ref": "#/$defs/inactiveActivationScope"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"slice": {"properties": {"number": {"maximum": 11}}}}
+      },
+      "then": {
+        "properties": {"platform_statuses": false}
       }
     }
   ],
@@ -375,7 +413,38 @@
         "qualification_contract_sha256": {"const": "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"}
       }
     },
+    "bilibiliPlatformActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "platform", "global_gate_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "platform_kernel_cutover"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {"const": ["bilibili_platform_kernel"]},
+        "platform": {"const": "bilibili"},
+        "global_gate_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"const": "927022a0bcf5f626f4b9275928dce9de201775523ab1bf4c0c9b6803f0012461"}
+      }
+    },
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "guardedDeliveryEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collection", "run_id", "canonical_platform", "delivery_stage", "artifacts", "qualification_run"],
+      "properties": {
+        "collection": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "canonical_platform": {"const": "bilibili"},
+        "delivery_stage": {"const": "delivered"},
+        "artifacts": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+        },
+        "qualification_run": {"$ref": "#/$defs/persistedRunEvidence"}
+      }
+    },
     "fingerprintedArtifact": {
       "type": "object",
       "additionalProperties": false,

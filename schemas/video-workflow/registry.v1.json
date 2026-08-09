@@ -476,6 +476,56 @@
       "kind": "contract",
       "positive_example": "tests/video_workflow/fixtures/contracts/diagnostic-compile-report.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/diagnostic-compile-report.invalid.json"
+    },
+    {
+      "schema_name": "run-record",
+      "schema_version": "4.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/run-record.v4.schema.json",
+      "schema_path": "schemas/video-workflow/v4/run-record.v4.schema.json",
+      "kind": "contract",
+      "invariants": ["run-record-delivery-v4"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/run-record.v4.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/run-record.v4.invalid.json"
+    },
+    {
+      "schema_name": "kernel-delivery-target",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/kernel-delivery-target.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v4/kernel-delivery-target.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["kernel-delivery-target-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target.invalid.json"
+    },
+    {
+      "schema_name": "kernel-session-delivery-target",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/kernel-session-delivery-target.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v4/kernel-session-delivery-target.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["kernel-session-delivery-target-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/kernel-session-delivery-target.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/kernel-session-delivery-target.invalid.json"
+    },
+    {
+      "schema_name": "kernel-delivery-task-index",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/kernel-delivery-task-index.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v4/kernel-delivery-task-index.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["kernel-delivery-task-index-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-task-index.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-task-index.invalid.json"
+    },
+    {
+      "schema_name": "kernel-delivery-target-archive",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/kernel-delivery-target-archive.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v4/kernel-delivery-target-archive.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["kernel-delivery-target-archive-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target-archive.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target-archive.invalid.json"
     }
   ]
 }

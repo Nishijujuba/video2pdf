@@ -891,8 +891,10 @@ def persist_source_blocker(
     run_path = Path(run_dir).resolve() / "workflow" / "run.json"
     record = read_json(run_path)
     kernel.contracts.validate_run_record(record)
-    if record.get("schema_version") != "3.0.0":
-        raise ContractError("Source user-input blockers require Run Record v3")
+    if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+        raise ContractError(
+            "Source user-input blockers require Run Record v3 or v4"
+        )
     if record.get("canonical_platform") != canonical_platform:
         raise ContractError("Source blocker platform differs from Run identity")
     store = getattr(kernel, "control_store", None)
@@ -983,8 +985,10 @@ def resolve_source_user_input(
     )
     record = read_json(run_path)
     kernel.contracts.validate_run_record(record)
-    if record.get("schema_version") != "3.0.0":
-        raise ContractError("Source user-input resolution requires Run Record v3")
+    if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+        raise ContractError(
+            "Source user-input resolution requires Run Record v3 or v4"
+        )
     if record.get("source_state") != "blocked_user_input":
         raise KernelConflict("Source Run is not blocked on user input")
     blocker = record.get("source_blocker")

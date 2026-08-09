@@ -2,6 +2,8 @@
 
 Status: active domain language. Component runtime activation is recorded in the [Video Workflow Kernel 2.0 decision map](../../adr/video-workflow-kernel-2.0-decision-map.md).
 
+New Bilibili Runs use the `active_kernel` lifecycle. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`. Final-quality authority remains the Delivery Quality `active_global_gate`.
+
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 
 The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and the Pyramid Gate Report. The Final Acceptance Context owns acceptance criteria, Reviewer judgment, and the final semantic delivery decision; this context consumes those published decisions and owns their invocation timing, freshness consequences, repair routing, and delivery mechanics.

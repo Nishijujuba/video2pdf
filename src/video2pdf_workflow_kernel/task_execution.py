@@ -165,8 +165,10 @@ class TaskExecution:
         run_dir = run_dir.resolve()
         self.kernel._verify_current_source(run_dir)
         record, _, _ = self._run_record(run_dir)
-        if record.get("schema_version") != "3.0.0":
-            raise ContractError("production Source Tasks require Run Record v3")
+        if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+            raise ContractError(
+                "production Source Tasks require Run Record v3 or v4"
+            )
         return self._production_source_task_id(
             record,
             task_stage=task_stage,
@@ -1212,8 +1214,10 @@ class TaskExecution:
         prepared_at: str,
         whisper_audio_candidate: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bytes | None]:
-        if record.get("schema_version") != "3.0.0":
-            raise ContractError("production Source Tasks require Run Record v3")
+        if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+            raise ContractError(
+                "production Source Tasks require Run Record v3 or v4"
+            )
         self._validate_production_task_identity_fields(
             task_stage=task_stage,
             logical_task_key=logical_task_key,
@@ -3641,7 +3645,10 @@ class TaskExecution:
             and not os.path.lexists(task_namespace)
         ):
             return
-        if record["schema_version"] == "3.0.0" and not durable_task_ids:
+        if (
+            record["schema_version"] in {"3.0.0", "4.0.0"}
+            and not durable_task_ids
+        ):
             if os.path.lexists(task_namespace):
                 if _is_link_or_reparse(task_namespace) or not task_namespace.is_dir():
                     raise ArtifactDrift("production Task namespace is invalid")
@@ -3662,7 +3669,7 @@ class TaskExecution:
         if record["schema_version"] == "1.0.0":
             return
         intent = store.task_promotion_by_id(record["last_mutation_intent_id"])
-        if record["schema_version"] != "3.0.0" and (
+        if record["schema_version"] not in {"3.0.0", "4.0.0"} and (
             intent is None
             or intent["state"] != "COMMITTED"
             or intent["run_id"] != record["run_id"]
@@ -3672,7 +3679,7 @@ class TaskExecution:
                 "task-capable Run Record lacks a committed promotion authority",
                 data={"drifted_paths": ["workflow/run.json"]},
             )
-        if record["schema_version"] == "3.0.0":
+        if record["schema_version"] in {"3.0.0", "4.0.0"}:
             current_logical_ids = {
                 binding["logical_id"]
                 for checkpoint in record["checkpoints"].values()

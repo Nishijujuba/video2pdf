@@ -13,7 +13,7 @@ The goal is to produce a complete, accurate, figure-rich Chinese PDF from a vide
 
 The Global Gate is `active_global_gate`: Delivery Quality policy and Acceptance Report v2 are the sole active final-quality authority for both Legacy and Kernel inputs. Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, dual authority, and a synthetic Legacy Run are forbidden.
 
-Platform Kernel authority remains unchanged. Bilibili and YouTube retain active Legacy coordination until their separate Platform Kernel Cutovers. A Legacy directory enters the global gate through a fresh Run-record-free Legacy Acceptance Input Set; a Kernel input retains its real Run and Control Store authority. `CONTEXT-MAP.md`, active context glossaries, and the decision map record this split explicitly.
+The Bilibili Platform Kernel Cutover is active. New Bilibili Runs use `active_kernel` coordination through the public Workflow CLI and Kernel delivery lifecycle. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube remains `active_legacy`. The shared final-quality authority remains the `active_global_gate`. A Legacy directory enters that gate through a fresh Run-record-free Legacy Acceptance Input Set; a Kernel input retains its real Run and Control Store authority. `CONTEXT-MAP.md`, active context glossaries, and the decision map record this split explicitly.
 
 ## Persisted Command Contract
 

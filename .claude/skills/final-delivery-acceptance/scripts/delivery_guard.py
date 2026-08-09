@@ -21,8 +21,11 @@ if str(SRC_ROOT) not in sys.path:
 
 from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
 from video2pdf_workflow_kernel.errors import KernelError
-from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
-from video2pdf_workflow_kernel.utils import canonical_json_bytes
+from video2pdf_workflow_kernel.utils import (
+    canonical_json_bytes,
+    normalized_physical_path,
+    write_json_atomic,
+)
 
 from validate_acceptance_report import (
     GateBlockedError,
@@ -91,6 +94,7 @@ class DeliveryTarget:
     compile_provenance_required: bool
     legacy_existing_pdf: bool
     recompiled: bool
+    kernel_authority: bool = False
 
 
 def _now_iso() -> str:
@@ -301,6 +305,13 @@ def resolve_delivery_target(
     project_root = project_root.resolve()
     current_target_path = current_target_path.resolve()
     current = _require_object(_load_json(current_target_path, "current target"), "current target")
+    if current.get("schema_name") == "kernel-session-delivery-target":
+        return _resolve_kernel_delivery_target(
+            project_root=project_root,
+            current_target_path=current_target_path,
+            current=current,
+            require_session_scope=require_session_scope,
+        )
     _require_keys(
         current,
         {"schema_version", "stage", "video_output_dir", "target_file", "source_skill", "updated_at"},
@@ -430,6 +441,283 @@ def resolve_delivery_target(
         legacy_existing_pdf=legacy_existing_pdf,
         recompiled=recompiled,
     )
+
+
+def _resolve_kernel_delivery_target(
+    *,
+    project_root: Path,
+    current_target_path: Path,
+    current: dict[str, Any],
+    require_session_scope: bool,
+) -> DeliveryTarget:
+    """Resolve committed Bilibili Kernel authority without publishing state."""
+
+    _require_keys(
+        current,
+        {
+            "schema_name", "schema_version", "projection_kind", "projection_revision",
+            "projection_path", "session_id", "run_id", "run_revision",
+            "lifecycle_intent_id", "stage", "ownership_generation", "owner_status",
+            "video_output_dir", "video_target",
+        },
+        "Kernel session delivery target",
+    )
+    if current.get("schema_version") != "1.0.0" or current.get("projection_kind") != "session_target":
+        raise GuardError("Kernel session delivery projection contract is invalid")
+    session_id = _validate_session_id(current["session_id"], "Kernel session target session_id")
+    if require_session_scope:
+        _validate_explicit_session_current_target_path(current_target_path, session_id)
+    if Path(_require_string(current["projection_path"], "Kernel session target projection_path")).resolve() != current_target_path:
+        raise GuardError("Kernel session projection path is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+
+    stage = _validate_stage(current["stage"], "Kernel session target stage")
+    video_output_dir = _resolve_project_path(project_root, current["video_output_dir"], "Kernel video_output_dir")
+    video_binding = _require_object(current["video_target"], "Kernel session target video_target")
+    target_file = _resolve_project_path(project_root, video_binding.get("path"), "Kernel video target path")
+    if not _path_under(video_output_dir, target_file):
+        raise GuardError("Kernel video target escapes video output directory")
+    video_target = _require_object(_load_json(target_file, "Kernel video target"), "Kernel video target")
+    _require_keys(
+        video_target,
+        {
+            "schema_name", "schema_version", "projection_kind", "projection_revision",
+            "run_id", "run_revision", "lifecycle_intent_id", "video_output_dir",
+            "stage", "ownership", "artifacts", "global_gate_authority",
+        },
+        "Kernel video delivery target",
+    )
+    if video_target.get("schema_name") != "kernel-delivery-target" or video_target.get("schema_version") != "1.0.0":
+        raise GuardError("Kernel video delivery projection contract is invalid")
+
+    run_path = video_output_dir / "workflow" / "run.json"
+    run_record = _require_object(_load_json(run_path, "Kernel Run Record"), "Kernel Run Record")
+    if run_record.get("schema_name") != "run-record" or run_record.get("schema_version") != "4.0.0":
+        raise GuardError("Bilibili Kernel delivery requires Run Record v4")
+    if run_record.get("canonical_platform") != "bilibili" or run_record.get("platform_adapter") != "bilibili":
+        raise GuardError("Kernel delivery authority is restricted to Bilibili")
+
+    run_id = _require_string(current["run_id"], "Kernel run_id")
+    intent_id = _require_string(current["lifecycle_intent_id"], "Kernel lifecycle_intent_id")
+    run_revision = current["run_revision"]
+    ownership_generation = current["ownership_generation"]
+    if not isinstance(run_revision, int) or isinstance(run_revision, bool) or run_revision < 1:
+        raise GuardError("Kernel run_revision must be a positive integer")
+    if not isinstance(ownership_generation, int) or isinstance(ownership_generation, bool) or ownership_generation < 1:
+        raise GuardError("Kernel ownership_generation must be a positive integer")
+    ownership = _require_object(video_target["ownership"], "Kernel video target ownership")
+    identity_values = (
+        run_record.get("run_id"), video_target.get("run_id"),
+        run_record.get("last_mutation_intent_id"), video_target.get("lifecycle_intent_id"),
+    )
+    if identity_values != (run_id, run_id, intent_id, intent_id):
+        raise GuardError("Kernel delivery authority identity is stale", first_failing_gate="kernel_authority", error_code="kernel_authority_stale")
+    if any(value != run_revision for value in (run_record.get("coordination_revision"), video_target.get("run_revision"))):
+        raise GuardError("Kernel delivery projection revision is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    if video_target.get("stage") != stage or run_record.get("delivery", {}).get("stage") != stage:
+        raise GuardError("Kernel delivery projection stage is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    if ownership != {"session_id": session_id, "generation": ownership_generation} or run_record.get("delivery", {}).get("ownership") != ownership:
+        raise GuardError("Kernel delivery ownership projection is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+
+    try:
+        successor_authority = AcceptanceV2Provider(
+            SRC_ROOT.parent
+        ).require_committed_delivery_successor(
+            workspace_root=video_output_dir / "review" / "acceptance"
+        )
+    except KernelError as exc:
+        data = getattr(exc, "data", {}) or {}
+        raise GuardError(
+            str(exc),
+            first_failing_gate=data.get("first_failing_gate", "kernel_authority"),
+            error_code=data.get(
+                "error_code", "acceptance_delivery_successor_invalid"
+            ),
+        ) from exc
+    if successor_authority != {
+        "run_id": run_id,
+        "run_revision": run_revision,
+        "lifecycle_intent_id": intent_id,
+        "run_record_sha256": _file_sha256(run_path),
+    }:
+        raise GuardError(
+            "Provider-proven Delivery Lifecycle successor disagrees with projections",
+            first_failing_gate="kernel_authority",
+            error_code="kernel_authority_stale",
+        )
+
+    task_ref = _require_object(run_record["delivery"]["projections"]["task_index"], "Kernel Run task-index projection")
+    task_index_path = _resolve_project_path(project_root, task_ref["path"], "Kernel task-index projection path")
+    task_index = _require_object(_load_json(task_index_path, "Kernel task index"), "Kernel task index")
+    _require_keys(
+        task_index,
+        {
+            "schema_name",
+            "schema_version",
+            "projection_kind",
+            "projection_revision",
+            "entries",
+        },
+        "Kernel task index",
+    )
+    if (
+        task_index.get("schema_name") != "kernel-delivery-task-index"
+        or task_index.get("schema_version") != "1.0.0"
+        or task_index.get("projection_kind") != "task_index"
+        or not isinstance(task_index.get("projection_revision"), int)
+    ):
+        raise GuardError(
+            "Kernel task-index projection contract is invalid",
+            first_failing_gate="kernel_projection",
+            error_code="kernel_projection_stale",
+        )
+    entries = task_index.get("entries")
+    own_entries = (
+        [
+            item
+            for item in entries
+            if isinstance(item, dict) and item.get("run_id") == run_id
+        ]
+        if isinstance(entries, list)
+        else []
+    )
+    if len(own_entries) != 1:
+        raise GuardError("Kernel task-index projection is missing", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    entry = own_entries[0]
+
+    projections = run_record["delivery"]["projections"]
+    actual_projections = {
+        "video_target": (target_file, video_target.get("projection_revision")),
+        "session_target": (current_target_path, current.get("projection_revision")),
+    }
+    for name, (path, revision) in actual_projections.items():
+        reference = _require_object(projections[name], f"Kernel Run {name} projection")
+        if reference.get("projection_revision") != revision or reference.get("sha256") != _file_sha256(path):
+            raise GuardError("Kernel delivery projection is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    task_index_sha = _file_sha256(task_index_path)
+    task_reference_revision = task_ref.get("projection_revision")
+    acceptance_input = _require_object(
+        _load_json(
+            video_output_dir / "review" / "acceptance" / "input-binding.json",
+            "Kernel Acceptance input binding",
+        ),
+        "Kernel Acceptance input binding",
+    )
+    acceptance_run = _require_object(
+        acceptance_input.get("run"), "Kernel Acceptance Run binding"
+    )
+    delivery_control_root = Path(
+        _require_string(
+            acceptance_run.get("control_store_root"),
+            "Kernel Acceptance Control Store root",
+        )
+    ).resolve()
+    if (
+        not isinstance(task_reference_revision, int)
+        or task_reference_revision > task_index["projection_revision"]
+        or not _kernel_task_index_publications_are_committed(
+            control_store_root=delivery_control_root,
+            task_index_path=task_index_path,
+            bound_sha256=task_ref.get("sha256"),
+            current_sha256=task_index_sha,
+        )
+    ):
+        raise GuardError("Kernel delivery projection is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    if video_binding.get("projection_revision") != video_target.get("projection_revision") or video_binding.get("sha256") != _file_sha256(target_file):
+        raise GuardError("Kernel session-to-video projection is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    if any(entry.get(field) != expected for field, expected in {
+        "run_revision": run_revision, "lifecycle_intent_id": intent_id, "stage": stage,
+        "session_id": session_id, "ownership_generation": ownership_generation,
+    }.items()):
+        raise GuardError("Kernel task-index entry is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+    entry_video = _require_object(entry.get("video_target"), "Kernel task-index video target")
+    entry_session = _require_object(entry.get("session_target"), "Kernel task-index session target")
+    if (
+        Path(_require_string(entry_video.get("path"), "Kernel task-index video path")).resolve()
+        != target_file
+        or entry_video.get("projection_revision")
+        != video_target.get("projection_revision")
+        or entry_video.get("sha256") != _file_sha256(target_file)
+        or Path(_require_string(entry_session.get("path"), "Kernel task-index session path")).resolve()
+        != current_target_path
+        or entry_session.get("projection_revision")
+        != current.get("projection_revision")
+        or entry_session.get("sha256") != _file_sha256(current_target_path)
+    ):
+        raise GuardError("Kernel task-index entry is stale", first_failing_gate="kernel_projection", error_code="kernel_projection_stale")
+
+    artifacts = _require_object(video_target["artifacts"], "Kernel delivery artifacts")
+    resolved_artifacts: dict[str, Path] = {}
+    for role in ("final_pdf", "main_tex", "final_compile_report", "acceptance_report"):
+        binding = _require_object(artifacts.get(role), f"Kernel artifact {role}")
+        path = _resolve_project_path(project_root, binding.get("path"), f"Kernel artifact {role} path")
+        if not _path_under(video_output_dir, path) or binding.get("sha256") != _file_sha256(path):
+            raise GuardError(f"Kernel artifact authority is stale: {role}")
+        resolved_artifacts[role] = path
+    gate_binding = _require_object(video_target["global_gate_authority"], "Kernel Global Gate authority")
+    gate_path = _resolve_project_path(project_root, gate_binding.get("path"), "Kernel Global Gate authority path")
+    gate_sha = _require_string(gate_binding.get("sha256"), "Kernel Global Gate authority sha256")
+
+    manifest_path = video_output_dir / "review" / "acceptance" / "allowed_artifacts_manifest.json"
+    guard_report_path = video_output_dir / "review" / "acceptance" / "delivery_guard_report.json"
+    return DeliveryTarget(
+        project_root=project_root, current_target_path=current_target_path, current_target=current,
+        video_target=video_target, video_output_dir=video_output_dir, target_file=target_file,
+        final_pdf=resolved_artifacts["final_pdf"], main_tex=resolved_artifacts["main_tex"],
+        manifest_path=manifest_path, acceptance_report_path=resolved_artifacts["acceptance_report"],
+        guard_report_path=guard_report_path, compile_report_path=resolved_artifacts["final_compile_report"],
+        global_gate_authority_path=gate_path, global_gate_authority_sha256=gate_sha,
+        attempt_limit=3, stage=stage,
+        final_pdf_relative=resolved_artifacts["final_pdf"].relative_to(video_output_dir).as_posix(),
+        main_tex_relative=resolved_artifacts["main_tex"].relative_to(video_output_dir).as_posix(),
+        manifest_relative=manifest_path.relative_to(video_output_dir).as_posix(),
+        acceptance_report_relative=resolved_artifacts["acceptance_report"].relative_to(video_output_dir).as_posix(),
+        guard_report_relative=guard_report_path.relative_to(video_output_dir).as_posix(),
+        compile_report_relative=resolved_artifacts["final_compile_report"].relative_to(video_output_dir).as_posix(),
+        target_file_relative=target_file.relative_to(video_output_dir).as_posix(),
+        compile_provenance_required=True, legacy_existing_pdf=False, recompiled=False,
+        kernel_authority=True,
+    )
+
+
+def _kernel_task_index_publications_are_committed(
+    *,
+    control_store_root: Path,
+    task_index_path: Path,
+    bound_sha256: Any,
+    current_sha256: str,
+) -> bool:
+    if not isinstance(bound_sha256, str):
+        return False
+    database_path = (
+        control_store_root.resolve() / ".workflow-control" / "control.sqlite3"
+    )
+    normalized_path = normalized_physical_path(task_index_path)
+    try:
+        with sqlite3.connect(
+            f"file:{database_path.as_posix()}?mode=ro", uri=True
+        ) as connection:
+            held = connection.execute(
+                "SELECT COUNT(*) FROM projection_publication_slots "
+                "WHERE normalized_path=? AND state='HELD'",
+                (normalized_path,),
+            ).fetchone()[0]
+            committed = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT slots.proposed_sha256 "
+                    "FROM projection_publication_slots AS slots "
+                    "JOIN delivery_lifecycle_intents AS intents "
+                    "ON intents.intent_id=slots.intent_id "
+                    "WHERE slots.normalized_path=? "
+                    "AND slots.proposed_state='present' "
+                    "AND slots.state='RELEASED' "
+                    "AND intents.state='COMMITTED'",
+                    (normalized_path,),
+                ).fetchall()
+            }
+    except (sqlite3.DatabaseError, OSError):
+        return False
+    return held == 0 and {bound_sha256, current_sha256}.issubset(committed)
 
 
 def _condition(name: str, status: str, message: str | None = None) -> dict[str, Any]:
@@ -1071,6 +1359,24 @@ def prepare_old_pdf(
         session_id = _validate_session_id(session_id, "session_id")
         pdf_path = _resolve_project_path(project_root, str(pdf_path), "pdf")
         video_output_dir = infer_video_output_dir(project_root, pdf_path, explicit_video_output_dir)
+        run_path = video_output_dir / "workflow" / "run.json"
+        if run_path.is_file():
+            try:
+                run_record = json.loads(run_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise GuardError(
+                    "video output Run authority is unreadable"
+                ) from exc
+            if (
+                isinstance(run_record, dict)
+                and run_record.get("schema_name") == "run-record"
+                and run_record.get("schema_version") == "4.0.0"
+                and run_record.get("canonical_platform") == "bilibili"
+            ):
+                raise GuardError(
+                    "Bilibili Kernel Run rejects Legacy old-pdf-prepare mutation; "
+                    "use the Workflow CLI delivery lifecycle"
+                )
         final_pdf_relative = pdf_path.relative_to(video_output_dir).as_posix()
         main_tex_relative = _choose_main_tex(video_output_dir, pdf_path)
         acceptance_dir = video_output_dir / "review" / "acceptance"
@@ -1421,7 +1727,7 @@ def _write_guard_report(
         "first_failing_gate": first_failing_gate,
         "error_code": error_code,
     }
-    target.guard_report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(target.guard_report_path, report)
 
 
 def _load_acceptance_status(path: Path) -> str | None:
@@ -1462,10 +1768,11 @@ def _validate_active_acceptance_authority(target: DeliveryTarget) -> dict[str, A
             error_code="global_gate_authority_stale",
         )
     try:
-        current_gate = GlobalGatePublisher().require_current(
+        acceptance_provider = AcceptanceV2Provider(SRC_ROOT.parent)
+        current_gate = acceptance_provider.require_current_global_gate(
             control_store_root=target.global_gate_authority_path.parent
         )
-        eligibility = AcceptanceV2Provider(SRC_ROOT.parent).guard_eligibility(
+        eligibility = acceptance_provider.guard_eligibility(
             workspace_root=target.acceptance_report_path.parent
         )
     except KernelError as exc:
@@ -1544,7 +1851,7 @@ def run_check(*, project_root: Path, current_target_path: Path, criteria_path: P
         return EXIT_PASS, f"PASS: {target.guard_report_path}"
     except (GuardError, GateBlockedError, AcceptanceReportValidationError) as exc:
         message = _blocking_message(str(exc), target)
-        if target is not None:
+        if target is not None and not target.kernel_authority:
             if not checked_conditions or checked_conditions[-1]["status"] == "pass":
                 checked_conditions.append(_condition("delivery_guard", "fail", str(exc)))
             acceptance_status = acceptance_status or _load_acceptance_status(target.acceptance_report_path)
@@ -1711,8 +2018,24 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _kernel_mutation_is_forbidden(current_target_path: Path | None) -> bool:
+    if current_target_path is None or not current_target_path.is_file():
+        return False
+    try:
+        current = json.loads(current_target_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(current, dict) and current.get("schema_name") == "kernel-session-delivery-target"
+
+
 def main() -> int:
     args = _parse_args()
+    if args.command in {"task-claim", "task-update", "clear-target", "task-handoff"} and _kernel_mutation_is_forbidden(args.current_target):
+        print(
+            _blocking_message("Kernel delivery authority is read-only; use the Workflow CLI delivery lifecycle", None),
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
     if args.command == "check":
         if args.current_target is None:
             message = _blocking_message(

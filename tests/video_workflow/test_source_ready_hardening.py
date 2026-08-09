@@ -562,6 +562,10 @@ class ContractAndPathHardeningTests(unittest.TestCase):
                 "figure-manifest",
                 "fixture-package",
                 "integration-manifest",
+                "kernel-delivery-target",
+                "kernel-delivery-target-archive",
+                "kernel-delivery-task-index",
+                "kernel-session-delivery-target",
                 "orphaned-filesystem-commit-report",
                 "outline-contract",
                 "production-common",
@@ -597,6 +601,10 @@ class ContractAndPathHardeningTests(unittest.TestCase):
         )
         self.assertIn(
             "run-record@3.0.0",
+            envelope["data"]["registered_contract_versions"],
+        )
+        self.assertIn(
+            "run-record@4.0.0",
             envelope["data"]["registered_contract_versions"],
         )
         self.assertIn(

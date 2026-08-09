@@ -70,6 +70,69 @@ class ProductionSourceTaskTests(unittest.TestCase):
         )
         return kernel, kernel.initialize_production_source(probe).run_dir
 
+    def _initialized_bilibili_v4_run(self):
+        from video2pdf_workflow_kernel.adapters import (
+            BilibiliPlatformAdapter,
+            PlatformProbeRequest,
+            RecordedCommandRunner,
+            YtDlpRuntime,
+        )
+        from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+        from video2pdf_workflow_kernel.utils import sha256_file, write_json_atomic
+
+        root = module_test_root(PROJECT_ROOT) / f"st-v4-{uuid.uuid4().hex[:8]}"
+        workspace = root / "project" / "workspace"
+        staging = root / "provider-staging"
+        cookie = root / "credentials/cookies.txt"
+        staging.mkdir(parents=True)
+        cookie.parent.mkdir(parents=True)
+        cookie.write_text(
+            "# Netscape HTTP Cookie File\n"
+            ".example.test\tTRUE\t/\tTRUE\t2147483647\tSID\trecorded\n",
+            encoding="utf-8",
+        )
+        gate_path = root / "active-global-gate.json"
+        write_json_atomic(gate_path, {"generation": 1, "status": "current"})
+        kernel = VideoWorkflowKernel(
+            workspace,
+            resource_provider_verifiers={
+                "source-task-test": lambda **_identity: (
+                    "provider-proof://source-task-test/succeeded"
+                )
+            },
+        )
+        probe = kernel.bootstrap_production_source(
+            adapter=BilibiliPlatformAdapter(
+                YtDlpRuntime(
+                    python_executable=Path("python"),
+                    ffmpeg_dir=Path("ffmpeg-bin"),
+                    ffprobe_executable=Path("ffprobe"),
+                )
+            ),
+            request=PlatformProbeRequest(
+                source_url="https://www.bilibili.com/video/BV1TEST00001/?p=1",
+                localized_cookie_file=cookie,
+                staging_root=staging,
+            ),
+            runner=RecordedCommandRunner(
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/providers/bilibili/fresh-download"
+            ),
+            task_start="2026-08-09T09:00:00+08:00",
+            request_id=f"source-task-v4-{uuid.uuid4().hex[:8]}",
+            provider_kind="recorded_fixture",
+        )
+        initialized = kernel.initialize_production_source(
+            probe,
+            session_id=f"session-{uuid.uuid4().hex[:8]}",
+            global_gate_binding={
+                "authority_path": str(gate_path.resolve()),
+                "authority_sha256": sha256_file(gate_path),
+                "generation": 1,
+            },
+        )
+        return kernel, initialized.run_dir
+
     @staticmethod
     def _release_admitted_launch(kernel, claim, resource: str) -> None:
         launch_tokens: list[str] = []
@@ -327,8 +390,11 @@ class ProductionSourceTaskTests(unittest.TestCase):
             "acquisition_id": acquisition_id,
             "source_epoch": record["source_epoch"],
             "mode": "fresh_download",
-            "adapter": {"id": "youtube", "contract_version": "1.0.0"},
-            "canonical_platform": "youtube",
+            "adapter": {
+                "id": record["canonical_platform"],
+                "contract_version": "1.0.0",
+            },
+            "canonical_platform": record["canonical_platform"],
             "canonical_item_id": record["canonical_item_id"],
             "source_identity_scheme": "canonical-platform-item-v1",
             "source_identity": record["source_identity"],
@@ -336,7 +402,10 @@ class ProductionSourceTaskTests(unittest.TestCase):
                 "kind": "recorded_fixture",
                 "recording_sha256": hashlib.sha256(b"recording").hexdigest(),
                 "tool_versions": [
-                    {"name": "recorded-youtube", "version": "1.0.0"},
+                    {
+                        "name": f"recorded-{record['canonical_platform']}",
+                        "version": "1.0.0",
+                    },
                     {"name": "ffprobe", "version": "7.1"},
                 ],
             },
@@ -351,11 +420,15 @@ class ProductionSourceTaskTests(unittest.TestCase):
                     "command_id": "download",
                     "purpose": "download",
                     "command_argv_redacted": [
-                        "recorded-youtube",
+                        f"recorded-{record['canonical_platform']}",
                         "--cookies",
                         "<localized-cookie-file>",
                         "--download",
-                        "https://www.youtube.com/watch?v=yt-test-001",
+                        (
+                            "https://www.bilibili.com/video/BV1TEST00001/?p=1"
+                            if record["canonical_platform"] == "bilibili"
+                            else "https://www.youtube.com/watch?v=yt-test-001"
+                        ),
                     ],
                     "exit_classification": "success",
                     "sanitized_log_sha256": hashlib.sha256(b"log").hexdigest(),
@@ -972,6 +1045,108 @@ class ProductionSourceTaskTests(unittest.TestCase):
         )
         self.assertEqual(record["source_state"], "pending")
         self.assertEqual(record["source_epoch"], 2)
+
+    def test_bilibili_kernel_v4_persists_and_resolves_cookie_blocker(self) -> None:
+        from contextlib import redirect_stdout
+        import io
+
+        from video2pdf_workflow_kernel.adapters import PlatformAdapterError
+        from video2pdf_workflow_kernel.cli import main
+        from video2pdf_workflow_kernel.source_acquisition import persist_source_blocker
+        from video2pdf_workflow_kernel.utils import (
+            read_json,
+            write_json_atomic,
+        )
+
+        kernel, run_dir = self._initialized_bilibili_v4_run()
+        initial_delivery = read_json(run_dir / "workflow/run.json")["delivery"]
+        persist_source_blocker(
+            kernel,
+            run_dir,
+            "bilibili",
+            PlatformAdapterError(
+                "platform cookie expired",
+                classification="source_authentication_required",
+                exit_code=30,
+                blocker_kind="user_input",
+                data={"authentication_classification": "cookie_expired"},
+            ),
+        )
+        closed_breaker = kernel.set_resource_circuit_breaker(
+            "bilibili_download",
+            state="closed",
+            reason="replacement credential passed the provider probe",
+            platform="bilibili",
+        )
+        blocked = read_json(run_dir / "workflow/run.json")
+        evidence = self._credential_resolution_evidence(blocked, closed_breaker)
+        evidence_path = run_dir / "待删除/test-input/credential-evidence.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_sha = write_json_atomic(evidence_path, evidence)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "source-blocker-resolve",
+                    "--run-dir",
+                    str(run_dir),
+                    "--authentication-classification",
+                    "cookie_accepted",
+                    "--credential-evidence",
+                    str(evidence_path),
+                    "--credential-evidence-sha256",
+                    evidence_sha,
+                ]
+            )
+        result = json.loads(stdout.getvalue())
+        record = read_json(run_dir / "workflow/run.json")
+
+        self.assertEqual(exit_code, 0, result)
+        self.assertEqual(result["classification"], "source_user_input_resolved")
+        self.assertEqual(record["schema_version"], "4.0.0")
+        self.assertEqual(record["source_state"], "pending")
+        self.assertEqual(record["source_epoch"], 2)
+        self.assertEqual(record["delivery"], initial_delivery)
+
+    def test_bilibili_kernel_v4_promotes_provider_task_without_delivery_dual_write(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.utils import read_json
+
+        kernel, run_dir = self._initialized_bilibili_v4_run()
+        initial = read_json(run_dir / "workflow/run.json")
+        prepared = kernel.prepare_production_source_task(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key="bilibili-v4-provider-epoch-1",
+            prepared_at="2026-08-09T09:01:00Z",
+        )
+        claim = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="issue13-coordinator",
+            worker_id="issue13-provider",
+        )
+        self._stage_provider_outputs(kernel, run_dir, claim)
+        self._release_admitted_launch(kernel, claim, "bilibili_download")
+        kernel.complete_task(
+            run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claim.attempt_id,
+            claim_generation=claim.claim_generation,
+        )
+        kernel.promote_task(
+            run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claim.attempt_id,
+            claim_generation=claim.claim_generation,
+        )
+
+        current = read_json(run_dir / "workflow/run.json")
+        self.assertEqual(current["schema_version"], "4.0.0")
+        self.assertEqual(current["coordination_revision"], 2)
+        self.assertEqual(current["source_state"], "candidates_ready")
+        self.assertEqual(current["delivery"], initial["delivery"])
 
     def test_three_stage_source_tasks_complete_through_resource_admission(self) -> None:
         from video2pdf_workflow_kernel.utils import (

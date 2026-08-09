@@ -90,8 +90,10 @@ def inspect_current_source_package(
     )
     record = read_json(record_path)
     contracts.validate_run_record(record)
-    if record.get("schema_version") != "3.0.0":
-        raise ContractError("Verified Import requires a production Run Record v3")
+    if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+        raise ContractError(
+            "Verified Import requires a production Run Record v3 or v4"
+        )
     source_ready = record["checkpoints"].get("source_ready")
     if (
         record["source_state"] != "ready"

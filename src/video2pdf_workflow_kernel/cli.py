@@ -13,7 +13,7 @@ from .control_store import ControlStore
 from .control_store_recovery import ControlStoreRecovery
 from .errors import CliUsageError, ControlStoreUnavailable, KernelError
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
-from .models import BootstrapProbeResult
+from .models import BootstrapProbeResult, ProductionBootstrapResult
 from .source_live_smoke import run_source_live_smoke
 from .task_execution import (
     CLAIM_FAULT_POINTS,
@@ -39,6 +39,11 @@ from .acceptance_v2 import (
     AcceptanceV2Provider,
 )
 from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcceptanceProvider
+from .platform_kernel import (
+    ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
+    BilibiliPlatformCutoverPublisher,
+)
+from .delivery_lifecycle import DeliveryLifecycleProvider, FAULT_POINTS as DELIVERY_FAULT_POINTS
 from .utils import read_json
 
 
@@ -250,6 +255,68 @@ def _parser() -> argparse.ArgumentParser:
     workflow_policy_check = commands.add_parser("workflow-policy-check")
     workflow_policy_check.add_argument("--control-store-root", required=True, type=Path)
 
+    platform_kernel_activate = commands.add_parser("platform-kernel-activate")
+    platform_kernel_activate.add_argument("--platform", required=True)
+    platform_kernel_activate.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    platform_kernel_activate.add_argument(
+        "--exit-evidence", required=True, type=Path
+    )
+    platform_kernel_activate.add_argument("--activated-at", required=True)
+    platform_kernel_activate.add_argument(
+        "--fault-point", choices=sorted(PLATFORM_ACTIVATION_FAULT_POINTS)
+    )
+
+    platform_kernel_reconcile = commands.add_parser("platform-kernel-reconcile")
+    platform_kernel_reconcile.add_argument("--platform", required=True)
+    platform_kernel_reconcile.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+
+    delivery_transition = commands.add_parser("delivery-transition")
+    delivery_transition.add_argument("--run-dir", required=True, type=Path)
+    delivery_transition.add_argument("--from-stage", required=True)
+    delivery_transition.add_argument("--to-stage", required=True)
+    delivery_transition.add_argument("--session-id", required=True)
+    delivery_transition.add_argument("--expected-run-revision", required=True, type=int)
+    delivery_transition.add_argument(
+        "--expected-ownership-generation", required=True, type=int
+    )
+    delivery_transition.add_argument("--evidence", required=True, type=Path)
+    delivery_transition.add_argument("--transitioned-at", required=True)
+    delivery_transition.add_argument(
+        "--fault-point", choices=sorted(DELIVERY_FAULT_POINTS)
+    )
+
+    delivery_handoff = commands.add_parser("delivery-handoff")
+    delivery_handoff.add_argument("--run-dir", required=True, type=Path)
+    delivery_handoff.add_argument("--from-session-id", required=True)
+    delivery_handoff.add_argument("--to-session-id", required=True)
+    delivery_handoff.add_argument("--expected-run-revision", required=True, type=int)
+    delivery_handoff.add_argument(
+        "--expected-ownership-generation", required=True, type=int
+    )
+    delivery_handoff.add_argument("--handed-off-at", required=True)
+    delivery_handoff.add_argument(
+        "--fault-point", choices=sorted(DELIVERY_FAULT_POINTS)
+    )
+
+    delivery_archive = commands.add_parser("delivery-archive")
+    delivery_archive.add_argument("--run-dir", required=True, type=Path)
+    delivery_archive.add_argument("--session-id", required=True)
+    delivery_archive.add_argument("--expected-run-revision", required=True, type=int)
+    delivery_archive.add_argument(
+        "--expected-ownership-generation", required=True, type=int
+    )
+    delivery_archive.add_argument("--archived-at", required=True)
+    delivery_archive.add_argument(
+        "--fault-point", choices=sorted(DELIVERY_FAULT_POINTS)
+    )
+
+    delivery_reconcile = commands.add_parser("delivery-reconcile")
+    delivery_reconcile.add_argument("--run-dir", required=True, type=Path)
+
     store = commands.add_parser("control-store-check")
     store.add_argument("--workspace-root", required=True, type=Path)
 
@@ -283,7 +350,9 @@ def _parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init-run")
     init.add_argument("--workspace-root", required=True, type=Path)
     init.add_argument("--probe", required=True, type=Path)
-    init.add_argument("--fixture", required=True, type=Path)
+    init.add_argument("--fixture", type=Path)
+    init.add_argument("--control-store-root", type=Path)
+    init.add_argument("--session-id")
     init.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
 
     source_import = commands.add_parser("source-import")
@@ -474,6 +543,24 @@ def _probe_from_path(path: Path, contracts: ContractRegistry) -> BootstrapProbeR
     )
 
 
+def _production_probe_from_path(
+    path: Path, contracts: ContractRegistry
+) -> ProductionBootstrapResult:
+    value = read_json(path)
+    contracts.validate("bootstrap-record", value)
+    adapter = value["adapter"]
+    return ProductionBootstrapResult(
+        run_id=value["run_id"],
+        request_id=value["request_id"],
+        record_path=path.resolve(),
+        original_title=value["original_title"],
+        task_start=value["task_start"],
+        canonical_platform=adapter["canonical_platform"],
+        canonical_item_id=value["canonical_item_id"],
+        source_identity=value["source_identity"],
+    )
+
+
 def _ok(command: str, classification: str, data: dict[str, Any], evidence_path: str | None = None) -> dict:
     return {
         "schema_name": "workflow-result",
@@ -552,7 +639,103 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         return _ok(command, "global_gate_reconciled", result, result["authority_path"])
     if command == "workflow-policy-check":
         result = GlobalGatePublisher().check_policy(control_store_root=args.control_store_root)
+        platform_db = args.control_store_root.resolve() / "platform-kernel-control.sqlite3"
+        if platform_db.is_file():
+            platform_policy = BilibiliPlatformCutoverPublisher().check_policy(
+                platform="bilibili",
+                control_store_root=args.control_store_root,
+            )
+            result.update(platform_policy)
+        else:
+            result["platform_statuses"] = {
+                "bilibili": "active_legacy",
+                "youtube": "active_legacy",
+            }
         return _ok(command, "workflow_policy_current", result, result["global_gate_authority"]["path"])
+    if command == "platform-kernel-activate":
+        result = BilibiliPlatformCutoverPublisher().activate(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            activated_at=args.activated_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "platform_kernel_activated",
+            result,
+            result["authority_path"],
+        )
+    if command == "platform-kernel-reconcile":
+        result = BilibiliPlatformCutoverPublisher().reconcile(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+        )
+        return _ok(
+            command,
+            "platform_kernel_reconciled",
+            result,
+            result["authority_path"],
+        )
+    if command == "delivery-transition":
+        result = DeliveryLifecycleProvider(project_root).transition(
+            run_dir=args.run_dir,
+            from_stage=args.from_stage,
+            to_stage=args.to_stage,
+            session_id=args.session_id,
+            expected_run_revision=args.expected_run_revision,
+            expected_ownership_generation=args.expected_ownership_generation,
+            evidence_path=args.evidence,
+            transitioned_at=args.transitioned_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "delivery_lifecycle_transitioned",
+            result,
+            result["run_record_path"],
+        )
+    if command == "delivery-handoff":
+        result = DeliveryLifecycleProvider(project_root).handoff(
+            run_dir=args.run_dir,
+            from_session_id=args.from_session_id,
+            to_session_id=args.to_session_id,
+            expected_run_revision=args.expected_run_revision,
+            expected_ownership_generation=args.expected_ownership_generation,
+            handed_off_at=args.handed_off_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "delivery_ownership_handed_off",
+            result,
+            result["run_record_path"],
+        )
+    if command == "delivery-archive":
+        result = DeliveryLifecycleProvider(project_root).archive(
+            run_dir=args.run_dir,
+            session_id=args.session_id,
+            expected_run_revision=args.expected_run_revision,
+            expected_ownership_generation=args.expected_ownership_generation,
+            archived_at=args.archived_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "delivery_target_archived",
+            result,
+            result["archive_path"],
+        )
+    if command == "delivery-reconcile":
+        result = DeliveryLifecycleProvider(project_root).reconcile(
+            run_dir=args.run_dir,
+        )
+        return _ok(
+            command,
+            "delivery_lifecycle_reconciled",
+            result,
+            result["run_record_path"],
+        )
     if command == "acceptance-final-authority-publish":
         result = AcceptanceV2Provider(project_root).publish_final_authority(input_binding_path=args.input_binding)
         return _ok(command, "acceptance_v2_final_authority_published", result)
@@ -968,7 +1151,50 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             },
             str(result.manifest_path),
         )
+    if command == "init-run" and args.fixture is None:
+        if args.control_store_root is None or not args.session_id:
+            raise CliUsageError(
+                "active Kernel init-run requires --control-store-root and --session-id"
+            )
+        kernel = VideoWorkflowKernel(args.workspace_root)
+        kernel.control_store = ControlStore.initialize(
+            args.workspace_root, kernel.contracts
+        )
+        probe = _production_probe_from_path(args.probe, kernel.contracts)
+        if probe.canonical_platform != "bilibili":
+            raise CliUsageError(
+                "production init-run is active only for Bilibili"
+            )
+        platform = BilibiliPlatformCutoverPublisher().require_current(
+            platform="bilibili",
+            control_store_root=args.control_store_root,
+        )
+        platform_authority = read_json(Path(platform["authority_path"]))
+        result = kernel.initialize_production_source(
+            probe,
+            session_id=args.session_id,
+            global_gate_binding=platform_authority["global_gate_binding"],
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "run_initialized",
+            {
+                "run_id": result.run_id,
+                "run_dir": str(result.run_dir),
+                "platform": "bilibili",
+                "stage": "generating",
+                "session_id": args.session_id,
+            },
+            str(result.run_dir / "workflow/run.json"),
+        )
     if command in {"init-run", "source-import"}:
+        if command == "init-run" and (
+            args.control_store_root is not None or args.session_id is not None
+        ):
+            raise CliUsageError(
+                "fixture init-run cannot combine --fixture with Kernel authority arguments"
+            )
         if command == "source-import" and (
             args.probe is None
             or args.fixture is None

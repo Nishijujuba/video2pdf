@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-from typing import Any, Callable, Mapping
+import time
+from typing import Any, Callable, Iterator, Mapping
 from urllib.parse import parse_qsl, urlsplit
 
 from .adapters import FixturePlatformAdapter
@@ -15,6 +17,7 @@ from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .errors import (
     ArtifactDrift,
+    CliUsageError,
     ContractError,
     ControlStoreUnavailable,
     InitializationFault,
@@ -41,6 +44,7 @@ from .utils import (
     canonical_json_bytes,
     read_json,
     require_contained_path,
+    require_safe_path_segment,
     sha256_bytes,
     sha256_file,
     write_json_atomic,
@@ -68,6 +72,45 @@ RUN_STATE_MUTATION_FAULT_POINTS = frozenset(
 )
 _BILIBILI_ITEM_ID = re.compile(r"^BV[0-9A-Za-z]{10}$")
 _YOUTUBE_ITEM_ID = re.compile(r"^[0-9A-Za-z_-]{11}$")
+
+
+@contextmanager
+def _exclusive_initial_delivery_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+            os.fsync(handle.fileno())
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            deadline = time.monotonic() + 30.0
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise KernelConflict(
+                            "Kernel initial delivery publication lock timed out"
+                        )
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _deterministic_production_locator(
@@ -548,9 +591,32 @@ class VideoWorkflowKernel:
         self,
         probe: ProductionBootstrapResult,
         *,
+        session_id: str | None = None,
+        global_gate_binding: dict[str, Any] | None = None,
         fault_point: str | None = None,
+        _delivery_lock_held: bool = False,
     ) -> ProductionInitializationResult:
         """Commit a production Run at source_acquisition/pending without a Manifest."""
+
+        if session_id is not None:
+            require_safe_path_segment(
+                session_id,
+                purpose="Kernel delivery session identity",
+                error_type=CliUsageError,
+            )
+        if session_id is not None and not _delivery_lock_held:
+            with _exclusive_initial_delivery_lock(
+                self.workspace_root
+                / ".workflow-control"
+                / "initial-delivery-task-index.lock"
+            ):
+                return self.initialize_production_source(
+                    probe,
+                    session_id=session_id,
+                    global_gate_binding=global_gate_binding,
+                    fault_point=fault_point,
+                    _delivery_lock_held=True,
+                )
 
         if fault_point is not None and fault_point not in FAULT_POINTS:
             raise ContractError(f"unknown initialization fault point: {fault_point}")
@@ -608,9 +674,30 @@ class VideoWorkflowKernel:
         bootstrap_path.write_bytes(probe.record_path.read_bytes())
         bootstrap_sha = sha256_file(bootstrap_path)
         self._inject(fault_point, "after_bootstrap_evidence_staged")
-        artifact_plan = self._production_artifact_plan(probe.run_id)
+        kernel_delivery = session_id is not None
+        if kernel_delivery != (global_gate_binding is not None):
+            raise ContractError(
+                "Kernel delivery initialization requires session and Global Gate together"
+            )
+        if kernel_delivery and probe.canonical_platform != "bilibili":
+            raise ContractError(
+                "Run Record v4 initialization is active only for Bilibili"
+            )
+        artifact_plan = self._production_artifact_plan(
+            probe.run_id,
+            run_record_version="4.0.0" if kernel_delivery else "3.0.0",
+        )
         self.contracts.validate("artifact-plan", artifact_plan)
         write_json_atomic(staging_path / "workflow/artifact-plan.json", artifact_plan)
+        delivery_publication = None
+        if kernel_delivery:
+            delivery_publication = self._initial_delivery_publication(
+                probe=probe,
+                output_path=output_path,
+                staging_path=staging_path,
+                session_id=session_id,
+                global_gate_binding=global_gate_binding,
+            )
         run_record = self._production_run_record(
             probe=probe,
             output_path=output_path,
@@ -619,6 +706,11 @@ class VideoWorkflowKernel:
             source_acquisition_mode=bootstrap[
                 "requested_source_acquisition_mode"
             ],
+            delivery=(
+                delivery_publication["run_delivery"]
+                if delivery_publication is not None
+                else None
+            ),
         )
         self.contracts.validate_run_record(run_record)
         prepared_path = staging_path / "待删除/bootstrap/prepared-run.json"
@@ -637,6 +729,8 @@ class VideoWorkflowKernel:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging_path, output_path)
         self._inject(fault_point, "after_output_dir_publish")
+        if delivery_publication is not None:
+            self._publish_initial_delivery_projections(output_path, run_record)
         store.transition_intent(
             intent_id, expected_state="PREPARED", new_state="PUBLISHED"
         )
@@ -1013,7 +1107,18 @@ class VideoWorkflowKernel:
             adapter_capabilities=adapter.capabilities,
         )
 
-    def reconcile_initialization(self, run_id: str) -> ReconcileResult:
+    def reconcile_initialization(
+        self, run_id: str, *, _delivery_lock_held: bool = False
+    ) -> ReconcileResult:
+        if not _delivery_lock_held:
+            with _exclusive_initial_delivery_lock(
+                self.workspace_root
+                / ".workflow-control"
+                / "initial-delivery-task-index.lock"
+            ):
+                return self.reconcile_initialization(
+                    run_id, _delivery_lock_held=True
+                )
         store = self._preflight_control_store()
         intent = store.intent_for_run(run_id)
         if intent is None:
@@ -1063,6 +1168,10 @@ class VideoWorkflowKernel:
                 data={"drifted_bindings": recovery_drift},
             )
         if state == "PREPARED":
+            if run_record.get("schema_version") == "4.0.0":
+                self._publish_initial_delivery_projections(
+                    output_path, run_record
+                )
             store.transition_intent(
                 intent["intent_id"], expected_state="PREPARED", new_state="PUBLISHED"
             )
@@ -1372,7 +1481,7 @@ class VideoWorkflowKernel:
         credential_evidence_sha256: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
-        """Resolve a Run v3 Source blocker after credential revalidation."""
+        """Resolve a production Run Source blocker after credential revalidation."""
 
         from .source_acquisition import resolve_source_user_input
 
@@ -1439,8 +1548,10 @@ class VideoWorkflowKernel:
             self.reconcile_run(run_dir)
         record = read_json(run_dir / "workflow/run.json")
         self.contracts.validate_run_record(record)
-        if record.get("schema_version") != "3.0.0":
-            raise ContractError("production Source finalization requires Run Record v3")
+        if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+            raise ContractError(
+                "production Source finalization requires Run Record v3 or v4"
+            )
         if record["source_state"] == "ready":
             self._verify_current_source(run_dir)
             manifest = read_json(run_dir / "source/manifest.json")
@@ -1655,7 +1766,7 @@ class VideoWorkflowKernel:
             old_sha = sha256_file(record_path)
             replacement = json.loads(json.dumps(record))
             replacement["coordination_revision"] = record["coordination_revision"] + 1
-            if replacement.get("schema_version") == "3.0.0":
+            if replacement.get("schema_version") in {"3.0.0", "4.0.0"}:
                 replacement["source_state"] = "stale"
                 replacement["source_version"] = None
                 replacement["source_blocker"] = None
@@ -1668,7 +1779,11 @@ class VideoWorkflowKernel:
             else:
                 for checkpoint in replacement["checkpoints"].values():
                     checkpoint["status"] = "stale"
-            if replacement.get("schema_version") in {"2.0.0", "3.0.0"}:
+            if replacement.get("schema_version") in {
+                "2.0.0",
+                "3.0.0",
+                "4.0.0",
+            }:
                 replacement["last_mutation_intent_id"] = (
                     store.derive_run_state_mutation_id(
                         run_id=record["run_id"],
@@ -1726,7 +1841,7 @@ class VideoWorkflowKernel:
                 "prepared run-state mutation replacement evidence is invalid"
             )
         if (
-            replacement.get("schema_version") == "3.0.0"
+            replacement.get("schema_version") in {"3.0.0", "4.0.0"}
             and replacement.get("source_state") == "pending"
             and "source_credential_resolution_evidence"
             in replacement.get("artifact_generations", {})
@@ -1877,10 +1992,304 @@ class VideoWorkflowKernel:
             ],
         }
 
+    def _initial_delivery_publication(
+        self,
+        *,
+        probe: ProductionBootstrapResult,
+        output_path: Path,
+        staging_path: Path,
+        session_id: str,
+        global_gate_binding: dict[str, Any],
+    ) -> dict[str, Any]:
+        require_safe_path_segment(
+            session_id,
+            purpose="Kernel delivery session identity",
+            error_type=CliUsageError,
+        )
+        gate_path = Path(str(global_gate_binding.get("authority_path", "")))
+        gate_sha = global_gate_binding.get("authority_sha256")
+        gate_generation = global_gate_binding.get("generation")
+        if (
+            not gate_path.is_absolute()
+            or not gate_path.is_file()
+            or not isinstance(gate_sha, str)
+            or sha256_file(gate_path) != gate_sha
+            or not isinstance(gate_generation, int)
+            or gate_generation < 1
+        ):
+            raise ContractError("Kernel delivery Global Gate binding is stale")
+
+        project_root = self.workspace_root.resolve().parent
+        video_relative = Path("review/acceptance/delivery_target.json")
+        video_path = output_path / video_relative
+        staged_video_path = staging_path / video_relative
+        session_path = (
+            project_root
+            / ".codex"
+            / "delivery-targets"
+            / "sessions"
+            / session_id
+            / "current.json"
+        )
+        task_index_path = (
+            project_root / ".codex" / "delivery-targets" / "task-index.json"
+        )
+        if session_path.exists():
+            raise KernelConflict("Kernel delivery session target is already occupied")
+        lifecycle_intent_id = hashlib.sha256(
+            (
+                "initialize-delivery\0"
+                + probe.run_id
+                + "\0"
+                + session_id
+            ).encode("utf-8")
+        ).hexdigest()
+        video_target = {
+            "schema_name": "kernel-delivery-target",
+            "schema_version": "1.0.0",
+            "projection_kind": "video_target",
+            "projection_revision": 1,
+            "run_id": probe.run_id,
+            "run_revision": 1,
+            "lifecycle_intent_id": lifecycle_intent_id,
+            "video_output_dir": str(output_path.resolve()),
+            "stage": "generating",
+            "ownership": {"session_id": session_id, "generation": 1},
+            "artifacts": {
+                "final_pdf": None,
+                "main_tex": None,
+                "final_compile_report": None,
+                "acceptance_report": None,
+                "delivery_guard_report": None,
+            },
+            "global_gate_authority": {
+                "path": str(gate_path.resolve()),
+                "generation": gate_generation,
+                "sha256": gate_sha,
+            },
+        }
+        self.contracts.validate("kernel-delivery-target", video_target)
+        video_sha = sha256_bytes(canonical_json_bytes(video_target))
+        session_target = {
+            "schema_name": "kernel-session-delivery-target",
+            "schema_version": "1.0.0",
+            "projection_kind": "session_target",
+            "projection_revision": 1,
+            "projection_path": str(session_path.resolve()),
+            "session_id": session_id,
+            "run_id": probe.run_id,
+            "run_revision": 1,
+            "lifecycle_intent_id": lifecycle_intent_id,
+            "stage": "generating",
+            "ownership_generation": 1,
+            "owner_status": "active",
+            "video_output_dir": str(output_path.resolve()),
+            "video_target": {
+                "path": str(video_path.resolve()),
+                "projection_revision": 1,
+                "sha256": video_sha,
+            },
+        }
+        self.contracts.validate("kernel-session-delivery-target", session_target)
+        session_sha = sha256_bytes(canonical_json_bytes(session_target))
+        entry = {
+            "run_id": probe.run_id,
+            "canonical_platform": probe.canonical_platform,
+            "video_output_dir": str(output_path.resolve()),
+            "run_revision": 1,
+            "lifecycle_intent_id": lifecycle_intent_id,
+            "stage": "generating",
+            "session_id": session_id,
+            "ownership_generation": 1,
+            "video_target": {
+                "path": str(video_path.resolve()),
+                "projection_revision": 1,
+                "sha256": video_sha,
+            },
+            "session_target": {
+                "path": str(session_path.resolve()),
+                "projection_revision": 1,
+                "sha256": session_sha,
+            },
+            "archive": None,
+        }
+        expected_task_index_sha256 = (
+            sha256_file(task_index_path) if task_index_path.is_file() else None
+        )
+        if task_index_path.is_file():
+            task_index = read_json(task_index_path)
+            self.contracts.validate("kernel-delivery-task-index", task_index)
+            if any(item["run_id"] == probe.run_id for item in task_index["entries"]):
+                raise KernelConflict("Kernel delivery task-index Run is already occupied")
+            task_index = json.loads(json.dumps(task_index))
+            task_index["projection_revision"] += 1
+            task_index["entries"].append(entry)
+            task_index["entries"].sort(key=lambda item: item["run_id"])
+        else:
+            task_index = {
+                "schema_name": "kernel-delivery-task-index",
+                "schema_version": "1.0.0",
+                "projection_kind": "task_index",
+                "projection_revision": 1,
+                "entries": [entry],
+            }
+        self.contracts.validate("kernel-delivery-task-index", task_index)
+        task_index_sha = sha256_bytes(canonical_json_bytes(task_index))
+        staged_video_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(staged_video_path, video_target)
+        publication_path = (
+            staging_path
+            / "待删除"
+            / "bootstrap"
+            / "initial-delivery-publication.json"
+        )
+        publication_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(
+            publication_path,
+            {
+                "schema_name": "kernel-initial-delivery-publication",
+                "schema_version": "1.0.0",
+                "session_target_path": str(session_path.resolve()),
+                "session_target": session_target,
+                "task_index_path": str(task_index_path.resolve()),
+                "expected_task_index_sha256": expected_task_index_sha256,
+                "task_index": task_index,
+            },
+        )
+        return {
+            "run_delivery": {
+                "stage": "generating",
+                "ownership": {"session_id": session_id, "generation": 1},
+                "projections": {
+                    "video_target": {
+                        "path": video_relative.as_posix(),
+                        "projection_revision": 1,
+                        "sha256": video_sha,
+                    },
+                    "session_target": {
+                        "path": str(session_path.resolve()),
+                        "projection_revision": 1,
+                        "sha256": session_sha,
+                    },
+                    "task_index": {
+                        "path": str(task_index_path.resolve()),
+                        "projection_revision": task_index["projection_revision"],
+                        "sha256": task_index_sha,
+                    },
+                    "archive": None,
+                },
+            },
+        }
+
+    def _publish_initial_delivery_projections(
+        self, run_dir: Path, run_record: dict[str, Any]
+    ) -> None:
+        publication_path = (
+            run_dir
+            / "待删除"
+            / "bootstrap"
+            / "initial-delivery-publication.json"
+        )
+        publication = read_json(publication_path)
+        if set(publication) != {
+            "schema_name",
+            "schema_version",
+            "session_target_path",
+            "session_target",
+            "task_index_path",
+            "expected_task_index_sha256",
+            "task_index",
+        } or (
+            publication.get("schema_name")
+            != "kernel-initial-delivery-publication"
+            or publication.get("schema_version") != "1.0.0"
+        ):
+            raise ContractError(
+                "Kernel initial delivery publication journal is invalid"
+            )
+        delivery = run_record["delivery"]
+        session_id = delivery["ownership"]["session_id"]
+        project_root = run_dir.resolve().parent.parent
+        expected_session_path = (
+            project_root
+            / ".codex"
+            / "delivery-targets"
+            / "sessions"
+            / session_id
+            / "current.json"
+        ).resolve()
+        expected_task_index_path = (
+            project_root
+            / ".codex"
+            / "delivery-targets"
+            / "task-index.json"
+        ).resolve()
+        session_path = Path(publication["session_target_path"]).resolve()
+        task_index_path = Path(publication["task_index_path"]).resolve()
+        if (
+            session_path != expected_session_path
+            or task_index_path != expected_task_index_path
+        ):
+            raise ContractError(
+                "Kernel initial delivery projection path is unauthorized"
+            )
+        session_target = publication["session_target"]
+        task_index = publication["task_index"]
+        self.contracts.validate(
+            "kernel-session-delivery-target", session_target
+        )
+        self.contracts.validate("kernel-delivery-task-index", task_index)
+        video_binding = delivery["projections"]["video_target"]
+        video_path = run_dir / PurePosixPath(video_binding["path"])
+        if (
+            not video_path.is_file()
+            or sha256_file(video_path) != video_binding["sha256"]
+            or sha256_bytes(canonical_json_bytes(session_target))
+            != delivery["projections"]["session_target"]["sha256"]
+            or sha256_bytes(canonical_json_bytes(task_index))
+            != delivery["projections"]["task_index"]["sha256"]
+        ):
+            raise ContractError(
+                "Kernel initial delivery projection fingerprint is stale"
+            )
+        if session_path.is_file():
+            if read_json(session_path) != session_target:
+                raise KernelConflict(
+                    "Kernel initial delivery session projection is occupied"
+                )
+        else:
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(session_path, session_target)
+
+        expected_task_index_sha256 = publication[
+            "expected_task_index_sha256"
+        ]
+        if expected_task_index_sha256 is not None and not isinstance(
+            expected_task_index_sha256, str
+        ):
+            raise ContractError(
+                "Kernel initial task-index predecessor fingerprint is invalid"
+            )
+        if task_index_path.is_file():
+            if read_json(task_index_path) == task_index:
+                return
+            if sha256_file(task_index_path) != expected_task_index_sha256:
+                raise KernelConflict(
+                    "Kernel initial delivery task-index predecessor changed"
+                )
+        elif expected_task_index_sha256 is not None:
+            raise KernelConflict(
+                "Kernel initial delivery task-index predecessor disappeared"
+            )
+        task_index_path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(task_index_path, task_index)
+
     @staticmethod
-    def _production_artifact_plan(run_id: str) -> dict[str, Any]:
+    def _production_artifact_plan(
+        run_id: str, *, run_record_version: str = "3.0.0"
+    ) -> dict[str, Any]:
         bindings = (
-            ("run_record", "workflow/run.json", "run-record", "3.0.0", "kernel:init-run", (), "run_initialized", "always"),
+            ("run_record", "workflow/run.json", "run-record", run_record_version, "kernel:init-run", (), "run_initialized", "always"),
             ("artifact_plan", "workflow/artifact-plan.json", "artifact-plan", "2.0.0", "kernel:init-run", (), "run_initialized", "always"),
             ("bootstrap_record", "待删除/bootstrap/probe.json", "bootstrap-record", "2.0.0", "kernel:bootstrap", (), "run_initialized", "always"),
             ("scaffold_contract", "workflow/scaffold-contract.json", "scaffold-contract", "1.0.0", "kernel:init-run", (), "run_initialized", "always"),
@@ -1934,6 +2343,7 @@ class VideoWorkflowKernel:
         intent_id: str,
         bootstrap_sha: str,
         source_acquisition_mode: str,
+        delivery: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from .utils import normalize_title
 
@@ -1950,9 +2360,9 @@ class VideoWorkflowKernel:
             "evidence_sha256": bootstrap_sha,
             "completed_at": probe.task_start,
         }
-        return {
+        record = {
             "schema_name": "run-record",
-            "schema_version": "3.0.0",
+            "schema_version": "4.0.0" if delivery is not None else "3.0.0",
             "kernel_version": "2.0.0",
             "scaffold_version": "1.0.0",
             "run_id": probe.run_id,
@@ -2003,6 +2413,9 @@ class VideoWorkflowKernel:
             },
             "checkpoints": {"run_initialized": initialized_checkpoint},
         }
+        if delivery is not None:
+            record["delivery"] = delivery
+        return record
 
     @staticmethod
     def _run_record(
@@ -2056,8 +2469,10 @@ class VideoWorkflowKernel:
     def _verify_production_run_identity(self, run_dir: Path) -> None:
         record = read_json(run_dir / "workflow/run.json")
         self.contracts.validate_run_record(record)
-        if record.get("schema_version") != "3.0.0":
-            raise ContractError("production Run identity requires Run Record v3")
+        if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
+            raise ContractError(
+                "production Run identity requires Run Record v3 or v4"
+            )
         self._verify_production_source_state(
             run_dir,
             record,
@@ -2135,7 +2550,7 @@ class VideoWorkflowKernel:
         record_path = run_dir / "workflow/run.json"
         record = read_json(record_path)
         self.contracts.validate_run_record(record)
-        if record.get("schema_version") == "3.0.0":
+        if record.get("schema_version") in {"3.0.0", "4.0.0"}:
             self._verify_production_source_state(
                 run_dir,
                 record,
@@ -2440,7 +2855,7 @@ class VideoWorkflowKernel:
         run_record_sha: str,
         expected_current_sha: str | None = None,
     ) -> list[str]:
-        if record.get("schema_version") == "3.0.0":
+        if record.get("schema_version") in {"3.0.0", "4.0.0"}:
             return self._production_identity_binding_drift(
                 run_dir,
                 intent,

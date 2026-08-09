@@ -1,6 +1,6 @@
 # Delivery Quality Context
 
-Status: active_global_gate. It succeeded the Final Acceptance Context at the Global Gate Cutover. Platform Kernel authority remains unchanged.
+Status: `active_global_gate`. It succeeded the Final Acceptance Context at the Global Gate Cutover. New Bilibili Runs are `active_kernel`, existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`.
 
 This target context owns canonical delivery-blocking quality policy, Language Profiles, Role Projections, semantic decision ownership, evidence sufficiency, implementation conformance, precompile quality judgments, text sealing, rendered-text reconciliation, and final semantic materialization.
 
@@ -91,4 +91,4 @@ fidelity failures from Contract Gaps and performs no semantic reinterpretation.
 
 ## Migration boundary
 
-Acceptance Report v2 is the sole active final semantic delivery decision. Acceptance Report v1, fallback, translation, dual authority, and synthetic Legacy Run Records are rejected. Bilibili and YouTube Run ownership remains active Legacy until each Platform Kernel Cutover.
+Acceptance Report v2 is the sole active final semantic delivery decision. Acceptance Report v1, fallback, translation, dual authority, and synthetic Legacy Run Records are rejected. The Bilibili Platform Kernel Cutover changes new Bilibili Run coordination to `active_kernel`; it leaves existing Bilibili directories on the Legacy Track and YouTube `active_legacy`. The Global Gate authority stays `active_global_gate` and unchanged in scope.

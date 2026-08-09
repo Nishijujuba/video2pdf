@@ -121,6 +121,37 @@ def normalized_physical_path(path: Path) -> str:
     return os.path.normcase(os.path.abspath(path)).casefold()
 
 
+def require_safe_path_segment(
+    value: str,
+    *,
+    purpose: str,
+    error_type: type[KernelError],
+) -> str:
+    """Require one portable Windows-safe path segment before any path is built."""
+
+    forbidden = frozenset('<>:"/\\|?*')
+    reserved = {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or value.endswith(".")
+        or value in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is None
+        or any(character in forbidden or ord(character) < 32 for character in value)
+        or value.split(".", 1)[0].casefold() in reserved
+    ):
+        raise error_type(f"{purpose} must be one safe path segment")
+    return value
+
+
 def require_contained_path(
     path: Path,
     boundary: Path,

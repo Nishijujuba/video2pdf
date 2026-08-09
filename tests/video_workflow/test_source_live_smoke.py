@@ -1614,6 +1614,47 @@ class SourceLiveSmokeTests(unittest.TestCase):
             "BV1TEST00001:p1",
         )
 
+    def test_report_accepts_current_bilibili_kernel_v4_source_authority(self) -> None:
+        from tests.video_workflow.test_source_publication_integration import (
+            build_decision_ready_authority,
+        )
+        from video2pdf_workflow_kernel.source_live_smoke import (
+            SourceLiveSmokeExecution,
+            build_smoke_report,
+        )
+
+        kernel, run_dir, _ = build_decision_ready_authority(
+            run_record_version="4.0.0",
+            platform="bilibili",
+        )
+        kernel.finalize_production_source(
+            run_dir,
+            published_at="2026-08-09T09:30:00+08:00",
+        )
+        execution = SourceLiveSmokeExecution(
+            run_path=run_dir / "workflow/run.json",
+            manifest_path=run_dir / "source/manifest.json",
+            command_argv_redacted=(
+                "recorded-bilibili",
+                "--cookies",
+                "<localized-cookie-file>",
+                "https://www.bilibili.com/video/BV1Issue13001",
+            ),
+            authentication_classification="cookie_accepted",
+            tool_versions={"yt-dlp": "recorded"},
+            runtime_policy_sha256=HASH_A,
+        )
+
+        report = build_smoke_report(
+            execution,
+            expected_platform="bilibili",
+            project_root=run_dir.parents[1],
+            recorded_at="2026-08-09T09:31:00+08:00",
+        )
+
+        self.assertEqual(report["platform"], "bilibili")
+        self.assertEqual(report["run_id"], json.loads(execution.run_path.read_text(encoding="utf-8"))["run_id"])
+
     def test_report_rejects_a_stale_source_ready_binding(self) -> None:
         from video2pdf_workflow_kernel.errors import ArtifactDrift
         from video2pdf_workflow_kernel.source_live_smoke import (

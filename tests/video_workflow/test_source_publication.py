@@ -115,7 +115,7 @@ class _PublicationAuthority:
 
 
 class SourcePublicationTests(unittest.TestCase):
-    def _decision_ready_run(self, label: str):
+    def _decision_ready_run(self, label: str, *, run_record_version: str = "3.0.0"):
         from video2pdf_workflow_kernel.contracts import ContractRegistry
         from video2pdf_workflow_kernel.utils import (
             canonical_json_bytes,
@@ -132,6 +132,15 @@ class SourcePublicationTests(unittest.TestCase):
                 / "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json"
             ).read_text(encoding="utf-8")
         )
+        if run_record_version == "4.0.0":
+            v4 = json.loads(
+                (
+                    PROJECT_ROOT
+                    / "tests/video_workflow/fixtures/contracts/run-record.v4.valid.json"
+                ).read_text(encoding="utf-8")
+            )
+            record["schema_version"] = "4.0.0"
+            record["delivery"] = v4["delivery"]
         record["output_path"] = str(run_dir.resolve())
         record["source_version"] = None
         record["source_state"] = "decision_ready"
@@ -184,6 +193,31 @@ class SourcePublicationTests(unittest.TestCase):
         contracts.validate_run_record(record)
         write_json_atomic(run_dir / "workflow/run.json", record)
         return run_dir, record, contracts
+
+    def test_bilibili_kernel_v4_publication_preserves_delivery_authority(self) -> None:
+        from video2pdf_workflow_kernel.source_publication import SourcePublicationSaga
+        from video2pdf_workflow_kernel.utils import read_json, sha256_file
+
+        run_dir, record, contracts = self._decision_ready_run(
+            "bilibili-v4-publication",
+            run_record_version="4.0.0",
+        )
+        prior_sha = sha256_file(run_dir / "workflow/run.json")
+        authority = _PublicationAuthority(prior_sha)
+        intent_id = authority.intent_id(record, prior_sha)
+        package = self._package(run_dir, record, intent_id, contracts)
+
+        SourcePublicationSaga(
+            run_dir,
+            contracts=contracts,
+            authority=authority,
+        ).publish(package)
+
+        current = read_json(run_dir / "workflow/run.json")
+        self.assertEqual(current["schema_version"], "4.0.0")
+        self.assertEqual(current["source_state"], "ready")
+        self.assertEqual(current["delivery"], record["delivery"])
+        self.assertEqual(authority.row["state"], "COMMITTED")
 
     def _package(self, run_dir: Path, record: dict, intent_id: str, contracts):
         from video2pdf_workflow_kernel.source_package import MaterializedSourcePackage

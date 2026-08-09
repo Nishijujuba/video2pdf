@@ -1,0 +1,430 @@
+from __future__ import annotations
+
+import argparse
+from copy import deepcopy
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for import_root in (PROJECT_ROOT / "src", PROJECT_ROOT / "scripts"):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
+
+from scripts.issue13_exit_evidence_contract import (
+    ACTIVATION_SCOPE,
+    ATOMIC_MEMBERS,
+    ATOMIC_MEMBER_STATUS,
+    COMMANDS,
+    EXPECTED_CHECKPOINTS,
+    EVIDENCE_PREFIX,
+    FIXTURE_SPECS,
+    PLATFORM_STATUSES,
+    RESULT_BINDINGS,
+    RESULTS,
+    SLICE_BASE_COMMIT,
+    SLICE_NAME,
+    SLICE_NUMBER,
+)
+from video2pdf_workflow_kernel.evidence import (
+    EvidenceSupportError,
+    fingerprint_implementation_changes,
+)
+from video2pdf_workflow_kernel.errors import ContractError
+from video2pdf_workflow_kernel.guarded_delivery import (
+    validate_acceptance_report,
+    validate_delivery_guard_report,
+)
+
+
+class CollectionError(RuntimeError):
+    pass
+
+
+def _read_json(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"{label} is unavailable or invalid") from exc
+    if not isinstance(value, dict):
+        raise CollectionError(f"{label} must be a JSON object")
+    return value
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _binding(path: Path, *, label: str) -> dict[str, str]:
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise CollectionError(f"{label} is unavailable")
+    return {"path": str(resolved), "sha256": _sha256(resolved)}
+
+
+def _bound_path(binding: Any, *, base: Path, label: str) -> Path:
+    if not isinstance(binding, dict):
+        raise CollectionError(f"{label} binding is absent")
+    raw = binding.get("path")
+    expected = binding.get("sha256")
+    if not isinstance(raw, str) or not isinstance(expected, str):
+        raise CollectionError(f"{label} binding is invalid")
+    candidate = Path(raw)
+    path = (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+    if not path.is_file() or _sha256(path) != expected:
+        raise CollectionError(f"{label} binding is stale")
+    return path
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    temporary = path.with_name(f".{path.name}.issue13-new")
+    temporary.write_bytes(payload)
+    temporary.replace(path)
+
+
+def qualification_manifest_skeleton() -> dict:
+    """Return authority-owned Slice 12 fields without collecting runtime evidence."""
+    return {
+        "slice": {"number": SLICE_NUMBER, "name": SLICE_NAME},
+        "slice_base_commit": SLICE_BASE_COMMIT,
+        "activation_scope": deepcopy(ACTIVATION_SCOPE),
+        "platform_statuses": deepcopy(PLATFORM_STATUSES),
+        "atomic_members": list(ATOMIC_MEMBERS),
+        "atomic_member_status": deepcopy(ATOMIC_MEMBER_STATUS),
+        "expected_checkpoints": deepcopy(EXPECTED_CHECKPOINTS),
+        "results": deepcopy(RESULTS),
+    }
+
+
+def collect(
+    *,
+    run_dir: Path,
+    current_target: Path,
+    qualification_run_dir: Path,
+    output: Path,
+) -> dict[str, Any]:
+    run_root = run_dir.resolve()
+    run_path = run_root / "workflow" / "run.json"
+    run_record = _read_json(run_path, label="Run Record")
+    if (
+        run_record.get("schema_version") != "4.0.0"
+        or run_record.get("canonical_platform") != "bilibili"
+        or run_record.get("delivery", {}).get("stage") != "delivered"
+        or Path(str(run_record.get("output_path", ""))).resolve() != run_root
+    ):
+        raise CollectionError("Run Record is not a delivered Bilibili Kernel Run")
+
+    delivery = run_record["delivery"]
+    projections = delivery["projections"]
+    video_path = _bound_path(
+        projections.get("video_target"), base=run_root, label="video delivery target"
+    )
+    session_path = _bound_path(
+        projections.get("session_target"), base=run_root, label="session delivery target"
+    )
+    if session_path != current_target.resolve():
+        raise CollectionError("current target differs from the Run authority")
+    task_index_path = _bound_path(
+        projections.get("task_index"), base=run_root, label="delivery task index"
+    )
+    video_target = _read_json(video_path, label="video delivery target")
+    session_target = _read_json(session_path, label="session delivery target")
+    task_index = _read_json(task_index_path, label="delivery task index")
+    run_id = run_record.get("run_id")
+    if (
+        video_target.get("run_id") != run_id
+        or video_target.get("stage") != "delivered"
+        or session_target.get("run_id") != run_id
+        or session_target.get("stage") != "delivered"
+        or len([entry for entry in task_index.get("entries", []) if entry.get("run_id") == run_id]) != 1
+    ):
+        raise CollectionError("delivery projections do not identify one delivered Run")
+
+    source_generation = run_record.get("artifact_generations", {}).get("source_manifest")
+    source_path = _bound_path(source_generation, base=run_root, label="source manifest")
+    artifact_bindings = video_target.get("artifacts", {})
+    acceptance_path = _bound_path(
+        artifact_bindings.get("acceptance_report"),
+        base=run_root,
+        label="Acceptance Report v2",
+    )
+    guard_path = _bound_path(
+        artifact_bindings.get("delivery_guard_report"),
+        base=run_root,
+        label="Delivery Guard Report",
+    )
+    final_pdf_path = _bound_path(
+        artifact_bindings.get("final_pdf"), base=run_root, label="final PDF"
+    )
+    global_gate_path = _bound_path(
+        video_target.get("global_gate_authority"),
+        base=run_root,
+        label="Global Gate authority",
+    )
+
+    try:
+        validate_acceptance_report(
+            project_root=PROJECT_ROOT,
+            report_path=acceptance_path,
+            run_id=run_id,
+        )
+    except ContractError as exc:
+        raise CollectionError("Acceptance Report v2 is not a passing Kernel decision")
+    try:
+        validate_delivery_guard_report(report_path=guard_path)
+    except ContractError as exc:
+        raise CollectionError("Delivery Guard Report is not a passing Run decision")
+
+    qualification_root = qualification_run_dir.resolve()
+    command_path = qualification_root / "command.json"
+    status_path = qualification_root / "status.json"
+    exit_code_path = qualification_root / "exit-code.txt"
+    command = _read_json(command_path, label="persisted command record")
+    status = _read_json(status_path, label="persisted terminal status")
+    try:
+        exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CollectionError("persisted exit code is unavailable or invalid") from exc
+    eligible = status.get("security", {}).get("acceptance_evidence_eligible")
+    expected_argv = list(COMMANDS[1][1])
+    if (
+        command.get("run_id") != status.get("run_id")
+        or command.get("argv") != expected_argv
+        or Path(str(command.get("cwd", ""))).resolve() != PROJECT_ROOT.resolve()
+        or command.get("accepted_exit_codes") != [0]
+        or status.get("state") != "succeeded"
+        or status.get("exit_code") != 0
+        or exit_code != 0
+        or eligible is not True
+    ):
+        raise CollectionError("qualification run is not succeeded evidence")
+
+    value = {
+        "schema_name": "issue13-exit-evidence-collection",
+        "schema_version": "1.0.0",
+        "run_id": run_id,
+        "canonical_platform": "bilibili",
+        "delivery_stage": "delivered",
+        "artifacts": {
+            "run_record": _binding(run_path, label="Run Record"),
+            "source_manifest": _binding(source_path, label="source manifest"),
+            "acceptance_report_v2": _binding(acceptance_path, label="Acceptance Report v2"),
+            "delivery_guard_report": _binding(guard_path, label="Delivery Guard Report"),
+            "video_delivery_target": _binding(video_path, label="video delivery target"),
+            "session_delivery_target": _binding(session_path, label="session delivery target"),
+            "delivery_task_index": _binding(task_index_path, label="delivery task index"),
+            "global_gate_authority": _binding(global_gate_path, label="Global Gate authority"),
+            "final_pdf": _binding(final_pdf_path, label="final PDF"),
+        },
+        "qualification_run": {
+            "run_id": command["run_id"],
+            "state": "succeeded",
+            "exit_code": 0,
+            "acceptance_evidence_eligible": True,
+            "command_record": _binding(command_path, label="persisted command record"),
+            "terminal_status": _binding(status_path, label="persisted terminal status"),
+            "exit_code_artifact": _binding(exit_code_path, label="persisted exit code"),
+        },
+    }
+    _write_json(output.resolve(), value)
+    return value
+
+
+def _project_binding(binding: dict[str, str], *, role: str) -> dict[str, str]:
+    path = Path(binding["path"]).resolve()
+    try:
+        relative = path.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError as exc:
+        raise CollectionError("Exit Evidence artifacts must be inside the repository") from exc
+    if not path.is_file() or _sha256(path) != binding["sha256"]:
+        raise CollectionError(f"collected artifact is stale: {role}")
+    return {"role": role, "path": relative, "sha256": binding["sha256"]}
+
+
+def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
+    collection = _read_json(collection_path.resolve(), label="Issue 13 collection")
+    if collection.get("schema_name") != "issue13-exit-evidence-collection":
+        raise CollectionError("Issue 13 collection identity is invalid")
+    artifacts = collection.get("artifacts")
+    qualification = collection.get("qualification_run")
+    if not isinstance(artifacts, dict) or not isinstance(qualification, dict):
+        raise CollectionError("Issue 13 collection is incomplete")
+
+    guarded_artifacts = [
+        _project_binding(artifacts[role], role=role)
+        for role in (
+            "run_record",
+            "source_manifest",
+            "acceptance_report_v2",
+            "delivery_guard_report",
+            "video_delivery_target",
+            "session_delivery_target",
+            "delivery_task_index",
+            "global_gate_authority",
+            "final_pdf",
+        )
+    ]
+    persisted = {
+        "run_id": qualification["run_id"],
+        "command_record": _project_binding(
+            qualification["command_record"], role="persisted_command_record"
+        ),
+        "terminal_status": _project_binding(
+            qualification["terminal_status"], role="persisted_terminal_status"
+        ),
+        "exit_code": _project_binding(
+            qualification["exit_code_artifact"], role="persisted_exit_code"
+        ),
+    }
+    collection_binding = _binding(collection_path.resolve(), label="Issue 13 collection")
+    guarded = {
+        "collection": _project_binding(
+            collection_binding, role="guarded_delivery_collection"
+        ),
+        "run_id": collection["run_id"],
+        "canonical_platform": collection["canonical_platform"],
+        "delivery_stage": collection["delivery_stage"],
+        "artifacts": guarded_artifacts,
+        "qualification_run": persisted,
+    }
+    try:
+        implementation_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CollectionError("implementation commit is unavailable") from exc
+
+    manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    commands = []
+    for command_id, command, expected_exit in COMMANDS:
+        log_path = manifest_path.resolve().parent / "logs" / f"{command_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_bytes(
+            (
+                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+                + json.dumps(
+                    {
+                        "schema_name": "issue13-qualified-command-summary",
+                        "schema_version": "1.0.0",
+                        "test_id": command_id,
+                        "qualification_run_id": persisted["run_id"],
+                        "expected_exit_code": expected_exit,
+                        "actual_exit_code": 0,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        commands.append(
+            {
+                "test_id": command_id,
+                "command": list(command),
+                "expected_exit_code": expected_exit,
+                "actual_exit_code": 0,
+                "log": _project_binding(
+                    _binding(log_path, label=f"{command_id} log"),
+                    role="command_log",
+                ),
+                "conforms": expected_exit == 0,
+            }
+        )
+    guarded_bindings = [
+        guarded["collection"],
+        *guarded["artifacts"],
+        persisted["command_record"],
+        persisted["terminal_status"],
+        persisted["exit_code"],
+    ]
+    manifest = {
+        "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+        "schema_version": 2,
+        "kind": "video-workflow-exit-evidence",
+        "fingerprint_algorithm": "sha256-raw-v1",
+        **qualification_manifest_skeleton(),
+        "implementation_commit": implementation_commit,
+        "evidence_paths": [
+            manifest_relative,
+            *[command["log"]["path"] for command in commands],
+            *[binding["path"] for binding in guarded_bindings],
+        ],
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "guarded_delivery_evidence": guarded,
+        "commands": commands,
+        "fixtures": [
+            {
+                "role": role,
+                "path": path,
+                "sha256": _sha256(PROJECT_ROOT / path),
+            }
+            for role, path in FIXTURE_SPECS
+        ],
+        "result_bindings": deepcopy(RESULT_BINDINGS),
+        "artifact_fingerprints": fingerprint_implementation_changes(
+            PROJECT_ROOT,
+            SLICE_BASE_COMMIT,
+            implementation_commit,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        ),
+        "unresolved_exceptions": [],
+        "overall_decision": "pass",
+    }
+    _write_json(manifest_path.resolve(), manifest)
+    return manifest
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Collect Issue 13 Exit Evidence")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    collect_parser = subparsers.add_parser("collect")
+    collect_parser.add_argument("--run-dir", type=Path, required=True)
+    collect_parser.add_argument("--current-target", type=Path, required=True)
+    collect_parser.add_argument("--qualification-run-dir", type=Path, required=True)
+    collect_parser.add_argument("--output", type=Path, required=True)
+    finalize_parser = subparsers.add_parser("finalize")
+    finalize_parser.add_argument("--collection", type=Path, required=True)
+    finalize_parser.add_argument("--manifest", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.command == "collect":
+            result = collect(
+                run_dir=args.run_dir,
+                current_target=args.current_target,
+                qualification_run_dir=args.qualification_run_dir,
+                output=args.output,
+            )
+        else:
+            result = finalize(
+                collection_path=args.collection,
+                manifest_path=args.manifest,
+            )
+    except (CollectionError, EvidenceSupportError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

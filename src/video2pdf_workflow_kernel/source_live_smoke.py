@@ -443,7 +443,7 @@ def build_smoke_report(
     manifest_sha = sha256_file(manifest_path)
     if (
         run.get("schema_name") != "run-record"
-        or run.get("schema_version") != "3.0.0"
+        or run.get("schema_version") not in {"3.0.0", "4.0.0"}
         or run.get("canonical_platform") != expected_platform
         or run.get("source_state") != "ready"
         or run.get("phase") != "source_ready"

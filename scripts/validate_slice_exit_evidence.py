@@ -19,9 +19,14 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
+from video2pdf_workflow_kernel.errors import ContractError
 from video2pdf_workflow_kernel.global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
+)
+from video2pdf_workflow_kernel.guarded_delivery import (
+    validate_acceptance_report,
+    validate_delivery_guard_report,
 )
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
@@ -119,6 +124,18 @@ from issue43_exit_evidence_contract import (
     RESULT_BINDINGS as ISSUE43_RESULT_BINDINGS,
     RESULTS as ISSUE43_RESULTS,
     SLICE_BASE_COMMIT as ISSUE43_BASE_COMMIT,
+)
+from issue13_exit_evidence_contract import (
+    ACTIVATION_SCOPE as ISSUE13_ACTIVATION_SCOPE,
+    ATOMIC_MEMBERS as ISSUE13_ATOMIC_MEMBERS,
+    COMMANDS as ISSUE13_COMMANDS,
+    EVIDENCE_PREFIX as ISSUE13_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as ISSUE13_EXPECTED_CHECKPOINTS,
+    FIXTURE_SPECS as ISSUE13_FIXTURE_SPECS,
+    PLATFORM_STATUSES as ISSUE13_PLATFORM_STATUSES,
+    RESULT_BINDINGS as ISSUE13_RESULT_BINDINGS,
+    RESULTS as ISSUE13_RESULTS,
+    SLICE_BASE_COMMIT as ISSUE13_BASE_COMMIT,
 )
 
 
@@ -318,6 +335,21 @@ SLICE_CONFIGS = {
         "result_bindings": ISSUE43_RESULT_BINDINGS,
         "fixture_specs": ISSUE43_FIXTURE_SPECS,
         "activation_scope": ISSUE43_ACTIVATION_SCOPE,
+    },
+    12: {
+        "base_commit": ISSUE13_BASE_COMMIT,
+        "evidence_prefix": ISSUE13_EVIDENCE_PREFIX,
+        "checkpoints": ISSUE13_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _, _ in ISSUE13_COMMANDS],
+        "commands": [
+            {"test_id": test_id, "command": list(command), "expected_exit_code": expected_exit_code}
+            for test_id, command, expected_exit_code in ISSUE13_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "recovery"],
+        "results": ISSUE13_RESULTS,
+        "result_bindings": ISSUE13_RESULT_BINDINGS,
+        "fixture_specs": ISSUE13_FIXTURE_SPECS,
+        "activation_scope": ISSUE13_ACTIVATION_SCOPE,
     },
 }
 
@@ -562,8 +594,82 @@ def validate_issue43_cutover(manifest: dict[str, Any]) -> None:
         )
 
 
+def validate_issue13_cutover(manifest: dict[str, Any]) -> None:
+    if manifest.get("slice", {}).get("number") != 12:
+        return
+    if manifest.get("activation_scope") != ISSUE13_ACTIVATION_SCOPE:
+        raise EvidenceError(
+            "Bilibili cutover activation scope differs from its closed authority",
+            first_failing_gate="activation_scope",
+            error_code="unsupported_activation_scope",
+        )
+    statuses = manifest.get("platform_statuses")
+    if isinstance(statuses, dict) and statuses.get("youtube") != "active_legacy":
+        raise EvidenceError(
+            "YouTube must retain Legacy platform authority during Bilibili cutover",
+            first_failing_gate="platform_statuses",
+            error_code="youtube_platform_authority_changed",
+        )
+    if statuses != ISSUE13_PLATFORM_STATUSES:
+        raise EvidenceError(
+            "Bilibili cutover platform statuses differ from their closed authority",
+            first_failing_gate="platform_statuses",
+            error_code="platform_status_set_mismatch",
+        )
+    if manifest.get("atomic_members") != list(ISSUE13_ATOMIC_MEMBERS):
+        raise EvidenceError(
+            "Bilibili cutover atomic member registry is incomplete or reordered",
+            first_failing_gate="atomic_members",
+            error_code="atomic_member_set_mismatch",
+        )
+    expected_status = {member: "active" for member in ISSUE13_ATOMIC_MEMBERS}
+    if manifest.get("atomic_member_status") != expected_status:
+        raise EvidenceError(
+            "Every Bilibili cutover atomic member must be active",
+            first_failing_gate="atomic_member_status",
+            error_code="atomic_member_inactive",
+        )
+    guarded = manifest.get("guarded_delivery_evidence")
+    if not isinstance(guarded, dict):
+        raise EvidenceError(
+            "Bilibili cutover lacks collected guarded-delivery evidence",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_evidence_missing",
+        )
+    expected_roles = {
+        "run_record",
+        "source_manifest",
+        "acceptance_report_v2",
+        "delivery_guard_report",
+        "video_delivery_target",
+        "session_delivery_target",
+        "delivery_task_index",
+        "global_gate_authority",
+        "final_pdf",
+    }
+    artifacts = guarded.get("artifacts")
+    roles = {
+        artifact.get("role")
+        for artifact in artifacts
+        if isinstance(artifact, dict)
+    } if isinstance(artifacts, list) else set()
+    if (
+        guarded.get("canonical_platform") != "bilibili"
+        or guarded.get("delivery_stage") != "delivered"
+        or roles != expected_roles
+        or not isinstance(guarded.get("collection"), dict)
+        or not isinstance(guarded.get("qualification_run"), dict)
+    ):
+        raise EvidenceError(
+            "Bilibili guarded-delivery collection is incomplete",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_evidence_invalid",
+        )
+
+
 def validate_semantics(manifest: dict[str, Any]) -> None:
     validate_issue43_cutover(manifest)
+    validate_issue13_cutover(manifest)
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):
@@ -830,11 +936,31 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
         smoke["source_manifest"]["path"]
         for smoke in manifest.get("platform_smokes", [])
     }
+    guarded = manifest.get("guarded_delivery_evidence")
+    guarded_artifacts: list[dict[str, Any]] = []
+    if isinstance(guarded, dict):
+        collection = guarded.get("collection")
+        if isinstance(collection, dict):
+            guarded_artifacts.append(collection)
+        guarded_artifacts.extend(
+            artifact
+            for artifact in guarded.get("artifacts", [])
+            if isinstance(artifact, dict)
+        )
+        qualification = guarded.get("qualification_run")
+        if isinstance(qualification, dict):
+            guarded_artifacts.extend(
+                artifact
+                for key, artifact in qualification.items()
+                if key != "run_id" and isinstance(artifact, dict)
+            )
+    guarded_paths = {artifact["path"] for artifact in guarded_artifacts}
     expected_evidence_paths = {
         manifest_relative,
         *log_paths,
         *persisted_paths,
         *smoke_manifest_paths,
+        *guarded_paths,
     }
     if set(manifest["evidence_paths"]) != expected_evidence_paths:
         raise EvidenceError(
@@ -847,6 +973,7 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     bound.extend(
         smoke["source_manifest"] for smoke in manifest.get("platform_smokes", [])
     )
+    bound.extend(guarded_artifacts)
     fixture_paths = {fixture["path"] for fixture in manifest["fixtures"]}
     for item in bound:
         path = resolve_project_path(item["path"])
@@ -933,6 +1060,77 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                     first_failing_gate="persisted_command_security",
                     error_code="persisted_command_security_failure",
                 )
+    if manifest.get("slice", {}).get("number") == 12:
+        guarded = manifest["guarded_delivery_evidence"]
+        artifact_paths = {
+            item["role"]: resolve_project_path(item["path"])
+            for item in guarded["artifacts"]
+        }
+        try:
+            validate_acceptance_report(
+                project_root=PROJECT_ROOT,
+                report_path=artifact_paths["acceptance_report_v2"],
+                run_id=guarded["run_id"],
+            )
+            validate_delivery_guard_report(
+                report_path=artifact_paths["delivery_guard_report"]
+            )
+        except (ContractError, KeyError) as exc:
+            raise EvidenceError(
+                "Issue #13 guarded-delivery decisions are not authoritative passes",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_decision_invalid",
+            ) from exc
+        qualification = guarded["qualification_run"]
+        try:
+            command_record = json.loads(
+                resolve_project_path(qualification["command_record"]["path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            terminal_status = json.loads(
+                resolve_project_path(qualification["terminal_status"]["path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            exit_code = int(
+                resolve_project_path(qualification["exit_code"]["path"])
+                .read_text(encoding="utf-8")
+                .strip()
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise EvidenceError(
+                "Issue #13 persisted qualification evidence cannot be decoded",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_invalid",
+            ) from exc
+        expected_argv = list(ISSUE13_COMMANDS[1][1])
+        if (
+            command_record.get("argv") != expected_argv
+            or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+            or command_record.get("accepted_exit_codes") != [0]
+        ):
+            raise EvidenceError(
+                "Issue #13 persisted qualification command differs from its closed contract",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_identity_stale",
+            )
+        if (
+            command_record.get("run_id") != qualification["run_id"]
+            or terminal_status.get("run_id") != qualification["run_id"]
+            or terminal_status.get("state") != "succeeded"
+            or terminal_status.get("exit_code") != 0
+            or exit_code != 0
+            or terminal_status.get("security", {}).get(
+                "acceptance_evidence_eligible"
+            )
+            is not True
+        ):
+            raise EvidenceError(
+                "Issue #13 qualification Run is not succeeded eligible evidence",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_failed",
+            )
 
 
 def validate_command_log_provenance(manifest: dict[str, Any]) -> None:

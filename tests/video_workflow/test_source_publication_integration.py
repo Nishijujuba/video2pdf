@@ -28,6 +28,9 @@ from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
 from video2pdf_workflow_kernel.source_publication import (  # noqa: E402
     SourcePublicationFault,
 )
+from video2pdf_workflow_kernel.source_acquisition import (  # noqa: E402
+    derive_source_identity,
+)
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
     read_json,
@@ -42,6 +45,9 @@ TEST_ROOT = module_test_root(PROJECT_ROOT)
 class _SourcePublicationFixtureBuilder:
     def build_decision_ready_authority(
         self,
+        *,
+        run_record_version: str = "3.0.0",
+        platform: str = "youtube",
     ) -> tuple[VideoWorkflowKernel, Path, dict]:
         root = TEST_ROOT / uuid.uuid4().hex
         workspace = root / "workspace"
@@ -53,8 +59,16 @@ class _SourcePublicationFixtureBuilder:
         request_id = f"source-publication-integration-{run_id}"
         intent_id = f"initialize-{run_id}"
         inventory = build_inventory(run_dir)
+        canonical_item_id = (
+            "BV1Issue13001" if platform == "bilibili" else "yt-test-001"
+        )
+        source_identity = derive_source_identity(platform, canonical_item_id)
         inventory["run_id"] = run_id
         inventory["acquisition_id"] = uuid.uuid4().hex
+        inventory["adapter"]["id"] = platform
+        inventory["canonical_platform"] = platform
+        inventory["canonical_item_id"] = canonical_item_id
+        inventory["source_identity"] = source_identity
         inventory_path, skeleton_path, patch_path = persist_fresh_controls(
             run_dir, inventory
         )
@@ -70,19 +84,23 @@ class _SourcePublicationFixtureBuilder:
                 "run_id": run_id,
                 "request_id": request_id,
                 "adapter": {
-                    "id": "youtube",
+                    "id": platform,
                     "contract_version": "1.0.0",
-                    "canonical_platform": "youtube",
+                    "canonical_platform": platform,
                 },
                 "source_request": {
                     "kind": "fresh_download",
                     "canonical_locator": (
-                        "https://www.youtube.com/watch?v=yt-test-001"
+                        (
+                            "https://www.bilibili.com/video/BV1Issue13001"
+                            if platform == "bilibili"
+                            else "https://www.youtube.com/watch?v=yt-test-001"
+                        )
                     ),
                 },
-                "canonical_platform": "youtube",
-                "canonical_item_id": inventory["canonical_item_id"],
-                "source_identity": inventory["source_identity"],
+                "canonical_platform": platform,
+                "canonical_item_id": canonical_item_id,
+                "source_identity": source_identity,
                 "original_title": inventory["source_metadata"]["original_title"],
                 "probe_execution": {
                     "provider_kind": "recorded_fixture",
@@ -111,14 +129,23 @@ class _SourcePublicationFixtureBuilder:
                 / "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json"
             ).read_text(encoding="utf-8")
         )
+        if run_record_version == "4.0.0":
+            delivery_fixture = json.loads(
+                (
+                    PROJECT_ROOT
+                    / "tests/video_workflow/fixtures/contracts/run-record.v4.valid.json"
+                ).read_text(encoding="utf-8")
+            )
+            record["schema_version"] = "4.0.0"
+            record["delivery"] = delivery_fixture["delivery"]
         record.update(
             {
                 "run_id": run_id,
                 "request_id": request_id,
-                "platform_adapter": "youtube",
-                "canonical_platform": "youtube",
-                "canonical_item_id": inventory["canonical_item_id"],
-                "source_identity": inventory["source_identity"],
+                "platform_adapter": platform,
+                "canonical_platform": platform,
+                "canonical_item_id": canonical_item_id,
+                "source_identity": source_identity,
                 "source_version": None,
                 "original_title": inventory["source_metadata"]["original_title"],
                 "normalized_title": inventory["source_metadata"]["original_title"],
@@ -184,9 +211,9 @@ class _SourcePublicationFixtureBuilder:
         store.bind_publication_expectations(
             intent_id,
             expected_run_record_sha256=initial_sha,
-            canonical_platform="youtube",
-            canonical_item_id=inventory["canonical_item_id"],
-            source_identity=inventory["source_identity"],
+            canonical_platform=platform,
+            canonical_item_id=canonical_item_id,
+            source_identity=source_identity,
             source_manifest_sha256=None,
         )
         store.transition_intent(
@@ -208,13 +235,41 @@ class _SourcePublicationFixtureBuilder:
         return VideoWorkflowKernel(workspace), run_dir, record
 
 
-def build_decision_ready_authority() -> tuple[VideoWorkflowKernel, Path, dict]:
+def build_decision_ready_authority(
+    *,
+    run_record_version: str = "3.0.0",
+    platform: str = "youtube",
+) -> tuple[VideoWorkflowKernel, Path, dict]:
     """Build a decision-ready v3 Run bound to a real file-backed authority."""
 
-    return _SourcePublicationFixtureBuilder().build_decision_ready_authority()
+    return _SourcePublicationFixtureBuilder().build_decision_ready_authority(
+        run_record_version=run_record_version,
+        platform=platform,
+    )
 
 
 class SourcePublicationIntegrationTests(unittest.TestCase):
+    def test_bilibili_kernel_v4_finalizer_commits_real_control_store_chain(self) -> None:
+        kernel, run_dir, prior = build_decision_ready_authority(
+            run_record_version="4.0.0",
+            platform="bilibili",
+        )
+
+        kernel.finalize_production_source(
+            run_dir,
+            published_at="2026-08-09T09:30:00+08:00",
+        )
+
+        current = read_json(run_dir / "workflow/run.json")
+        self.assertEqual(current["schema_version"], "4.0.0")
+        self.assertEqual(current["canonical_platform"], "bilibili")
+        self.assertEqual(current["source_state"], "ready")
+        self.assertEqual(current["delivery"], prior["delivery"])
+        self.assertEqual(
+            kernel.control_store.current_run_record_sha(current["run_id"]),
+            sha256_file(run_dir / "workflow/run.json"),
+        )
+
     def test_kernel_finalizer_and_reconciler_commit_real_v9_publication(self) -> None:
         kernel, run_dir, prior = build_decision_ready_authority()
 

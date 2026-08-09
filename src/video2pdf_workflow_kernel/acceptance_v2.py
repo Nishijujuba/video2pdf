@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import stat
@@ -21,7 +22,8 @@ from .utils import (
     write_json_atomic,
 )
 from .global_gate import (
-    GlobalGatePublisher,
+    GLOBAL_GATE_DB,
+    GLOBAL_GATE_SCHEMA_VERSION,
     OPTIONAL_ACCEPTANCE_QUALITY_INPUTS,
     REQUIRED_ACCEPTANCE_QUALITY_INPUTS,
 )
@@ -1319,9 +1321,16 @@ class AcceptanceV2Provider:
             _reject("publication intent paths or identity are contradictory", "publication_recovery", "acceptance_publication_intent_contradictory")
 
     def guard_eligibility(self, *, workspace_root: Path) -> dict[str, Any]:
-        root, execution_root, execution, _, binding = self._load_current(workspace_root)
+        root, execution_root, execution, _, binding = self._load_current(
+            workspace_root,
+            allow_committed_delivery_successor=True,
+        )
         domain = AcceptanceInputDomain.from_binding(binding)
-        self._validate_binding(binding, verify_files=True)
+        self._validate_binding(
+            binding,
+            verify_files=True,
+            allow_committed_delivery_successor=True,
+        )
         report_path = root / "acceptance_report.json"
         checks = {
             "report_exists": report_path.is_file(),
@@ -1429,12 +1438,134 @@ class AcceptanceV2Provider:
             "decision_pass": report.get("overall_status") == "pass",
             "routing_ready": report.get("routing_state") == "ready_for_delivery",
         })
-        current_global_gate = GlobalGatePublisher().require_current(control_store_root=Path(domain.global_gate_authority["control_store_root"]))
+        current_global_gate = self.require_current_global_gate(
+            control_store_root=Path(domain.global_gate_authority["control_store_root"])
+        )
         checks["global_gate_authority_current"] = bool(
             report.get("activation_status") == "active_global_gate"
             and report.get("global_gate_authority") == domain.global_gate_authority == current_global_gate
         )
         return {"activation_status": "active_global_gate", "delivery_authority": all(checks.values()), "eligible": all(checks.values()), "mechanical_checks": checks, "report_sha256": report.get("report_sha256")}
+
+    def require_committed_delivery_successor(
+        self, *, workspace_root: Path
+    ) -> dict[str, Any]:
+        """Return the provider-proven Acceptance predecessor/successor boundary."""
+
+        _, _, _, _, binding = self._load_current(
+            workspace_root,
+            allow_committed_delivery_successor=True,
+        )
+        domain = AcceptanceInputDomain.from_binding(binding)
+        if domain.track != "kernel" or domain.run is None:
+            _reject(
+                "Delivery Lifecycle successor authority requires a Kernel input",
+                "run_lifecycle",
+                "acceptance_delivery_successor_invalid",
+            )
+        run_path = Path(domain.run["run_record_path"]).resolve()
+        if not run_path.is_file():
+            _reject(
+                "Kernel Run Record is absent",
+                "run_lifecycle",
+                "acceptance_run_record_stale",
+            )
+        successor = read_json(run_path)
+        successor_sha256 = sha256_file(run_path)
+        if successor_sha256 == domain.run["run_record_sha256"]:
+            _reject(
+                "Kernel delivery has no successor Run revision",
+                "run_lifecycle",
+                "acceptance_delivery_successor_absent",
+            )
+        predecessor_authority_sha256 = ControlStore(
+            Path(domain.run["control_store_root"]),
+            ContractRegistry(self.project_root),
+        ).current_run_record_sha(domain.run["run_id"])
+        self._require_committed_delivery_successor(
+            binding=binding,
+            successor=successor,
+            successor_sha256=successor_sha256,
+            predecessor_authority_sha256=predecessor_authority_sha256,
+        )
+        return {
+            "run_id": successor["run_id"],
+            "run_revision": successor["coordination_revision"],
+            "lifecycle_intent_id": successor["last_mutation_intent_id"],
+            "run_record_sha256": successor_sha256,
+        }
+
+    def require_current_global_gate(
+        self, *, control_store_root: Path
+    ) -> dict[str, Any]:
+        """Read the committed Global Gate without mutating its SQLite file."""
+
+        root = control_store_root.resolve()
+        authority_path = root / "active_global_gate.json"
+        database_path = root / GLOBAL_GATE_DB
+        try:
+            with sqlite3.connect(
+                f"file:{database_path.as_posix()}?mode=ro", uri=True
+            ) as control:
+                control.row_factory = sqlite3.Row
+                if control.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    _reject(
+                        "Global Gate control store is corrupt",
+                        "control_store",
+                        "global_gate_control_store_corrupt",
+                    )
+                if control.execute("PRAGMA user_version").fetchone()[0] != GLOBAL_GATE_SCHEMA_VERSION:
+                    _reject(
+                        "Global Gate control store schema is incompatible",
+                        "control_store",
+                        "global_gate_control_store_incompatible",
+                    )
+                row = control.execute(
+                    "SELECT * FROM gate_authority WHERE singleton=1"
+                ).fetchone()
+                pending = control.execute(
+                    "SELECT COUNT(*) FROM gate_intents WHERE state!='COMMITTED'"
+                ).fetchone()[0]
+        except (sqlite3.DatabaseError, OSError) as exc:
+            _reject(
+                "Global Gate control store is unavailable",
+                "control_store",
+                "global_gate_control_store_unavailable",
+                detail=str(exc),
+            )
+        if (
+            row is None
+            or pending
+            or not authority_path.is_file()
+            or sha256_file(authority_path) != row["authority_sha256"]
+        ):
+            _reject(
+                "Global Gate authority is absent or stale",
+                "global_gate_authority",
+                "global_gate_authority_stale",
+            )
+        value = read_json(authority_path)
+        if (
+            value.get("active_global_gate") != "acceptance_report_v2"
+            or value.get("platform_kernel_authority") != "unchanged"
+            or value.get("generation") != row["generation"]
+            or value.get("exit_evidence_sha256") != row["evidence_sha256"]
+            or value.get("authority_sha256")
+            != _fingerprint_without(value, "authority_sha256")
+        ):
+            _reject(
+                "Global Gate authority conflicts with committed control state",
+                "global_gate_authority",
+                "global_gate_authority_conflict",
+            )
+        return {
+            "control_store_root": str(root),
+            "path": str(authority_path),
+            "file_sha256": row["authority_sha256"],
+            "authority_sha256": value["authority_sha256"],
+            "exit_evidence_sha256": row["evidence_sha256"],
+            "generation": row["generation"],
+        }
 
     def _historical_attempts_current(self, root: Path, ledger: dict[str, Any], current_execution: dict[str, Any]) -> bool:
         executions_root = (root / "executions").resolve()
@@ -1487,6 +1618,7 @@ class AcceptanceV2Provider:
         *,
         allow_projection_recovery: bool = False,
         allow_claim_transition: bool = False,
+        allow_committed_delivery_successor: bool = False,
     ) -> tuple[Path, Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
         root = workspace_root.resolve()
         current = read_json(root / "current.json")
@@ -1516,7 +1648,11 @@ class AcceptanceV2Provider:
         self.registry.validate("acceptance-v2-review-skeleton", skeleton)
         if binding.get("input_track") != "legacy":
             self.registry.validate("acceptance-v2-input-binding", binding)
-        self._validate_binding(binding, verify_files=False)
+        self._validate_binding(
+            binding,
+            verify_files=False,
+            allow_committed_delivery_successor=allow_committed_delivery_successor,
+        )
         domain = AcceptanceInputDomain.from_binding(binding)
         if execution["execution_id"] != current["execution_id"] or skeleton["execution_id"] != execution["execution_id"] or execution.get("skeleton_sha256") != skeleton.get("skeleton_sha256") or execution.get("input_binding_sha256") != domain.fingerprint:
             _reject("acceptance execution identities disagree", "execution_identity", "acceptance_execution_identity_invalid")
@@ -1889,7 +2025,14 @@ class AcceptanceV2Provider:
         ):
             _reject("Acceptance execution projection split lacks committed Control Store authority", "publication_recovery", "acceptance_execution_projection_stale")
 
-    def _validate_binding(self, binding: dict[str, Any], *, verify_files: bool, require_published_final_authority: bool = True) -> None:
+    def _validate_binding(
+        self,
+        binding: dict[str, Any],
+        *,
+        verify_files: bool,
+        require_published_final_authority: bool = True,
+        allow_committed_delivery_successor: bool = False,
+    ) -> None:
         if binding.get("schema_name") == "legacy-acceptance-input-set" and binding.get("input_track") == "legacy":
             if "run" in binding:
                 _reject("A Legacy Acceptance Input Set cannot contain a synthetic Run binding", "input_identity", "legacy_synthetic_run_rejected")
@@ -1934,7 +2077,11 @@ class AcceptanceV2Provider:
                 _reject("Legacy Acceptance criteria binding is stale", "policy_binding", "acceptance_policy_stale")
             if binding.get("provider", {}).get("provider_id") != "legacy-acceptance-adoption-provider":
                 _reject("Legacy Acceptance provider identity is unsupported", "input_identity", "legacy_provider_unsupported")
-            current_gate = GlobalGatePublisher().require_current(control_store_root=Path(binding["global_gate_authority"].get("control_store_root", "")))
+            current_gate = self.require_current_global_gate(
+                control_store_root=Path(
+                    binding["global_gate_authority"].get("control_store_root", "")
+                )
+            )
             if current_gate != binding["global_gate_authority"]:
                 _reject("Legacy Acceptance Global Gate binding is stale", "global_gate_authority", "global_gate_authority_stale")
             return
@@ -1952,19 +2099,32 @@ class AcceptanceV2Provider:
             _reject("Allowed Artifacts Manifest is missing", "input_freshness", "acceptance_input_stale", path=str(allowed_manifest_path))
         run_record_path = Path(run.get("run_record_path", "")).resolve()
         control_store_root = Path(run.get("control_store_root", "")).resolve()
-        current_global_gate = GlobalGatePublisher().require_current(control_store_root=control_store_root)
+        current_global_gate = self.require_current_global_gate(
+            control_store_root=control_store_root
+        )
         if binding.get("global_gate_authority") != current_global_gate:
             _reject("Kernel Acceptance Global Gate binding is stale", "global_gate_authority", "global_gate_authority_stale")
         if run_record_path != video_root / "workflow" / "run.json" or not control_store_root.is_dir():
             _reject("Kernel Run authority path is invalid", "run_lifecycle", "acceptance_run_authority_invalid")
-        if not run_record_path.is_file() or sha256_file(run_record_path) != run.get("run_record_sha256"):
+        if not run_record_path.is_file():
             _reject("Kernel Run Record is absent or stale", "run_lifecycle", "acceptance_run_record_stale")
         run_record = read_json(run_record_path)
+        current_run_record_sha = sha256_file(run_record_path)
         try:
             ContractRegistry(self.project_root).validate_run_record(run_record)
             current_run_sha = ControlStore(control_store_root, ContractRegistry(self.project_root)).current_run_record_sha(run["run_id"])
         except KernelError as exc:
             _reject("Kernel Run authority is invalid", "run_lifecycle", "acceptance_run_authority_invalid", detail=str(exc))
+        committed_delivery_successor = False
+        if current_run_record_sha != run.get("run_record_sha256"):
+            if not allow_committed_delivery_successor:
+                _reject("Kernel Run Record is absent or stale", "run_lifecycle", "acceptance_run_record_stale")
+            committed_delivery_successor = self._require_committed_delivery_successor(
+                binding=binding,
+                successor=run_record,
+                successor_sha256=current_run_record_sha,
+                predecessor_authority_sha256=current_run_sha,
+            )
         checkpoint = run_record.get("checkpoints", {}).get("source_ready")
         recorded_producers = sorted({
             item["producer"] for item in run_record.get("artifact_generations", {}).values()
@@ -1972,9 +2132,19 @@ class AcceptanceV2Provider:
         })
         if (
             run_record.get("run_id") != run.get("run_id")
-            or run_record.get("coordination_revision") != run.get("coordination_revision")
+            or (
+                run_record.get("coordination_revision") != run.get("coordination_revision")
+                and not committed_delivery_successor
+            )
             or Path(run_record.get("output_path", "")).resolve() != video_root
-            or current_run_sha != run.get("run_record_sha256")
+            or (
+                current_run_sha
+                != (
+                    current_run_record_sha
+                    if committed_delivery_successor
+                    else run.get("run_record_sha256")
+                )
+            )
             or not isinstance(checkpoint, dict)
             or checkpoint.get("status") != "current"
             or run.get("checkpoint") != {"name": "source_ready", "status": "current", "evidence_sha256": checkpoint.get("evidence_sha256")}
@@ -2024,6 +2194,7 @@ class AcceptanceV2Provider:
         logical_ids = [item.get("logical_id") for item in binding["artifacts"]]
         if len(logical_ids) != len(set(logical_ids)) or not {"final_pdf", "main_tex"} <= set(logical_ids):
             _reject("Acceptance artifacts are incomplete or duplicated", "input_membership", "acceptance_input_membership_invalid")
+
         changed_generation_ids = run.get("changed_generation_ids")
         predecessor = run.get("predecessor_generation_set_sha256")
         if (
@@ -2172,6 +2343,83 @@ class AcceptanceV2Provider:
                 or origin_manifest.get("compiler_provider") != expected_compile_provider
             ):
                 _reject("Rendered evidence provenance is incomplete", "quality_input_validity", "acceptance_rendered_evidence_invalid")
+
+    def _require_committed_delivery_successor(
+        self,
+        *,
+        binding: dict[str, Any],
+        successor: dict[str, Any],
+        successor_sha256: str,
+        predecessor_authority_sha256: str | None,
+    ) -> bool:
+        """Prove the sole Guard exception to the immutable Acceptance Run binding."""
+
+        run = binding["run"]
+        intent_id = successor.get("last_mutation_intent_id")
+        if (
+            successor.get("run_id") != run.get("run_id")
+            or successor.get("coordination_revision")
+            != run.get("coordination_revision", -2) + 1
+            or successor.get("schema_version") != "4.0.0"
+            or successor.get("canonical_platform") != "bilibili"
+            or successor.get("platform_adapter") != "bilibili"
+            or successor.get("delivery", {}).get("stage") != "accepted"
+            or not isinstance(intent_id, str)
+            or not intent_id
+        ):
+            _reject(
+                "Kernel Run is not the committed Delivery Lifecycle successor",
+                "run_lifecycle",
+                "acceptance_delivery_successor_invalid",
+            )
+        control_store_path = ControlStore(
+            Path(run["control_store_root"]),
+            ContractRegistry(self.project_root),
+        ).path
+        try:
+            with sqlite3.connect(
+                f"file:{control_store_path.as_posix()}?mode=ro", uri=True
+            ) as control:
+                control.row_factory = sqlite3.Row
+                intent = control.execute(
+                    "SELECT * FROM delivery_lifecycle_intents WHERE intent_id=?",
+                    (intent_id,),
+                ).fetchone()
+        except (sqlite3.DatabaseError, OSError) as exc:
+            _reject(
+                "Delivery Lifecycle authority is unavailable",
+                "run_lifecycle",
+                "acceptance_delivery_successor_authority_unavailable",
+                detail=str(exc),
+            )
+        try:
+            replacement = json.loads(intent["replacement_run_record_json"]) if intent else None
+        except (json.JSONDecodeError, TypeError) as exc:
+            _reject(
+                "Committed Delivery Lifecycle successor is malformed",
+                "run_lifecycle",
+                "acceptance_delivery_successor_invalid",
+                detail=str(exc),
+            )
+        if not (
+            intent
+            and intent["state"] == "COMMITTED"
+            and intent["run_id"] == run["run_id"]
+            and intent["expected_run_revision"] == run["coordination_revision"]
+            and intent["prior_run_record_sha256"] == run["run_record_sha256"]
+            and intent["prior_stage"] == "ready_for_delivery"
+            and intent["target_stage"] == "accepted"
+            and intent["operation"] == "transition"
+            and intent["replacement_run_record_sha256"] == successor_sha256
+            and replacement == successor
+            and predecessor_authority_sha256 == successor_sha256
+        ):
+            _reject(
+                "Kernel Run lacks an exact committed Delivery Lifecycle successor",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+        return True
 
     def _validate_patch(self, patch: dict[str, Any], dimension: str, skeleton: dict[str, Any], binding: dict[str, Any]) -> None:
         domain = AcceptanceInputDomain.from_binding(binding)

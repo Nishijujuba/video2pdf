@@ -1,0 +1,12 @@
+{
+  "scenario_id": "youtube_kernel_activated",
+  "scenario_class": "single_contradiction",
+  "base_fixture": "slice12.valid.json",
+  "target_invariant": "platform_statuses",
+  "mutation_seam": "platform_statuses.youtube",
+  "mutation": {"platform_statuses": {"bilibili": "active_kernel", "youtube": "active_kernel"}},
+  "rematerialized_nodes": [],
+  "intentionally_stale_nodes": [],
+  "expected_first_failing_gate": "platform_statuses",
+  "expected_error_code": "youtube_platform_authority_changed"
+}

@@ -74,6 +74,28 @@ class GlobalGateFault(KernelError):
         )
 
 
+class PlatformKernelFault(KernelError):
+    classification = "injected_platform_kernel_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Platform Kernel fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class DeliveryLifecycleFault(KernelError):
+    classification = "injected_delivery_lifecycle_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Delivery Lifecycle fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
 class UnknownContractVersion(ContractError):
     classification = "unknown_contract_version"
 

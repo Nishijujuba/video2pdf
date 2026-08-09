@@ -1,0 +1,12 @@
+{
+  "scenario_id": "self_declared_guarded_delivery",
+  "scenario_class": "self_declaration",
+  "base_fixture": "slice12.valid.json",
+  "target_invariant": "guarded_delivery_evidence",
+  "mutation_seam": "guarded_delivery_evidence",
+  "mutation": {"operation": "remove"},
+  "rematerialized_nodes": [],
+  "intentionally_stale_nodes": ["guarded_delivery_evidence"],
+  "expected_first_failing_gate": "guarded_delivery_evidence",
+  "expected_error_code": "guarded_delivery_evidence_missing"
+}

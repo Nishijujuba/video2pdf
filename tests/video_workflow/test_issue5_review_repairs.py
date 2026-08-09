@@ -2539,6 +2539,7 @@ class ContractAndPromptRepairTests(unittest.TestCase):
                 ("run-record", "1.0.0"),
                 ("run-record", "2.0.0"),
                 ("run-record", "3.0.0"),
+                ("run-record", "4.0.0"),
             },
         )
         v2 = next(entry for entry in run_entries if entry["schema_version"] == "2.0.0")
@@ -2576,9 +2577,22 @@ class ContractAndPromptRepairTests(unittest.TestCase):
                 / "tests/video_workflow/fixtures/contracts/run-record.v3.valid.json"
             ),
         )
+        v4 = next(
+            entry for entry in run_entries if entry["schema_version"] == "4.0.0"
+        )
+        self.assertEqual(
+            v4["schema_path"], "schemas/video-workflow/v4/run-record.v4.schema.json"
+        )
+        contracts.validate(
+            "run-record",
+            read_json(
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/contracts/run-record.v4.valid.json"
+            ),
+        )
         with self.assertRaises(UnknownContractVersion):
             contracts.validate_run_record(
-                {"schema_name": "run-record", "schema_version": "4.0.0"}
+                {"schema_name": "run-record", "schema_version": "5.0.0"}
             )
 
     def test_duplicate_run_record_version_is_rejected(self) -> None:

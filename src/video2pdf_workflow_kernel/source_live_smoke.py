@@ -974,6 +974,293 @@ def _promote_supplied_whisper_transcript(
     return "und"
 
 
+def _resume_decision_ready_whisper(
+    *,
+    kernel: Any,
+    run_dir: Path,
+    run: Mapping[str, Any],
+    case: SourceLiveSmokeCase,
+    proofs: _TerminalProofRegistry,
+    recorded_at: str,
+    provider_kind: Literal["live", "recorded_fixture"],
+    recording_sha256: str | None,
+    whisper_transcript: Path | None,
+    versions: Mapping[str, str],
+    runtime_policy_sha256: str,
+) -> SourceLiveSmokeExecution:
+    """Resume the only open stage of an authenticated decision-ready Run."""
+
+    from .source_candidates import SourceCandidatePolicy
+    from .source_package import GeneratedWhisperTranscript
+
+    if whisper_transcript is None:
+        raise ContractError(
+            "decision-ready source acquisition resume requires --whisper-transcript"
+        )
+    if (
+        "source_manifest" in run["artifact_generations"]
+        or (run_dir / "source/manifest.json").exists()
+        or run.get("checkpoints", {}).get("source_ready", {}).get("status")
+        == "current"
+    ):
+        raise ArtifactDrift(
+            "decision-ready source acquisition contains partial source package authority"
+        )
+
+    generations = run["artifact_generations"]
+    required = {
+        "source_candidate_inventory",
+        "source_acquisition_decision_skeleton",
+        "source_acquisition_decision",
+    }
+    if not required.issubset(generations):
+        raise ArtifactDrift(
+            "decision-ready source acquisition lacks promoted decision authority"
+        )
+    for logical_id in sorted(required):
+        generation = generations[logical_id]
+        path = run_dir / Path(*PurePosixPath(generation["path"]).parts)
+        try:
+            require_contained_path(
+                path,
+                run_dir,
+                purpose=f"decision-ready {logical_id} Artifact",
+                error_type=ArtifactDrift,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+        except ArtifactDrift:
+            raise
+        if sha256_file(path) != generation["sha256"]:
+            raise ArtifactDrift(
+                "decision-ready source acquisition promoted Artifact drifted",
+                data={"drifted_paths": [generation["path"]]},
+            )
+
+    current = dict(run)
+    generations = current["artifact_generations"]
+    inventory = read_json(
+        run_dir / generations["source_candidate_inventory"]["path"]
+    )
+    skeleton = read_json(
+        run_dir / generations["source_acquisition_decision_skeleton"]["path"]
+    )
+    patch = read_json(run_dir / generations["source_acquisition_decision"]["path"])
+    expected_policy = SourceCandidatePolicy(
+        content_classification=case.content_classification,
+        subtitle_language_priority=case.subtitle_language_priority,
+        whisper_allowed=case.whisper_allowed,
+    ).binding()
+    provider = inventory.get("provider", {})
+    if (
+        inventory.get("run_id") != current["run_id"]
+        or inventory.get("source_identity") != current["source_identity"]
+        or inventory.get("source_epoch") != current["source_epoch"]
+        or inventory.get("policy_binding") != expected_policy
+        or provider.get("kind") != provider_kind
+        or provider.get("recording_sha256") != recording_sha256
+    ):
+        raise ContractError(
+            "decision-ready source acquisition differs from current provider or policy authority"
+        )
+
+    source_epoch = int(current["source_epoch"])
+    expected_task_ids = {
+        "provider": kernel.derive_production_source_task_id(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key=f"source-acquisition-provider-epoch-{source_epoch}",
+        ),
+        "semantic": kernel.derive_production_source_task_id(
+            run_dir,
+            task_stage="semantic_judgment",
+            logical_task_key=f"source-acquisition-semantic-epoch-{source_epoch}",
+        ),
+    }
+
+    def committed_producer(logical_id: str, expected_task_id: str) -> str:
+        producer = str(generations[logical_id].get("producer", ""))
+        if not producer.startswith("task:"):
+            raise ArtifactDrift(
+                "decision-ready source acquisition lacks Task-produced authority"
+            )
+        try:
+            task_id, attempt_id = producer.removeprefix("task:").split("/", 1)
+        except ValueError as exc:
+            raise ArtifactDrift(
+                "decision-ready source acquisition Task producer is invalid"
+            ) from exc
+        status = kernel.task_claim_status(task_id)
+        if (
+            task_id != expected_task_id
+            or status is None
+            or status["state"] != "terminal"
+            or status["attempt_id"] != attempt_id
+        ):
+            raise ArtifactDrift(
+                "decision-ready source acquisition Task is not current and committed"
+            )
+        return attempt_id
+
+    provider_attempt_id = committed_producer(
+        "source_candidate_inventory", expected_task_ids["provider"]
+    )
+    try:
+        skeleton_attempt_id = committed_producer(
+            "source_acquisition_decision_skeleton", expected_task_ids["provider"]
+        )
+    except ArtifactDrift as exc:
+        raise ArtifactDrift(
+            "decision-ready source acquisition provider Task producer cohesion drifted"
+        ) from exc
+    if skeleton_attempt_id != provider_attempt_id:
+        raise ArtifactDrift(
+            "decision-ready source acquisition provider Task producer cohesion drifted"
+        )
+    semantic_attempt_id = committed_producer(
+        "source_acquisition_decision", expected_task_ids["semantic"]
+    )
+    kernel.reconcile_run(run_dir)
+    reconciled = read_json(run_dir / "workflow/run.json")
+    if (
+        reconciled["run_id"] != run["run_id"]
+        or reconciled["source_identity"] != run["source_identity"]
+        or reconciled["source_epoch"] != run["source_epoch"]
+        or reconciled["source_state"] != "decision_ready"
+        or reconciled["source_acquisition_mode"] != "fresh_download"
+    ):
+        raise ArtifactDrift(
+            "decision-ready source acquisition authority changed during reconciliation"
+        )
+    semantic_envelope = (
+        run_dir / "workflow/tasks" / expected_task_ids["semantic"] / "task.json"
+    )
+    if (
+        patch.get("task_id") != expected_task_ids["semantic"]
+        or patch.get("attempt_id") != semantic_attempt_id
+        or patch.get("task_envelope_sha256") != sha256_file(semantic_envelope)
+        or patch.get("skeleton_sha256")
+        != generations["source_acquisition_decision_skeleton"]["sha256"]
+        or patch.get("judgment", {}).get("whisper_fallback", {}).get("choice")
+        != "use_whisper"
+    ):
+        raise ArtifactDrift(
+            "decision-ready source acquisition semantic Judgment Patch drifted"
+        )
+
+    audio_id = skeleton["allowed_judgment"]["whisper_audio_candidate_id"]
+    audio = next(
+        (item for item in inventory["candidates"] if item["candidate_id"] == audio_id),
+        None,
+    )
+    if audio is None:
+        raise ArtifactDrift(
+            "decision-ready source acquisition lacks its Whisper audio candidate"
+        )
+    whisper_key = f"source-whisper-transcription-epoch-{source_epoch}"
+    prepared_whisper = kernel.prepare_production_source_task(
+        run_dir,
+        task_stage="whisper_transcription",
+        logical_task_key=whisper_key,
+        prepared_at=recorded_at,
+        whisper_audio_candidate={
+            "candidate_id": audio["candidate_id"],
+            "staged_path": audio["staged_path"],
+            "sha256": audio["sha256"],
+        },
+    )
+    coordinator_id = f"source-acquire-{case.platform}"
+    claimed_whisper = _claim_or_reclaim_source_task(
+        kernel,
+        run_dir,
+        prepared_whisper,
+        coordinator_session_id=coordinator_id,
+        worker_id=f"{coordinator_id}-whisper",
+    )
+    whisper_tokens: list[str] = []
+    whisper_failures: list[Exception] = []
+
+    def transcribe(launch_token: str) -> str:
+        whisper_tokens.append(launch_token)
+        try:
+            output, _ = _task_output_path(
+                prepared_whisper, claimed_whisper, "source_transcription"
+            )
+            return _promote_supplied_whisper_transcript(whisper_transcript, output)
+        except Exception as error:
+            whisper_failures.append(error)
+            return "und"
+
+    language = AdmittedSourceProviderLauncher(kernel).launch_whisper(
+        attempt_id=claimed_whisper.attempt_id,
+        claim_generation=claimed_whisper.claim_generation,
+        provider=transcribe,
+    )
+    try:
+        if len(whisper_tokens) != 1:
+            raise ContractError("source Whisper launch token is ambiguous")
+        if whisper_failures:
+            raise whisper_failures[0]
+        whisper_output, _ = _task_output_path(
+            prepared_whisper, claimed_whisper, "source_transcription"
+        )
+        whisper_sha256 = sha256_file(whisper_output)
+    except Exception:
+        if whisper_tokens:
+            _release_stage(
+                kernel=kernel,
+                proofs=proofs,
+                claimed=claimed_whisper,
+                launch_token=whisper_tokens[0],
+                stage="whisper",
+                artifacts={},
+                observed_at=recorded_at,
+                declared_outcome="failed",
+            )
+        raise
+    _release_stage(
+        kernel=kernel,
+        proofs=proofs,
+        claimed=claimed_whisper,
+        launch_token=whisper_tokens[0],
+        stage="whisper",
+        artifacts={"source_transcription": whisper_sha256},
+        observed_at=recorded_at,
+    )
+    _complete_and_promote(kernel, run_dir, prepared_whisper, claimed_whisper)
+    promoted = read_json(run_dir / "workflow/run.json")
+    generation = promoted["artifact_generations"]["source_transcription"]
+    transcript_path = run_dir / generation["path"]
+    generated = GeneratedWhisperTranscript(
+        staged_path=generation["path"],
+        sha256=sha256_file(transcript_path),
+        size_bytes=transcript_path.stat().st_size,
+        media_type="application/x-subrip",
+        language=language,
+        technical_probe={
+            "status": "pass",
+            "duration_seconds": inventory["source_metadata"]["duration_seconds"],
+            "stream_types": ["transcript"],
+            "codec_names": ["subrip"],
+        },
+        generation=generation["generation"],
+        evidence_sha256=generation["sha256"],
+    )
+    finalized = kernel.finalize_production_source(
+        run_dir,
+        published_at=recorded_at,
+        whisper_transcript=generated,
+    )
+    return SourceLiveSmokeExecution(
+        run_path=run_dir / "workflow/run.json",
+        manifest_path=Path(finalized.manifest_path),
+        command_argv_redacted=(),
+        authentication_classification="cookie_accepted",
+        tool_versions=versions,
+        runtime_policy_sha256=runtime_policy_sha256,
+    )
+
+
 def acquire_source_for_initialized_run(
     *,
     kernel: Any,
@@ -1016,10 +1303,24 @@ def acquire_source_for_initialized_run(
     if (
         run["canonical_platform"] != case.platform
         or run["original_title"] != case.original_title
-        or run["source_state"] != "pending"
+        or run["source_state"] not in {"pending", "decision_ready"}
         or run["source_acquisition_mode"] != "fresh_download"
     ):
         raise ContractError("source acquisition request differs from current Run authority")
+    if run["source_state"] == "decision_ready":
+        return _resume_decision_ready_whisper(
+            kernel=kernel,
+            run_dir=run_dir,
+            run=run,
+            case=case,
+            proofs=proofs,
+            recorded_at=recorded_at,
+            provider_kind=provider_kind,
+            recording_sha256=recording_sha256,
+            whisper_transcript=whisper_transcript,
+            versions=versions,
+            runtime_policy_sha256=runtime_policy_sha256,
+        )
     source_epoch = int(run["source_epoch"])
     provider_key = f"source-acquisition-provider-epoch-{source_epoch}"
     semantic_key = f"source-acquisition-semantic-epoch-{source_epoch}"

@@ -11,6 +11,7 @@ from typing import Any
 from jsonschema import Draft202012Validator, ValidationError
 
 from .acceptance_v2 import AcceptanceV2Provider
+from .contracts import ContractRegistry
 from .errors import (
     ContractError,
     ControlStoreUnavailable,
@@ -842,6 +843,18 @@ class BilibiliPlatformCutoverPublisher:
             item for item in index.get("entries", []) if item.get("run_id") == run["run_id"]
         ]
         entry = matching_entries[0] if len(matching_entries) == 1 else {}
+        if run.get("source_state") == "decision_ready":
+            self._require_decision_ready_reprepare(
+                run_dir=run_dir,
+                run=run,
+                video=video,
+                session=session,
+                index=index,
+                entry=entry,
+                run_connection_path=workspace / ".workflow-control" / "control.sqlite3",
+                session_id=row["session_id"],
+            )
+            return candidate
         if (
             run.get("coordination_revision") != 1
             or run.get("source_epoch") != 1
@@ -919,6 +932,259 @@ class BilibiliPlatformCutoverPublisher:
                 },
             )
         return candidate
+
+    @staticmethod
+    def _require_decision_ready_reprepare(
+        *,
+        run_dir: Path,
+        run: dict[str, Any],
+        video: dict[str, Any],
+        session: dict[str, Any],
+        index: dict[str, Any],
+        entry: dict[str, Any],
+        run_connection_path: Path,
+        session_id: str,
+    ) -> None:
+        """Accept only the current pre-publication Source decision authority."""
+
+        try:
+            ContractRegistry(PROJECT_ROOT).validate_run_record(run)
+        except (ContractError, OSError) as exc:
+            raise KernelConflict(
+                "Bilibili decision-ready candidate Run is contract-invalid"
+            ) from exc
+        artifact_ids = {
+            "bootstrap_record",
+            "source_candidate_inventory",
+            "source_acquisition_decision_skeleton",
+            "source_acquisition_decision",
+        }
+        checkpoint_ids = {
+            "run_initialized",
+            "source_candidates_ready",
+            "source_acquisition_decision_ready",
+        }
+        delivery_artifacts = video.get("artifacts")
+        projections = run["delivery"]["projections"]
+        if (
+            run.get("coordination_revision") != 3
+            or run.get("source_epoch") != 1
+            or run.get("source_blocker") is not None
+            or run.get("source_version") is not None
+            or run.get("phase") != "source_acquisition"
+            or set(run.get("artifact_generations", {})) != artifact_ids
+            or set(run.get("checkpoints", {})) != checkpoint_ids
+            or any(
+                checkpoint.get("status") != "current"
+                for checkpoint in run["checkpoints"].values()
+            )
+            or (run_dir / "source" / "manifest.json").exists()
+            or not isinstance(delivery_artifacts, dict)
+            or any(value is not None for value in delivery_artifacts.values())
+            or run["delivery"].get("ownership")
+            != {"session_id": session_id, "generation": 1}
+            or projections.get("archive") is not None
+            or projections["video_target"].get("projection_revision") != 1
+            or projections["session_target"].get("projection_revision") != 1
+            or video.get("projection_revision") != 1
+            or video.get("run_revision") != 1
+            or session.get("projection_revision") != 1
+            or session.get("run_revision") != 1
+            or session.get("owner_status") != "active"
+            or session.get("ownership_generation") != 1
+            or entry.get("run_revision") != 1
+            or entry.get("ownership_generation") != 1
+            or entry.get("session_id") != session_id
+            or entry.get("archive") is not None
+            or entry.get("video_target", {}).get("projection_revision") != 1
+            or entry.get("session_target", {}).get("projection_revision") != 1
+            or projections["task_index"].get("projection_revision")
+            != index.get("projection_revision")
+            or (run_dir / "review" / "acceptance" / "acceptance_report.json").exists()
+            or (
+                run_dir / "review" / "acceptance" / "delivery_guard_report.json"
+            ).exists()
+        ):
+            raise KernelConflict(
+                "Bilibili initialized candidate has progressed beyond the allowed "
+                "decision-ready authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_progressed",
+                },
+            )
+
+        generations = run["artifact_generations"]
+        for logical_id, generation in generations.items():
+            path = run_dir / Path(*str(generation.get("path", "")).split("/"))
+            if (
+                generation.get("generation") != 1
+                or not path.is_file()
+                or generation.get("sha256") != sha256_file(path)
+            ):
+                raise KernelConflict(
+                    "Bilibili decision-ready candidate artifact authority drifted",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_initialized_reprepare_artifact_drift",
+                    },
+                )
+        expected_checkpoint_bindings = {
+            "run_initialized": {"bootstrap_record"},
+            "source_candidates_ready": {
+                "source_candidate_inventory",
+                "source_acquisition_decision_skeleton",
+            },
+            "source_acquisition_decision_ready": {
+                "source_candidate_inventory",
+                "source_acquisition_decision_skeleton",
+                "source_acquisition_decision",
+            },
+        }
+        for checkpoint_id, logical_ids in expected_checkpoint_bindings.items():
+            bindings = run["checkpoints"][checkpoint_id].get("artifact_bindings", [])
+            if (
+                {binding.get("logical_id") for binding in bindings} != logical_ids
+                or any(
+                    binding.get("generation")
+                    != generations[binding["logical_id"]]["generation"]
+                    or binding.get("sha256")
+                    != generations[binding["logical_id"]]["sha256"]
+                    for binding in bindings
+                )
+            ):
+                raise KernelConflict(
+                    "Bilibili decision-ready candidate checkpoint authority drifted"
+                )
+
+        if not run_connection_path.is_file():
+            raise KernelConflict(
+                "Bilibili initialized candidate Control Store is unavailable"
+            )
+        with sqlite3.connect(run_connection_path) as run_connection:
+            run_connection.row_factory = sqlite3.Row
+            run_id = run["run_id"]
+            initialization = run_connection.execute(
+                "SELECT * FROM initialization_intents WHERE run_id=? AND state='COMMITTED'",
+                (run_id,),
+            ).fetchall()
+            intent_counts = {
+                table: run_connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE run_id=?", (run_id,)
+                ).fetchone()[0]
+                for table in (
+                    "run_state_mutation_intents",
+                    "source_publication_intents",
+                    "delivery_lifecycle_intents",
+                )
+            }
+            promotions = run_connection.execute(
+                "SELECT * FROM task_promotion_intents WHERE run_id=? "
+                "ORDER BY expected_run_revision",
+                (run_id,),
+            ).fetchall()
+            claims = run_connection.execute(
+                "SELECT c.*,a.state AS attempt_state FROM task_claims c "
+                "JOIN task_attempts a ON a.attempt_id=c.attempt_id "
+                "WHERE c.authority_id=? ORDER BY c.task_id",
+                (run_id,),
+            ).fetchall()
+            task_envelopes = {}
+            for path in sorted((run_dir / "workflow" / "tasks").glob("*/task.json")):
+                envelope = read_json(path)
+                task_envelopes[envelope.get("task_id")] = envelope
+
+            claims_by_stage = {
+                task_envelopes.get(claim["task_id"], {}).get("task_stage"): claim
+                for claim in claims
+            }
+            provider = claims_by_stage.get("provider_acquisition")
+            semantic = claims_by_stage.get("semantic_judgment")
+            whisper = claims_by_stage.get("whisper_transcription")
+            promotion_by_task = {row["task_id"]: row for row in promotions}
+            allowed_promoted = (provider, semantic)
+            if (
+                len(initialization) != 1
+                or initialization[0]["output_path"] != str(run_dir)
+                or any(intent_counts.values())
+                or len(task_envelopes) != 3
+                or len(claims) != 3
+                or len(promotions) != 2
+                or any(row["state"] != "COMMITTED" for row in promotions)
+                or [row["expected_run_revision"] for row in promotions] != [1, 2]
+                or promotions[0]["old_run_record_sha256"]
+                != (
+                    initialization[0]["run_record_sha256"]
+                    or initialization[0]["expected_run_record_sha256"]
+                )
+                or promotions[0]["replacement_run_record_sha256"]
+                != promotions[1]["old_run_record_sha256"]
+                or promotions[1]["replacement_run_record_sha256"]
+                != sha256_file(run_dir / "workflow" / "run.json")
+                or provider is None
+                or semantic is None
+                or whisper is None
+                or any(
+                    claim["state"] != "TERMINAL"
+                    or claim["attempt_state"] != "COMMITTED_COMPLETE"
+                    or claim["task_id"] not in promotion_by_task
+                    for claim in allowed_promoted
+                )
+                or whisper["state"] != "ACTIVE"
+                or whisper["claim_generation"] != 2
+                or whisper["attempt_state"] != "CLAIMED"
+                or whisper["task_id"] in promotion_by_task
+                or run.get("last_mutation_intent_id")
+                != promotion_by_task[semantic["task_id"]]["intent_id"]
+            ):
+                raise KernelConflict(
+                    "Bilibili decision-ready candidate task authority is unexpected",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_initialized_reprepare_task_authority_invalid",
+                    },
+                )
+
+            producers = {
+                logical_id: generation.get("producer")
+                for logical_id, generation in generations.items()
+            }
+            provider_prefix = f"task:{provider['task_id']}/{provider['attempt_id']}"
+            semantic_prefix = f"task:{semantic['task_id']}/{semantic['attempt_id']}"
+            whisper_attempts = run_connection.execute(
+                "SELECT * FROM task_attempts WHERE task_id=? ORDER BY claim_generation",
+                (whisper["task_id"],),
+            ).fetchall()
+            prior_lease = run_connection.execute(
+                "SELECT * FROM resource_leases WHERE attempt_id=?",
+                (whisper_attempts[0]["attempt_id"] if whisper_attempts else "",),
+            ).fetchone()
+            terminal_evidence = (
+                json.loads(prior_lease["terminal_evidence_json"])
+                if prior_lease is not None
+                and isinstance(prior_lease["terminal_evidence_json"], str)
+                else {}
+            )
+            if (
+                producers["source_candidate_inventory"] != provider_prefix
+                or producers["source_acquisition_decision_skeleton"]
+                != provider_prefix
+                or producers["source_acquisition_decision"] != semantic_prefix
+                or len(whisper_attempts) != 2
+                or [row["claim_generation"] for row in whisper_attempts] != [1, 2]
+                or [row["state"] for row in whisper_attempts]
+                != ["ABANDONED", "CLAIMED"]
+                or prior_lease is None
+                or prior_lease["state"] != "released"
+                or terminal_evidence.get("declared_outcome") != "failed"
+            ):
+                raise KernelConflict(
+                    "Bilibili decision-ready candidate retry authority is invalid",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_initialized_reprepare_retry_invalid",
+                    },
+                )
 
     def require_prepared_candidate(
         self,

@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from tests.video_workflow import test_issue13_candidate_confirmation as candidate_test
 from tests.video_workflow import test_issue13_cold_start_cutover as cold_start_test
 from tests.video_workflow import test_issue13_platform_cutover as platform_test
+from tests.video_workflow import test_issue13_whisper_source_cli as whisper_test
 from video2pdf_workflow_kernel.errors import KernelConflict
 from video2pdf_workflow_kernel.guarded_delivery import _load_active_delivery_guard
 from video2pdf_workflow_kernel.platform_kernel import BilibiliPlatformCutoverPublisher
@@ -74,6 +75,404 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
         self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
         run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
         return control, workspace, probe, implementation_commit, run_dir
+
+    def _decision_ready_candidate_for_reprepare(
+        self, *, source_ready: bool = False,
+    ) -> tuple[Path, Path, str, Path]:
+        case_root = whisper_test.new_case_dir(
+            self.id(), label="issue13-decision-ready-reprepare"
+        )
+        project_root = case_root / "candidate-project"
+        workspace = project_root / "workspace"
+        workspace.mkdir(parents=True)
+        control = case_root / "control"
+        control.mkdir()
+        platform_test.Issue13PlatformCutoverTests._write_stub_global_gate(control)
+        recording = whisper_test._recorded_provider_without_subtitles(case_root)
+        cookie = case_root / "credentials" / "bilibili-cookies.txt"
+        cookie.parent.mkdir()
+        cookie.write_text(
+            "# Netscape HTTP Cookie File\n"
+            ".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\trecorded\n",
+            encoding="utf-8",
+        )
+        transcript = case_root / "worker-output" / "transcription.srt"
+        transcript.parent.mkdir()
+        transcript.write_bytes(
+            (
+                "1\n00:00:00,000 --> 00:00:04,500\n"
+                "A governed transcript remains on the source timeline.\n\n"
+                "2\n00:00:04,500 --> 00:00:09,000\n"
+                "Every cue remains bound to acquired source evidence.\n"
+                if source_ready
+                else "invalid transcript\n"
+            ).encode("utf-8")
+        )
+
+        probed = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-probe",
+            "bootstrap-probe",
+            "--workspace-root",
+            str(workspace),
+            "--platform",
+            "bilibili",
+            "--source-url",
+            whisper_test.SOURCE_URL,
+            "--cookie-file",
+            str(cookie),
+            "--provider-recording",
+            str(recording),
+            "--task-start",
+            "2026-08-11T10:00:00+08:00",
+            "--request-id",
+            "issue13-decision-ready-reprepare",
+        )
+        self.assertEqual(0, probed.returncode, probed.stdout + probed.stderr)
+        probe = Path(json.loads(probed.stdout)["data"]["probe_record"])
+        implementation_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        prepared = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-prepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T02:01:00Z",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        initialized = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-init",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control),
+            "--probe",
+            str(probe),
+            "--session-id",
+            "session-issue13-decision-ready",
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
+        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
+        acquired = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-acquire",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie),
+            "--provider-recording",
+            str(recording),
+            "--whisper-transcript",
+            str(transcript),
+        )
+        self.assertEqual(
+            0 if source_ready else 20,
+            acquired.returncode,
+            acquired.stdout + acquired.stderr,
+        )
+        if source_ready:
+            return control, probe, implementation_commit, run_dir
+        whisper_task = next(
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (run_dir / "workflow" / "tasks").glob("*/task.json")
+            if json.loads(path.read_text(encoding="utf-8")).get("task_stage")
+            == "whisper_transcription"
+        )
+        prior_attempt = json.loads(
+            next(
+                (run_dir / whisper_task["task_root_path"] / "attempts").glob(
+                    "*/attempt.json"
+                )
+            ).read_text(encoding="utf-8")
+        )
+        reclaimed = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-reclaim",
+            "task-reclaim",
+            "--run-dir",
+            str(run_dir),
+            "--task-id",
+            whisper_task["task_id"],
+            "--expected-attempt-id",
+            prior_attempt["attempt_id"],
+            "--expected-claim-generation",
+            "1",
+            "--coordinator-session-id",
+            "source-acquire-bilibili",
+            "--worker-id",
+            "source-acquire-bilibili-whisper",
+            "--reason",
+            "retry failed Whisper transcript",
+        )
+        self.assertEqual(0, reclaimed.returncode, reclaimed.stdout + reclaimed.stderr)
+        self.assertEqual(2, json.loads(reclaimed.stdout)["data"]["claim_generation"])
+        return control, probe, implementation_commit, run_dir
+
+    def test_prepare_rebinds_exact_decision_ready_candidate_with_active_whisper_retry(
+        self,
+    ) -> None:
+        control, probe, implementation_commit, run_dir = (
+            self._decision_ready_candidate_for_reprepare()
+        )
+        old_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        database_path = control / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(database_path) as database:
+            candidate = json.loads(
+                database.execute(
+                    "SELECT candidate_json FROM platform_cutover_candidates "
+                    "WHERE platform='bilibili'"
+                ).fetchone()[0]
+            )
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
+        reprepared = whisper_test._run_public_cli(
+            self.id() + "-decision-ready-reprepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T03:00:00Z",
+        )
+
+        self.assertEqual(0, reprepared.returncode, reprepared.stdout + reprepared.stderr)
+        envelope = json.loads(reprepared.stdout)
+        self.assertTrue(envelope["data"]["reprepared"])
+        self.assertFalse(envelope["data"]["idempotent"])
+        self.assertEqual(run_dir, Path(envelope["data"]["candidate_run_dir"]))
+        with sqlite3.connect(database_path) as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        candidate = json.loads(row["candidate_json"])
+        self.assertEqual("INITIALIZED", row["state"])
+        self.assertEqual(implementation_commit, row["implementation_commit"])
+        self.assertEqual(implementation_commit, candidate["implementation_commit"])
+        self.assertEqual("2026-08-11T03:00:00Z", candidate["prepared_at"])
+        self.assertEqual(str(run_dir.resolve()), candidate["candidate_run_dir"])
+
+    def test_decision_ready_reprepare_rejects_each_forbidden_progression(self) -> None:
+        control, probe, implementation_commit, run_dir = (
+            self._decision_ready_candidate_for_reprepare()
+        )
+        old_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        platform_database = control / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(platform_database) as database:
+            candidate = json.loads(
+                database.execute(
+                    "SELECT candidate_json FROM platform_cutover_candidates "
+                    "WHERE platform='bilibili'"
+                ).fetchone()[0]
+            )
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
+        def reprepare(label: str) -> dict:
+            completed = whisper_test._run_public_cli(
+                self.id() + f"-decision-ready-reject-{label}",
+                "platform-kernel-prepare",
+                "--platform",
+                "bilibili",
+                "--control-store-root",
+                str(control),
+                "--implementation-commit",
+                implementation_commit,
+                "--candidate-probe",
+                str(probe),
+                "--candidate-session-id",
+                "session-issue13-decision-ready",
+                "--prepared-at",
+                "2026-08-11T03:00:00Z",
+            )
+            self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+            return json.loads(completed.stdout)
+
+        inventory_path = run_dir / "work" / "source-acquisition" / "candidate-inventory.json"
+        inventory_bytes = inventory_path.read_bytes()
+        inventory_path.write_bytes(inventory_bytes + b" ")
+        artifact_drift = reprepare("artifact-drift")
+        self.assertEqual(
+            "bilibili_initialized_reprepare_artifact_drift",
+            artifact_drift["data"]["error_code"],
+        )
+        inventory_path.write_bytes(inventory_bytes)
+
+        manifest_path = run_dir / "source" / "manifest.json"
+        _write_json(manifest_path, {})
+        source_manifest = reprepare("source-manifest")
+        self.assertEqual(
+            "bilibili_initialized_reprepare_progressed",
+            source_manifest["data"]["error_code"],
+        )
+        disposable = run_dir / "待删除"
+        disposable.mkdir(exist_ok=True)
+        manifest_path.replace(disposable / "unexpected-source-manifest.json")
+
+        run_path = run_dir / "workflow" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        video_path = run_dir / run["delivery"]["projections"]["video_target"]["path"]
+        video_bytes = video_path.read_bytes()
+        video = json.loads(video_bytes)
+        video["artifacts"]["acceptance_report"] = {
+            "path": str((run_dir / "review" / "acceptance" / "acceptance_report.json").resolve()),
+            "sha256": "a" * 64,
+        }
+        _write_json(video_path, video)
+        run["delivery"]["projections"]["video_target"]["sha256"] = _sha256(video_path)
+        _write_json(run_path, run)
+        delivery_progress = reprepare("delivery-progress")
+        self.assertEqual(
+            "bilibili_initialized_reprepare_progressed",
+            delivery_progress["data"]["error_code"],
+        )
+        video_path.write_bytes(video_bytes)
+        run["delivery"]["projections"]["video_target"]["sha256"] = _sha256(video_path)
+        _write_json(run_path, run)
+
+        run_database = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        with sqlite3.connect(run_database) as database:
+            database.row_factory = sqlite3.Row
+            whisper = database.execute(
+                "SELECT c.* FROM task_claims c JOIN task_attempts a "
+                "ON a.attempt_id=c.attempt_id JOIN task_claim_authorities ca "
+                "ON ca.task_id=c.task_id WHERE c.authority_id=? "
+                "AND c.state='ACTIVE' AND c.claim_generation=2",
+                (json.loads(run_path.read_text(encoding="utf-8"))["run_id"],),
+            ).fetchone()
+            promoted = dict(
+                database.execute(
+                    "SELECT * FROM task_promotion_intents WHERE run_id=? "
+                    "ORDER BY expected_run_revision DESC LIMIT 1",
+                    (json.loads(run_path.read_text(encoding="utf-8"))["run_id"],),
+                ).fetchone()
+            )
+            promoted.update(
+                {
+                    "intent_id": "e" * 64,
+                    "task_id": whisper["task_id"],
+                    "attempt_id": whisper["attempt_id"],
+                    "claim_generation": 2,
+                    "expected_run_revision": 3,
+                    "intent_identity": "f" * 64,
+                }
+            )
+            columns = tuple(promoted)
+            database.execute(
+                f"INSERT INTO task_promotion_intents({','.join(columns)}) "
+                f"VALUES({','.join('?' for _ in columns)})",
+                tuple(promoted[column] for column in columns),
+            )
+        whisper_promoted = reprepare("whisper-promoted")
+        self.assertEqual(
+            "bilibili_initialized_reprepare_task_authority_invalid",
+            whisper_promoted["data"]["error_code"],
+        )
+
+    def test_initialized_reprepare_rejects_current_source_ready_authority(self) -> None:
+        control, probe, implementation_commit, run_dir = (
+            self._decision_ready_candidate_for_reprepare(source_ready=True)
+        )
+        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual("ready", run["source_state"])
+        self.assertTrue((run_dir / "source" / "manifest.json").is_file())
+        old_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with sqlite3.connect(control / "platform-kernel-control.sqlite3") as database:
+            candidate = json.loads(
+                database.execute(
+                    "SELECT candidate_json FROM platform_cutover_candidates "
+                    "WHERE platform='bilibili'"
+                ).fetchone()[0]
+            )
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
+        completed = whisper_test._run_public_cli(
+            self.id() + "-source-ready-reprepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T03:00:00Z",
+        )
+
+        self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "bilibili_initialized_reprepare_progressed",
+            json.loads(completed.stdout)["data"]["error_code"],
+        )
 
     def test_prepare_rebinds_exact_initialized_candidate_without_recreating_run(
         self,

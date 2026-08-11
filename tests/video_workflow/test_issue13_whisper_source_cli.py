@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -486,6 +487,322 @@ class Issue13WhisperSourceCliTests(unittest.TestCase):
                 _sha256(run_dir / artifact["path"]),
                 f"{artifact['logical_id']} must be bound to the current Source Manifest",
             )
+
+    def test_public_source_acquire_resumes_only_whisper_from_decision_ready(
+        self,
+    ) -> None:
+        case_root = new_case_dir(self.id(), label="issue13-whisper-resume")
+        project_root = case_root / "candidate-project"
+        workspace_root = project_root / "workspace"
+        workspace_root.mkdir(parents=True)
+        control_store_root = case_root / "control"
+        control_store_root.mkdir()
+        platform_cutover_test.Issue13PlatformCutoverTests._write_stub_global_gate(
+            control_store_root
+        )
+        recording_root = _recorded_provider_without_subtitles(case_root)
+        cookie_file = case_root / "credentials" / "bilibili-cookies.txt"
+        cookie_file.parent.mkdir()
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            ".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\trecorded\n",
+            encoding="utf-8",
+        )
+        invalid_srt = case_root / "worker-output" / "invalid.srt"
+        invalid_srt.parent.mkdir()
+        invalid_srt.write_text("transcription failed", encoding="utf-8")
+        valid_srt = case_root / "worker-output" / "generation-2.srt"
+        valid_srt.write_bytes(
+            b"1\n00:00:00,000 --> 00:00:04,500\n"
+            b"The fresh Whisper generation completes the same source epoch.\n"
+        )
+
+        probed = _run_public_cli(
+            self.id() + "-probe",
+            "bootstrap-probe",
+            "--workspace-root",
+            str(workspace_root),
+            "--platform",
+            "bilibili",
+            "--source-url",
+            SOURCE_URL,
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--task-start",
+            "2026-08-11T10:00:00+08:00",
+            "--request-id",
+            "issue13-whisper-resume-probe",
+        )
+        self.assertEqual(0, probed.returncode, probed.stdout + probed.stderr)
+        probe_path = Path(json.loads(probed.stdout)["data"]["probe_record"])
+        implementation_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        prepared = _run_public_cli(
+            self.id() + "-prepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control_store_root),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe_path),
+            "--candidate-session-id",
+            "session-issue13-whisper-resume",
+            "--prepared-at",
+            "2026-08-11T02:01:00Z",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        initialized = _run_public_cli(
+            self.id() + "-init",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace_root),
+            "--control-store-root",
+            str(control_store_root),
+            "--probe",
+            str(probe_path),
+            "--session-id",
+            "session-issue13-whisper-resume",
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
+        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
+        initialized_run = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+
+        faulted = _run_public_cli(
+            self.id() + "-faulted",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--whisper-transcript",
+            str(invalid_srt),
+        )
+        self.assertNotEqual(0, faulted.returncode, faulted.stdout + faulted.stderr)
+        decision_ready = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("decision_ready", decision_ready["source_state"])
+        self.assertNotIn("source_manifest", decision_ready["artifact_generations"])
+        self.assertNotIn("source_ready", decision_ready["checkpoints"])
+
+        task_records = {
+            record["task_stage"]: record
+            for record in (
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (run_dir / "workflow" / "tasks").glob("*/task.json")
+            )
+        }
+        original_task_ids = {
+            stage: record["task_id"] for stage, record in task_records.items()
+        }
+        original_attempt_counts = {
+            stage: len(list((run_dir / "workflow" / "tasks" / record["task_id"] / "attempts").glob("*")))
+            for stage, record in task_records.items()
+        }
+        self.assertEqual(
+            {"provider_acquisition", "semantic_judgment", "whisper_transcription"},
+            set(original_task_ids),
+        )
+
+        inventory_path = (
+            run_dir / "work" / "source-acquisition" / "candidate-inventory.json"
+        )
+        inventory_bytes = inventory_path.read_bytes()
+        inventory_path.write_bytes(inventory_bytes + b"\n")
+        drifted_resume = _run_public_cli(
+            self.id() + "-drifted-resume",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--whisper-transcript",
+            str(valid_srt),
+        )
+        self.assertEqual(40, drifted_resume.returncode)
+        self.assertEqual(
+            "artifact_drift", json.loads(drifted_resume.stdout)["classification"]
+        )
+        inventory_path.write_bytes(inventory_bytes)
+
+        # scenario_id: decision_ready_skeleton_producer_split
+        # target_invariant: inventory and skeleton share one committed provider Attempt
+        # mutation_seam: promoted skeleton generation producer
+        # rematerialized_nodes: Run bytes, latest promotion replacement, journal, row identity
+        # intentionally_stale_nodes: none
+        # expected_first_gate: decision-ready provider producer cohesion
+        # expected_error_code: artifact_drift
+        def rematerialize_skeleton_producer(producer: str) -> None:
+            from video2pdf_workflow_kernel.utils import canonical_json_bytes
+
+            run_path = run_dir / "workflow" / "run.json"
+            replacement = json.loads(run_path.read_text(encoding="utf-8"))
+            replacement["artifact_generations"][
+                "source_acquisition_decision_skeleton"
+            ]["producer"] = producer
+            replacement_bytes = canonical_json_bytes(replacement)
+            replacement_sha = hashlib.sha256(replacement_bytes).hexdigest()
+            replacement_json = replacement_bytes.decode("utf-8")
+            intent_id = replacement["last_mutation_intent_id"]
+            control_store = (
+                run_dir.parent / ".workflow-control" / "control.sqlite3"
+            )
+            with sqlite3.connect(control_store) as database:
+                row = database.execute(
+                    "SELECT i.task_id,i.attempt_id,i.outputs_json,"
+                    "c.envelope_sha256,a.completion_sha256 "
+                    "FROM task_promotion_intents i "
+                    "JOIN task_claims c ON c.task_id=i.task_id "
+                    "JOIN task_attempts a ON a.attempt_id=i.attempt_id "
+                    "WHERE i.intent_id=? AND i.state='COMMITTED'",
+                    (intent_id,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                task_id, attempt_id, outputs_json, envelope_sha, completion_sha = row
+                outputs_sha = hashlib.sha256(outputs_json.encode("utf-8")).hexdigest()
+                intent_identity = hashlib.sha256(
+                    "\0".join(
+                        (
+                            "task_promotion_intent_row_v2",
+                            intent_id,
+                            replacement_sha,
+                            outputs_sha,
+                            envelope_sha,
+                            completion_sha,
+                        )
+                    ).encode("utf-8")
+                ).hexdigest()
+                journal_path = (
+                    run_dir
+                    / "workflow"
+                    / "tasks"
+                    / task_id
+                    / "attempts"
+                    / attempt_id
+                    / "p.json"
+                )
+                journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                journal["replacement_run_record_sha256"] = replacement_sha
+                journal_bytes = canonical_json_bytes(journal)
+                journal_path.write_bytes(journal_bytes)
+                database.execute(
+                    "UPDATE task_promotion_intents SET "
+                    "replacement_run_record_json=?, replacement_run_record_sha256=?, "
+                    "journal_sha256=?, intent_identity=? WHERE intent_id=?",
+                    (
+                        replacement_json,
+                        replacement_sha,
+                        hashlib.sha256(journal_bytes).hexdigest(),
+                        intent_identity,
+                        intent_id,
+                    ),
+                )
+            run_path.write_bytes(replacement_bytes)
+
+        inventory_producer = decision_ready["artifact_generations"][
+            "source_candidate_inventory"
+        ]["producer"]
+        skeleton_producer = decision_ready["artifact_generations"][
+            "source_acquisition_decision_skeleton"
+        ]["producer"]
+        semantic_producer = decision_ready["artifact_generations"][
+            "source_acquisition_decision"
+        ]["producer"]
+        self.assertEqual(inventory_producer, skeleton_producer)
+        rematerialize_skeleton_producer(semantic_producer)
+        split_provider_resume = _run_public_cli(
+            self.id() + "-split-provider-resume",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--whisper-transcript",
+            str(valid_srt),
+        )
+        self.assertEqual(40, split_provider_resume.returncode)
+        split_error = json.loads(split_provider_resume.stdout)
+        self.assertEqual("artifact_drift", split_error["classification"])
+        self.assertIn(
+            "provider Task producer cohesion",
+            split_error["data"]["message"],
+        )
+        rematerialize_skeleton_producer(skeleton_producer)
+
+        reconciled = _run_public_cli(
+            self.id() + "-reconcile",
+            "source-acquire-reconcile",
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stdout + reconciled.stderr)
+        self.assertEqual(1, json.loads(reconciled.stdout)["data"]["tasks_advanced"])
+
+        resumed = _run_public_cli(
+            self.id() + "-resume",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--whisper-transcript",
+            str(valid_srt),
+        )
+        self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
+        final_run = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        final_task_records = {
+            record["task_stage"]: record
+            for record in (
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (run_dir / "workflow" / "tasks").glob("*/task.json")
+            )
+        }
+        self.assertEqual(
+            original_task_ids,
+            {stage: record["task_id"] for stage, record in final_task_records.items()},
+        )
+        self.assertEqual(initialized_run["run_id"], final_run["run_id"])
+        self.assertEqual(initialized_run["source_identity"], final_run["source_identity"])
+        self.assertEqual(initialized_run["source_epoch"], final_run["source_epoch"])
+        self.assertEqual("ready", final_run["source_state"])
+        self.assertEqual("current", final_run["checkpoints"]["source_ready"]["status"])
+        self.assertEqual(
+            original_attempt_counts["provider_acquisition"],
+            len(list((run_dir / "workflow" / "tasks" / original_task_ids["provider_acquisition"] / "attempts").glob("*"))),
+            "resume must not invoke or reclaim the provider Task",
+        )
+        self.assertEqual(
+            original_attempt_counts["semantic_judgment"],
+            len(list((run_dir / "workflow" / "tasks" / original_task_ids["semantic_judgment"] / "attempts").glob("*"))),
+            "resume must not invoke or reclaim the semantic Task",
+        )
+        self.assertEqual(
+            original_attempt_counts["whisper_transcription"] + 1,
+            len(list((run_dir / "workflow" / "tasks" / original_task_ids["whisper_transcription"] / "attempts").glob("*"))),
+        )
 
 
 if __name__ == "__main__":

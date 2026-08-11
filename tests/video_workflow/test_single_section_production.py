@@ -747,6 +747,14 @@ class SingleSectionProductionTests(unittest.TestCase):
         self.assertEqual(str(temporary), environment["TMP"])
         self.assertEqual(staging, profile.parent)
         self.assertEqual(staging, temporary.parent)
+        startup = profile / "miktex/config/miktexstartup.ini"
+        self.assertEqual(
+            b"[Auto]\nConfig=Regular\n\n[Setup]\nVersion=25.12\n",
+            startup.read_bytes(),
+        )
+        self.assertEqual(profile, startup.resolve().parents[2])
+        self.assertFalse(startup.is_symlink())
+        self.assertFalse(startup.parent.is_symlink())
         self.assertTrue(profile.is_dir())
         self.assertTrue(temporary.is_dir())
         self.assertFalse(profile.is_symlink())

@@ -38,6 +38,7 @@ _FIXTURE_PACKAGE_INVENTORY = (
 ).resolve()
 _MIKTEX_ENGINE = Path(r"D:\kits\MiKTex\miktex\bin\x64\xelatex.exe").resolve()
 _MIKTEX_RUNTIME_ROOTS = (Path(r"D:\kits\MiKTex").resolve(),)
+_MIKTEX_STARTUP = b"[Auto]\nConfig=Regular\n\n[Setup]\nVersion=25.12\n"
 _TRUSTED_FONT_ROOTS = tuple(
     root.resolve()
     for root in (
@@ -486,6 +487,52 @@ class GuardedCompileProvider:
             )
         profile = runtime_directories["engine-profile"]
         temporary = runtime_directories["engine-temp"]
+        startup_parent = profile
+        for name in ("miktex", "config"):
+            startup_parent = require_contained_path(
+                startup_parent / name,
+                profile,
+                purpose="Diagnostic Compile MiKTeX startup directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+                allow_missing=True,
+            )
+            try:
+                startup_parent.mkdir()
+            except OSError as exc:
+                raise ContractError(
+                    "Diagnostic Compile MiKTeX startup directory is unavailable"
+                ) from exc
+            startup_parent = require_contained_path(
+                startup_parent,
+                profile,
+                purpose="Diagnostic Compile MiKTeX startup directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+        startup = require_contained_path(
+            startup_parent / "miktexstartup.ini",
+            profile,
+            purpose="Diagnostic Compile MiKTeX startup file",
+            error_type=ContractError,
+            leaf_kind="file",
+            allow_missing=True,
+        )
+        try:
+            with startup.open("xb") as stream:
+                stream.write(_MIKTEX_STARTUP)
+        except OSError as exc:
+            raise ContractError(
+                "Diagnostic Compile MiKTeX startup file is unavailable"
+            ) from exc
+        require_contained_path(
+            startup,
+            profile,
+            purpose="Diagnostic Compile MiKTeX startup file",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
         environment = {
             "PYTHONUTF8": "1",
             "MIKTEX_ENABLE_INSTALLER": "0",
@@ -553,7 +600,12 @@ class GuardedCompileProvider:
                 gaps.append(str(observed_path))
                 continue
             identity = str(observed_path).casefold()
-            if identity in staged:
+            if observed_path == startup:
+                if observed_path.read_bytes() != _MIKTEX_STARTUP:
+                    gaps.append(str(observed_path))
+                    continue
+                classification = "attempt_generated_auxiliary"
+            elif identity in staged:
                 classification = "manifest_entry"
             elif identity in allowed_fonts:
                 if _sha256_path(observed_path) != allowed_fonts[identity]["sha256"]:

@@ -20,6 +20,7 @@ from .errors import (
 )
 from .evidence import EvidenceSupportError, git_output, sha256_git_blob
 from .global_gate import GlobalGatePublisher
+from .kernel import VideoWorkflowKernel
 from .guarded_delivery import (
     require_current_kernel_guarded_decision,
     validate_acceptance_report,
@@ -855,6 +856,21 @@ class BilibiliPlatformCutoverPublisher:
                 session_id=row["session_id"],
             )
             return candidate
+        if run.get("source_state") == "ready":
+            self._require_source_ready_reprepare(
+                run_dir=run_dir,
+                run=run,
+                video=video,
+                session=session,
+                index=index,
+                entry=entry,
+                session_id=row["session_id"],
+                prior_implementation_commit=row["implementation_commit"],
+                requested_implementation_commit=requested_candidate[
+                    "implementation_commit"
+                ],
+            )
+            return candidate
         if (
             run.get("coordination_revision") != 1
             or run.get("source_epoch") != 1
@@ -932,6 +948,145 @@ class BilibiliPlatformCutoverPublisher:
                 },
             )
         return candidate
+
+    @staticmethod
+    def _require_source_ready_reprepare(
+        *,
+        run_dir: Path,
+        run: dict[str, Any],
+        video: dict[str, Any],
+        session: dict[str, Any],
+        index: dict[str, Any],
+        entry: dict[str, Any],
+        session_id: str,
+        prior_implementation_commit: str,
+        requested_implementation_commit: str,
+    ) -> None:
+        """Accept current source authority before diagnostic compilation or delivery publication."""
+
+        if prior_implementation_commit != requested_implementation_commit:
+            try:
+                requested_lineage = git_output(
+                    PROJECT_ROOT,
+                    "rev-list",
+                    "--parents",
+                    "-n",
+                    "1",
+                    requested_implementation_commit,
+                ).split()
+                if prior_implementation_commit not in requested_lineage[1:]:
+                    raise EvidenceSupportError(
+                        "prior implementation commit is not a direct parent"
+                    )
+            except EvidenceSupportError as exc:
+                raise KernelConflict(
+                    "Bilibili source-ready candidate implementation is not a direct child",
+                    data={
+                        "first_failing_gate": "implementation_artifacts",
+                        "error_code": "bilibili_candidate_implementation_invalid",
+                    },
+                ) from exc
+
+        artifact_ids = {
+            "bootstrap_record",
+            "source_candidate_inventory",
+            "source_acquisition_decision_skeleton",
+            "source_acquisition_decision",
+            "source_transcription",
+            "source_manifest",
+        }
+        checkpoint_ids = {
+            "run_initialized",
+            "source_candidates_ready",
+            "source_acquisition_decision_ready",
+            "source_ready",
+        }
+        projections = run["delivery"]["projections"]
+        delivery_artifacts = video.get("artifacts")
+        if (
+            run.get("coordination_revision") != 5
+            or run.get("source_epoch") != 1
+            or run.get("source_blocker") is not None
+            or run.get("phase") != "source_ready"
+            or set(run.get("artifact_generations", {})) != artifact_ids
+            or set(run.get("checkpoints", {})) != checkpoint_ids
+            or any(
+                checkpoint.get("status") != "current"
+                for checkpoint in run["checkpoints"].values()
+            )
+            or not isinstance(delivery_artifacts, dict)
+            or any(value is not None for value in delivery_artifacts.values())
+            or run["delivery"].get("ownership")
+            != {"session_id": session_id, "generation": 1}
+            or projections.get("archive") is not None
+            or projections["video_target"].get("projection_revision") != 1
+            or projections["session_target"].get("projection_revision") != 1
+            or video.get("projection_revision") != 1
+            or video.get("run_revision") != 1
+            or session.get("projection_revision") != 1
+            or session.get("run_revision") != 1
+            or session.get("owner_status") != "active"
+            or session.get("ownership_generation") != 1
+            or entry.get("run_revision") != 1
+            or entry.get("ownership_generation") != 1
+            or entry.get("session_id") != session_id
+            or entry.get("archive") is not None
+            or entry.get("video_target", {}).get("projection_revision") != 1
+            or entry.get("session_target", {}).get("projection_revision") != 1
+            or projections["task_index"].get("projection_revision")
+            != index.get("projection_revision")
+            or (run_dir / "review" / "acceptance" / "acceptance_report.json").exists()
+            or (
+                run_dir / "review" / "acceptance" / "delivery_guard_report.json"
+            ).exists()
+        ):
+            raise KernelConflict(
+                "Bilibili initialized candidate has progressed beyond source-ready",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_progressed",
+                },
+            )
+
+        control_database = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        try:
+            current = VideoWorkflowKernel(run_dir.parent).require_current_validated_source_package(
+                run_dir
+            )
+        except Exception as exc:
+            raise KernelConflict(
+                "Bilibili source-ready candidate authority is not current",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_source_not_current",
+                },
+            ) from exc
+        if current != run or not control_database.is_file():
+            raise KernelConflict(
+                "Bilibili source-ready candidate authority changed during validation",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_source_not_current",
+                },
+            )
+        with sqlite3.connect(control_database) as run_connection:
+            run_connection.row_factory = sqlite3.Row
+            delivery_intents = run_connection.execute(
+                "SELECT COUNT(*) FROM delivery_lifecycle_intents WHERE run_id=?",
+                (run["run_id"],),
+            ).fetchone()[0]
+            mutation_intents = run_connection.execute(
+                "SELECT COUNT(*) FROM run_state_mutation_intents WHERE run_id=?",
+                (run["run_id"],),
+            ).fetchone()[0]
+        if delivery_intents or mutation_intents:
+            raise KernelConflict(
+                "Bilibili source-ready candidate has later lifecycle authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_progressed",
+                },
+            )
 
     @staticmethod
     def _require_decision_ready_reprepare(

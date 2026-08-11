@@ -419,13 +419,29 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
             whisper_promoted["data"]["error_code"],
         )
 
-    def test_initialized_reprepare_rejects_current_source_ready_authority(self) -> None:
+    def test_initialized_reprepare_rebinds_exact_current_source_ready_authority(
+        self,
+    ) -> None:
         control, probe, implementation_commit, run_dir = (
             self._decision_ready_candidate_for_reprepare(source_ready=True)
         )
-        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        run_path = run_dir / "workflow" / "run.json"
+        manifest_path = run_dir / "source" / "manifest.json"
+        run_bytes = run_path.read_bytes()
+        manifest_bytes = manifest_path.read_bytes()
+        run = json.loads(run_bytes)
         self.assertEqual("ready", run["source_state"])
-        self.assertTrue((run_dir / "source" / "manifest.json").is_file())
+        self.assertTrue(manifest_path.is_file())
+        self.assertEqual("source_ready", run["phase"])
+        self.assertEqual("current", run["checkpoints"]["source_ready"]["status"])
+        self.assertNotIn("draft_compile_ready", run["checkpoints"])
+        self.assertNotIn("production_complete", run["checkpoints"])
+        self.assertFalse(
+            (run_dir / "review" / "acceptance" / "acceptance_report.json").exists()
+        )
+        self.assertFalse(
+            (run_dir / "review" / "acceptance" / "delivery_guard_report.json").exists()
+        )
         old_commit = subprocess.run(
             ["git", "rev-parse", "HEAD~1"],
             cwd=PROJECT_ROOT,
@@ -451,8 +467,209 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
                 ),
             )
 
-        completed = whisper_test._run_public_cli(
+        reprepared = whisper_test._run_public_cli(
             self.id() + "-source-ready-reprepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T03:00:00Z",
+        )
+
+        self.assertEqual(0, reprepared.returncode, reprepared.stdout + reprepared.stderr)
+        envelope = json.loads(reprepared.stdout)
+        self.assertTrue(envelope["data"]["reprepared"])
+        self.assertFalse(envelope["data"]["idempotent"])
+        self.assertEqual(run_dir, Path(envelope["data"]["candidate_run_dir"]))
+        self.assertEqual(run_bytes, run_path.read_bytes())
+        self.assertEqual(manifest_bytes, manifest_path.read_bytes())
+        with sqlite3.connect(control / "platform-kernel-control.sqlite3") as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        candidate = json.loads(row["candidate_json"])
+        self.assertEqual("INITIALIZED", row["state"])
+        self.assertEqual("INITIALIZED", candidate["state"])
+        self.assertEqual(implementation_commit, row["implementation_commit"])
+        self.assertEqual(implementation_commit, candidate["implementation_commit"])
+        self.assertEqual("2026-08-11T03:00:00Z", candidate["prepared_at"])
+
+        exact_retry = whisper_test._run_public_cli(
+            self.id() + "-source-ready-exact-retry",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T03:00:00Z",
+        )
+        self.assertEqual(0, exact_retry.returncode, exact_retry.stdout + exact_retry.stderr)
+        retry_envelope = json.loads(exact_retry.stdout)
+        self.assertTrue(retry_envelope["data"]["idempotent"])
+        self.assertFalse(retry_envelope["data"]["reprepared"])
+
+        timestamp_only_change = whisper_test._run_public_cli(
+            self.id() + "-source-ready-timestamp-only",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-decision-ready",
+            "--prepared-at",
+            "2026-08-11T03:01:00Z",
+        )
+        self.assertEqual(
+            30,
+            timestamp_only_change.returncode,
+            timestamp_only_change.stdout + timestamp_only_change.stderr,
+        )
+
+    def test_source_ready_reprepare_rejects_current_authority_drift_without_write(
+        self,
+    ) -> None:
+        control, probe, implementation_commit, run_dir = (
+            self._decision_ready_candidate_for_reprepare(source_ready=True)
+        )
+        old_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        database_path = control / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(database_path) as database:
+            candidate = json.loads(
+                database.execute(
+                    "SELECT candidate_json FROM platform_cutover_candidates "
+                    "WHERE platform='bilibili'"
+                ).fetchone()[0]
+            )
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
+        def candidate_row() -> tuple:
+            with sqlite3.connect(database_path) as database:
+                return database.execute(
+                    "SELECT state,implementation_commit,candidate_json "
+                    "FROM platform_cutover_candidates WHERE platform='bilibili'"
+                ).fetchone()
+
+        def rejected(label: str) -> None:
+            before = candidate_row()
+            completed = whisper_test._run_public_cli(
+                self.id() + f"-source-ready-drift-{label}",
+                "platform-kernel-prepare",
+                "--platform",
+                "bilibili",
+                "--control-store-root",
+                str(control),
+                "--implementation-commit",
+                implementation_commit,
+                "--candidate-probe",
+                str(probe),
+                "--candidate-session-id",
+                "session-issue13-decision-ready",
+                "--prepared-at",
+                "2026-08-11T03:00:00Z",
+            )
+            self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+            self.assertEqual(before, candidate_row())
+
+        manifest_path = run_dir / "source" / "manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+        manifest_path.write_bytes(manifest_bytes + b" ")
+        rejected("manifest")
+        manifest_path.write_bytes(manifest_bytes)
+
+        run_path = run_dir / "workflow" / "run.json"
+        run_bytes = run_path.read_bytes()
+        run = json.loads(run_bytes)
+        video_path = run_dir / run["delivery"]["projections"]["video_target"]["path"]
+        video_bytes = video_path.read_bytes()
+        video = json.loads(video_bytes)
+        video["stage"] = "accepted"
+        _write_json(video_path, video)
+        rejected("projection")
+        video_path.write_bytes(video_bytes)
+
+        run = json.loads(run_bytes)
+        run["checkpoints"]["draft_compile_ready"] = dict(
+            run["checkpoints"]["source_ready"]
+        )
+        _write_json(run_path, run)
+        rejected("compile-checkpoint")
+        run_path.write_bytes(run_bytes)
+
+    def test_source_ready_reprepare_rejects_non_direct_implementation_descendant(
+        self,
+    ) -> None:
+        control, probe, implementation_commit, _run_dir = (
+            self._decision_ready_candidate_for_reprepare(source_ready=True)
+        )
+        old_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD~2"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        database_path = control / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(database_path) as database:
+            candidate = json.loads(
+                database.execute(
+                    "SELECT candidate_json FROM platform_cutover_candidates "
+                    "WHERE platform='bilibili'"
+                ).fetchone()[0]
+            )
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+        with sqlite3.connect(database_path) as database:
+            before = database.execute(
+                "SELECT state,implementation_commit,candidate_json "
+                "FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+
+        completed = whisper_test._run_public_cli(
+            self.id() + "-source-ready-nondirect-implementation",
             "platform-kernel-prepare",
             "--platform",
             "bilibili",
@@ -470,9 +687,15 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
 
         self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
         self.assertEqual(
-            "bilibili_initialized_reprepare_progressed",
+            "bilibili_candidate_implementation_invalid",
             json.loads(completed.stdout)["data"]["error_code"],
         )
+        with sqlite3.connect(database_path) as database:
+            after = database.execute(
+                "SELECT state,implementation_commit,candidate_json "
+                "FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        self.assertEqual(before, after)
 
     def test_prepare_rebinds_exact_initialized_candidate_without_recreating_run(
         self,

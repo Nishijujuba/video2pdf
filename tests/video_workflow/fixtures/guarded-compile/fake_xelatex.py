@@ -11,6 +11,11 @@ entry = Path(sys.argv[-1])
 stem = entry.stem
 cwd = Path.cwd()
 source = entry.read_text(encoding="utf-8")
+captured_environment = (
+    dict(os.environ)
+    if "VIDEO2PDF_FIXTURE_CAPTURE_ENVIRONMENT" in source
+    else None
+)
 if "VIDEO2PDF_FIXTURE_STDERR" in source:
     sys.stderr.buffer.write(b"fixture log4cxx root overlap warning\n")
 if "VIDEO2PDF_FIXTURE_NONZERO_EXIT" in source:
@@ -29,6 +34,13 @@ inputs = sorted(
         )
     )
 )
+if captured_environment is not None:
+    import json
+
+    (cwd / "engine-environment.json").write_text(
+        json.dumps(captured_environment, sort_keys=True),
+        encoding="utf-8",
+    )
 (cwd / f"{stem}.aux").write_text("generated auxiliary", encoding="utf-8")
 with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
     for path in inputs:

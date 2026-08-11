@@ -658,6 +658,108 @@ class SingleSectionProductionTests(unittest.TestCase):
             with self.assertRaisesRegex(CompileDependencyGap, "undeclared compile inputs"):
                 GuardedCompileProvider(self.run_dir).compile(manifest_path, policy)
 
+    def test_diagnostic_compile_uses_a_governed_miktex_profile_environment(self) -> None:
+        from video2pdf_workflow_kernel.guarded_compile import (
+            GuardedCompileProvider,
+            runtime_policy_for_fixture,
+        )
+
+        main = self.run_dir / "work/integration/main.tex"
+        main.parent.mkdir(parents=True, exist_ok=True)
+        main.write_text(
+            "\\begin{document}VIDEO2PDF_FIXTURE_CAPTURE_ENVIRONMENT"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+        run_id, integration_generation = self._authorize_compile_main(main)
+        policy = runtime_policy_for_fixture(
+            run_dir=self.run_dir,
+            engine_executable=Path(sys.executable),
+            engine_prefix_args=[
+                str(
+                    PROJECT_ROOT
+                    / "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py"
+                )
+            ],
+            system_fonts=[SYSTEM_FONT],
+        )
+        manifest = {
+            "schema_name": "compile-manifest",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "run_id": run_id,
+            "mode": "diagnostic",
+            "delivery_authority": False,
+            "integration_manifest_generation": integration_generation,
+            "runtime_policy_sha256": policy["policy_sha256"],
+            "dependency_discovery_policy_version": "recorder-closure-v1",
+            "entries": [{
+                "logical_id": "integrated_main",
+                "generation": 1,
+                "sha256": sha256(main),
+                "size": main.stat().st_size,
+                "producer": "test",
+                "source_path": "work/integration/main.tex",
+                "staging_path": "main.tex",
+                "role": "entry_tex",
+                "media_type": "application/x-tex",
+                "required": True,
+            }],
+        }
+        manifest_path = self.run_dir / "workflow/compile-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        hostile = {
+            "USERPROFILE": "HOST_PROFILE_MUST_NOT_CROSS",
+            "HOME": "HOST_HOME_MUST_NOT_CROSS",
+            "TEMP": "HOST_TEMP_MUST_NOT_CROSS",
+            "TMP": "HOST_TMP_MUST_NOT_CROSS",
+            "MIKTEX_USERDATA": "HOST_MIKTEX_DATA_MUST_NOT_CROSS",
+            "MIKTEX_USERCONFIG": "HOST_MIKTEX_CONFIG_MUST_NOT_CROSS",
+            "MIKTEX_USERINSTALL": "HOST_MIKTEX_INSTALL_MUST_NOT_CROSS",
+            "MIKTEX_USERLOGDIRECTORY": "HOST_MIKTEX_LOG_MUST_NOT_CROSS",
+            "MIKTEX_HOST_ONLY": "HOST_MIKTEX_EXTRA_MUST_NOT_CROSS",
+            "TEXINPUTS": "HOST_TEXINPUTS_MUST_NOT_CROSS",
+            "PYTHONPATH": "HOST_PYTHONPATH_MUST_NOT_CROSS",
+            "UNNAMED_SECRET": "HOST_SECRET_MUST_NOT_CROSS",
+        }
+        with mock.patch.dict(os.environ, hostile, clear=False):
+            GuardedCompileProvider(self.run_dir).compile(manifest_path, policy)
+
+        captures = list(self.run_dir.rglob("engine-environment.json"))
+        self.assertEqual(1, len(captures))
+        environment = json.loads(captures[0].read_text(encoding="utf-8"))
+        staging = captures[0].parent.resolve()
+        profile = Path(environment["MIKTEX_USERDATA"]).resolve()
+        temporary = Path(environment["TEMP"]).resolve()
+        self.assertEqual(
+            {
+                str(profile),
+            },
+            {
+                environment["MIKTEX_USERDATA"],
+                environment["MIKTEX_USERCONFIG"],
+                environment["MIKTEX_USERINSTALL"],
+                environment["MIKTEX_USERLOGDIRECTORY"],
+                environment["USERPROFILE"],
+                environment["HOME"],
+            },
+        )
+        self.assertEqual(str(temporary), environment["TMP"])
+        self.assertEqual(staging, profile.parent)
+        self.assertEqual(staging, temporary.parent)
+        self.assertTrue(profile.is_dir())
+        self.assertTrue(temporary.is_dir())
+        self.assertFalse(profile.is_symlink())
+        self.assertFalse(temporary.is_symlink())
+        for forbidden in (
+            "MIKTEX_HOST_ONLY",
+            "TEXINPUTS",
+            "PYTHONPATH",
+            "UNNAMED_SECRET",
+        ):
+            self.assertNotIn(forbidden, environment)
+        self.assertFalse(set(hostile.values()) & set(environment.values()))
+
     def test_figure_manifest_rejects_a_mismatched_slot_contribution(self) -> None:
         from video2pdf_workflow_kernel.errors import ContractError
 

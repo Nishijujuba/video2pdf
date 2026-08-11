@@ -461,8 +461,61 @@ class GuardedCompileProvider:
             "--disable-installer", "-no-shell-escape", "-recorder",
             "-interaction=nonstopmode", entry["staging_path"],
         ]
-        environment = dict(os.environ)
-        environment["MIKTEX_ENABLE_INSTALLER"] = "0"
+        runtime_directories: dict[str, Path] = {}
+        for name in ("engine-profile", "engine-temp"):
+            candidate = require_contained_path(
+                staging / name,
+                staging,
+                purpose=f"Diagnostic Compile {name} directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+                allow_missing=True,
+            )
+            try:
+                candidate.mkdir()
+            except OSError as exc:
+                raise ContractError(
+                    f"Diagnostic Compile {name} directory is unavailable"
+                ) from exc
+            runtime_directories[name] = require_contained_path(
+                candidate,
+                staging,
+                purpose=f"Diagnostic Compile {name} directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+        profile = runtime_directories["engine-profile"]
+        temporary = runtime_directories["engine-temp"]
+        environment = {
+            "PYTHONUTF8": "1",
+            "MIKTEX_ENABLE_INSTALLER": "0",
+            "MIKTEX_USERDATA": str(profile),
+            "MIKTEX_USERCONFIG": str(profile),
+            "MIKTEX_USERINSTALL": str(profile),
+            "MIKTEX_USERLOGDIRECTORY": str(profile),
+            "USERPROFILE": str(profile),
+            "HOME": str(profile),
+            "HOMEDRIVE": profile.drive,
+            "HOMEPATH": str(profile)[len(profile.drive):],
+            "USERNAME": "video2pdf",
+            "USERDOMAIN": "LOCAL",
+            "TEMP": str(temporary),
+            "TMP": str(temporary),
+        }
+        host_environment = {
+            key.upper(): value for key, value in os.environ.items()
+        }
+        for key in ("SYSTEMROOT", "WINDIR"):
+            if key in host_environment:
+                environment[key] = host_environment[key]
+        if "SYSTEMROOT" in environment:
+            environment["SYSTEMDRIVE"] = Path(environment["SYSTEMROOT"]).drive
+        if engine["name"] == "xelatex-fixture":
+            fixture_input = host_environment.get(
+                "VIDEO2PDF_FIXTURE_UNDECLARED_INPUT"
+            )
+            if fixture_input is not None:
+                environment["VIDEO2PDF_FIXTURE_UNDECLARED_INPUT"] = fixture_input
         environment["VIDEO2PDF_FIXTURE_FONTS"] = os.pathsep.join(
             item["path"] for item in runtime_policy["system_fonts"]
         )

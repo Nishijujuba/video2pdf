@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 import uuid
 
@@ -34,7 +35,43 @@ def _is_reparse_point(path: Path) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
-def _localized_cookie(source: Path, run_dir: Path) -> Path:
+def _credential_root(run_dir: Path) -> Path:
+    root = run_dir / "待删除" / "source-acquire" / "credentials"
+    require_contained_path(
+        root,
+        run_dir,
+        purpose="source acquisition credential root",
+        error_type=ContractError,
+        allow_missing=True,
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return require_contained_path(
+        root,
+        run_dir,
+        purpose="source acquisition credential root",
+        error_type=ContractError,
+        leaf_kind="directory",
+    )
+
+
+def _localized_cookie(
+    source: Path,
+    run_dir: Path,
+    *,
+    attempt_id: str | None = None,
+    claim_generation: int | None = None,
+) -> Path:
+    if (attempt_id is None) != (claim_generation is None):
+        raise ContractError(
+            "source acquisition credential attempt binding is incomplete"
+        )
+    if attempt_id is not None and (
+        re.fullmatch(r"[0-9a-f]{24}", attempt_id) is None
+        or isinstance(claim_generation, bool)
+        or not isinstance(claim_generation, int)
+        or claim_generation < 1
+    ):
+        raise ContractError("source acquisition credential attempt binding is invalid")
     try:
         if not source.is_file() or source.is_symlink() or _is_reparse_point(source):
             raise ContractError("source acquisition cookie is not a regular file")
@@ -46,7 +83,9 @@ def _localized_cookie(source: Path, run_dir: Path) -> Path:
     if not payload:
         raise ContractError("source acquisition cookie is empty")
     identity = hashlib.sha256(payload).hexdigest()[:24]
-    root = run_dir / "待删除" / "source-acquire" / "credentials" / identity
+    root = _credential_root(run_dir) / identity
+    if attempt_id is not None:
+        root = root / "attempts" / f"{attempt_id}.g{claim_generation}"
     require_contained_path(
         root,
         run_dir,
@@ -167,7 +206,6 @@ def acquire_bilibili_source_for_run(
     base_item_id, separator, part = item_id.partition(":")
     explicit_selector = part if separator else None
     source_url = f"https://www.bilibili.com/video/{base_item_id}/"
-    localized_cookie = _localized_cookie(cookie_file.resolve(), run_dir)
     case = SourceLiveSmokeCase(
         platform="bilibili",
         source_url=source_url,
@@ -220,6 +258,7 @@ def acquire_bilibili_source_for_run(
         / "source-acquire"
         / str(run["run_id"])
     )
+    _credential_root(run_dir)
     proofs = _TerminalProofRegistry(
         disposable_root / "terminal-proofs",
         project_root,
@@ -235,7 +274,16 @@ def acquire_bilibili_source_for_run(
         run_dir=run_dir,
         case=case,
         credential=CredentialBinding(
-            platform="bilibili", localized_cookie_file=localized_cookie
+            platform="bilibili", localized_cookie_file=cookie_file.resolve()
+        ),
+        credential_materializer=lambda binding, claim: CredentialBinding(
+            platform=binding.platform,
+            localized_cookie_file=_localized_cookie(
+                binding.localized_cookie_file,
+                run_dir,
+                attempt_id=claim.attempt_id,
+                claim_generation=claim.claim_generation,
+            ),
         ),
         adapter=adapter,
         runner=runner,

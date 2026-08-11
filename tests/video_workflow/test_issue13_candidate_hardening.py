@@ -47,6 +47,259 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
             "test_candidate_activation_rejects_generating_candidate"
         )
 
+    def _initialized_candidate_for_reprepare(
+        self,
+    ) -> tuple[Path, Path, Path, str, Path]:
+        cold = cold_start_test.Issue13ColdStartCutoverTests(
+            "test_prepared_candidate_can_initialize_v4_through_public_cli"
+        )
+        control, workspace, probe, implementation_commit = cold._cold_start_case()
+        cold._prepare_candidate(
+            control_store_root=control,
+            probe_path=probe,
+            implementation_commit=implementation_commit,
+        )
+        initialized = cold_start_test._run_public_cli(
+            self.id() + "-initialize",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control),
+            "--probe",
+            str(probe),
+            "--session-id",
+            "session-issue13-candidate",
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
+        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
+        return control, workspace, probe, implementation_commit, run_dir
+
+    def test_prepare_rebinds_exact_initialized_candidate_without_recreating_run(
+        self,
+    ) -> None:
+        control, workspace, probe, implementation_commit, run_dir = (
+            self._initialized_candidate_for_reprepare()
+        )
+        database_path = control / "platform-kernel-control.sqlite3"
+        old_commit = "a" * 40
+        with sqlite3.connect(database_path) as database:
+            row = database.execute(
+                "SELECT candidate_json FROM platform_cutover_candidates "
+                "WHERE platform='bilibili'"
+            ).fetchone()
+            candidate = json.loads(row[0])
+            candidate["implementation_commit"] = old_commit
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    old_commit,
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+        workspace_directories_before = sorted(
+            path.resolve() for path in workspace.iterdir() if path.is_dir()
+        )
+
+        reprepared = cold_start_test._run_public_cli(
+            self.id() + "-reprepare",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:00:00Z",
+        )
+
+        self.assertEqual(0, reprepared.returncode, reprepared.stdout + reprepared.stderr)
+        envelope = json.loads(reprepared.stdout)
+        self.assertFalse(envelope["data"]["idempotent"])
+        self.assertTrue(envelope["data"]["reprepared"])
+        self.assertEqual(run_dir, Path(envelope["data"]["candidate_run_dir"]))
+        self.assertEqual(implementation_commit, envelope["data"]["implementation_commit"])
+        self.assertTrue((run_dir / "workflow" / "run.json").is_file())
+        self.assertEqual(
+            workspace_directories_before,
+            sorted(path.resolve() for path in workspace.iterdir() if path.is_dir()),
+            "reprepare must preserve the initialized Run instead of creating another Run",
+        )
+        with sqlite3.connect(database_path) as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        candidate = json.loads(row["candidate_json"])
+        self.assertEqual("INITIALIZED", row["state"])
+        self.assertEqual("INITIALIZED", candidate["state"])
+        self.assertEqual(str(workspace.resolve()), candidate["workspace_root"])
+        self.assertEqual(str(run_dir.resolve()), candidate["candidate_run_dir"])
+        self.assertEqual(implementation_commit, row["implementation_commit"])
+        self.assertEqual(implementation_commit, candidate["implementation_commit"])
+        self.assertEqual("2026-08-11T09:00:00Z", candidate["prepared_at"])
+
+        exact_retry = cold_start_test._run_public_cli(
+            self.id() + "-exact-retry",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:00:00Z",
+        )
+        self.assertEqual(0, exact_retry.returncode, exact_retry.stdout + exact_retry.stderr)
+        retry_envelope = json.loads(exact_retry.stdout)
+        self.assertTrue(retry_envelope["data"]["idempotent"])
+        self.assertFalse(retry_envelope["data"]["reprepared"])
+
+        timestamp_only_change = cold_start_test._run_public_cli(
+            self.id() + "-timestamp-only",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:01:00Z",
+        )
+        self.assertEqual(
+            30,
+            timestamp_only_change.returncode,
+            timestamp_only_change.stdout + timestamp_only_change.stderr,
+        )
+
+    def test_initialized_reprepare_rejects_run_progression(self) -> None:
+        control, _workspace, probe, implementation_commit, run_dir = (
+            self._initialized_candidate_for_reprepare()
+        )
+        run_path = run_dir / "workflow" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run["coordination_revision"] = 2
+        _write_json(run_path, run)
+
+        completed = cold_start_test._run_public_cli(
+            self.id() + "-progressed",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:00:00Z",
+        )
+
+        self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+        envelope = json.loads(completed.stdout)
+        self.assertEqual(
+            "bilibili_initialized_reprepare_progressed", envelope["data"]["error_code"]
+        )
+
+    def test_initialized_reprepare_rejects_pending_platform_intent(self) -> None:
+        control, _workspace, probe, implementation_commit, _run_dir = (
+            self._initialized_candidate_for_reprepare()
+        )
+        with sqlite3.connect(control / "platform-kernel-control.sqlite3") as database:
+            database.execute(
+                "INSERT INTO platform_cutover_intents("
+                "intent_id,platform,evidence_sha256,authority_json,state) "
+                "VALUES(?,?,?,?, 'PREPARED')",
+                ("pending-intent", "bilibili", "b" * 64, "{}"),
+            )
+
+        completed = cold_start_test._run_public_cli(
+            self.id() + "-pending-intent",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:00:00Z",
+        )
+
+        self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+        envelope = json.loads(completed.stdout)
+        self.assertEqual(
+            "bilibili_initialized_reprepare_intent_pending",
+            envelope["data"]["error_code"],
+        )
+
+    def test_initialized_reprepare_rejects_delivery_projection_progression(self) -> None:
+        control, workspace, probe, implementation_commit, run_dir = (
+            self._initialized_candidate_for_reprepare()
+        )
+        run_path = run_dir / "workflow" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        session_binding = run["delivery"]["projections"]["session_target"]
+        session_path = Path(session_binding["path"])
+        if not session_path.is_absolute():
+            session_path = run_dir.parents[1] / session_path
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        session["projection_revision"] = 2
+        _write_json(session_path, session)
+        session_binding["sha256"] = _sha256(session_path)
+        _write_json(run_path, run)
+        with sqlite3.connect(workspace / ".workflow-control" / "control.sqlite3") as database:
+            database.execute(
+                "UPDATE initialization_intents SET run_record_sha256=? WHERE run_id=?",
+                (_sha256(run_path), run["run_id"]),
+            )
+
+        completed = cold_start_test._run_public_cli(
+            self.id() + "-projection-progressed",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+            "--prepared-at",
+            "2026-08-11T09:00:00Z",
+        )
+
+        self.assertEqual(30, completed.returncode, completed.stdout + completed.stderr)
+        envelope = json.loads(completed.stdout)
+        self.assertEqual(
+            "bilibili_initialized_reprepare_progressed", envelope["data"]["error_code"]
+        )
+
     def _bind_acceptance_to_delivery_projections(
         self, run_dir: Path, acceptance: Path
     ) -> None:

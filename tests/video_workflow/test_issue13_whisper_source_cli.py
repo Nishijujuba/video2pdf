@@ -96,6 +96,41 @@ def _sha256(path: Path) -> str:
 
 
 class Issue13WhisperSourceCliTests(unittest.TestCase):
+    def test_attempt_cookie_replay_rejects_a_mutated_existing_working_copy(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.errors import KernelConflict
+        from video2pdf_workflow_kernel.source_acquire import _localized_cookie
+
+        case_root = new_case_dir(self.id(), label="attempt-cookie-replay")
+        run_dir = case_root / "run"
+        run_dir.mkdir()
+        cookie = case_root / "user-cookie.txt"
+        original = b"# Netscape HTTP Cookie File\nexternal-cookie\n"
+        cookie.write_bytes(original)
+        working = _localized_cookie(
+            cookie,
+            run_dir,
+            attempt_id="a" * 24,
+            claim_generation=1,
+        )
+        working.write_bytes(
+            b"# Netscape HTTP Cookie File\nprovider-mutated-cookie\n"
+        )
+
+        with self.assertRaises(KernelConflict) as raised:
+            _localized_cookie(
+                cookie,
+                run_dir,
+                attempt_id="a" * 24,
+                claim_generation=1,
+            )
+
+        self.assertEqual(cookie.read_bytes(), original)
+        serialized = f"{raised.exception}\n{raised.exception.data}"
+        self.assertNotIn("cookies.txt", serialized)
+        self.assertNotIn(str(working), serialized)
+
     def test_source_credential_localization_rejects_a_linked_ancestor(self) -> None:
         from video2pdf_workflow_kernel.errors import ContractError
         from video2pdf_workflow_kernel.source_acquire import _localized_cookie

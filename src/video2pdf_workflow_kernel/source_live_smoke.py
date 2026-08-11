@@ -989,6 +989,8 @@ def acquire_source_for_initialized_run(
     provider_kind: Literal["live", "recorded_fixture"],
     recording_sha256: str | None,
     recording_evidence: Any | None = None,
+    credential_materializer: Callable[[CredentialBinding, Any], CredentialBinding]
+    | None = None,
     disposable_root: Path | None = None,
     whisper_transcript: Path | None = None,
     fault_point: str | None = None,
@@ -1040,6 +1042,15 @@ def acquire_source_for_initialized_run(
         coordinator_session_id=coordinator_id,
         worker_id=f"{coordinator_id}-provider",
     )
+    if credential_materializer is not None:
+        credential = credential_materializer(credential, claimed_provider)
+        if (
+            not isinstance(credential, CredentialBinding)
+            or credential.platform != case.platform
+        ):
+            raise ContractError(
+                "source provider credential materialization is invalid"
+            )
     launch_tokens: list[str] = []
     provider_failures: list[Exception] = []
     trash_root = (

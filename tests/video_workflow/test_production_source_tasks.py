@@ -557,6 +557,101 @@ class ProductionSourceTaskTests(unittest.TestCase):
         )
         self.assertEqual(claim.resource_admission.queue_state, "admitted")
 
+    def test_provider_cookie_writeback_is_disposable_and_does_not_block_completion(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.source_acquire import _localized_cookie
+
+        kernel, run_dir = self._initialized_youtube_run()
+        original_cookie = run_dir.parent.parent / "user-cookie.txt"
+        original_payload = b"# Netscape HTTP Cookie File\noriginal-user-cookie\n"
+        original_cookie.write_bytes(original_payload)
+        localized_cookie = _localized_cookie(original_cookie, run_dir)
+        prepared = kernel.prepare_production_source_task(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key="source-provider-cookie-writeback-epoch-1",
+            prepared_at="2026-08-11T06:30:00Z",
+        )
+        claim = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="issue13-coordinator",
+            worker_id="issue13-provider",
+        )
+
+        localized_cookie.write_bytes(
+            b"# Netscape HTTP Cookie File\nprovider-refreshed-cookie\n"
+        )
+        self._stage_provider_outputs(kernel, run_dir, claim)
+        self._release_admitted_launch(kernel, claim, "youtube_download")
+        completion = kernel.complete_task(
+            run_dir,
+            task_id=prepared.task_id,
+            attempt_id=claim.attempt_id,
+            claim_generation=claim.claim_generation,
+        )
+
+        self.assertEqual(
+            completion.classification, "validated_waiting_for_promotion"
+        )
+        self.assertEqual(original_cookie.read_bytes(), original_payload)
+        self.assertEqual(
+            localized_cookie.relative_to(run_dir).parts[:3],
+            ("待删除", "source-acquire", "credentials"),
+        )
+
+    def test_provider_noncredential_drift_stays_closed_and_hides_cookie_path(
+        self,
+    ) -> None:
+        from video2pdf_workflow_kernel.errors import ContractError
+        from video2pdf_workflow_kernel.source_acquire import _localized_cookie
+
+        kernel, run_dir = self._initialized_youtube_run()
+        original_cookie = run_dir.parent.parent / "user-cookie.txt"
+        original_cookie.write_bytes(
+            b"# Netscape HTTP Cookie File\noriginal-user-cookie\n"
+        )
+        localized_cookie = _localized_cookie(original_cookie, run_dir)
+        protected = run_dir / "待删除" / "source-acquire" / "operator-note.txt"
+        protected.parent.mkdir(parents=True, exist_ok=True)
+        protected.write_text("before", encoding="utf-8")
+        prepared = kernel.prepare_production_source_task(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key="source-provider-noncredential-drift-epoch-1",
+            prepared_at="2026-08-11T06:31:00Z",
+        )
+        claim = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="issue13-coordinator",
+            worker_id="issue13-provider",
+        )
+
+        localized_cookie.write_bytes(
+            b"# Netscape HTTP Cookie File\nprovider-refreshed-cookie\n"
+        )
+        protected.write_text("after", encoding="utf-8")
+        self._stage_provider_outputs(kernel, run_dir, claim)
+        self._release_admitted_launch(kernel, claim, "youtube_download")
+
+        with self.assertRaises(ContractError) as raised:
+            kernel.complete_task(
+                run_dir,
+                task_id=prepared.task_id,
+                attempt_id=claim.attempt_id,
+                claim_generation=claim.claim_generation,
+            )
+
+        self.assertEqual(
+            raised.exception.data["changed_paths"],
+            ["待删除/source-acquire/operator-note.txt"],
+        )
+        serialized = json.dumps(raised.exception.data, ensure_ascii=False)
+        self.assertNotIn("cookies.txt", serialized)
+        self.assertNotIn(str(localized_cookie), serialized)
+
     def test_production_task_id_is_stable_within_epoch_and_changes_on_reopen(self) -> None:
         from video2pdf_workflow_kernel.task_execution import TaskExecution
         from video2pdf_workflow_kernel.utils import read_json

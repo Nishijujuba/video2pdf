@@ -212,15 +212,26 @@ class TaskExecution:
         return record, path, sha256_file(path)
 
     def _protected_run_snapshot(
-        self, run_dir: Path, *, task_root_path: str
+        self,
+        run_dir: Path,
+        *,
+        task_root_path: str,
+        task_stage: str | None = None,
     ) -> list[dict[str, str]]:
         root = run_dir.resolve()
-        dynamic_kernel_namespaces = (
+        dynamic_kernel_namespaces = [
             "workflow/tasks",
             # Provider workers stage media here. Candidate Inventory evidence
             # authenticates the exact file set at Completion Gate.
             "work/source-acquisition/candidates",
-        )
+        ]
+        if task_stage == "provider_acquisition":
+            # Each admitted Provider Attempt receives its own task-local cookie
+            # working copy. It is disposable credential state and has no
+            # artifact authority in the Task's protected Run snapshot.
+            dynamic_kernel_namespaces.append(
+                "待删除/source-acquire/credentials"
+            )
         snapshot: list[dict[str, str]] = []
         pending = [root]
         while pending:
@@ -257,6 +268,16 @@ class TaskExecution:
                     )
         return sorted(snapshot, key=lambda item: item["path"])
 
+    @staticmethod
+    def _is_provider_disposable_source_path(
+        envelope: dict[str, Any], relative: str
+    ) -> bool:
+        parts = PurePosixPath(relative).parts
+        return (
+            envelope.get("task_stage") == "provider_acquisition"
+            and parts[:3] == ("待删除", "source-acquire", "credentials")
+        )
+
     def _verify_protected_run_snapshot(
         self,
         run_dir: Path,
@@ -265,11 +286,16 @@ class TaskExecution:
         allowed_replacements: dict[str, tuple[str | None, str]] | None = None,
     ) -> None:
         actual = self._protected_run_snapshot(
-            run_dir, task_root_path=envelope["task_root_path"]
+            run_dir,
+            task_root_path=envelope["task_root_path"],
+            task_stage=envelope.get("task_stage"),
         )
         expected = {
             item["path"]: item["sha256"]
             for item in envelope["protected_run_snapshot"]
+            if not self._is_provider_disposable_source_path(
+                envelope, item["path"]
+            )
         }
         observed = {item["path"]: item["sha256"] for item in actual}
         for path, (prior_sha, new_sha) in (allowed_replacements or {}).items():
@@ -1491,7 +1517,7 @@ class TaskExecution:
             "input_artifacts": inputs,
             "allowed_read_paths": reads,
             "protected_run_snapshot": self._protected_run_snapshot(
-                run_dir, task_root_path=task_root
+                run_dir, task_root_path=task_root, task_stage=task_stage
             ),
             "write_set": writes,
             "required_outputs": required_outputs,
@@ -1670,6 +1696,17 @@ class TaskExecution:
             raise ArtifactDrift("Generated Task Prompt is absent or linked")
         actual_envelope = read_json(envelope_path)
         self.contracts.validate("subagent-task-envelope", actual_envelope)
+        if expected_envelope.get("task_stage") == "provider_acquisition":
+            expected_envelope = copy.deepcopy(expected_envelope)
+            actual_envelope = copy.deepcopy(actual_envelope)
+            for candidate in (expected_envelope, actual_envelope):
+                candidate["protected_run_snapshot"] = [
+                    item
+                    for item in candidate["protected_run_snapshot"]
+                    if not self._is_provider_disposable_source_path(
+                        candidate, item["path"]
+                    )
+                ]
         if actual_envelope != expected_envelope or (
             expected_prompt is not None and prompt_path.read_bytes() != expected_prompt
         ):

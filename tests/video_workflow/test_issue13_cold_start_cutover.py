@@ -418,6 +418,7 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             ".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\trecorded\n",
             encoding="utf-8",
         )
+        original_cookie_bytes = cookie_file.read_bytes()
 
         faulted = _run_public_cli(
             self.id() + "-source-acquire-faulted",
@@ -445,6 +446,15 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             json.loads(
                 (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
             )["source_state"],
+        )
+        first_working_copies = list(
+            (run_dir / "待删除" / "source-acquire" / "credentials").glob(
+                "**/cookies.txt"
+            )
+        )
+        self.assertEqual(1, len(first_working_copies))
+        first_working_copies[0].write_bytes(
+            b"# Netscape HTTP Cookie File\nprovider-writeback-generation-1\n"
         )
 
         reconciled = _run_public_cli(
@@ -492,7 +502,35 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
         self.assertEqual(
             initialized_record["source_identity"], current_record["source_identity"]
         )
+        self.assertEqual(
+            initialized_record["source_epoch"], current_record["source_epoch"]
+        )
         self.assertEqual("ready", current_record["source_state"])
+        self.assertEqual(original_cookie_bytes, cookie_file.read_bytes())
+        attempts = sorted(
+            (
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (run_dir / "workflow" / "tasks").glob(
+                    "*/attempts/*/attempt.json"
+                )
+                if json.loads(
+                    (path.parents[2] / "task.json").read_text(encoding="utf-8")
+                )["task_stage"]
+                == "provider_acquisition"
+            ),
+            key=lambda item: item["claim_generation"],
+        )
+        self.assertEqual([1, 2], [item["claim_generation"] for item in attempts])
+        working_copies = list(
+            (run_dir / "待删除" / "source-acquire" / "credentials").glob(
+                "**/cookies.txt"
+            )
+        )
+        self.assertEqual(2, len(working_copies))
+        self.assertEqual(
+            {item["attempt_id"] for item in attempts},
+            {path.parent.name.split(".g", 1)[0] for path in working_copies},
+        )
         self.assertEqual(
             "current", current_record["checkpoints"]["source_ready"]["status"]
         )

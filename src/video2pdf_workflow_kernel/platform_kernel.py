@@ -618,6 +618,7 @@ class BilibiliPlatformCutoverPublisher:
         }
         encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
         reprepared = False
+        candidate_run_dir: str | None = None
         with self._connect(root) as connection:
             connection.execute("BEGIN IMMEDIATE")
             active = connection.execute(
@@ -640,15 +641,61 @@ class BilibiliPlatformCutoverPublisher:
             ).fetchone()
             if existing is not None:
                 existing_candidate = self._candidate_snapshot(existing)
-                if existing["state"] != "PREPARED":
+                if existing["state"] == "INITIALIZED":
+                    rebound_candidate = self._require_initialized_reprepare(
+                        root=root,
+                        connection=connection,
+                        row=existing,
+                        requested_candidate=candidate,
+                    )
+                    candidate_run_dir = rebound_candidate["candidate_run_dir"]
+                    if (
+                        existing["implementation_commit"] == implementation_commit
+                        and existing_candidate.get("prepared_at") == prepared_at
+                    ):
+                        connection.execute("COMMIT")
+                        idempotent = True
+                    elif existing["implementation_commit"] == implementation_commit:
+                        connection.execute("ROLLBACK")
+                        raise KernelConflict(
+                            "Bilibili initialized candidate reprepare is not an exact retry"
+                        )
+                    else:
+                        rebound_candidate["implementation_commit"] = implementation_commit
+                        rebound_candidate["prepared_at"] = prepared_at
+                        rebound_encoded = json.dumps(
+                            rebound_candidate, sort_keys=True, separators=(",", ":")
+                        )
+                        updated = connection.execute(
+                            "UPDATE platform_cutover_candidates SET "
+                            "implementation_commit=?,candidate_json=? "
+                            "WHERE platform=? AND state='INITIALIZED' "
+                            "AND implementation_commit=? AND candidate_json=?",
+                            (
+                                implementation_commit,
+                                rebound_encoded,
+                                platform,
+                                existing["implementation_commit"],
+                                existing["candidate_json"],
+                            ),
+                        )
+                        if updated.rowcount != 1:
+                            connection.execute("ROLLBACK")
+                            raise KernelConflict(
+                                "Bilibili cutover candidate changed during preparation"
+                            )
+                        connection.execute("COMMIT")
+                        idempotent = False
+                        reprepared = True
+                elif existing["state"] != "PREPARED":
                     connection.execute("ROLLBACK")
                     raise KernelConflict(
                         "A different Bilibili cutover candidate is already prepared"
                     )
-                if existing["candidate_json"] == encoded:
+                elif existing["candidate_json"] == encoded:
                     connection.execute("COMMIT")
                     idempotent = True
-                else:
+                elif existing["state"] == "PREPARED":
                     rebound_candidate = dict(existing_candidate)
                     rebound_candidate["implementation_commit"] = implementation_commit
                     rebound_candidate["prepared_at"] = prepared_at
@@ -715,7 +762,163 @@ class BilibiliPlatformCutoverPublisher:
             },
             "idempotent": idempotent,
             "reprepared": reprepared,
+            **(
+                {"candidate_run_dir": candidate_run_dir}
+                if candidate_run_dir is not None
+                else {}
+            ),
         }
+
+    def _require_initialized_reprepare(
+        self,
+        *,
+        root: Path,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        requested_candidate: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Prove that an initialized candidate still has only initialization authority."""
+
+        candidate = self._candidate_snapshot(row)
+        comparable = dict(candidate)
+        comparable.pop("workspace_root", None)
+        comparable.pop("candidate_run_dir", None)
+        comparable["state"] = "PREPARED"
+        comparable["implementation_commit"] = requested_candidate[
+            "implementation_commit"
+        ]
+        comparable["prepared_at"] = requested_candidate["prepared_at"]
+        if comparable != requested_candidate:
+            raise KernelConflict(
+                "Bilibili initialized candidate identity differs from preparation",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_identity_mismatch",
+                },
+            )
+        pending_platform_intent = connection.execute(
+            "SELECT 1 FROM platform_cutover_intents WHERE platform=? AND state='PREPARED'",
+            (SUPPORTED_PLATFORM,),
+        ).fetchone()
+        if pending_platform_intent is not None:
+            raise KernelConflict(
+                "Bilibili initialized candidate has a pending platform intent",
+                data={
+                    "first_failing_gate": "platform_kernel_authority",
+                    "error_code": "bilibili_initialized_reprepare_intent_pending",
+                },
+            )
+
+        run_dir, run, video = self._current_candidate_run(
+            root=root, row=row, expected_stage="generating"
+        )
+        workspace = Path(str(candidate.get("workspace_root", ""))).resolve()
+        if run_dir.parent != workspace:
+            raise KernelConflict(
+                "Bilibili initialized candidate Run path differs from preparation",
+                data={
+                    "first_failing_gate": "path_boundary",
+                    "error_code": "bilibili_initialized_reprepare_run_path_invalid",
+                },
+            )
+        run_path = run_dir / "workflow" / "run.json"
+        projections = run["delivery"]["projections"]
+        project_root = run_dir.parents[1]
+        session_path = self._projection_path(
+            projections.get("session_target"),
+            base=run_dir,
+            allowed_root=project_root,
+            label="session target",
+        )
+        index_path = self._projection_path(
+            projections.get("task_index"),
+            base=run_dir,
+            allowed_root=project_root,
+            label="task index",
+        )
+        session = read_json(session_path)
+        index = read_json(index_path)
+        matching_entries = [
+            item for item in index.get("entries", []) if item.get("run_id") == run["run_id"]
+        ]
+        entry = matching_entries[0] if len(matching_entries) == 1 else {}
+        if (
+            run.get("coordination_revision") != 1
+            or run.get("source_epoch") != 1
+            or run.get("source_state") != "pending"
+            or run.get("source_blocker") is not None
+            or run.get("source_version") is not None
+            or run.get("phase") != "source_acquisition"
+            or run.get("last_mutation_intent_id") is not None
+            or set(run.get("artifact_generations", {})) != {"bootstrap_record"}
+            or set(run.get("checkpoints", {})) != {"run_initialized"}
+            or run["checkpoints"]["run_initialized"].get("status") != "current"
+            or (run_dir / "source" / "manifest.json").exists()
+            or any(value is not None for value in video.get("artifacts", {}).values())
+            or video.get("projection_revision") != 1
+            or video.get("run_revision") != 1
+            or run["delivery"].get("ownership")
+            != {"session_id": row["session_id"], "generation": 1}
+            or projections.get("archive") is not None
+            or projections["video_target"].get("projection_revision") != 1
+            or projections["session_target"].get("projection_revision") != 1
+            or session.get("projection_revision") != 1
+            or session.get("run_revision") != 1
+            or session.get("owner_status") != "active"
+            or session.get("ownership_generation") != 1
+            or entry.get("run_revision") != 1
+            or entry.get("ownership_generation") != 1
+            or entry.get("session_id") != row["session_id"]
+            or entry.get("archive") is not None
+            or entry.get("video_target", {}).get("projection_revision") != 1
+            or entry.get("session_target", {}).get("projection_revision") != 1
+            or projections["task_index"].get("projection_revision")
+            != index.get("projection_revision")
+        ):
+            raise KernelConflict(
+                "Bilibili initialized candidate has progressed beyond initialization",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_progressed",
+                },
+            )
+        control_database = workspace / ".workflow-control" / "control.sqlite3"
+        if not control_database.is_file():
+            raise KernelConflict(
+                "Bilibili initialized candidate Control Store is unavailable"
+            )
+        with sqlite3.connect(control_database) as run_connection:
+            run_connection.row_factory = sqlite3.Row
+            initialization = run_connection.execute(
+                "SELECT * FROM initialization_intents WHERE run_id=? AND state='COMMITTED'",
+                (run["run_id"],),
+            ).fetchone()
+            committed_progress = sum(
+                run_connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE run_id=? AND state='COMMITTED'",
+                    (run["run_id"],),
+                ).fetchone()[0]
+                for table in (
+                    "run_state_mutation_intents",
+                    "task_promotion_intents",
+                    "source_publication_intents",
+                    "delivery_lifecycle_intents",
+                )
+            )
+        if (
+            initialization is None
+            or initialization["output_path"] != str(run_dir)
+            or initialization["run_record_sha256"] != sha256_file(run_path)
+            or committed_progress != 0
+        ):
+            raise KernelConflict(
+                "Bilibili initialized candidate Run is not current initialization authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_initialized_reprepare_run_not_current",
+                },
+            )
+        return candidate
 
     def require_prepared_candidate(
         self,

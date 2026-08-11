@@ -340,16 +340,41 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
 
     def test_public_adapter_uses_minimal_named_runtime_environment(self) -> None:
         environment = dict(os.environ)
-        environment["UNNAMED_CREDENTIAL"] = "SHOULD_NOT_CROSS"
-        environment["PYTHONPATH"] = "SHOULD_NOT_CROSS"
-        environment["TEXINPUTS"] = "SHOULD_NOT_CROSS"
+        system_root = environment.get("SYSTEMROOT", str(Path(sys.executable).anchor))
+        windows_directory = environment.get("WINDIR", system_root)
+        allowed_root = Path(sys.executable).resolve().parent
+        valid_miktex_paths = os.pathsep.join(
+            (str(allowed_root), str(allowed_root / "fixture-runtime-cache"))
+        )
+        environment.update({
+            "SYSTEMROOT": system_root,
+            "WINDIR": windows_directory,
+            "MIKTEX_VALID_PATHS": valid_miktex_paths,
+            "MIKTEX_MIXED_AUTHORITY": os.pathsep.join(
+                (str(allowed_root), str(self.root))
+            ),
+            "UNNAMED_CREDENTIAL": "SHOULD_NOT_CROSS",
+            "PYTHONPATH": "SHOULD_NOT_CROSS",
+            "TEXINPUTS": "SHOULD_NOT_CROSS",
+            "PATH": "SHOULD_NOT_CROSS",
+            "COMSPEC": "SHOULD_NOT_CROSS",
+            "APPDATA": "SHOULD_NOT_CROSS",
+            "USERPROFILE": "SHOULD_NOT_CROSS",
+            "TEMP": "SHOULD_NOT_CROSS",
+            "TMP": "SHOULD_NOT_CROSS",
+        })
         completed = self._run(environment=environment)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         provenance = json.loads((self.output / "compile-provenance.json").read_text(encoding="utf-8"))
         runtime_environment = provenance["runtime_environment"]
-        self.assertNotIn("UNNAMED_CREDENTIAL", runtime_environment)
-        self.assertNotIn("PYTHONPATH", runtime_environment)
-        self.assertNotIn("TEXINPUTS", runtime_environment)
+        self.assertEqual(system_root, runtime_environment["SYSTEMROOT"])
+        self.assertEqual(windows_directory, runtime_environment["WINDIR"])
+        self.assertEqual(valid_miktex_paths, runtime_environment["MIKTEX_VALID_PATHS"])
+        for forbidden in (
+            "MIKTEX_MIXED_AUTHORITY", "UNNAMED_CREDENTIAL", "PYTHONPATH", "TEXINPUTS",
+            "PATH", "COMSPEC", "APPDATA", "USERPROFILE", "TEMP", "TMP",
+        ):
+            self.assertNotIn(forbidden, runtime_environment)
 
 
 class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):

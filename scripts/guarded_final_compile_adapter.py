@@ -123,6 +123,10 @@ def compile_pdf(staging: Path, entry: Path, policy: dict[str, Any]) -> tuple[Pat
                "--disable-installer", "-no-shell-escape", "-recorder", "-interaction=nonstopmode", entry.name]
     environment = {"PYTHONUTF8": "1"}
     environment["VIDEO2PDF_FIXTURE_FONTS"] = os.pathsep.join(str(Path(item["path"]).resolve()) for item in policy["system_fonts"])
+    for key, value in os.environ.items():
+        normalized_key = key.upper()
+        if normalized_key in {"SYSTEMROOT", "WINDIR"}:
+            environment[normalized_key] = value
     runtime_roots = [Path(value).resolve() for value in policy["allowed_runtime_roots"]]
     for key, value in os.environ.items():
         if not key.upper().startswith("MIKTEX_"):

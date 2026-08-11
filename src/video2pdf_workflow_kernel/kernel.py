@@ -1973,6 +1973,119 @@ class VideoWorkflowKernel:
         store.check()
         return store
 
+    def _resolve_delivery_task_index_path(self, project_root: Path) -> Path:
+        """Choose the Kernel projection without claiming the Legacy index path."""
+
+        delivery_root = project_root.resolve() / ".codex" / "delivery-targets"
+        primary_path = delivery_root / "task-index.json"
+        if not primary_path.exists():
+            return primary_path
+        if not primary_path.is_file():
+            raise ContractError("Delivery task-index path is not a file")
+        try:
+            primary = read_json(primary_path)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ContractError("Delivery task-index JSON is malformed") from exc
+        if not isinstance(primary, dict):
+            raise ContractError("Delivery task-index must be a JSON object")
+        if primary.get("schema_name") == "kernel-delivery-task-index":
+            self.contracts.validate("kernel-delivery-task-index", primary)
+            return primary_path
+        self._validate_legacy_delivery_task_index(primary, project_root=project_root)
+        sibling_path = delivery_root / "kernel-task-index.json"
+        if not sibling_path.exists():
+            return sibling_path
+        if not sibling_path.is_file():
+            raise ContractError("Kernel delivery task-index sibling is not a file")
+        try:
+            sibling = read_json(sibling_path)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ContractError(
+                "Kernel delivery task-index sibling JSON is malformed"
+            ) from exc
+        if not isinstance(sibling, dict):
+            raise ContractError("Kernel delivery task-index sibling must be an object")
+        self.contracts.validate("kernel-delivery-task-index", sibling)
+        return sibling_path
+
+    @staticmethod
+    def _validate_legacy_delivery_task_index(
+        value: dict[str, Any], *, project_root: Path
+    ) -> None:
+        if value.get("schema_version") != "1.0" or "schema_name" in value:
+            raise ContractError(
+                "Existing delivery task-index is neither Kernel nor Legacy schema 1.0"
+            )
+        tasks = value.get("tasks")
+        if not isinstance(tasks, list):
+            raise ContractError("Legacy delivery task-index tasks must be a list")
+        required = {
+            "video_output_dir",
+            "target_file",
+            "owner_session_id",
+            "owner_status",
+            "last_session_id",
+            "stage",
+            "updated_at",
+        }
+        allowed_stages = {
+            "generating",
+            "ready_for_delivery",
+            "accepted",
+            "delivered",
+            "blocked",
+        }
+        allowed_owner_statuses = {
+            "active",
+            "blocked",
+            "delivered",
+            "abandoned",
+            "superseded",
+        }
+        active_video_dirs: set[Path] = set()
+        for position, task in enumerate(tasks):
+            if not isinstance(task, dict) or not required.issubset(task):
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} is malformed"
+                )
+            string_fields = required - {"owner_status", "stage"}
+            if any(
+                not isinstance(task.get(field), str) or not task[field]
+                for field in string_fields
+            ):
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} has invalid strings"
+                )
+            if task["owner_status"] not in allowed_owner_statuses:
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} owner status is invalid"
+                )
+            if task["stage"] not in allowed_stages:
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} stage is invalid"
+                )
+            video_relative = Path(task["video_output_dir"])
+            target_relative = Path(task["target_file"])
+            if video_relative.is_absolute() or target_relative.is_absolute():
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} path is absolute"
+                )
+            video_path = (project_root.resolve() / video_relative).resolve()
+            target_path = (project_root.resolve() / target_relative).resolve()
+            if (
+                not video_path.is_relative_to(project_root.resolve())
+                or not target_path.is_relative_to(video_path)
+            ):
+                raise ContractError(
+                    f"Legacy delivery task-index task {position} path escapes its boundary"
+                )
+            if task["owner_status"] == "active":
+                if video_path in active_video_dirs:
+                    raise ContractError(
+                        "Legacy delivery task-index has duplicate active video ownership"
+                    )
+                active_video_dirs.add(video_path)
+
     @staticmethod
     def _artifact_plan(run_id: str) -> dict[str, Any]:
         return {
@@ -2031,9 +2144,7 @@ class VideoWorkflowKernel:
             / session_id
             / "current.json"
         )
-        task_index_path = (
-            project_root / ".codex" / "delivery-targets" / "task-index.json"
-        )
+        task_index_path = self._resolve_delivery_task_index_path(project_root)
         if session_path.exists():
             raise KernelConflict("Kernel delivery session target is already occupied")
         lifecycle_intent_id = hashlib.sha256(
@@ -2218,11 +2329,8 @@ class VideoWorkflowKernel:
             / session_id
             / "current.json"
         ).resolve()
-        expected_task_index_path = (
+        expected_task_index_path = self._resolve_delivery_task_index_path(
             project_root
-            / ".codex"
-            / "delivery-targets"
-            / "task-index.json"
         ).resolve()
         session_path = Path(publication["session_target_path"]).resolve()
         task_index_path = Path(publication["task_index_path"]).resolve()

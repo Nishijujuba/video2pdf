@@ -617,6 +617,7 @@ class BilibiliPlatformCutoverPublisher:
             "state": "PREPARED",
         }
         encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        reprepared = False
         with self._connect(root) as connection:
             connection.execute("BEGIN IMMEDIATE")
             active = connection.execute(
@@ -638,14 +639,50 @@ class BilibiliPlatformCutoverPublisher:
                 (platform,),
             ).fetchone()
             if existing is not None:
-                self._candidate_snapshot(existing)
-                if existing["state"] != "PREPARED" or existing["candidate_json"] != encoded:
+                existing_candidate = self._candidate_snapshot(existing)
+                if existing["state"] != "PREPARED":
                     connection.execute("ROLLBACK")
                     raise KernelConflict(
                         "A different Bilibili cutover candidate is already prepared"
                     )
-                connection.execute("COMMIT")
-                idempotent = True
+                if existing["candidate_json"] == encoded:
+                    connection.execute("COMMIT")
+                    idempotent = True
+                else:
+                    rebound_candidate = dict(existing_candidate)
+                    rebound_candidate["implementation_commit"] = implementation_commit
+                    rebound_candidate["prepared_at"] = prepared_at
+                    if (
+                        existing["implementation_commit"] == implementation_commit
+                        or "workspace_root" in existing_candidate
+                        or "candidate_run_dir" in existing_candidate
+                        or rebound_candidate != candidate
+                    ):
+                        connection.execute("ROLLBACK")
+                        raise KernelConflict(
+                            "A different Bilibili cutover candidate is already prepared"
+                        )
+                    updated = connection.execute(
+                        "UPDATE platform_cutover_candidates SET "
+                        "implementation_commit=?,candidate_json=? "
+                        "WHERE platform=? AND state='PREPARED' "
+                        "AND implementation_commit=? AND candidate_json=?",
+                        (
+                            implementation_commit,
+                            encoded,
+                            platform,
+                            existing["implementation_commit"],
+                            existing["candidate_json"],
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        connection.execute("ROLLBACK")
+                        raise KernelConflict(
+                            "Bilibili cutover candidate changed during preparation"
+                        )
+                    connection.execute("COMMIT")
+                    idempotent = False
+                    reprepared = True
             else:
                 connection.execute(
                     "INSERT INTO platform_cutover_candidates("
@@ -677,6 +714,7 @@ class BilibiliPlatformCutoverPublisher:
                 "youtube": "active_legacy",
             },
             "idempotent": idempotent,
+            "reprepared": reprepared,
         }
 
     def require_prepared_candidate(

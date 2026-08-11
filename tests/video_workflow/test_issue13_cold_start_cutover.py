@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -156,6 +157,210 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
         self.assertEqual("cutover_candidate_initialized", envelope["classification"])
         self.assertEqual("4.0.0", run_record["schema_version"])
         self.assertEqual("generating", run_record["delivery"]["stage"])
+
+    def test_cutover_candidate_coexists_with_existing_legacy_task_index(self) -> None:
+        control, workspace, probe, implementation_commit = self._cold_start_case()
+        self._prepare_candidate(
+            control_store_root=control,
+            probe_path=probe,
+            implementation_commit=implementation_commit,
+        )
+        project_root = workspace.parent
+        legacy_index_path = (
+            project_root / ".codex" / "delivery-targets" / "task-index.json"
+        )
+        legacy_index_path.parent.mkdir(parents=True)
+        legacy_index = {
+            "schema_version": "1.0",
+            "tasks": [
+                {
+                    "video_output_dir": "workspace/existing-legacy-video",
+                    "target_file": (
+                        "workspace/existing-legacy-video/review/acceptance/"
+                        "delivery_target.json"
+                    ),
+                    "owner_session_id": "legacy-session",
+                    "owner_status": "active",
+                    "last_session_id": "legacy-session",
+                    "stage": "generating",
+                    "updated_at": "2026-08-09T12:00:00+08:00",
+                }
+            ],
+        }
+        legacy_bytes = (
+            json.dumps(legacy_index, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        legacy_index_path.write_bytes(legacy_bytes)
+        legacy_sha = hashlib.sha256(legacy_bytes).hexdigest()
+
+        faulted = _run_public_cli(
+            self.id() + "-candidate-fault",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control),
+            "--probe",
+            str(probe),
+            "--session-id",
+            "session-issue13-candidate",
+            "--fault-point",
+            "after_candidate_begin",
+        )
+        self.assertEqual(60, faulted.returncode, faulted.stdout + faulted.stderr)
+        candidate_reconciled = _run_public_cli(
+            self.id() + "-candidate-reconcile",
+            "platform-kernel-candidate-reconcile",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--workspace-root",
+            str(workspace),
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+        )
+        self.assertEqual(
+            0,
+            candidate_reconciled.returncode,
+            candidate_reconciled.stdout + candidate_reconciled.stderr,
+        )
+        retried = _run_public_cli(
+            self.id() + "-candidate-retry",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control),
+            "--probe",
+            str(probe),
+            "--session-id",
+            "session-issue13-candidate",
+            "--fault-point",
+            "after_output_dir_publish",
+        )
+        self.assertEqual(60, retried.returncode, retried.stdout + retried.stderr)
+        initialized = _run_public_cli(
+            self.id() + "-publication-reconcile",
+            "platform-kernel-candidate-reconcile",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control),
+            "--workspace-root",
+            str(workspace),
+            "--candidate-probe",
+            str(probe),
+            "--candidate-session-id",
+            "session-issue13-candidate",
+        )
+        self.assertEqual(
+            0, initialized.returncode, initialized.stdout + initialized.stderr
+        )
+        initialized_envelope = json.loads(initialized.stdout)
+        run_dir = Path(initialized_envelope["data"]["run_dir"])
+        run_record_path = run_dir / "workflow" / "run.json"
+        run_record = json.loads(run_record_path.read_text(encoding="utf-8"))
+        sibling_index_path = legacy_index_path.with_name("kernel-task-index.json")
+        sibling_index = json.loads(sibling_index_path.read_text(encoding="utf-8"))
+        session_path = (
+            project_root
+            / ".codex"
+            / "delivery-targets"
+            / "sessions"
+            / "session-issue13-candidate"
+            / "current.json"
+        )
+        session_target = json.loads(session_path.read_text(encoding="utf-8"))
+        video_target = json.loads(
+            (run_dir / "review" / "acceptance" / "delivery_target.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        task_binding = run_record["delivery"]["projections"]["task_index"]
+        self.assertEqual(legacy_bytes, legacy_index_path.read_bytes())
+        self.assertEqual(
+            legacy_sha,
+            hashlib.sha256(legacy_index_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual("1.0.0", sibling_index["schema_version"])
+        self.assertEqual(
+            [run_record["run_id"]],
+            [entry["run_id"] for entry in sibling_index["entries"]],
+        )
+        self.assertEqual(str(sibling_index_path.resolve()), task_binding["path"])
+        self.assertEqual(
+            hashlib.sha256(sibling_index_path.read_bytes()).hexdigest(),
+            task_binding["sha256"],
+        )
+        self.assertEqual(run_record["run_id"], session_target["run_id"])
+        self.assertEqual(run_record["run_id"], video_target["run_id"])
+
+        reconciled = _run_public_cli(
+            self.id() + "-reconcile",
+            "reconcile-run",
+            "--workspace-root",
+            str(workspace),
+            "--run-id",
+            run_record["run_id"],
+        )
+        self.assertEqual(0, reconciled.returncode, reconciled.stdout + reconciled.stderr)
+        self.assertEqual(legacy_bytes, legacy_index_path.read_bytes())
+        self.assertEqual(
+            hashlib.sha256(sibling_index_path.read_bytes()).hexdigest(),
+            json.loads(run_record_path.read_text(encoding="utf-8"))["delivery"][
+                "projections"
+            ]["task_index"]["sha256"],
+        )
+
+    def test_cutover_candidate_rejects_invalid_kernel_task_index_sibling(self) -> None:
+        control, workspace, probe, implementation_commit = self._cold_start_case()
+        self._prepare_candidate(
+            control_store_root=control,
+            probe_path=probe,
+            implementation_commit=implementation_commit,
+        )
+        delivery_root = workspace.parent / ".codex" / "delivery-targets"
+        delivery_root.mkdir(parents=True)
+        legacy_path = delivery_root / "task-index.json"
+        sibling_path = delivery_root / "kernel-task-index.json"
+        legacy_bytes = b'{"schema_version":"1.0","tasks":[]}\n'
+        invalid_sibling_bytes = b'{"schema_version":"1.0.0","entries":[]}\n'
+        legacy_path.write_bytes(legacy_bytes)
+        sibling_path.write_bytes(invalid_sibling_bytes)
+
+        completed = _run_public_cli(
+            self.id() + "-candidate-init",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control),
+            "--probe",
+            str(probe),
+            "--session-id",
+            "session-issue13-candidate",
+        )
+
+        self.assertNotEqual(0, completed.returncode)
+        envelope = json.loads(completed.stdout)
+        self.assertIn(
+            envelope["classification"], {"contract_invalid", "unknown_contract_version"}
+        )
+        self.assertEqual(legacy_bytes, legacy_path.read_bytes())
+        self.assertEqual(invalid_sibling_bytes, sibling_path.read_bytes())
+        self.assertFalse(
+            (
+                workspace.parent
+                / ".codex"
+                / "delivery-targets"
+                / "sessions"
+                / "session-issue13-candidate"
+                / "current.json"
+            ).exists()
+        )
 
     def test_initialized_candidate_acquires_recorded_bilibili_source_without_a_second_run(
         self,

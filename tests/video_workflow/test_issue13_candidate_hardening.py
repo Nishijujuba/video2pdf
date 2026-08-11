@@ -957,6 +957,79 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
             "bilibili_candidate_state_inconsistent", envelope["data"]["error_code"]
         )
 
+    def test_prepare_rebinds_only_current_implementation_for_exact_prepared_candidate(
+        self,
+    ) -> None:
+        cold = cold_start_test.Issue13ColdStartCutoverTests(
+            "test_cold_start_prepare_binds_one_candidate_without_activation"
+        )
+        control, _workspace, probe, _implementation_commit = cold._cold_start_case()
+        old_commit = "a" * 40
+        repaired_commit = "b" * 40
+
+        def run_prepare(commit: str, prepared_at: str) -> subprocess.CompletedProcess[str]:
+            def fake_git_output(_root: Path, *arguments: str) -> str:
+                if arguments == ("cat-file", "-e", f"{commit}^{{commit}}"):
+                    return ""
+                if arguments == ("rev-parse", "HEAD"):
+                    return commit
+                raise AssertionError(f"unexpected git command: {arguments!r}")
+
+            with patch.object(platform_kernel_module, "git_output", fake_git_output):
+                return platform_test._run_cli(
+                    "platform-kernel-prepare",
+                    "--platform",
+                    "bilibili",
+                    "--control-store-root",
+                    str(control),
+                    "--implementation-commit",
+                    commit,
+                    "--candidate-probe",
+                    str(probe),
+                    "--candidate-session-id",
+                    "session-issue13-candidate",
+                    "--prepared-at",
+                    prepared_at,
+                )
+
+        initial = run_prepare(old_commit, "2026-08-09T13:00:00Z")
+        self.assertEqual(0, initial.returncode, initial.stdout + initial.stderr)
+
+        timestamp_only_change = run_prepare(old_commit, "2026-08-11T08:59:00Z")
+        self.assertEqual(
+            30,
+            timestamp_only_change.returncode,
+            timestamp_only_change.stdout + timestamp_only_change.stderr,
+        )
+
+        repaired = run_prepare(repaired_commit, "2026-08-11T09:00:00Z")
+        self.assertEqual(0, repaired.returncode, repaired.stdout + repaired.stderr)
+        repaired_envelope = json.loads(repaired.stdout)
+        self.assertFalse(repaired_envelope["data"]["idempotent"])
+        self.assertTrue(repaired_envelope["data"]["reprepared"])
+
+        with sqlite3.connect(control / "platform-kernel-control.sqlite3") as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+        candidate = json.loads(row["candidate_json"])
+        self.assertEqual("PREPARED", row["state"])
+        self.assertEqual("PREPARED", candidate["state"])
+        self.assertEqual(repaired_commit, row["implementation_commit"])
+        self.assertEqual(repaired_commit, candidate["implementation_commit"])
+        self.assertNotIn("workspace_root", candidate)
+        self.assertNotIn("candidate_run_dir", candidate)
+
+        exact_retry = run_prepare(repaired_commit, "2026-08-11T09:00:00Z")
+        self.assertEqual(
+            0, exact_retry.returncode, exact_retry.stdout + exact_retry.stderr
+        )
+        retry_envelope = json.loads(exact_retry.stdout)
+        self.assertTrue(retry_envelope["data"]["idempotent"])
+        self.assertFalse(retry_envelope["data"]["reprepared"])
+
     def test_candidate_activation_rejects_sql_json_state_drift(self) -> None:
         _harness, control, _evidence, run_dir, _acceptance, _guard = (
             self._ready_candidate()

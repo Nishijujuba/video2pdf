@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 from typing import Any
@@ -113,6 +113,38 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
             or not item.get("evidence_locator")
         ):
             raise ContractError("Text Origin Plan rendered object is invalid")
+        if item["object_kind"] == "declared_raster_text":
+            source_path = item.get("source_path")
+            source_pure = (
+                PurePosixPath(source_path)
+                if isinstance(source_path, str) and source_path
+                else None
+            )
+            if (
+                not isinstance(item.get("source_artifact_logical_id"), str)
+                or not item.get("source_artifact_logical_id")
+                or not isinstance(item.get("source_generation"), int)
+                or isinstance(item.get("source_generation"), bool)
+                or item["source_generation"] < 1
+                or not isinstance(item.get("source_sha256"), str)
+                or len(item["source_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in item["source_sha256"]
+                )
+                or source_pure is None
+                or source_pure.is_absolute()
+                or "\\" in source_path
+                or Path(source_path).drive
+                or any(part in {"", ".", ".."} for part in source_pure.parts)
+            ):
+                raise ContractError(
+                    "Text Origin Plan declared raster source is invalid",
+                    data={
+                        "first_failing_gate": "text_origin_plan_raster_source",
+                        "error_code": "contract_invalid",
+                    },
+                )
     if len(object_ids) != len(set(object_ids)):
         raise ContractError("Text Origin Plan rendered object identities are ambiguous")
     if not isinstance(edges, list) or not edges:
@@ -362,6 +394,34 @@ class GuardedFinalCompileProvider:
         ):
             raise ContractError("Text Origin Plan is stale or unsupported")
         _validate_text_origin_plan(plan)
+        compile_entry_by_binding = {
+            (
+                entry.get("logical_id"),
+                entry.get("generation"),
+                entry.get("sha256"),
+            ): entry
+            for entry in entries
+        }
+        for raster in plan["rendered_objects"]:
+            if raster["object_kind"] != "declared_raster_text":
+                continue
+            binding = (
+                raster["source_artifact_logical_id"],
+                raster["source_generation"],
+                raster["source_sha256"],
+            )
+            source_entry = compile_entry_by_binding.get(binding)
+            if (
+                source_entry is None
+                or source_entry.get("staging_path") != raster["source_path"]
+            ):
+                raise CompileDependencyGap(
+                    "Final Compile raster source binding is stale",
+                    data={
+                        "first_failing_gate": "final_compile_raster_source_binding",
+                        "error_code": "compile_dependency_gap",
+                    },
+                )
         item_by_id = {item["item_id"]: item for item in inventory["items"]}
         planned_ids: list[str] = []
         for item in plan.get("sealed_items", []):

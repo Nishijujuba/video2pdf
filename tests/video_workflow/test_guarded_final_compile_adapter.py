@@ -203,7 +203,8 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "object_kind": "declared_raster_text", "bbox": bbox, "exact_utf8_text": "Raster words",
             "extractor_id": "declared-raster-v1", "evidence_locator": "page:1/image:1"})
         plan["rendered_objects"][-1].update({"source_artifact_logical_id": "figure_asset",
-            "source_generation": 1, "source_sha256": source_sha})
+            "source_generation": 1, "source_sha256": source_sha,
+            "source_path": "figure.png"})
         plan["edges"].append({"edge_id": "figure-origin", "disposition": "sealed_origin",
             "sealed_item_id": "figure", "sealed_text_utf8": "Raster words",
             "rendered_object_ids": ["page-1-raster-1"], "recipe": "exact_utf8"})
@@ -364,12 +365,14 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
              "bbox": [200.0, 100.0, 300.0, 200.0], "exact_utf8_text": "A",
              "extractor_id": "declared-raster-v1", "evidence_locator": "page:1/image:1",
              "source_artifact_logical_id": sources[1]["logical_id"],
-             "source_generation": sources[1]["generation"], "source_sha256": sources[1]["sha256"]},
+             "source_generation": sources[1]["generation"], "source_sha256": sources[1]["sha256"],
+             "source_path": "figure_b.png"},
             {"object_id": "raster-b", "page": 1, "object_kind": "declared_raster_text",
              "bbox": [320.0, 100.0, 420.0, 200.0], "exact_utf8_text": "B",
              "extractor_id": "declared-raster-v1", "evidence_locator": "page:1/image:2",
              "source_artifact_logical_id": sources[0]["logical_id"],
-             "source_generation": sources[0]["generation"], "source_sha256": sources[0]["sha256"]},
+             "source_generation": sources[0]["generation"], "source_sha256": sources[0]["sha256"],
+             "source_path": "figure_a.png"},
         ])
         plan["plan_sha256"] = fingerprint(plan, "plan_sha256")
         self.plan.write_bytes(canonical_bytes(plan))
@@ -613,13 +616,36 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             )
         self.assertFalse(workspace.exists())
 
-    def _run_public_final_compile_fixture(self, directive: str | None = None) -> Path:
+    def _run_public_final_compile_fixture(
+        self,
+        directive: str | None = None,
+        *,
+        include_raster: bool = False,
+        raster_source_path: str | None = "figure.png",
+    ) -> Path:
         fixture = GuardedFinalCompileAdapterTests(methodName="test_public_adapter_compiles_and_derives_complete_evidence")
         fixture.setUp()
         fixture.source.write_text(
             "Core claim\n" + (f"% {directive}\n" if directive else ""),
             encoding="utf-8",
         )
+        if include_raster:
+            fixture._declare_raster([200.0, 100.0, 300.0, 200.0])
+            plan = json.loads(fixture.plan.read_text(encoding="utf-8"))
+            raster = next(
+                item
+                for item in plan["rendered_objects"]
+                if item["object_kind"] == "declared_raster_text"
+            )
+            if raster_source_path is None:
+                raster.pop("source_path")
+            else:
+                raster["source_path"] = raster_source_path
+            plan["plan_sha256"] = fingerprint(plan, "plan_sha256")
+            fixture.plan.write_bytes(canonical_bytes(plan))
+            request = json.loads(fixture.request.read_text(encoding="utf-8"))
+            request["text_origin_plan_sha256"] = plan["plan_sha256"]
+            fixture.request.write_bytes(canonical_bytes(request))
         source_sha = hashlib.sha256(fixture.source.read_bytes()).hexdigest()
         governance = fixture.root / "governance.json"
         governance.write_bytes(b'{"governed":true}\n')
@@ -629,7 +655,13 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             "artifacts": [
                 {"logical_id": "integrated_main", "generation": 1, "sha256": source_sha},
                 {"logical_id": "governance_manifest", "generation": 1, "sha256": governance_sha},
-            ]}
+            ] + ([{
+                "logical_id": "figure_asset",
+                "generation": 1,
+                "sha256": hashlib.sha256(
+                    (fixture.source.parent / "figure.png").read_bytes()
+                ).hexdigest(),
+            }] if include_raster else [])}
         generations["generation_set_sha256"] = fingerprint(generations, "generation_set_sha256")
         item = {"item_id": "main", "kind": "paragraph", "semantic_region": "main",
             "language_profile_id": "zh-hans", "source_artifact_logical_id": "integrated_main",
@@ -637,15 +669,39 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             "representation": "structured_text", "text_sha256": hashlib.sha256(b"Core claim").hexdigest(),
             "applicable_rule_ids": ["no_meta_writing_content"]}
         item["item_sha256"] = fingerprint(item, "item_sha256")
+        items = [item]
+        declared_surface = [{"region_id": "main", "kind": "paragraph"}]
+        coverage_ledger = [{"region_id": "main", "item_id": "main", "status": "covered"}]
+        if include_raster:
+            figure_sha = generations["artifacts"][-1]["sha256"]
+            figure_item = {
+                "item_id": "figure",
+                "kind": "raster_text",
+                "semantic_region": "figure",
+                "language_profile_id": "zh-hans",
+                "source_artifact_logical_id": "figure_asset",
+                "source_generation": 1,
+                "source_sha256": figure_sha,
+                "locator": "figure:1",
+                "representation": "authoritative_raster_text",
+                "text_sha256": hashlib.sha256(b"Raster words").hexdigest(),
+                "applicable_rule_ids": ["no_meta_writing_content"],
+            }
+            figure_item["item_sha256"] = fingerprint(figure_item, "item_sha256")
+            items.append(figure_item)
+            declared_surface.append({"region_id": "figure", "kind": "raster_text"})
+            coverage_ledger.append({"region_id": "figure", "item_id": "figure", "status": "covered"})
         inventory = {"schema_name": "reader-facing-text-inventory", "schema_version": "1.0.0",
             "inventory_id": "adapter-public-inventory", "language_profile_id": "zh-hans",
             "delivery_glossary": None, "generation_set_sha256": generations["generation_set_sha256"],
-            "declared_surface": [{"region_id": "main", "kind": "paragraph"}], "items": [item],
-            "coverage_ledger": [{"region_id": "main", "item_id": "main", "status": "covered"}],
+            "declared_surface": declared_surface, "items": items,
+            "coverage_ledger": coverage_ledger,
             "extractors": [{"extractor_id": "latex-text-v1", "extractor_sha256": "6" * 64}]}
         inventory["reader_text_set_sha256"] = hashlib.sha256(canonical_bytes([{
-            "item_id": "main", "kind": "paragraph", "representation": "structured_text",
-            "text_sha256": item["text_sha256"]}])).hexdigest()
+            "item_id": current["item_id"], "kind": current["kind"],
+            "representation": current["representation"],
+            "text_sha256": current["text_sha256"],
+        } for current in items])).hexdigest()
         inventory["inventory_sha256"] = fingerprint(inventory, "inventory_sha256")
         seal = {"schema_name": "precompile-text-seal", "schema_version": "1.0.0", "seal_id": "7" * 32,
             "activation_status": "target_only", "sealed_at": "2026-08-11T13:00:00Z",
@@ -733,6 +789,41 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
 
     def test_public_final_compile_allows_unread_governance_entries(self) -> None:
         self._run_public_final_compile_fixture()
+
+    def test_public_final_compile_accepts_bound_raster_source_path(self) -> None:
+        self._run_public_final_compile_fixture(include_raster=True)
+
+    def test_public_final_compile_rejects_missing_or_escaping_raster_source_path(self) -> None:
+        for source_path in (None, "../figure.png"):
+            with self.subTest(source_path=source_path):
+                with self.assertRaisesRegex(
+                    ContractError,
+                    "declared raster source is invalid",
+                ) as raised:
+                    self._run_public_final_compile_fixture(
+                        include_raster=True,
+                        raster_source_path=source_path,
+                    )
+                self.assertEqual(
+                    "text_origin_plan_raster_source",
+                    raised.exception.data["first_failing_gate"],
+                )
+                self.assertEqual("contract_invalid", raised.exception.data["error_code"])
+
+    def test_public_final_compile_rejects_raster_staging_path_mismatch(self) -> None:
+        with self.assertRaisesRegex(
+            CompileDependencyGap,
+            "raster source binding is stale",
+        ) as raised:
+            self._run_public_final_compile_fixture(
+                include_raster=True,
+                raster_source_path="figures/drifted.png",
+            )
+        self.assertEqual(
+            "final_compile_raster_source_binding",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual("compile_dependency_gap", raised.exception.data["error_code"])
 
     def test_public_final_compile_rejects_unobserved_entrypoint(self) -> None:
         with self.assertRaisesRegex(

@@ -78,6 +78,23 @@ def mutated_registry(
 
 
 class DeliveryQualityContractsCliTests(unittest.TestCase):
+    def test_rendered_inventory_accepts_bound_declared_raster_source_path(self) -> None:
+        registry = DeliveryQualityRegistry(PROJECT_ROOT)
+        entry = next(
+            item
+            for item in registry.entries
+            if item.schema_name == "rendered-text-object-inventory"
+        )
+        inventory = json.loads(entry.positive_example.read_text(encoding="utf-8"))
+        inventory["objects"][0].update({
+            "object_kind": "declared_raster_text",
+            "source_artifact_logical_id": "figure_asset",
+            "source_generation": 3,
+            "source_sha256": "6" * 64,
+            "source_path": "figures/figure_asset.png",
+        })
+        registry.validate("rendered-text-object-inventory", inventory)
+
     def test_acceptance_v2_negative_fixtures_are_single_contradiction_valid_graphs(
         self,
     ) -> None:

@@ -563,6 +563,59 @@ class SingleSectionProductionTests(unittest.TestCase):
         self.assertEqual([], policy["engine"]["prefix_args"])
         self.assertEqual(sha256(engine), registered[str(engine.resolve()).casefold()])
 
+        main = self.run_dir / "work/integration/main.tex"
+        main.parent.mkdir(parents=True, exist_ok=True)
+        main.write_text("\\begin{document}fixture\\end{document}\n", encoding="utf-8")
+        run_id, integration_generation = self._authorize_compile_main(main)
+        manifest = {
+            "schema_name": "compile-manifest",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "run_id": run_id,
+            "mode": "diagnostic",
+            "delivery_authority": False,
+            "integration_manifest_generation": integration_generation,
+            "runtime_policy_sha256": policy["policy_sha256"],
+            "dependency_discovery_policy_version": "recorder-closure-v1",
+            "entries": [{
+                "logical_id": "integrated_main",
+                "generation": 1,
+                "sha256": sha256(main),
+                "size": main.stat().st_size,
+                "producer": "test",
+                "source_path": "work/integration/main.tex",
+                "staging_path": "main.tex",
+                "role": "entry_tex",
+                "media_type": "application/x-tex",
+                "required": True,
+            }],
+        }
+        manifest_path = self.run_dir / "workflow/compile-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        captured_command: list[str] = []
+
+        def complete_without_starting_miktex(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            captured_command.extend(command)
+            staging = Path(str(kwargs["cwd"]))
+            (staging / "main.pdf").write_bytes(b"fixture-pdf")
+            (staging / "main.fls").write_text(
+                f"INPUT {staging / 'main.tex'}\nOUTPUT {staging / 'main.pdf'}\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch(
+            "video2pdf_workflow_kernel.guarded_compile.subprocess.run",
+            side_effect=complete_without_starting_miktex,
+        ):
+            GuardedCompileProvider(self.run_dir).compile(manifest_path, policy)
+
+        installer_index = captured_command.index("--disable-installer")
+        self.assertEqual(
+            ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],
+            captured_command[installer_index - 2:installer_index],
+        )
+
     def test_runtime_policy_and_recorder_evidence_fail_closed(self) -> None:
         from video2pdf_workflow_kernel.errors import CompileDependencyGap, ContractError
         from video2pdf_workflow_kernel.guarded_compile import (

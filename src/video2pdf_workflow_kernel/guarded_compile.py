@@ -457,8 +457,14 @@ class GuardedCompileProvider:
 
         entry = next(item for item in entries if item["role"] == "entry_tex")
         engine = runtime_policy["engine"]
+        miktex_process_guards = (
+            ["--miktex-disable-maintenance", "--miktex-disable-diagnose"]
+            if runtime_policy["policy_id"] == "miktex-xelatex-runtime"
+            else []
+        )
         command = [
             engine["executable"], *engine.get("prefix_args", []),
+            *miktex_process_guards,
             "--disable-installer", "-no-shell-escape", "-recorder",
             "-interaction=nonstopmode", entry["staging_path"],
         ]

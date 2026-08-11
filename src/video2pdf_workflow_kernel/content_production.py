@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 import shutil
@@ -138,6 +139,356 @@ class ContentProduction:
         self.kernel.contracts.validate("production-state", state)
         write_json_atomic(path, state)
         return state
+
+    def require_current_diagnostic_compile_authority(
+        self, run_dir: Path
+    ) -> dict[str, Any]:
+        """Prove that the complete production graph owns the diagnostic compile."""
+        run_dir = run_dir.resolve()
+        state_path = self._state_path(run_dir)
+        if not state_path.is_file():
+            raise ContractError("Final Compile requires current Production State")
+        with self._exclusive_run_lock(run_dir):
+            state = self._load_or_create_state(run_dir)
+            plan = self._plan_locked(run_dir, state, persist=False)
+            sections = state.get("sections")
+            if (
+                plan.get("classification") != "production_complete"
+                or state.get("checkpoints", {}).get("draft_compile_ready") != "current"
+                or not isinstance(sections, dict)
+                or not sections
+                or any(section.get("status") != "integrated" for section in sections.values())
+            ):
+                raise ContractError(
+                    "Final Compile requires the complete current Production task graph"
+                )
+
+            required_tasks = {"outline", "pyramid-outline", "pyramid-main"}
+            required_artifacts = {
+                "outline_contract",
+                "pyramid_outline_report",
+                "pyramid_main_report",
+                "integrated_main",
+                "integration_manifest",
+                "compile_manifest",
+                "diagnostic_compile_report",
+                "diagnostic_pdf",
+                "local_class",
+                "local_style",
+                "bibliography",
+            }
+            for section_id, section in sections.items():
+                required_tasks.update(
+                    {
+                        f"writer-{section_id.replace('_', '-')}",
+                        f"pyramid-section-{section_id.replace('_', '-')}",
+                    }
+                )
+                required_artifacts.update(
+                    {
+                        f"writer_{section_id}",
+                        f"writer_result_{section_id}",
+                        f"integrated_{section_id}",
+                        f"pyramid_{section_id}_report",
+                    }
+                )
+                for slot in section.get("figure_slots", []):
+                    required_tasks.add(self._figure_logical_task_key(slot))
+                    slot_id = slot["slot_id"]
+                    required_artifacts.update(
+                        {
+                            f"figure_asset_{slot_id}",
+                            f"figure_manifest_{slot_id}",
+                            f"figure_contribution_{slot_id}",
+                        }
+                    )
+
+            completed = set(state.get("completed_tasks", []))
+            claims = state.get("claims", {})
+            receipts = state.get("receipts", {})
+            promotion_sequence = state.get("promotion_sequence", [])
+            if (
+                completed != required_tasks
+                or set(claims) != required_tasks
+                or set(receipts) != required_tasks
+                or set(state.get("artifacts", {})) != required_artifacts
+                or set(promotion_sequence) != required_tasks
+                or not promotion_sequence
+                or promotion_sequence[-1] != "pyramid-main"
+            ):
+                raise ContractError(
+                    "Final Compile requires the exact committed Production task graph"
+                )
+            for logical_key in sorted(required_tasks):
+                claim = claims[logical_key]
+                receipt = receipts[logical_key]
+                expected_task_id = _digest(state["run_id"], logical_key)
+                expected_claim_token = _digest(
+                    state["run_id"],
+                    logical_key,
+                    str(claim.get("claim_generation")),
+                    "claim",
+                )
+                if (
+                    claim.get("status") != "committed"
+                    or claim.get("task_id") != expected_task_id
+                    or claim.get("claim_token") != expected_claim_token
+                    or receipt.get("task_id") != claim.get("task_id")
+                    or receipt.get("attempt_id") != claim.get("active_attempt_id")
+                    or receipt.get("claim_generation") != claim.get("claim_generation")
+                ):
+                    raise ContractError(
+                        "Final Compile requires current committed Production receipts"
+                    )
+                task_dir = run_dir / "workflow/tasks" / claim["task_id"]
+                envelope_path = task_dir / "envelope.json"
+                require_contained_path(
+                    envelope_path,
+                    run_dir,
+                    purpose=f"Production Task Envelope {logical_key}",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                envelope = read_json(envelope_path)
+                self.kernel.contracts.validate("production-task-envelope", envelope)
+                if (
+                    envelope.get("run_id") != state["run_id"]
+                    or envelope.get("task_id") != expected_task_id
+                    or envelope.get("logical_task_key") != logical_key
+                    or envelope.get("claim_generation") != claim["claim_generation"]
+                    or envelope.get("claim_token") != expected_claim_token
+                ):
+                    raise ContractError(
+                        "Final Compile requires current Production Task Envelopes"
+                    )
+                outputs = self._validate_attempt(
+                    run_dir, envelope, claim["active_attempt_id"]
+                )
+                expected_producers = {
+                    f"task:{claim['task_id']}:{claim['active_attempt_id']}",
+                    f"provider:{claim['task_id']}:{claim['active_attempt_id']}",
+                }
+                promoted = [
+                    artifact
+                    for artifact in state["artifacts"].values()
+                    if artifact.get("producer") in expected_producers
+                ]
+                if (
+                    {artifact["path"] for artifact in promoted}
+                    != set(envelope.get("write_set", []))
+                    or Counter(artifact["sha256"] for artifact in promoted)
+                    != Counter(sha256_file(path) for path in outputs.values())
+                ):
+                    raise ContractError(
+                        "Final Compile requires exact Production output promotion authority"
+                    )
+                result = receipt.get("result", {})
+                if logical_key != "pyramid-main" and (
+                    result.get("classification") != "production_advanced"
+                    or result.get("completed_role") != envelope.get("role")
+                    or result.get("promotion_sequence")
+                    != max(
+                        index
+                        for index, promoted_key in enumerate(promotion_sequence, start=1)
+                        if promoted_key == logical_key
+                    )
+                    or not isinstance(result.get("checkpoints"), dict)
+                ):
+                    raise ContractError(
+                        "Final Compile requires current Production receipt results"
+                    )
+
+            expected_roles = {"outline", "pyramid_outline", "pyramid_main"}
+            expected_roles.update({"writer", "figure", "pyramid_section"})
+            if set(state.get("completed_roles", [])) != expected_roles:
+                raise ContractError(
+                    "Final Compile requires exact completed Production roles"
+                )
+
+            last_promotion = {
+                logical_key: max(
+                    index
+                    for index, promoted_key in enumerate(promotion_sequence, start=1)
+                    if promoted_key == logical_key
+                )
+                for logical_key in required_tasks
+            }
+            if not (
+                last_promotion["outline"] < last_promotion["pyramid-outline"]
+                < last_promotion["pyramid-main"]
+            ):
+                raise ContractError(
+                    "Final Compile requires ordered Production promotion authority"
+                )
+            for section_id, section in sections.items():
+                writer_key = f"writer-{section_id.replace('_', '-')}"
+                pyramid_key = f"pyramid-section-{section_id.replace('_', '-')}"
+                dependency_keys = [
+                    writer_key,
+                    *[
+                        self._figure_logical_task_key(slot)
+                        for slot in section["figure_slots"]
+                    ],
+                ]
+                if (
+                    any(
+                        last_promotion["pyramid-outline"]
+                        >= last_promotion[dependency_key]
+                        for dependency_key in dependency_keys
+                    )
+                    or max(last_promotion[key] for key in dependency_keys)
+                    >= last_promotion[pyramid_key]
+                    or last_promotion[pyramid_key] >= last_promotion["pyramid-main"]
+                ):
+                    raise ContractError(
+                        "Final Compile requires ordered Production promotion authority"
+                    )
+
+            main_receipt = receipts["pyramid-main"].get("result", {})
+            if (
+                main_receipt.get("classification") != "diagnostic_compile_ready"
+                or main_receipt.get("next_classification") != "production_complete"
+                or main_receipt.get("runnable_tasks") != []
+            ):
+                raise ContractError(
+                    "Final Compile requires the committed diagnostic compile receipt"
+                )
+
+            integration = read_json(run_dir / "workflow/integration-manifest.json")
+            self.kernel.contracts.validate("integration-manifest", integration)
+            expected_integration = {
+                "main": {
+                    "logical_id": "integrated_main",
+                    **self._artifact(state, "integrated_main"),
+                },
+                "sections": [
+                    {
+                        "logical_id": f"integrated_{section_id}",
+                        **self._artifact(state, f"integrated_{section_id}"),
+                    }
+                    for section_id in sections
+                ],
+                "figures": [
+                    {"logical_id": logical_id, **self._artifact(state, logical_id)}
+                    for section in sections.values()
+                    for slot in section["figure_slots"]
+                    for logical_id in (
+                        f"figure_asset_{slot['slot_id']}",
+                        f"figure_manifest_{slot['slot_id']}",
+                        f"figure_contribution_{slot['slot_id']}",
+                    )
+                ],
+            }
+            if (
+                integration.get("run_id") != state["run_id"]
+                or integration.get("source_binding") != state["source_binding"]
+                or any(
+                    integration.get(key) != value
+                    for key, value in expected_integration.items()
+                )
+            ):
+                raise ContractError(
+                    "Final Compile requires the current Integration Manifest closure"
+                )
+            compile_manifest_path = run_dir / "workflow/compile-manifest.json"
+            compile_manifest = read_json(compile_manifest_path)
+            self.kernel.contracts.validate("compile-manifest", compile_manifest)
+            compile_specs: list[tuple[str, str | None, str, str]] = [
+                ("integrated_main", "main.tex", "entry_tex", "application/x-tex"),
+                *[
+                    (
+                        f"integrated_{section_id}",
+                        f"{section_id}.tex",
+                        "section_tex",
+                        "application/x-tex",
+                    )
+                    for section_id in sections
+                ],
+                *[
+                    (
+                        f"figure_asset_{slot['slot_id']}",
+                        f"figures/{slot['slot_id']}.png",
+                        "figure",
+                        "image/png",
+                    )
+                    for section in sections.values()
+                    for slot in section["figure_slots"]
+                ],
+                ("local_class", None, "local_class", "application/x-tex"),
+                ("local_style", None, "local_style", "application/x-tex"),
+                ("bibliography", None, "bibliography", "application/x-bibtex"),
+            ]
+            expected_compile_entries: list[dict[str, Any]] = []
+            for logical_id, staging_path, role, media_type in compile_specs:
+                artifact = self._artifact(state, logical_id)
+                expected_compile_entries.append(
+                    {
+                        "logical_id": logical_id,
+                        "generation": artifact["generation"],
+                        "sha256": artifact["sha256"],
+                        "size": artifact["size"],
+                        "producer": artifact["producer"],
+                        "source_path": artifact["path"],
+                        "staging_path": staging_path or Path(artifact["path"]).name,
+                        "role": role,
+                        "media_type": media_type,
+                        "required": True,
+                    }
+                )
+            if compile_manifest.get("entries") != expected_compile_entries:
+                raise ContractError(
+                    "Final Compile requires the current Diagnostic Compile Manifest closure"
+                )
+            policy_path = run_dir / "workflow/compile-runtime-policy.json"
+            require_contained_path(
+                policy_path,
+                run_dir,
+                purpose="Diagnostic Compile Runtime Policy",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            policy = read_json(policy_path)
+            self.kernel.contracts.validate("compile-runtime-policy", policy)
+            report_path = run_dir / "review/latex/diagnostic-compile-report.json"
+            report = read_json(report_path)
+            self.kernel.contracts.validate("diagnostic-compile-report", report)
+            diagnostic_pdf = self._artifact(state, "diagnostic_pdf")
+            compile_artifact = self._artifact(state, "compile_manifest")
+            integration_artifact = self._artifact(state, "integration_manifest")
+            if (
+                compile_manifest.get("mode") != "diagnostic"
+                or compile_manifest.get("delivery_authority") is not False
+                or compile_manifest.get("run_id") != state["run_id"]
+                or compile_manifest.get("runtime_policy_sha256") != policy.get("policy_sha256")
+                or compile_manifest.get("integration_manifest_generation")
+                != {
+                    "generation": integration_artifact["generation"],
+                    "sha256": integration_artifact["sha256"],
+                }
+                or report.get("status") != "pass"
+                or report.get("mode") != "diagnostic"
+                or report.get("delivery_authority") is not False
+                or report.get("runtime_policy_sha256") != policy.get("policy_sha256")
+                or Path(str(report.get("compile_manifest_path", ""))).resolve()
+                != compile_manifest_path.resolve()
+                or report.get("compile_manifest_sha256") != compile_artifact["sha256"]
+                or report.get("dependency_closure", {}).get("complete") is not True
+                or report.get("pdf", {}).get("sha256") != diagnostic_pdf["sha256"]
+            ):
+                raise ContractError(
+                    "Final Compile requires current diagnostic compile authority"
+                )
+            return {
+                "run_dir": str(run_dir),
+                "run_id": state["run_id"],
+                "runtime_policy_path": str(policy_path.resolve()),
+                "runtime_policy_sha256": sha256_file(policy_path),
+                "runtime_policy_fingerprint": policy["policy_sha256"],
+                "diagnostic_compile_report_sha256": sha256_file(report_path),
+                "diagnostic_pdf_sha256": diagnostic_pdf["sha256"],
+            }
 
     @staticmethod
     def _artifact(state: dict[str, Any], logical_id: str) -> dict[str, Any]:

@@ -20,6 +20,10 @@ from video2pdf_workflow_kernel.final_compile import (
 )
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
+FINAL_COMPILE_ADAPTER = PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"
+FAKE_ENGINE = PROJECT_ROOT / "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py"
+PACKAGE_INVENTORY = PROJECT_ROOT / "tests/video_workflow/fixtures/guarded-compile/package-inventory.json"
+SYSTEM_FONT = Path("C:/Windows/Fonts/arial.ttf")
 
 
 def canonical_sha(value: object) -> str:
@@ -44,7 +48,32 @@ def write_json(path: Path, value: object) -> Path:
     return path
 
 
-def run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
+def runtime_policy_fixture(root: Path) -> tuple[Path, dict]:
+    policy = {
+        "schema_name": "compile-runtime-policy", "schema_version": "1.0.0",
+        "kernel_version": "2.0.0", "policy_id": "fixture-miktex-runtime",
+        "policy_version": "1.0.0", "runtime_family": "miktex",
+        "engine": {"name": "xelatex-fixture", "version": "fixture-1",
+            "executable": str(Path(sys.executable).resolve()),
+            "sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+            "prefix_args": [str(FAKE_ENGINE.resolve())],
+            "prefix_file_fingerprints": [{"path": str(FAKE_ENGINE.resolve()),
+                "sha256": hashlib.sha256(FAKE_ENGINE.read_bytes()).hexdigest()}]},
+        "package_inventory": {"version": "fixture-1", "path": str(PACKAGE_INVENTORY.resolve()),
+            "sha256": hashlib.sha256(PACKAGE_INVENTORY.read_bytes()).hexdigest()},
+        "system_fonts": [{"path": str(SYSTEM_FONT.resolve()),
+            "sha256": hashlib.sha256(SYSTEM_FONT.read_bytes()).hexdigest()}],
+        "allowed_packages": ["article"],
+        "allowed_runtime_roots": [str(Path(sys.executable).resolve().parent)],
+        "shell_escape": False, "automatic_package_install": False,
+        "dependency_discovery_policy_version": "recorder-closure-v1",
+    }
+    policy["policy_sha256"] = canonical_sha(policy)
+    path = write_json(root / "runtime-policy.json", policy)
+    return path, policy
+
+
+def run_cli(*arguments: str, environment: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], dict]:
     completed = subprocess.run(
         [sys.executable, "-X", "utf8", "-B", str(CLI), *arguments],
         cwd=PROJECT_ROOT,
@@ -52,25 +81,49 @@ def run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         encoding="utf-8",
         capture_output=True,
         check=False,
+        env=environment,
     )
     return completed, json.loads(completed.stdout)
 
 
 class RenderedTextReconciliationCliTests(unittest.TestCase):
-    FINAL_COMPILE_ADAPTER = (
-        PROJECT_ROOT
-        / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"
-    )
-    FINAL_COMPILE_ADAPTER = (
-        PROJECT_ROOT
-        / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"
-    )
-    def fixture(self) -> tuple[Path, dict[str, Path]]:
-        root = new_case_dir(self.id(), label="rendered-text-reconciliation")
+    FINAL_COMPILE_ADAPTER = FINAL_COMPILE_ADAPTER
+
+    def fixture(self, *, production_compile: bool = False) -> tuple[Path, dict[str, Path]]:
+        if production_compile:
+            from tests.video_workflow.test_single_section_production import (
+                SingleSectionProductionTests,
+            )
+
+            production = SingleSectionProductionTests(
+                methodName="test_public_plan_and_advance_reach_guarded_diagnostic_compile"
+            )
+            production.setUp()
+            production._cli = lambda *args: (
+                subprocess.CompletedProcess(args, 0, "", ""),
+                {
+                    "classification": "diagnostic_compile_ready",
+                    "data": {"delivery_authority": False},
+                },
+            )
+            production.test_public_plan_and_advance_reach_guarded_diagnostic_compile()
+            root = production.run_dir
+        else:
+            root = new_case_dir(self.id(), label="rendered-text-reconciliation")
         quality = root / "precompile"
         evidence = root / "final-evidence"
+        if production_compile:
+            runtime_policy_path = root / "workflow/compile-runtime-policy.json"
+            runtime_policy = json.loads(runtime_policy_path.read_text(encoding="utf-8"))
+        else:
+            runtime_policy_path, runtime_policy = runtime_policy_fixture(root)
         compile_input = root / "integrated-main.tex"
-        compile_input.write_text("guarded final compile fixture\n", encoding="utf-8")
+        compile_input.write_text(
+            "\\documentclass{article}\\begin{document}Core claim\\end{document}\n"
+            if production_compile
+            else "guarded final compile fixture\n",
+            encoding="utf-8",
+        )
         compile_input_sha256 = hashlib.sha256(compile_input.read_bytes()).hexdigest()
         recorder = root / "adapter-output" / "compile-recorder.fls"
         recorder.parent.mkdir()
@@ -90,7 +143,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             ],
         }
         generations["generation_set_sha256"] = canonical_sha(generations)
-        texts = {
+        texts = {"main.paragraph.001": "Core claim"} if production_compile else {
             "main.title": "从视频证据到可交付课程讲义",
             "main.paragraph.001": "可靠交付要求每条读者可见文字都能追溯到当前源工件。",
         }
@@ -181,7 +234,15 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                     "staging_path": "main.tex",
                 }
             ],
-            "approved_runtime_inputs": [],
+            "approved_runtime_inputs": ([{
+                "path": str(SYSTEM_FONT.resolve()),
+                "sha256": hashlib.sha256(SYSTEM_FONT.read_bytes()).hexdigest(),
+                "classification": "registered_system_font",
+            }] if production_compile else []),
+            "runtime_policy": {
+                "path": str(runtime_policy_path.resolve()),
+                "sha256": hashlib.sha256(runtime_policy_path.read_bytes()).hexdigest(),
+            },
         }
         compile_manifest["manifest_sha256"] = canonical_sha(compile_manifest)
         compiler_provider = final_compile_provider_identity(PROJECT_ROOT)
@@ -231,7 +292,16 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             },
             "text_origin_plan_sha256": "8" * 64,
         }
-        rendered_objects = [
+        rendered_objects = ([{
+            "object_id": "page-1-text-1",
+            "page": 1,
+            "object_kind": "pdf_text_run",
+            "bbox": [72.0, 60.17499923706055, 124.55799865722656, 75.28900146484375],
+            "exact_utf8_text": "Core claim",
+            "text_sha256": text_sha("Core claim"),
+            "extractor_id": "pymupdf-text-v1",
+            "evidence_locator": "page:1/block:1/line:1/span:1",
+        }] if production_compile else [
             {
                 "object_id": "p1.title.01",
                 "page": 1,
@@ -272,7 +342,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 "extractor_id": "pdf-text-v1",
                 "evidence_locator": "page:1/object:p1.page-number.01",
             },
-        ]
+        ])
         for obj in rendered_objects:
             obj["object_sha256"] = canonical_sha(obj)
         rendered = {
@@ -280,7 +350,13 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "schema_version": "1.0.0",
             "activation_status": "target_only",
             "final_pdf_sha256": pdf_sha,
-            "extractor_suite": [{"extractor_id": "pdf-text-v1", "extractor_sha256": "a" * 64}],
+            "extractor_suite": ([{
+                "extractor_id": "pymupdf-text-v1",
+                "extractor_sha256": "a" * 64,
+            }] if production_compile else [{
+                "extractor_id": "pdf-text-v1",
+                "extractor_sha256": "a" * 64,
+            }]),
             "coverage": {
                 "page_count": 1,
                 "pages_scanned": [1],
@@ -292,15 +368,14 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "objects": rendered_objects,
         }
         rendered["inventory_sha256"] = canonical_sha(rendered)
-        origins = {
-            "schema_name": "text-origin-manifest",
-            "schema_version": "1.0.0",
-            "activation_status": "target_only",
-            "compiler_provider": final_seal["compile_provider"],
-            "precompile_text_seal_sha256": seal["seal_sha256"],
-            "final_artifact_seal_sha256": final_seal["seal_sha256"],
-            "rendered_text_inventory_sha256": rendered["inventory_sha256"],
-            "edges": [
+        origin_edges = ([{
+            "edge_id": "origin.main",
+            "disposition": "sealed_origin",
+            "sealed_item_id": "main.paragraph.001",
+            "sealed_text_utf8": "Core claim",
+            "rendered_object_ids": ["page-1-text-1"],
+            "recipe": "exact_utf8",
+        }] if production_compile else [
                 {
                     "edge_id": "origin.title",
                     "disposition": "sealed_origin",
@@ -327,7 +402,16 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                         "inputs": {"page": 1},
                     },
                 },
-            ],
+            ])
+        origins = {
+            "schema_name": "text-origin-manifest",
+            "schema_version": "1.0.0",
+            "activation_status": "target_only",
+            "compiler_provider": final_seal["compile_provider"],
+            "precompile_text_seal_sha256": seal["seal_sha256"],
+            "final_artifact_seal_sha256": final_seal["seal_sha256"],
+            "rendered_text_inventory_sha256": rendered["inventory_sha256"],
+            "edges": origin_edges,
         }
         origins["manifest_sha256"] = canonical_sha(origins)
         rendered_page = root / "rendered_pages" / "page_001.png"
@@ -358,6 +442,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "render_evidence": write_json(root / "render-evidence-manifest.json", render_evidence),
             "rendered": write_json(root / "rendered-text-object-inventory.json", rendered),
             "origins": write_json(root / "text-origin-manifest.json", origins),
+            "runtime_policy": runtime_policy_path,
         }
         return root, paths
 
@@ -428,13 +513,14 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "--compile-manifest", str(paths["compile_manifest"]),
             "--text-origin-plan", str(plan_path),
             "--compiler-adapter", str(self.FINAL_COMPILE_ADAPTER),
+            "--runtime-policy", str(paths["runtime_policy"]),
             "--workspace-root", str(workspace),
             "--compiled-at", "2026-07-31T01:15:00Z",
         )
         return completed, envelope, workspace
 
     def test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence(self) -> None:
-        root, paths = self.fixture()
+        root, paths = self.fixture(production_compile=True)
         completed, envelope, workspace = self.final_compile(root, paths)
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("guarded_final_compile_complete", envelope["classification"])
@@ -452,7 +538,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         self.assertEqual("rendered_text_reconciliation_passed", result["classification"])
 
     def test_public_final_compile_rejects_stale_precompile_seal_before_adapter(self) -> None:
-        root, paths = self.fixture()
+        root, paths = self.fixture(production_compile=True)
         seal_path = paths["precompile_workspace"] / "precompile-text-seal.json"
         seal = json.loads(seal_path.read_text(encoding="utf-8"))
         seal["sealed_at"] = "2026-07-31T01:00:01Z"

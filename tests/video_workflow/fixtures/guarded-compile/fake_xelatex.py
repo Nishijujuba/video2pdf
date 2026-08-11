@@ -4,6 +4,8 @@ from pathlib import Path
 import os
 import sys
 
+import fitz
+
 
 entry = Path(sys.argv[-1])
 stem = entry.stem
@@ -20,4 +22,16 @@ with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
     undeclared = os.environ.get("VIDEO2PDF_FIXTURE_UNDECLARED_INPUT")
     if undeclared:
         handle.write(f"INPUT {Path(undeclared).resolve()}\n")
-(cwd / f"{stem}.pdf").write_bytes(b"%PDF-1.4\n% fixture diagnostic\n")
+document = fitz.open()
+page = document.new_page()
+page.insert_text((72, 72), "Core claim")
+figure = cwd / "figure.png"
+if figure.is_file():
+    page.insert_image(fitz.Rect(200, 100, 300, 200), filename=figure)
+for name, rect in (("figure_a.png", fitz.Rect(200, 100, 300, 200)),
+                   ("figure_b.png", fitz.Rect(320, 100, 420, 200))):
+    figure = cwd / name
+    if figure.is_file():
+        page.insert_image(rect, filename=figure)
+document.save(cwd / f"{stem}.pdf")
+document.close()

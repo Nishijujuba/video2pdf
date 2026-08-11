@@ -205,6 +205,7 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--compile-manifest", required=True, type=Path)
     final_compile.add_argument("--text-origin-plan", required=True, type=Path)
     final_compile.add_argument("--compiler-adapter", required=True, type=Path)
+    final_compile.add_argument("--runtime-policy", required=True, type=Path)
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
 
@@ -985,6 +986,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             compile_manifest_path=args.compile_manifest,
             text_origin_plan_path=args.text_origin_plan,
             compiler_adapter_path=args.compiler_adapter,
+            runtime_policy_path=args.runtime_policy,
             workspace_root=args.workspace_root,
             compiled_at=args.compiled_at,
         )

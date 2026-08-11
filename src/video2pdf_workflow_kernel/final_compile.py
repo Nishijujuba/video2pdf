@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -10,7 +11,9 @@ from typing import Any
 import fitz
 
 from .delivery_quality import DeliveryQualityRegistry
+from .evidence import EvidenceSupportError, git_output, sha256_git_blob
 from .errors import CompileDependencyGap, ContractError
+from .guarded_compile import GuardedCompileProvider
 from .utils import (
     canonical_json_bytes,
     read_json,
@@ -186,6 +189,84 @@ class GuardedFinalCompileProvider:
         self.project_root = project_root.resolve()
         self.registry = DeliveryQualityRegistry(self.project_root)
 
+    def _validate_adapter_authority(self, adapter_path: Path) -> dict[str, str]:
+        registered = (self.project_root / "scripts/guarded_final_compile_adapter.py").resolve()
+        adapter = adapter_path.resolve()
+        if adapter != registered:
+            raise ContractError("registered Final Compile adapter is required")
+        require_contained_path(
+            adapter,
+            self.project_root,
+            purpose="registered Final Compile adapter",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        try:
+            head = git_output(self.project_root, "rev-parse", "HEAD")
+            committed_sha256 = sha256_git_blob(
+                self.project_root, head, "scripts/guarded_final_compile_adapter.py"
+            )
+        except EvidenceSupportError as exc:
+            raise ContractError(
+                "registered Final Compile adapter must be tracked in current Git HEAD"
+            ) from exc
+        current_sha256 = sha256_file(adapter)
+        if current_sha256 != committed_sha256:
+            raise ContractError(
+                "registered Final Compile adapter differs from current Git HEAD"
+            )
+        return {
+            "adapter_path": str(adapter),
+            "adapter_sha256": current_sha256,
+            "protocol_version": "guarded-final-compile-v1",
+        }
+
+    def _validate_workspace_authority(
+        self,
+        precompile_workspace_root: Path,
+        workspace_root: Path,
+        runtime_policy_path: Path,
+    ) -> Path:
+        precompile = precompile_workspace_root
+        run_boundary = next(
+            (candidate for candidate in (precompile, *precompile.parents)
+             if (candidate / "workflow/run.json").is_file()),
+            None,
+        )
+        if run_boundary is None:
+            raise ContractError("Final Compile requires a real Workflow Run")
+        require_contained_path(
+            precompile,
+            run_boundary,
+            purpose="Precompile workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+        )
+        root = require_contained_path(
+            workspace_root,
+            run_boundary,
+            purpose="Final Compile workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+            allow_missing=True,
+        )
+        from .content_production import ContentProduction
+        from .kernel import VideoWorkflowKernel
+
+        kernel = VideoWorkflowKernel(run_boundary.parent)
+        authority = ContentProduction(kernel).require_current_diagnostic_compile_authority(
+            run_boundary
+        )
+        if (
+            Path(authority["runtime_policy_path"]) != runtime_policy_path.resolve()
+            or authority["runtime_policy_sha256"] != sha256_file(runtime_policy_path)
+        ):
+            raise ContractError(
+                "Final Compile requires the current diagnostic Runtime Policy"
+            )
+        return root
+
     def compile(
         self,
         *,
@@ -195,6 +276,7 @@ class GuardedFinalCompileProvider:
         compiler_adapter_path: Path,
         workspace_root: Path,
         compiled_at: str,
+        runtime_policy_path: Path,
     ) -> dict[str, Any]:
         self.registry.check()
         precompile_root = precompile_workspace_root.resolve()
@@ -297,23 +379,29 @@ class GuardedFinalCompileProvider:
         if len(planned_ids) != len(set(planned_ids)) or set(planned_ids) != set(item_by_id):
             raise ContractError("Text Origin Plan lacks complete sealed-item coverage")
 
-        adapter = compiler_adapter_path.resolve()
+        runtime_policy = runtime_policy_path.resolve()
         require_contained_path(
-            adapter,
+            runtime_policy,
             self.project_root,
-            purpose="Final Compile adapter",
+            purpose="Final Compile Runtime Policy",
             error_type=ContractError,
             leaf_kind="file",
             require_single_link=True,
         )
-        if adapter.suffix.casefold() != ".py":
-            raise ContractError("Final Compile adapter is unavailable or unsupported")
-        adapter_identity = {
-            "adapter_path": str(adapter),
-            "adapter_sha256": sha256_file(adapter),
-            "protocol_version": "guarded-final-compile-v1",
-        }
-        root = workspace_root.resolve()
+        policy = read_json(runtime_policy)
+        GuardedCompileProvider(self.project_root)._validate_runtime_policy(policy)
+        policy_binding = compile_manifest.get("runtime_policy")
+        if (
+            not isinstance(policy_binding, dict)
+            or Path(str(policy_binding.get("path", ""))).resolve() != runtime_policy
+            or policy_binding.get("sha256") != sha256_file(runtime_policy)
+        ):
+            raise ContractError("Final Compile Manifest runtime policy binding is stale")
+        adapter_identity = self._validate_adapter_authority(compiler_adapter_path)
+        adapter = Path(adapter_identity["adapter_path"])
+        root = self._validate_workspace_authority(
+            precompile_workspace_root, workspace_root, runtime_policy
+        )
         if root.exists() and any(root.iterdir()):
             raise ContractError("Final Compile workspace must be empty")
         root.mkdir(parents=True, exist_ok=True)
@@ -333,6 +421,8 @@ class GuardedFinalCompileProvider:
             "compiled_at": compiled_at,
             "output_root": str(adapter_output),
         }
+        request["runtime_policy_path"] = str(runtime_policy)
+        request["runtime_policy_sha256"] = sha256_file(runtime_policy)
         request_path = root / "compile-request.json"
         write_json_atomic(request_path, request)
         completed = subprocess.run(
@@ -343,6 +433,8 @@ class GuardedFinalCompileProvider:
             capture_output=True,
             check=False,
             timeout=120,
+            env={key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ}
+            | {"PYTHONUTF8": "1"},
         )
         if completed.returncode != 0 or completed.stderr:
             raise CompileDependencyGap(

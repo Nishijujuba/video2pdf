@@ -4,12 +4,50 @@ import hashlib
 import io
 from pathlib import Path, PurePosixPath
 import subprocess
+import os
+import shutil
+import sys
 import tarfile
 from typing import Iterable
 
 
 class EvidenceSupportError(RuntimeError):
     """Low-level evidence operation failure for caller-specific classification."""
+
+
+def _trusted_git_executable() -> Path:
+    if os.name == "nt":
+        approved_roots = (
+            Path("D:/kits/Git").resolve(),
+            Path("C:/Program Files/Git").resolve(),
+            Path("C:/Program Files (x86)/Git").resolve(),
+        )
+        candidates = tuple(root / "cmd/git.exe" for root in approved_roots)
+    else:
+        candidates = tuple(
+            Path(value)
+            for value in (
+                "/usr/bin/git",
+                "/usr/local/bin/git",
+                "/opt/homebrew/bin/git",
+            )
+        )
+        approved_roots = tuple(candidate.parent.resolve() for candidate in candidates)
+    discovered = shutil.which("git")
+    if discovered:
+        candidates = (*candidates, Path(discovered))
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_file() and any(
+            resolved == root or root in resolved.parents for root in approved_roots
+        ):
+            return resolved
+    raise EvidenceSupportError(
+        f"approved Git executable is unavailable for {sys.platform}"
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -21,11 +59,30 @@ def sha256_file(path: Path) -> str:
 
 
 def _run_git(project_root: Path, arguments: tuple[str, ...]) -> bytes:
+    root = project_root.resolve()
+    git_executable = _trusted_git_executable()
+    environment = {
+        key: os.environ[key]
+        for key in ("SYSTEMROOT", "WINDIR")
+        if key in os.environ
+    }
+    authority = subprocess.run(
+        [str(git_executable), "-C", str(root), "rev-parse", "--path-format=absolute",
+         "--show-toplevel", "--git-dir", "--git-common-dir"],
+        cwd=root, capture_output=True, check=False, env=environment,
+    )
+    lines = authority.stdout.decode("utf-8", errors="replace").splitlines()
+    if authority.returncode != 0 or len(lines) != 3 or Path(lines[0]).resolve() != root:
+        raise EvidenceSupportError("project_root is not the anchored Git worktree")
+    git_dir, common_dir = Path(lines[1]).resolve(), Path(lines[2]).resolve()
+    if not git_dir.is_dir() or not common_dir.is_dir():
+        raise EvidenceSupportError("anchored Git repository authority is missing")
     completed = subprocess.run(
-        ["git", *arguments],
-        cwd=project_root,
+        [str(git_executable), f"--git-dir={git_dir}", f"--work-tree={root}", *arguments],
+        cwd=root,
         capture_output=True,
         check=False,
+        env=environment,
     )
     if completed.returncode != 0:
         message = completed.stderr.decode("utf-8", errors="replace").strip()

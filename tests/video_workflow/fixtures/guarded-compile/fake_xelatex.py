@@ -15,7 +15,20 @@ if "VIDEO2PDF_FIXTURE_STDERR" in source:
     sys.stderr.buffer.write(b"fixture log4cxx root overlap warning\n")
 if "VIDEO2PDF_FIXTURE_NONZERO_EXIT" in source:
     raise SystemExit(7)
-inputs = sorted(path.relative_to(cwd) for path in cwd.rglob("*") if path.is_file())
+if "VIDEO2PDF_FIXTURE_UNDECLARED_RECORDER_INPUT" in source:
+    (cwd / "undeclared.tex").write_text("undeclared", encoding="utf-8")
+inputs = sorted(
+    path.relative_to(cwd)
+    for path in cwd.rglob("*")
+    if (
+        path.is_file()
+        and path.suffix != ".unread"
+        and not (
+            "VIDEO2PDF_FIXTURE_OMIT_ENTRYPOINT_INPUT" in source
+            and path == cwd / entry.name
+        )
+    )
+)
 (cwd / f"{stem}.aux").write_text("generated auxiliary", encoding="utf-8")
 with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
     for path in inputs:

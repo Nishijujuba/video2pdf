@@ -513,7 +513,8 @@ class GuardedFinalCompileProvider:
         if not isinstance(recorder_cwd_value, str) or not recorder_cwd_value:
             raise CompileDependencyGap("Final Compile recorder working directory is missing")
         recorder_cwd = Path(recorder_cwd_value).resolve()
-        expected_recorder_paths = dict(approved_runtime_paths)
+        declared_entry_paths: dict[str, dict[str, Any]] = {}
+        entrypoint_paths: list[str] = []
         for entry in entries:
             staged_path = Path(entry["staging_path"])
             if staged_path.is_absolute():
@@ -527,10 +528,16 @@ class GuardedFinalCompileProvider:
             if (
                 not staged_path.is_file()
                 or sha256_file(staged_path) != entry.get("sha256")
-                or identity in expected_recorder_paths
+                or identity in approved_runtime_paths
+                or identity in declared_entry_paths
             ):
                 raise CompileDependencyGap("Final Compile staged input identity is stale")
-            expected_recorder_paths[identity] = entry
+            declared_entry_paths[identity] = entry
+            if staged_path.name.casefold() == "main.tex":
+                entrypoint_paths.append(identity)
+        if len(entrypoint_paths) != 1:
+            raise CompileDependencyGap("Final Compile entrypoint is missing or ambiguous")
+        declared_recorder_paths = approved_runtime_paths | declared_entry_paths
         observed_recorder_paths: list[str] = []
         generated_recorder_inputs: list[dict[str, Any]] = []
         for line in recorder_path.read_text(
@@ -543,7 +550,7 @@ class GuardedFinalCompileProvider:
                 observed = recorder_cwd / observed
             observed = observed.resolve()
             identity = str(observed).casefold()
-            if identity in expected_recorder_paths:
+            if identity in declared_recorder_paths:
                 observed_recorder_paths.append(identity)
                 continue
             try:
@@ -567,7 +574,11 @@ class GuardedFinalCompileProvider:
                     "classification": "attempt_generated_auxiliary",
                 }
             )
-        if set(observed_recorder_paths) != set(expected_recorder_paths):
+        observed_recorder_path_set = set(observed_recorder_paths)
+        if (
+            entrypoint_paths[0] not in observed_recorder_path_set
+            or not set(approved_runtime_paths).issubset(observed_recorder_path_set)
+        ):
             raise CompileDependencyGap("Final Compile recorder closure is not exact")
         pdf_sha256 = sha256_file(pdf_path)
         final_seal = read_json(final_seal_path)

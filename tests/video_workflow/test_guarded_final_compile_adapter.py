@@ -20,7 +20,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from video2pdf_workflow_kernel.cli import _parser
-from video2pdf_workflow_kernel.errors import ContractError
+from video2pdf_workflow_kernel.errors import CompileDependencyGap, ContractError
 from video2pdf_workflow_kernel.delivery_quality import DeliveryQualityRegistry
 from video2pdf_workflow_kernel.final_compile import GuardedFinalCompileProvider
 
@@ -613,14 +613,23 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             )
         self.assertFalse(workspace.exists())
 
-    def test_public_final_compile_uses_registered_adapter_and_required_policy(self) -> None:
+    def _run_public_final_compile_fixture(self, directive: str | None = None) -> Path:
         fixture = GuardedFinalCompileAdapterTests(methodName="test_public_adapter_compiles_and_derives_complete_evidence")
         fixture.setUp()
-        fixture.source.write_bytes(b"Core claim\n")
+        fixture.source.write_text(
+            "Core claim\n" + (f"% {directive}\n" if directive else ""),
+            encoding="utf-8",
+        )
         source_sha = hashlib.sha256(fixture.source.read_bytes()).hexdigest()
+        governance = fixture.root / "governance.json"
+        governance.write_bytes(b'{"governed":true}\n')
+        governance_sha = hashlib.sha256(governance.read_bytes()).hexdigest()
         generations = {"schema_name": "precompile-artifact-generation-set", "schema_version": "1.0.0",
             "generation_set_id": "adapter-public-1", "producer_ids": ["fixture-integration"],
-            "artifacts": [{"logical_id": "integrated_main", "generation": 1, "sha256": source_sha}]}
+            "artifacts": [
+                {"logical_id": "integrated_main", "generation": 1, "sha256": source_sha},
+                {"logical_id": "governance_manifest", "generation": 1, "sha256": governance_sha},
+            ]}
         generations["generation_set_sha256"] = fingerprint(generations, "generation_set_sha256")
         item = {"item_id": "main", "kind": "paragraph", "semantic_region": "main",
             "language_profile_id": "zh-hans", "source_artifact_logical_id": "integrated_main",
@@ -659,6 +668,13 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
         manifest["precompile_text_seal_sha256"] = seal["seal_sha256"]
         manifest["entries"][0]["sha256"] = source_sha
+        manifest["entries"].append({
+            "logical_id": "governance_manifest",
+            "generation": 1,
+            "sha256": governance_sha,
+            "source_path": str(governance),
+            "staging_path": "governance.unread",
+        })
         manifest["runtime_policy"] = {
             "path": str(runtime_policy.resolve()),
             "sha256": hashlib.sha256(runtime_policy.read_bytes()).hexdigest(),
@@ -684,14 +700,22 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             "ORDINARY_SECRET": "SHOULD_NOT_CROSS",
             "PYTHONUTF8": "1",
         })
-        completed = subprocess.run([sys.executable, "-X", "utf8", "-B", str(CLI),
-            "delivery-quality-final-compile", "--precompile-workspace-root", str(quality),
-            "--compile-manifest", str(fixture.manifest), "--text-origin-plan", str(fixture.plan),
-            "--compiler-adapter", str(ADAPTER), "--runtime-policy", str(runtime_policy),
-            "--workspace-root", str(workspace), "--compiled-at", "2026-08-11T13:00:00Z"],
-            cwd=PROJECT_ROOT, text=True, encoding="utf-8", capture_output=True, check=False,
-            env=invocation_environment)
-        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        with (
+            mock.patch.dict(os.environ, invocation_environment, clear=True),
+            mock.patch(
+                "video2pdf_workflow_kernel.final_compile.sha256_git_blob",
+                return_value=hashlib.sha256(ADAPTER.read_bytes()).hexdigest(),
+            ),
+        ):
+            self.provider.compile(
+                precompile_workspace_root=quality,
+                compile_manifest_path=fixture.manifest,
+                text_origin_plan_path=fixture.plan,
+                compiler_adapter_path=ADAPTER,
+                workspace_root=workspace,
+                compiled_at="2026-08-11T13:00:00Z",
+                runtime_policy_path=runtime_policy,
+            )
         self.assertTrue((workspace / "final-compile-report.json").is_file())
         provenance = json.loads(
             (workspace / "adapter-output/compile-provenance.json").read_text(encoding="utf-8")
@@ -705,6 +729,28 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         self.assertNotIn("texinputs", runtime_environment)
         self.assertNotIn("pythonpath", runtime_environment)
         self.assertNotIn("ordinary_secret", runtime_environment)
+        return workspace
+
+    def test_public_final_compile_allows_unread_governance_entries(self) -> None:
+        self._run_public_final_compile_fixture()
+
+    def test_public_final_compile_rejects_unobserved_entrypoint(self) -> None:
+        with self.assertRaisesRegex(
+            CompileDependencyGap,
+            "recorder closure is not exact",
+        ):
+            self._run_public_final_compile_fixture(
+                "VIDEO2PDF_FIXTURE_OMIT_ENTRYPOINT_INPUT"
+            )
+
+    def test_public_final_compile_rejects_undeclared_recorder_input(self) -> None:
+        with self.assertRaisesRegex(
+            CompileDependencyGap,
+            "recorder contains undeclared input",
+        ):
+            self._run_public_final_compile_fixture(
+                "VIDEO2PDF_FIXTURE_UNDECLARED_RECORDER_INPUT"
+            )
 
 
 if __name__ == "__main__":

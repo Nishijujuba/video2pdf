@@ -488,7 +488,7 @@ class GuardedCompileProvider:
         profile = runtime_directories["engine-profile"]
         temporary = runtime_directories["engine-temp"]
         startup_parent = profile
-        for name in ("miktex", "config"):
+        for name in ("MiKTeX", "miktex", "config"):
             startup_parent = require_contained_path(
                 startup_parent / name,
                 profile,
@@ -533,15 +533,18 @@ class GuardedCompileProvider:
             leaf_kind="file",
             require_single_link=True,
         )
+        miktex_profile = profile / "MiKTeX"
         environment = {
             "PYTHONUTF8": "1",
             "MIKTEX_ENABLE_INSTALLER": "0",
-            "MIKTEX_USERDATA": str(profile),
-            "MIKTEX_USERCONFIG": str(profile),
-            "MIKTEX_USERINSTALL": str(profile),
-            "MIKTEX_USERLOGDIRECTORY": str(profile),
+            "MIKTEX_USERDATA": str(miktex_profile),
+            "MIKTEX_USERCONFIG": str(miktex_profile),
+            "MIKTEX_USERINSTALL": str(miktex_profile),
+            "MIKTEX_USERLOGDIRECTORY": str(miktex_profile),
             "USERPROFILE": str(profile),
             "HOME": str(profile),
+            "APPDATA": str(profile),
+            "LOCALAPPDATA": str(profile),
             "HOMEDRIVE": profile.drive,
             "HOMEPATH": str(profile)[len(profile.drive):],
             "USERNAME": "video2pdf",

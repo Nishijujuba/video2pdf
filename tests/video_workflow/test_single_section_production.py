@@ -713,6 +713,8 @@ class SingleSectionProductionTests(unittest.TestCase):
             "HOME": "HOST_HOME_MUST_NOT_CROSS",
             "TEMP": "HOST_TEMP_MUST_NOT_CROSS",
             "TMP": "HOST_TMP_MUST_NOT_CROSS",
+            "APPDATA": "HOST_APPDATA_MUST_NOT_CROSS",
+            "LOCALAPPDATA": "HOST_LOCALAPPDATA_MUST_NOT_CROSS",
             "MIKTEX_USERDATA": "HOST_MIKTEX_DATA_MUST_NOT_CROSS",
             "MIKTEX_USERCONFIG": "HOST_MIKTEX_CONFIG_MUST_NOT_CROSS",
             "MIKTEX_USERINSTALL": "HOST_MIKTEX_INSTALL_MUST_NOT_CROSS",
@@ -729,30 +731,33 @@ class SingleSectionProductionTests(unittest.TestCase):
         self.assertEqual(1, len(captures))
         environment = json.loads(captures[0].read_text(encoding="utf-8"))
         staging = captures[0].parent.resolve()
-        profile = Path(environment["MIKTEX_USERDATA"]).resolve()
+        profile = Path(environment["USERPROFILE"]).resolve()
+        miktex_profile = Path(environment["MIKTEX_USERDATA"]).resolve()
         temporary = Path(environment["TEMP"]).resolve()
         self.assertEqual(
             {
-                str(profile),
+                str(miktex_profile),
             },
             {
                 environment["MIKTEX_USERDATA"],
                 environment["MIKTEX_USERCONFIG"],
                 environment["MIKTEX_USERINSTALL"],
                 environment["MIKTEX_USERLOGDIRECTORY"],
-                environment["USERPROFILE"],
-                environment["HOME"],
             },
         )
+        self.assertEqual(str(profile), environment["HOME"])
+        self.assertEqual(str(profile), environment["APPDATA"])
+        self.assertEqual(str(profile), environment["LOCALAPPDATA"])
+        self.assertEqual(profile / "MiKTeX", miktex_profile)
         self.assertEqual(str(temporary), environment["TMP"])
         self.assertEqual(staging, profile.parent)
         self.assertEqual(staging, temporary.parent)
-        startup = profile / "miktex/config/miktexstartup.ini"
+        startup = miktex_profile / "miktex/config/miktexstartup.ini"
         self.assertEqual(
             b"[Auto]\nConfig=Regular\n\n[Setup]\nVersion=25.12\n",
             startup.read_bytes(),
         )
-        self.assertEqual(profile, startup.resolve().parents[2])
+        self.assertEqual(miktex_profile, startup.resolve().parents[2])
         self.assertFalse(startup.is_symlink())
         self.assertFalse(startup.parent.is_symlink())
         self.assertTrue(profile.is_dir())

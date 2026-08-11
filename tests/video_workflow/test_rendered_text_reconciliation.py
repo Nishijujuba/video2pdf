@@ -399,7 +399,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                     "recipe": "declared_generated",
                     "generator": {
                         **registered_generator_identity("page-number-v1"),
-                        "inputs": {"page": 1},
+                        "inputs": {"first_page_number": 1, "page_count": 1},
                     },
                 },
             ])
@@ -652,6 +652,81 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         self.assertEqual(4, report["coverage_proof"]["rendered_objects_disposed"])
         self.assertFalse(report["semantic_reinterpretation_performed"])
 
+    def test_registered_page_number_range_generator_is_reconciled(self) -> None:
+        _, paths = self.fixture()
+        origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
+        rendered = json.loads(paths["rendered"].read_text(encoding="utf-8"))
+        second_page_number = {
+            "object_id": "p2.page-number.01",
+            "page": 2,
+            "object_kind": "pdf_text_run",
+            "bbox": [90, 190, 100, 200],
+            "exact_utf8_text": "2",
+            "text_sha256": text_sha("2"),
+            "extractor_id": "pdf-text-v1",
+            "evidence_locator": "page:2/object:p2.page-number.01",
+        }
+        second_page_number["object_sha256"] = canonical_sha(second_page_number)
+        rendered["objects"].append(second_page_number)
+        rendered["coverage"].update(page_count=2, pages_scanned=[1, 2])
+        rendered["inventory_sha256"] = canonical_sha(
+            {key: value for key, value in rendered.items() if key != "inventory_sha256"}
+        )
+        write_json(paths["rendered"], rendered)
+
+        page_edge = origins["edges"][2]
+        page_edge["rendered_object_ids"].append("p2.page-number.01")
+        page_edge["generator"]["inputs"] = {"first_page_number": 1, "page_count": 2}
+        origins["rendered_text_inventory_sha256"] = rendered["inventory_sha256"]
+        origins["manifest_sha256"] = canonical_sha(
+            {key: value for key, value in origins.items() if key != "manifest_sha256"}
+        )
+        write_json(paths["origins"], origins)
+
+        second_page = paths["render_evidence"].parent / "rendered_pages/page_002.png"
+        second_page.write_bytes(b"png-page-2")
+        render_evidence = json.loads(
+            paths["render_evidence"].read_text(encoding="utf-8")
+        )
+        render_evidence["page_count"] = 2
+        render_evidence["pages"].append(
+            {
+                "page": 2,
+                "path": "rendered_pages/page_002.png",
+                "sha256": hashlib.sha256(second_page.read_bytes()).hexdigest(),
+            }
+        )
+        render_evidence["manifest_sha256"] = canonical_sha(
+            {
+                key: value
+                for key, value in render_evidence.items()
+                if key != "manifest_sha256"
+            }
+        )
+        write_json(paths["render_evidence"], render_evidence)
+        self._refresh_compile_output_bindings(paths)
+
+        completed, envelope = self.reconcile(paths)
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("rendered_text_reconciliation_passed", envelope["classification"])
+        report = json.loads(paths["output"].read_text(encoding="utf-8"))
+        self.assertEqual("pass", report["overall_decision"])
+        generated_result = next(
+            item
+            for item in report["edge_results"]
+            if item["edge_id"] == "generated.page-number"
+        )
+        self.assertEqual(
+            ["p1.page-number.01", "p2.page-number.01"],
+            generated_result["rendered_object_ids"],
+        )
+        self.assertEqual("pass", generated_result["decision"])
+        self.assertNotIn(
+            "UNSUPPORTED_GENERATOR_RECIPE",
+            {item["code"] for item in report["contract_gaps"]},
+        )
+
     def test_omission_substitution_addition_and_generated_mismatch_are_failures(self) -> None:
         mutations = {
             "omission": lambda origins, rendered: self._omit_paragraph(origins, rendered),
@@ -706,6 +781,50 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 self.assertEqual("rendered_text_reconciliation_contract_gap", envelope["classification"])
                 report = json.loads(paths["output"].read_text(encoding="utf-8"))
                 self.assertIn(expected, {item["code"] for item in report["contract_gaps"]})
+
+    def test_unknown_generator_id_remains_a_stable_contract_gap(self) -> None:
+        _, paths = self.fixture()
+        origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
+        origins["edges"][2]["generator"]["generator_id"] = "unknown-generator-v1"
+        origins["manifest_sha256"] = canonical_sha(
+            {key: value for key, value in origins.items() if key != "manifest_sha256"}
+        )
+        write_json(paths["origins"], origins)
+        self._refresh_compile_output_bindings(paths)
+
+        completed, envelope = self.reconcile(paths)
+
+        self.assertEqual(20, completed.returncode)
+        self.assertEqual(
+            "rendered_text_reconciliation_contract_gap", envelope["classification"]
+        )
+        report = json.loads(paths["output"].read_text(encoding="utf-8"))
+        self.assertEqual(
+            [{"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": "generated.page-number"}],
+            report["contract_gaps"],
+        )
+
+    def test_page_number_range_count_mismatch_is_a_stable_contract_gap(self) -> None:
+        _, paths = self.fixture()
+        origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
+        origins["edges"][2]["generator"]["inputs"]["page_count"] = 2
+        origins["manifest_sha256"] = canonical_sha(
+            {key: value for key, value in origins.items() if key != "manifest_sha256"}
+        )
+        write_json(paths["origins"], origins)
+        self._refresh_compile_output_bindings(paths)
+
+        completed, envelope = self.reconcile(paths)
+
+        self.assertEqual(20, completed.returncode)
+        self.assertEqual(
+            "rendered_text_reconciliation_contract_gap", envelope["classification"]
+        )
+        report = json.loads(paths["output"].read_text(encoding="utf-8"))
+        self.assertEqual(
+            [{"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": "generated.page-number"}],
+            report["contract_gaps"],
+        )
 
     def test_stale_seal_is_rejected_before_report_publication(self) -> None:
         _, paths = self.fixture()

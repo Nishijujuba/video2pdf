@@ -54,21 +54,27 @@ def _normalize(text: str, recipe: str) -> str:
     raise ValueError(recipe)
 
 
-def _generated_text(generator: dict[str, Any]) -> str:
+def _generated_texts(generator: dict[str, Any]) -> tuple[str, ...]:
     kind = generator.get("kind")
     inputs = generator.get("inputs")
     if not isinstance(inputs, dict):
         raise ValueError("missing generator inputs")
-    if kind == "literal":
-        value = inputs.get("literal")
-        if not isinstance(value, str):
-            raise ValueError("invalid literal generator")
-        return value
     if kind == "page_number":
-        page = inputs.get("page")
-        if not isinstance(page, int) or page < 1:
+        first_page_number = inputs.get("first_page_number")
+        page_count = inputs.get("page_count")
+        if (
+            set(inputs) != {"first_page_number", "page_count"}
+            or not isinstance(first_page_number, int)
+            or isinstance(first_page_number, bool)
+            or first_page_number < 1
+            or not isinstance(page_count, int)
+            or isinstance(page_count, bool)
+            or page_count < 1
+        ):
             raise ValueError("invalid page generator")
-        return str(page)
+        return tuple(
+            str(page) for page in range(first_page_number, first_page_number + page_count)
+        )
     raise ValueError("unsupported generator")
 
 
@@ -389,11 +395,18 @@ class RenderedTextReconciliationProvider:
                     contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
                     continue
                 try:
-                    expected = _generated_text(generator)
+                    expected = _generated_texts(generator)
                 except ValueError:
                     contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
                     continue
-                equivalent = expected == actual
+                if len(expected) != len(rendered_ids):
+                    contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
+                    continue
+                actual_generated_texts = tuple(
+                    objects_by_id[object_id]["exact_utf8_text"]
+                    for object_id in rendered_ids
+                )
+                equivalent = expected == actual_generated_texts
                 result = {"edge_id": edge_id, "disposition": disposition, "rendered_object_ids": rendered_ids, "generator_id": generator["generator_id"], "decision": "pass" if equivalent else "generated_mismatch"}
                 edge_results.append(result)
                 if not equivalent:

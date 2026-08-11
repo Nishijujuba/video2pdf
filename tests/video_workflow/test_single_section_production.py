@@ -513,6 +513,27 @@ class SingleSectionProductionTests(unittest.TestCase):
                 "\\input{missing-section}", {"main.tex"}, {"graphicx"}
             )
 
+    def test_compile_reference_scan_ignores_macro_placeholders_and_rejects_literal_paths(self) -> None:
+        from video2pdf_workflow_kernel.errors import CompileDependencyGap, ContractError
+        from video2pdf_workflow_kernel.guarded_compile import GuardedCompileProvider
+
+        provider = GuardedCompileProvider(self.run_dir)
+        macro_body = "".join(
+            f"\\includegraphics{{#{index}}}" for index in range(1, 10)
+        )
+        provider._validate_declared_references(
+            macro_body, {"main.tex"}, {"graphicx"}
+        )
+
+        with self.assertRaisesRegex(CompileDependencyGap, "undeclared direct"):
+            provider._validate_declared_references(
+                "\\input{missing-section}", {"main.tex"}, {"graphicx"}
+            )
+        with self.assertRaisesRegex(ContractError, "absolute"):
+            provider.static_preflight_text("\\includegraphics{C:/missing/figure.png}")
+        with self.assertRaisesRegex(ContractError, "escapes"):
+            provider.static_preflight_text("\\includegraphics{../missing/figure.png}")
+
     def test_registered_real_miktex_policy_binds_exact_runtime_inputs(self) -> None:
         from video2pdf_workflow_kernel.guarded_compile import (
             GuardedCompileProvider,

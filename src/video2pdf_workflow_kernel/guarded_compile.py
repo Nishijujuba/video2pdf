@@ -24,7 +24,7 @@ from .utils import (
 _SHELL_ESCAPE = re.compile(r"\\(?:immediate\s*)?write18|\\ShellEscape|--shell-escape", re.IGNORECASE)
 _DIRECT_REFERENCE = re.compile(
     r"\\(input|include|includegraphics|bibliography|documentclass|usepackage)"
-    r"(?:\[[^\]]*\])?\{([^}]+)\}"
+    r"(?:\[[^\]]*\])?\{(?!#[1-9]\})([^}]+)\}"
 )
 _GENERATED_SUFFIXES = frozenset(
     {".aux", ".toc", ".out", ".fls", ".log", ".xdv", ".bcf", ".run.xml"}

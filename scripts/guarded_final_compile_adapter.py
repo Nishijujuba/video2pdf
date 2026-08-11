@@ -14,7 +14,10 @@ import fitz
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from video2pdf_workflow_kernel.guarded_compile import GuardedCompileProvider  # noqa: E402
-from video2pdf_workflow_kernel.utils import canonical_json_bytes  # noqa: E402
+from video2pdf_workflow_kernel.utils import (  # noqa: E402
+    canonical_json_bytes,
+    require_contained_path,
+)
 
 
 class AdapterError(RuntimeError):
@@ -121,7 +124,30 @@ def compile_pdf(staging: Path, entry: Path, policy: dict[str, Any]) -> tuple[Pat
     engine = policy["engine"]
     command = [str(Path(engine["executable"]).resolve()), *map(str, engine.get("prefix_args", [])),
                "--disable-installer", "-no-shell-escape", "-recorder", "-interaction=nonstopmode", entry.name]
-    environment = {"PYTHONUTF8": "1"}
+    engine_temp = require_contained_path(
+        staging / "engine-temp",
+        staging,
+        purpose="Final Compile engine temporary directory",
+        error_type=AdapterError,
+        leaf_kind="directory",
+        allow_missing=True,
+    )
+    try:
+        engine_temp.mkdir()
+    except OSError as exc:
+        raise AdapterError("Final Compile engine temporary directory is unavailable") from exc
+    engine_temp = require_contained_path(
+        engine_temp,
+        staging,
+        purpose="Final Compile engine temporary directory",
+        error_type=AdapterError,
+        leaf_kind="directory",
+    )
+    environment = {
+        "PYTHONUTF8": "1",
+        "TEMP": str(engine_temp),
+        "TMP": str(engine_temp),
+    }
     environment["VIDEO2PDF_FIXTURE_FONTS"] = os.pathsep.join(str(Path(item["path"]).resolve()) for item in policy["system_fonts"])
     for key, value in os.environ.items():
         normalized_key = key.upper()

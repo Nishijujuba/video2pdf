@@ -367,12 +367,18 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         provenance = json.loads((self.output / "compile-provenance.json").read_text(encoding="utf-8"))
         runtime_environment = provenance["runtime_environment"]
+        staging = (self.output / "compiler-staging").resolve()
+        engine_temp = (staging / "engine-temp").resolve()
         self.assertEqual(system_root, runtime_environment["SYSTEMROOT"])
         self.assertEqual(windows_directory, runtime_environment["WINDIR"])
         self.assertEqual(valid_miktex_paths, runtime_environment["MIKTEX_VALID_PATHS"])
+        self.assertEqual(str(engine_temp), runtime_environment["TEMP"])
+        self.assertEqual(str(engine_temp), runtime_environment["TMP"])
+        self.assertTrue(engine_temp.is_dir())
+        self.assertEqual(staging, engine_temp.parent)
         for forbidden in (
             "MIKTEX_MIXED_AUTHORITY", "UNNAMED_CREDENTIAL", "PYTHONPATH", "TEXINPUTS",
-            "PATH", "COMSPEC", "APPDATA", "USERPROFILE", "TEMP", "TMP",
+            "PATH", "COMSPEC", "APPDATA", "USERPROFILE",
         ):
             self.assertNotIn(forbidden, runtime_environment)
 

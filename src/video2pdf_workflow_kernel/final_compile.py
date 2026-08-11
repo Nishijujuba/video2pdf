@@ -390,6 +390,26 @@ class GuardedFinalCompileProvider:
         )
         policy = read_json(runtime_policy)
         GuardedCompileProvider(self.project_root)._validate_runtime_policy(policy)
+        runtime_roots = [
+            Path(value).resolve() for value in policy["allowed_runtime_roots"]
+        ]
+        adapter_env = {"PYTHONUTF8": "1"}
+        for key, value in os.environ.items():
+            normalized_key = key.upper()
+            if normalized_key in {"SYSTEMROOT", "WINDIR"}:
+                adapter_env[normalized_key] = value
+                continue
+            if not normalized_key.startswith("MIKTEX_"):
+                continue
+            path_values = value.split(os.pathsep)
+            if not path_values or any(not item for item in path_values):
+                continue
+            resolved_paths = [Path(item).resolve() for item in path_values]
+            if all(
+                any(path == root or root in path.parents for root in runtime_roots)
+                for path in resolved_paths
+            ):
+                adapter_env[normalized_key] = value
         policy_binding = compile_manifest.get("runtime_policy")
         if (
             not isinstance(policy_binding, dict)
@@ -433,8 +453,7 @@ class GuardedFinalCompileProvider:
             capture_output=True,
             check=False,
             timeout=120,
-            env={key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ}
-            | {"PYTHONUTF8": "1"},
+            env=adapter_env,
         )
         if completed.returncode != 0 or completed.stderr:
             raise CompileDependencyGap(

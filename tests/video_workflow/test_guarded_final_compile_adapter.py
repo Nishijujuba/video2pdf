@@ -578,14 +578,41 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         plan["plan_sha256"] = fingerprint(plan, "plan_sha256")
         fixture.plan.write_bytes(canonical_bytes(plan))
         workspace = run_dir / "review/final-compile"
+        allowed_root = Path(sys.executable).resolve().parent
+        valid_miktex_paths = os.pathsep.join(
+            (str(allowed_root), str(allowed_root / "fixture-runtime-cache"))
+        )
+        invalid_miktex_paths = os.pathsep.join((str(allowed_root), str(self.root)))
+        invocation_environment = dict(os.environ)
+        invocation_environment.update({
+            "MiKtEx_VALID_PATHS": valid_miktex_paths,
+            "MIKTEX_MIXED_AUTHORITY": invalid_miktex_paths,
+            "TEXINPUTS": "SHOULD_NOT_CROSS",
+            "PYTHONPATH": "SHOULD_NOT_CROSS",
+            "ORDINARY_SECRET": "SHOULD_NOT_CROSS",
+            "PYTHONUTF8": "1",
+        })
         completed = subprocess.run([sys.executable, "-X", "utf8", "-B", str(CLI),
             "delivery-quality-final-compile", "--precompile-workspace-root", str(quality),
             "--compile-manifest", str(fixture.manifest), "--text-origin-plan", str(fixture.plan),
             "--compiler-adapter", str(ADAPTER), "--runtime-policy", str(runtime_policy),
             "--workspace-root", str(workspace), "--compiled-at", "2026-08-11T13:00:00Z"],
-            cwd=PROJECT_ROOT, text=True, encoding="utf-8", capture_output=True, check=False)
+            cwd=PROJECT_ROOT, text=True, encoding="utf-8", capture_output=True, check=False,
+            env=invocation_environment)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertTrue((workspace / "final-compile-report.json").is_file())
+        provenance = json.loads(
+            (workspace / "adapter-output/compile-provenance.json").read_text(encoding="utf-8")
+        )
+        runtime_environment = {
+            key.casefold(): value
+            for key, value in provenance["runtime_environment"].items()
+        }
+        self.assertEqual(valid_miktex_paths, runtime_environment["miktex_valid_paths"])
+        self.assertNotIn("miktex_mixed_authority", runtime_environment)
+        self.assertNotIn("texinputs", runtime_environment)
+        self.assertNotIn("pythonpath", runtime_environment)
+        self.assertNotIn("ordinary_secret", runtime_environment)
 
 
 if __name__ == "__main__":

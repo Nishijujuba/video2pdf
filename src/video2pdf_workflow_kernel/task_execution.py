@@ -955,6 +955,13 @@ class TaskExecution:
                 require_single_link=True,
             )
             payload = path.read_bytes()
+            if (
+                output_spec["schema_name"] == "source-transcription-srt"
+                and completion_json is None
+                and str(attempt["attempt_id"]) != str(current_claim["attempt_id"])
+            ):
+                outputs[output_spec["logical_id"]] = payload
+                continue
             if output_spec["schema_name"] == "source-transcription-srt":
                 self._validate_srt_bytes(payload)
             else:

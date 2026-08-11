@@ -511,7 +511,12 @@ class Issue13WhisperSourceCliTests(unittest.TestCase):
         invalid_srt = case_root / "worker-output" / "invalid.srt"
         invalid_srt.parent.mkdir()
         invalid_srt.write_text("transcription failed", encoding="utf-8")
-        valid_srt = case_root / "worker-output" / "generation-2.srt"
+        crlf_srt = case_root / "worker-output" / "generation-2-crlf.srt"
+        crlf_srt.write_bytes(
+            b"1\r\n00:00:00,000 --> 00:00:04,500\r\n"
+            b"Generation two is structurally valid with non-canonical newlines.\r\n"
+        )
+        valid_srt = case_root / "worker-output" / "generation-3.srt"
         valid_srt.write_bytes(
             b"1\n00:00:00,000 --> 00:00:04,500\n"
             b"The fresh Whisper generation completes the same source epoch.\n"
@@ -757,6 +762,88 @@ class Issue13WhisperSourceCliTests(unittest.TestCase):
         self.assertEqual(0, reconciled.returncode, reconciled.stdout + reconciled.stderr)
         self.assertEqual(1, json.loads(reconciled.stdout)["data"]["tasks_advanced"])
 
+        generation_2_faulted = _run_public_cli(
+            self.id() + "-generation-2-faulted",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(recording_root),
+            "--whisper-transcript",
+            str(crlf_srt),
+        )
+        self.assertNotEqual(
+            0,
+            generation_2_faulted.returncode,
+            generation_2_faulted.stdout + generation_2_faulted.stderr,
+        )
+        self.assertEqual(
+            "contract_invalid",
+            json.loads(generation_2_faulted.stdout)["classification"],
+        )
+        self.assertNotIn(
+            str(crlf_srt.resolve()),
+            generation_2_faulted.stdout + generation_2_faulted.stderr,
+        )
+        whisper_task_root = (
+            run_dir
+            / "workflow"
+            / "tasks"
+            / original_task_ids["whisper_transcription"]
+        )
+        generation_2_attempt = next(
+            path.parent
+            for path in (whisper_task_root / "attempts").glob("*/attempt.json")
+            if json.loads(path.read_text(encoding="utf-8"))["claim_generation"] == 2
+        )
+        generation_2_output = generation_2_attempt / "o" / "transcription.srt"
+        generation_2_bytes = generation_2_output.read_bytes()
+        self.assertEqual(crlf_srt.read_bytes(), generation_2_bytes)
+        generation_3_reconciled = _run_public_cli(
+            self.id() + "-generation-3-reconcile",
+            "source-acquire-reconcile",
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(
+            0,
+            generation_3_reconciled.returncode,
+            generation_3_reconciled.stdout + generation_3_reconciled.stderr,
+        )
+        self.assertEqual(
+            1,
+            json.loads(generation_3_reconciled.stdout)["data"]["tasks_advanced"],
+        )
+        self.assertEqual(generation_2_bytes, generation_2_output.read_bytes())
+        self.assertNotIn(
+            str(crlf_srt.resolve()),
+            generation_3_reconciled.stdout + generation_3_reconciled.stderr,
+        )
+
+        rebound = _run_public_cli(
+            self.id() + "-generation-3-rebind",
+            "platform-kernel-prepare",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control_store_root),
+            "--implementation-commit",
+            implementation_commit,
+            "--candidate-probe",
+            str(probe_path),
+            "--candidate-session-id",
+            "session-issue13-whisper-resume",
+            "--prepared-at",
+            "2026-08-11T02:01:00Z",
+        )
+        self.assertEqual(0, rebound.returncode, rebound.stdout + rebound.stderr)
+        self.assertEqual(
+            "platform_kernel_candidate_prepared",
+            json.loads(rebound.stdout)["classification"],
+        )
+
         resumed = _run_public_cli(
             self.id() + "-resume",
             "source-acquire",
@@ -790,6 +877,19 @@ class Issue13WhisperSourceCliTests(unittest.TestCase):
         self.assertEqual("ready", final_run["source_state"])
         self.assertEqual("current", final_run["checkpoints"]["source_ready"]["status"])
         self.assertEqual(
+            [1, 2, 3],
+            sorted(
+                json.loads(path.read_text(encoding="utf-8"))["claim_generation"]
+                for path in (
+                    run_dir
+                    / "workflow"
+                    / "tasks"
+                    / original_task_ids["whisper_transcription"]
+                    / "attempts"
+                ).glob("*/attempt.json")
+            ),
+        )
+        self.assertEqual(
             original_attempt_counts["provider_acquisition"],
             len(list((run_dir / "workflow" / "tasks" / original_task_ids["provider_acquisition"] / "attempts").glob("*"))),
             "resume must not invoke or reclaim the provider Task",
@@ -800,7 +900,7 @@ class Issue13WhisperSourceCliTests(unittest.TestCase):
             "resume must not invoke or reclaim the semantic Task",
         )
         self.assertEqual(
-            original_attempt_counts["whisper_transcription"] + 1,
+            original_attempt_counts["whisper_transcription"] + 2,
             len(list((run_dir / "workflow" / "tasks" / original_task_ids["whisper_transcription"] / "attempts").glob("*"))),
         )
 

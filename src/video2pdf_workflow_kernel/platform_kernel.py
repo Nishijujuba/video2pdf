@@ -1131,7 +1131,6 @@ class BilibiliPlatformCutoverPublisher:
                     for claim in allowed_promoted
                 )
                 or whisper["state"] != "ACTIVE"
-                or whisper["claim_generation"] != 2
                 or whisper["attempt_state"] != "CLAIMED"
                 or whisper["task_id"] in promotion_by_task
                 or run.get("last_mutation_intent_id")
@@ -1152,31 +1151,161 @@ class BilibiliPlatformCutoverPublisher:
             provider_prefix = f"task:{provider['task_id']}/{provider['attempt_id']}"
             semantic_prefix = f"task:{semantic['task_id']}/{semantic['attempt_id']}"
             whisper_attempts = run_connection.execute(
-                "SELECT * FROM task_attempts WHERE task_id=? ORDER BY claim_generation",
+                "SELECT a.*,ca.completion_record_json FROM task_attempts a "
+                "LEFT JOIN task_completion_authorities ca "
+                "ON ca.attempt_id=a.attempt_id "
+                "WHERE a.task_id=? ORDER BY a.claim_generation",
                 (whisper["task_id"],),
             ).fetchall()
-            prior_lease = run_connection.execute(
-                "SELECT * FROM resource_leases WHERE attempt_id=?",
-                (whisper_attempts[0]["attempt_id"] if whisper_attempts else "",),
-            ).fetchone()
-            terminal_evidence = (
-                json.loads(prior_lease["terminal_evidence_json"])
-                if prior_lease is not None
-                and isinstance(prior_lease["terminal_evidence_json"], str)
-                else {}
+            whisper_leases = run_connection.execute(
+                "SELECT * FROM resource_leases WHERE task_id=? "
+                "ORDER BY claim_generation",
+                (whisper["task_id"],),
+            ).fetchall()
+            leases_by_attempt = {row["attempt_id"]: row for row in whisper_leases}
+            latest_generation = (
+                int(whisper_attempts[-1]["claim_generation"])
+                if whisper_attempts
+                else 0
+            )
+            generations_are_contiguous = [
+                int(row["claim_generation"]) for row in whisper_attempts
+            ] == list(range(1, latest_generation + 1))
+            current_attempts = [
+                row for row in whisper_attempts if row["state"] == "CLAIMED"
+            ]
+            prior_attempts = whisper_attempts[:-1]
+            proof_root = (
+                run_dir.parent.parent
+                / "待删除"
+                / "source-acquire"
+                / run_id
+                / "terminal-proofs"
+            )
+
+            def prior_attempt_is_closed(attempt: sqlite3.Row) -> bool:
+                lease = leases_by_attempt.get(attempt["attempt_id"])
+                if (
+                    attempt["state"] not in {"ABANDONED", "FAILED"}
+                    or attempt["completion_sha256"] is not None
+                    or attempt["completion_record_json"] is not None
+                    or lease is None
+                    or lease["state"] not in {"released", "resolved"}
+                    or not isinstance(lease["terminal_evidence_json"], str)
+                ):
+                    return False
+                try:
+                    terminal = json.loads(lease["terminal_evidence_json"])
+                    evidence = terminal["evidence"]
+                    terminal_result_id = require_safe_path_segment(
+                        str(evidence["terminal_result_id"]),
+                        purpose="source terminal result id",
+                        error_type=ContractError,
+                    )
+                    proof_path = proof_root / f"{terminal_result_id}.json"
+                    proof = read_json(proof_path)
+                    proof_reference = (
+                        f"{proof_path.resolve().relative_to(PROJECT_ROOT).as_posix()}"
+                        f"#sha256={sha256_file(proof_path)}"
+                    )
+                except (
+                    KeyError,
+                    OSError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    ContractError,
+                ):
+                    return False
+                outcome = terminal.get("declared_outcome")
+                proof_fields = {
+                    "schema_name",
+                    "schema_version",
+                    "provider",
+                    "terminal_result_id",
+                    "task_id",
+                    "attempt_id",
+                    "claim_generation",
+                    "launch_token",
+                    "stage",
+                    "declared_outcome",
+                    "artifacts",
+                    "observed_at",
+                }
+                proof_artifacts = proof.get("artifacts")
+                if outcome == "failed":
+                    proof_artifacts_are_valid = proof_artifacts == {}
+                else:
+                    transcript_path = (
+                        run_dir
+                        / Path(*str(attempt["attempt_path"]).split("/"))
+                        / "o"
+                        / "transcription.srt"
+                    )
+                    proof_artifacts_are_valid = (
+                        isinstance(proof_artifacts, dict)
+                        and set(proof_artifacts) == {"source_transcription"}
+                        and transcript_path.is_file()
+                        and proof_artifacts["source_transcription"]
+                        == sha256_file(transcript_path)
+                    )
+                return (
+                    terminal.get("schema_name")
+                    == "resource-lease-resolution-evidence"
+                    and terminal.get("schema_version") == "1.0.0"
+                    and terminal.get("kernel_version") == "2.0.0"
+                    and terminal.get("evidence_class")
+                    == "provider_terminal_result"
+                    and terminal.get("lease_id") == lease["lease_id"]
+                    and terminal.get("attempt_id") == attempt["attempt_id"]
+                    and terminal.get("claim_generation")
+                    == attempt["claim_generation"]
+                    and outcome in {"failed", "succeeded"}
+                    and hashlib.sha256(
+                        canonical_json_bytes(terminal)
+                    ).hexdigest()
+                    == lease["terminal_evidence_sha256"]
+                    and evidence.get("provider") == "source-acquire"
+                    and evidence.get("terminal_result_id") == terminal_result_id
+                    and evidence.get("verification_proof_reference")
+                    == proof_reference
+                    and set(proof) == proof_fields
+                    and proof.get("schema_name") == "source-provider-terminal-proof"
+                    and proof.get("schema_version") == "1.0.0"
+                    and proof.get("provider") == "source-acquire"
+                    and proof.get("terminal_result_id") == terminal_result_id
+                    and proof.get("task_id") == whisper["task_id"]
+                    and proof.get("attempt_id") == attempt["attempt_id"]
+                    and proof.get("claim_generation")
+                    == attempt["claim_generation"]
+                    and proof.get("launch_token") == lease["launch_token"]
+                    and proof.get("stage") == "whisper"
+                    and proof.get("declared_outcome") == outcome
+                    and proof.get("observed_at") == terminal.get("observed_at")
+                    and proof_artifacts_are_valid
+                )
+
+            current_attempt_is_open = (
+                len(current_attempts) == 1
+                and whisper_attempts
+                and current_attempts[0]["attempt_id"]
+                == whisper_attempts[-1]["attempt_id"]
+                and current_attempts[0]["attempt_id"] == whisper["attempt_id"]
+                and int(current_attempts[0]["claim_generation"])
+                == latest_generation
+                == int(whisper["claim_generation"])
+                and current_attempts[0]["completion_sha256"] is None
+                and current_attempts[0]["completion_record_json"] is None
             )
             if (
                 producers["source_candidate_inventory"] != provider_prefix
                 or producers["source_acquisition_decision_skeleton"]
                 != provider_prefix
                 or producers["source_acquisition_decision"] != semantic_prefix
-                or len(whisper_attempts) != 2
-                or [row["claim_generation"] for row in whisper_attempts] != [1, 2]
-                or [row["state"] for row in whisper_attempts]
-                != ["ABANDONED", "CLAIMED"]
-                or prior_lease is None
-                or prior_lease["state"] != "released"
-                or terminal_evidence.get("declared_outcome") != "failed"
+                or latest_generation < 2
+                or not generations_are_contiguous
+                or len(whisper_leases) != len(whisper_attempts)
+                or not current_attempt_is_open
+                or not all(prior_attempt_is_closed(row) for row in prior_attempts)
             ):
                 raise KernelConflict(
                     "Bilibili decision-ready candidate retry authority is invalid",

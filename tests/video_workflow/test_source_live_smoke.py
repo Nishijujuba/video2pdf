@@ -190,15 +190,85 @@ class RecordingKernel:
 
 
 class SourceLiveSmokeTests(unittest.TestCase):
+    def test_terminal_proof_registry_reloads_persisted_provider_proof(self) -> None:
+        from video2pdf_workflow_kernel.source_live_smoke import _TerminalProofRegistry
+
+        root = new_case_dir(self.id(), label="terminal-proof-reload")
+        proof_root = root / "terminal-proofs"
+        written = _TerminalProofRegistry(
+            proof_root, PROJECT_ROOT, provider_id="source-acquire"
+        )
+        written.record(
+            terminal_result_id="source-acquire-provider-proof",
+            task_id="a" * 32,
+            attempt_id="b" * 24,
+            claim_generation=1,
+            launch_token="launch-token",
+            stage="provider",
+            declared_outcome="succeeded",
+            artifacts={"source_candidate_inventory": HASH_A},
+            observed_at="2026-08-11T02:00:00Z",
+        )
+
+        reloaded = _TerminalProofRegistry(
+            proof_root, PROJECT_ROOT, provider_id="source-acquire"
+        )
+
+        self.assertEqual(1, len(reloaded.records()))
+        self.assertIn(
+            "#sha256=",
+            reloaded.verify(
+                terminal_result_id="source-acquire-provider-proof",
+                attempt_id="b" * 24,
+                declared_outcome="succeeded",
+            ),
+        )
+
+    def test_released_provider_attempt_is_reclaimed_at_a_new_generation(self) -> None:
+        from types import SimpleNamespace
+
+        from video2pdf_workflow_kernel.source_live_smoke import (
+            _claim_or_reclaim_source_task,
+        )
+
+        kernel = mock.Mock()
+        kernel.task_claim_status.return_value = {
+            "task_id": "a" * 32,
+            "attempt_id": "b" * 24,
+            "claim_generation": 1,
+            "state": "active",
+        }
+        kernel.resource_status.return_value = SimpleNamespace(
+            lease_state="released"
+        )
+        kernel.reclaim_task.return_value = SimpleNamespace(claim_generation=2)
+        prepared = SimpleNamespace(task_id="a" * 32)
+
+        claimed = _claim_or_reclaim_source_task(
+            kernel,
+            Path("run"),
+            prepared,
+            coordinator_session_id="source-acquire-bilibili",
+            worker_id="source-acquire-bilibili-provider",
+        )
+
+        self.assertEqual(2, claimed.claim_generation)
+        kernel.reclaim_task.assert_called_once()
     def setUp(self) -> None:
         from video2pdf_workflow_kernel import source_live_smoke
 
         production_registry = source_live_smoke._TerminalProofRegistry
 
-        def external_proof_registry(proof_root: Path, project_root: Path):
+        def external_proof_registry(
+            proof_root: Path, project_root: Path, *, provider_id="source-live-smoke"
+        ):
             self.assertEqual(project_root.resolve(), PROJECT_ROOT.resolve())
             generated_authority_root = proof_root.parents[2]
-            return production_registry(proof_root, generated_authority_root)
+            return production_registry(
+                proof_root,
+                generated_authority_root,
+                provider_id=provider_id,
+            )
 
         patcher = mock.patch.object(
             source_live_smoke,
@@ -639,12 +709,36 @@ class SourceLiveSmokeTests(unittest.TestCase):
         self.assertEqual(run["source_state"], "blocked_user_input")
         self.assertEqual(run["source_blocker"], raised.exception.data["source_blocker"])
         self.assertEqual(run["source_blocker"]["reason"], "cookie_rejected")
+        self.assertNotEqual(run["phase"], "failed")
         self.assertEqual(
             {
                 (item["resource_class"], item["scope_kind"], item["state"])
                 for item in VideoWorkflowKernel(work_root).resource_circuit_breaker_status()
             },
             {("youtube_download", "platform", "open")},
+        )
+        kernel = VideoWorkflowKernel(work_root)
+        self.assertEqual(
+            0,
+            kernel.resource_capacity_status()["resources"]["youtube_download"][
+                "usage"
+            ],
+        )
+        provider_proof = next(
+            read_json(path)
+            for path in work_root.rglob("terminal-proofs/*.json")
+            if read_json(path)["stage"] == "provider"
+        )
+        task_id = kernel.derive_production_source_task_id(
+            run_paths[0].parent.parent,
+            task_stage="provider_acquisition",
+            logical_task_key=(
+                f"source-acquisition-provider-epoch-{run['source_epoch']}"
+            ),
+        )
+        self.assertEqual(
+            "released",
+            kernel.resource_status(task_id, provider_proof["attempt_id"]).lease_state,
         )
 
     def test_provider_lease_is_released_when_candidate_materialization_fails(
@@ -784,7 +878,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=RuntimeError("forced semantic callback failure"),
             ),
             self.assertRaisesRegex(
@@ -906,7 +1000,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 self.id(), "whisper-provider-failure"
             )
         )
-        real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
+        real_builder = source_live_smoke.build_policy_ranked_source_judgment_patch
 
         def choose_whisper(**kwargs):
             skeleton = json.loads(json.dumps(kwargs["skeleton"]))
@@ -930,7 +1024,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=choose_whisper,
             ),
             mock.patch.object(
@@ -986,7 +1080,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 self.id(), "whisper-output-missing"
             )
         )
-        real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
+        real_builder = source_live_smoke.build_policy_ranked_source_judgment_patch
 
         def choose_whisper(**kwargs):
             skeleton = json.loads(json.dumps(kwargs["skeleton"]))
@@ -1010,7 +1104,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=choose_whisper,
             ),
             mock.patch.object(
@@ -1067,7 +1161,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 self.id(), "whisper-output-drift"
             )
         )
-        real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
+        real_builder = source_live_smoke.build_policy_ranked_source_judgment_patch
         transcript_output: Path | None = None
 
         def choose_whisper(**kwargs):
@@ -1106,7 +1200,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=choose_whisper,
             ),
             mock.patch.object(
@@ -1173,7 +1267,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 self.id(), "whisper-token-ambiguity"
             )
         )
-        real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
+        real_builder = source_live_smoke.build_policy_ranked_source_judgment_patch
         real_launch = AdmittedSourceProviderLauncher.launch_whisper
 
         def choose_whisper(**kwargs):
@@ -1223,7 +1317,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=choose_whisper,
             ),
             mock.patch.object(
@@ -1282,7 +1376,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
         work_root, recorded, runtime, case, credential = (
             recorded_youtube_smoke_inputs(self.id(), "whisper-success")
         )
-        real_builder = source_live_smoke.build_deterministic_smoke_judgment_patch
+        real_builder = source_live_smoke.build_policy_ranked_source_judgment_patch
 
         def choose_whisper(**kwargs):
             skeleton = json.loads(json.dumps(kwargs["skeleton"]))
@@ -1313,7 +1407,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
             ),
             mock.patch.object(
                 source_live_smoke,
-                "build_deterministic_smoke_judgment_patch",
+                "build_policy_ranked_source_judgment_patch",
                 side_effect=choose_whisper,
             ),
             mock.patch.object(
@@ -1463,7 +1557,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
 
     def test_deterministic_smoke_worker_stays_inside_skeleton_choices(self) -> None:
         from video2pdf_workflow_kernel.source_live_smoke import (
-            build_deterministic_smoke_judgment_patch,
+            build_policy_ranked_source_judgment_patch,
         )
 
         skeleton = {
@@ -1474,7 +1568,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 "whisper_audio_candidate_id": HASH_B,
             },
         }
-        patch = build_deterministic_smoke_judgment_patch(
+        patch = build_policy_ranked_source_judgment_patch(
             skeleton=skeleton,
             task_id="3" * 32,
             attempt_id="4" * 24,
@@ -1505,7 +1599,7 @@ class SourceLiveSmokeTests(unittest.TestCase):
                 "subtitle_candidate_ids": [],
             },
         }
-        patch = build_deterministic_smoke_judgment_patch(
+        patch = build_policy_ranked_source_judgment_patch(
             skeleton=without_subtitles,
             task_id="3" * 32,
             attempt_id="4" * 24,

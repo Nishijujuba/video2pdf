@@ -7,6 +7,7 @@ from importlib import metadata as importlib_metadata
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 from typing import Any, Callable, Literal, Mapping, TypeVar
@@ -52,6 +53,9 @@ _CREDENTIAL_PROFILES = {
     ),
 }
 _T = TypeVar("_T")
+SOURCE_ACQUIRE_FAULT_POINTS = frozenset(
+    {"after_provider_terminal_proof_persisted"}
+)
 
 
 @dataclass(frozen=True)
@@ -83,26 +87,98 @@ class SourceLiveSmokeExecution:
 
 
 class _TerminalProofRegistry:
-    def __init__(self, proof_root: Path, project_root: Path) -> None:
+    def __init__(
+        self,
+        proof_root: Path,
+        project_root: Path,
+        *,
+        provider_id: str = "source-live-smoke",
+    ) -> None:
+        if not provider_id or not provider_id.strip():
+            raise ContractError("source terminal proof provider is invalid")
         self.proof_root = proof_root
         self.project_root = project_root
+        self.provider_id = provider_id
         self._proofs: dict[str, tuple[str, str, str]] = {}
+        self._records: dict[str, dict[str, Any]] = {}
+        if proof_root.exists():
+            require_contained_path(
+                proof_root,
+                project_root,
+                purpose="source terminal proof directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+            for path in sorted(proof_root.glob("*.json")):
+                require_contained_path(
+                    path,
+                    proof_root,
+                    purpose="source terminal proof",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                value = read_json(path)
+                required = {
+                    "schema_name",
+                    "schema_version",
+                    "provider",
+                    "terminal_result_id",
+                    "task_id",
+                    "attempt_id",
+                    "claim_generation",
+                    "launch_token",
+                    "stage",
+                    "declared_outcome",
+                    "artifacts",
+                    "observed_at",
+                }
+                if (
+                    not isinstance(value, dict)
+                    or set(value) != required
+                    or value["schema_name"] != "source-provider-terminal-proof"
+                    or value["schema_version"] != "1.0.0"
+                    or value["provider"] != provider_id
+                    or path.stem != value["terminal_result_id"]
+                    or not isinstance(value["claim_generation"], int)
+                    or value["claim_generation"] < 1
+                    or not isinstance(value["launch_token"], str)
+                    or not value["launch_token"]
+                ):
+                    raise ContractError("persisted source terminal proof is invalid")
+                reference = (
+                    f"{_project_relative(path, project_root, label='terminal proof')}"
+                    f"#sha256={sha256_file(path)}"
+                )
+                self._proofs[value["terminal_result_id"]] = (
+                    value["attempt_id"],
+                    value["declared_outcome"],
+                    reference,
+                )
+                self._records[value["terminal_result_id"]] = value
 
     def record(
         self,
         *,
         terminal_result_id: str,
+        task_id: str,
         attempt_id: str,
+        claim_generation: int,
+        launch_token: str,
         stage: str,
         declared_outcome: Literal["succeeded", "failed"],
         artifacts: Mapping[str, str],
         observed_at: str,
     ) -> None:
         value = {
-            "schema_name": "source-live-smoke-terminal-proof",
+            "schema_name": "source-provider-terminal-proof",
             "schema_version": "1.0.0",
+            "provider": self.provider_id,
             "terminal_result_id": terminal_result_id,
+            "task_id": task_id,
             "attempt_id": attempt_id,
+            "claim_generation": claim_generation,
+            "launch_token": launch_token,
             "stage": stage,
             "declared_outcome": declared_outcome,
             "artifacts": dict(sorted(artifacts.items())),
@@ -113,7 +189,7 @@ class _TerminalProofRegistry:
         expected = canonical_json_bytes(value)
         if path.exists():
             if path.is_symlink() or _is_reparse_point(path) or path.read_bytes() != expected:
-                raise ArtifactDrift("source live smoke terminal proof drifted")
+                raise ArtifactDrift("source provider terminal proof drifted")
         else:
             write_json_atomic(path, value)
         proof_sha = sha256_file(path)
@@ -126,6 +202,10 @@ class _TerminalProofRegistry:
             declared_outcome,
             reference,
         )
+        self._records[terminal_result_id] = value
+
+    def records(self) -> tuple[dict[str, Any], ...]:
+        return tuple(dict(self._records[key]) for key in sorted(self._records))
 
     def verify(self, **binding: Any) -> str:
         terminal_result_id = binding.get("terminal_result_id")
@@ -134,12 +214,12 @@ class _TerminalProofRegistry:
                 str(terminal_result_id)
             ]
         except KeyError as exc:
-            raise ContractError("source live smoke terminal proof is unknown") from exc
+            raise ContractError("source provider terminal proof is unknown") from exc
         if (
             binding.get("attempt_id") != attempt_id
             or binding.get("declared_outcome") != declared_outcome
         ):
-            raise ContractError("source live smoke terminal proof has a stale attempt")
+            raise ContractError("source provider terminal proof has a stale attempt")
         return reference
 
 
@@ -271,7 +351,7 @@ def launch_admitted_platform_acquisition(
     )
 
 
-def build_deterministic_smoke_judgment_patch(
+def build_policy_ranked_source_judgment_patch(
     *,
     skeleton: Mapping[str, Any],
     task_id: str,
@@ -280,10 +360,10 @@ def build_deterministic_smoke_judgment_patch(
     skeleton_sha256: str,
 ) -> dict[str, Any]:
     if skeleton.get("task_id") != task_id:
-        raise ContractError("smoke semantic Task differs from its Decision Skeleton")
+        raise ContractError("source semantic Task differs from its Decision Skeleton")
     allowed = skeleton.get("allowed_judgment")
     if not isinstance(allowed, Mapping):
-        raise ContractError("smoke Decision Skeleton lacks bounded judgment choices")
+        raise ContractError("source Decision Skeleton lacks bounded judgment choices")
     subtitle_ids = allowed.get("subtitle_candidate_ids")
     whisper_choices = allowed.get("whisper_choices")
     if (
@@ -291,7 +371,7 @@ def build_deterministic_smoke_judgment_patch(
         or any(not isinstance(item, str) for item in subtitle_ids)
         or not isinstance(whisper_choices, list)
     ):
-        raise ContractError("smoke Decision Skeleton choices are invalid")
+        raise ContractError("source Decision Skeleton choices are invalid")
     selected = subtitle_ids[0] if subtitle_ids else None
     known_gaps: list[dict[str, Any]] = []
     if selected is not None:
@@ -310,7 +390,7 @@ def build_deterministic_smoke_judgment_patch(
     elif "unavailable" in whisper_choices:
         choice = "unavailable"
         selection_rationale = "No usable subtitle candidate is available."
-        fallback_rationale = "The bounded smoke policy exposes no usable fallback."
+        fallback_rationale = "The bounded source policy exposes no usable fallback."
         known_gaps = [
             {
                 "code": "missing_subtitles",
@@ -319,7 +399,7 @@ def build_deterministic_smoke_judgment_patch(
             }
         ]
     else:
-        raise ContractError("smoke Decision Skeleton has no complete judgment path")
+        raise ContractError("source Decision Skeleton has no complete judgment path")
     patch = {
         "schema_name": "source-acquisition-judgment-patch",
         "schema_version": "2.0.0",
@@ -534,7 +614,10 @@ def build_smoke_report(
 
 
 def _runtime_tools(
-    case: SourceLiveSmokeCase, project_root: Path
+    case: SourceLiveSmokeCase,
+    project_root: Path,
+    *,
+    policy_schema_name: str = "source-live-smoke-runtime-policy",
 ) -> tuple[Any, dict[str, str], str]:
     from .adapters import YtDlpRuntime
 
@@ -580,7 +663,7 @@ def _runtime_tools(
             raise ContractError("source live smoke Node runtime is unavailable")
         versions["node"] = node_version.removeprefix("v")
     policy = {
-        "schema_name": "source-live-smoke-runtime-policy",
+        "schema_name": policy_schema_name,
         "schema_version": "1.0.0",
         "platform": case.platform,
         "adapter_contract_version": "1.0.0",
@@ -714,9 +797,9 @@ def _write_task_json_output(
     return path
 
 
-def _terminal_result_id(stage: str, attempt_id: str) -> str:
+def _terminal_result_id(provider_id: str, stage: str, attempt_id: str) -> str:
     suffix = hashlib.sha256(f"{stage}\0{attempt_id}".encode("utf-8")).hexdigest()[:16]
-    return f"source-live-smoke-{stage}-{suffix}"
+    return f"{provider_id}-{stage}-{suffix}"
 
 
 def _release_stage(
@@ -729,23 +812,36 @@ def _release_stage(
     artifacts: Mapping[str, str],
     observed_at: str,
     declared_outcome: Literal["succeeded", "failed"] = "succeeded",
+    fault_point: str | None = None,
 ) -> None:
-    terminal_result_id = _terminal_result_id(stage, claimed.attempt_id)
+    terminal_result_id = _terminal_result_id(
+        proofs.provider_id, stage, claimed.attempt_id
+    )
     proofs.record(
         terminal_result_id=terminal_result_id,
+        task_id=claimed.task_id,
         attempt_id=claimed.attempt_id,
+        claim_generation=claimed.claim_generation,
+        launch_token=launch_token,
         stage=stage,
         declared_outcome=declared_outcome,
         artifacts=artifacts,
         observed_at=observed_at,
     )
+    if (
+        fault_point == "after_provider_terminal_proof_persisted"
+        and stage == "provider"
+    ):
+        raise KernelConflict(
+            "injected source acquisition fault after terminal proof persisted"
+        )
     kernel.release_resource_lease(
         claimed.attempt_id,
         claimed.claim_generation,
         launch_token,
         terminal_evidence={
             "evidence_class": "provider_terminal_result",
-            "provider": "source-live-smoke",
+            "provider": proofs.provider_id,
             "terminal_result_id": terminal_result_id,
             "declared_outcome": declared_outcome,
             "observed_at": observed_at,
@@ -765,6 +861,41 @@ def _complete_and_promote(kernel: Any, run_dir: Path, prepared: Any, claimed: An
         task_id=prepared.task_id,
         attempt_id=claimed.attempt_id,
         claim_generation=claimed.claim_generation,
+    )
+
+
+def _claim_or_reclaim_source_task(
+    kernel: Any,
+    run_dir: Path,
+    prepared: Any,
+    *,
+    coordinator_session_id: str,
+    worker_id: str,
+) -> Any:
+    prior = kernel.task_claim_status(prepared.task_id)
+    if prior is None:
+        return kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id=coordinator_session_id,
+            worker_id=worker_id,
+        )
+    resource = kernel.resource_status(prepared.task_id, prior["attempt_id"])
+    if prior["state"] == "active" and resource.lease_state == "released":
+        return kernel.reclaim_task(
+            run_dir,
+            task_id=prepared.task_id,
+            expected_attempt_id=prior["attempt_id"],
+            expected_claim_generation=prior["claim_generation"],
+            coordinator_session_id=coordinator_session_id,
+            worker_id=worker_id,
+            reason="released provider attempt requires a fresh launch generation",
+        )
+    return kernel.claim_task(
+        run_dir,
+        prepared.task_id,
+        coordinator_session_id=coordinator_session_id,
+        worker_id=worker_id,
     )
 
 
@@ -812,21 +943,63 @@ def _transcribe_whisper(audio_path: Path, output_path: Path) -> str:
     return language or "und"
 
 
-def _execute_kernel_source_live_smoke(
+_SRT_TIMELINE = re.compile(
+    r"(?m)^\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}$"
+)
+
+
+def _promote_supplied_whisper_transcript(
+    transcript_path: Path, output_path: Path
+) -> str:
+    if (
+        not transcript_path.is_file()
+        or transcript_path.is_symlink()
+        or _is_reparse_point(transcript_path)
+    ):
+        raise ContractError("supplied Whisper transcript is not a regular file")
+    try:
+        payload = transcript_path.read_bytes()
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError("supplied Whisper transcript is not UTF-8") from exc
+    except OSError as exc:
+        raise ContractError("supplied Whisper transcript is unreadable") from exc
+    if not payload or not text.strip():
+        raise ContractError("supplied Whisper transcript is empty")
+    timelines = _SRT_TIMELINE.findall(text.replace("\r\n", "\n"))
+    if not timelines:
+        raise ContractError("supplied Whisper transcript lacks an SRT timeline")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(payload)
+    return "und"
+
+
+def acquire_source_for_initialized_run(
+    *,
+    kernel: Any,
+    run_dir: Path,
     case: SourceLiveSmokeCase,
     credential: CredentialBinding,
-    work_root: Path,
-    project_root: Path,
+    adapter: Any,
+    runner: Any,
+    proofs: _TerminalProofRegistry,
     recorded_at: str,
+    versions: Mapping[str, str],
+    runtime_policy_sha256: str,
+    provider_kind: Literal["live", "recorded_fixture"],
+    recording_sha256: str | None,
+    recording_evidence: Any | None = None,
+    disposable_root: Path | None = None,
+    whisper_transcript: Path | None = None,
+    fault_point: str | None = None,
 ) -> SourceLiveSmokeExecution:
-    from .adapters import (
-        PlatformAcquireRequest,
-        PlatformAdapterError,
-        PlatformProbeRequest,
-        SubprocessCommandRunner,
-    )
-    from .kernel import VideoWorkflowKernel
-    from .models import DeterministicLocatorRequest
+    """Acquire and publish source evidence into one already initialized Run."""
+
+    if fault_point is not None and fault_point not in SOURCE_ACQUIRE_FAULT_POINTS:
+        raise ContractError(f"unknown source acquisition fault point: {fault_point}")
+
+    from .adapters import PlatformAcquireRequest, PlatformAdapterError, PlatformProbeRequest
+    from .source_acquisition import persist_source_blocker
     from .source_candidates import (
         SourceCandidatePolicy,
         SourceProviderBinding,
@@ -834,44 +1007,17 @@ def _execute_kernel_source_live_smoke(
         materialize_source_candidates,
     )
     from .source_package import GeneratedWhisperTranscript
-    from .source_acquisition import persist_source_blocker
 
-    work_root.mkdir(parents=True, exist_ok=True)
-    trash_root = work_root / "待删除" / "source-live-smoke"
-    trash_root.mkdir(parents=True, exist_ok=True)
-    runtime, versions, runtime_policy_sha = _runtime_tools(case, project_root)
-    adapter = _adapter_for(case, runtime)
-    runner = SubprocessCommandRunner()
-    proofs = _TerminalProofRegistry(trash_root / "terminal-proofs", project_root)
-    kernel = VideoWorkflowKernel(
-        work_root,
-        resource_provider_verifiers={"source-live-smoke": proofs.verify},
-    )
-    request_hash = sha256_bytes(
-        canonical_json_bytes(
-            {
-                "platform": case.platform,
-                "source_url": case.source_url,
-                "recorded_at": recorded_at,
-            }
-        )
-    )[:24]
-    bootstrap_request = DeterministicLocatorRequest(
-        source_url=case.source_url,
-        original_title=case.original_title,
-        explicit_item_selector=case.explicit_item_selector,
-    )
-    bootstrap = kernel.bootstrap_production_source(
-        adapter=adapter,
-        request=bootstrap_request,
-        runner=runner,
-        task_start=recorded_at,
-        request_id=f"source-live-smoke-{case.platform}-{request_hash}",
-        provider_kind="deterministic_locator",
-    )
-    initialized = kernel.initialize_production_source(bootstrap)
-    run_dir = initialized.run_dir
+    run_dir = run_dir.resolve()
     run = read_json(run_dir / "workflow" / "run.json")
+    kernel.contracts.validate_run_record(run)
+    if (
+        run["canonical_platform"] != case.platform
+        or run["original_title"] != case.original_title
+        or run["source_state"] != "pending"
+        or run["source_acquisition_mode"] != "fresh_download"
+    ):
+        raise ContractError("source acquisition request differs from current Run authority")
     source_epoch = int(run["source_epoch"])
     provider_key = f"source-acquisition-provider-epoch-{source_epoch}"
     semantic_key = f"source-acquisition-semantic-epoch-{source_epoch}"
@@ -886,14 +1032,21 @@ def _execute_kernel_source_live_smoke(
         logical_task_key=provider_key,
         prepared_at=recorded_at,
     )
-    claimed_provider = kernel.claim_task(
+    coordinator_id = f"source-acquire-{case.platform}"
+    claimed_provider = _claim_or_reclaim_source_task(
+        kernel,
         run_dir,
-        prepared_provider.task_id,
-        coordinator_session_id=f"source-live-smoke-{case.platform}",
-        worker_id=f"source-live-smoke-{case.platform}-provider",
+        prepared_provider,
+        coordinator_session_id=coordinator_id,
+        worker_id=f"{coordinator_id}-provider",
     )
     launch_tokens: list[str] = []
     provider_failures: list[Exception] = []
+    trash_root = (
+        disposable_root.resolve()
+        if disposable_root is not None
+        else run_dir.parent.parent / "待删除" / "source-acquire" / run["run_id"]
+    )
 
     def acquire(launch_token: str) -> tuple[Any, Any]:
         launch_tokens.append(launch_token)
@@ -909,13 +1062,12 @@ def _execute_kernel_source_live_smoke(
                 runner=runner,
             )
             if (
-                admitted_probe.canonical_platform != bootstrap.canonical_platform
-                or admitted_probe.canonical_item_id != bootstrap.canonical_item_id
-                or admitted_probe.original_title != bootstrap.original_title
+                admitted_probe.canonical_platform != run["canonical_platform"]
+                or admitted_probe.canonical_item_id != run["canonical_item_id"]
+                or admitted_probe.original_title != run["original_title"]
             ):
                 raise ArtifactDrift(
-                    "admitted Source Probe changed deterministic Bootstrap identity "
-                    "or original title"
+                    "admitted Source Probe changed initialized Run identity or original title"
                 )
             acquisition = adapter.acquire(
                 PlatformAcquireRequest(
@@ -923,9 +1075,7 @@ def _execute_kernel_source_live_smoke(
                     localized_cookie_file=credential.localized_cookie_file,
                     staging_root=staging,
                     probe=admitted_probe,
-                    eligible_track_ids=_eligible_subtitle_tracks(
-                        case, admitted_probe
-                    ),
+                    eligible_track_ids=_eligible_subtitle_tracks(case, admitted_probe),
                     max_video_height=case.max_video_height,
                 ),
                 runner=runner,
@@ -943,7 +1093,7 @@ def _execute_kernel_source_live_smoke(
         acquire=acquire,
     )
     if len(launch_tokens) != 1:
-        raise ContractError("source live smoke provider launch token is ambiguous")
+        raise ContractError("source provider launch token is ambiguous")
     if provider_failures:
         error = provider_failures[0]
         _release_stage(
@@ -956,14 +1106,12 @@ def _execute_kernel_source_live_smoke(
             observed_at=recorded_at,
             declared_outcome="failed",
         )
-        if (
-            isinstance(error, PlatformAdapterError)
-            and error.blocker_kind == "user_input"
-        ):
+        if isinstance(error, PlatformAdapterError) and error.blocker_kind == "user_input":
             error.data["source_blocker"] = persist_source_blocker(
                 kernel, run_dir, case.platform, error
             )
         raise error
+
     try:
         policy = SourceCandidatePolicy(
             content_classification=case.content_classification,
@@ -971,8 +1119,22 @@ def _execute_kernel_source_live_smoke(
             whisper_allowed=case.whisper_allowed,
         )
         provider = SourceProviderBinding(
-            kind="live",
-            recording_sha256=None,
+            kind=provider_kind,
+            recording_sha256=recording_sha256,
+            recording_platform=(
+                None
+                if recording_evidence is None
+                else recording_evidence.canonical_platform
+            ),
+            recording_adapter_id=(
+                None if recording_evidence is None else recording_evidence.adapter_id
+            ),
+            recording_adapter_contract_version=(
+                None
+                if recording_evidence is None
+                else recording_evidence.adapter_contract_version
+            ),
+            recording_evidence=recording_evidence,
             tool_versions=tuple(
                 ToolVersion(name=name, version=version)
                 for name, version in sorted(versions.items())
@@ -983,10 +1145,10 @@ def _execute_kernel_source_live_smoke(
         )
         candidates = materialize_source_candidates(
             scratch_run,
-            run_id=bootstrap.run_id,
+            run_id=run["run_id"],
             source_epoch=source_epoch,
             acquisition_id=sha256_bytes(
-                f"source-acquisition\0{bootstrap.run_id}\0{source_epoch}".encode(
+                f"source-acquisition\0{run['run_id']}\0{source_epoch}".encode(
                     "utf-8"
                 )
             )[:32],
@@ -1008,7 +1170,7 @@ def _execute_kernel_source_live_smoke(
             candidates.inventory,
         )
         if candidates.skeleton is None:
-            raise ContractError("fresh source live smoke lacks a Decision Skeleton")
+            raise ContractError("fresh source acquisition lacks a Decision Skeleton")
         skeleton_output = _write_task_json_output(
             prepared_provider,
             claimed_provider,
@@ -1038,10 +1200,9 @@ def _execute_kernel_source_live_smoke(
             "source_acquisition_decision_skeleton": sha256_file(skeleton_output),
         },
         observed_at=recorded_at,
+        fault_point=fault_point,
     )
-    _complete_and_promote(
-        kernel, run_dir, prepared_provider, claimed_provider
-    )
+    _complete_and_promote(kernel, run_dir, prepared_provider, claimed_provider)
 
     prepared_semantic = kernel.prepare_production_source_task(
         run_dir,
@@ -1050,12 +1211,13 @@ def _execute_kernel_source_live_smoke(
         prepared_at=recorded_at,
     )
     if prepared_semantic.task_id != semantic_task_id:
-        raise ArtifactDrift("source live smoke semantic Task identity changed")
-    claimed_semantic = kernel.claim_task(
+        raise ArtifactDrift("source semantic Task identity changed")
+    claimed_semantic = _claim_or_reclaim_source_task(
+        kernel,
         run_dir,
-        prepared_semantic.task_id,
-        coordinator_session_id=f"source-live-smoke-{case.platform}",
-        worker_id=f"source-live-smoke-{case.platform}-semantic",
+        prepared_semantic,
+        coordinator_session_id=coordinator_id,
+        worker_id=f"{coordinator_id}-semantic",
     )
     semantic_tokens: list[str] = []
     semantic_failures: list[Exception] = []
@@ -1064,7 +1226,7 @@ def _execute_kernel_source_live_smoke(
         semantic_tokens.append(launch_token)
         try:
             skeleton_path = run_dir / "work/source-acquisition/decision.skeleton.json"
-            patch = build_deterministic_smoke_judgment_patch(
+            patch = build_policy_ranked_source_judgment_patch(
                 skeleton=read_json(skeleton_path),
                 task_id=prepared_semantic.task_id,
                 attempt_id=claimed_semantic.attempt_id,
@@ -1088,36 +1250,27 @@ def _execute_kernel_source_live_smoke(
         ("codex_semantic",),
         judge,
     )
-    if len(semantic_tokens) != 1:
-        raise ContractError("source live smoke semantic launch token is ambiguous")
-    if semantic_failures:
-        _release_stage(
-            kernel=kernel,
-            proofs=proofs,
-            claimed=claimed_semantic,
-            launch_token=semantic_tokens[0],
-            stage="semantic",
-            artifacts={},
-            observed_at=recorded_at,
-            declared_outcome="failed",
-        )
-        raise semantic_failures[0]
     try:
+        if len(semantic_tokens) != 1:
+            raise ContractError("source semantic launch token is ambiguous")
+        if semantic_failures:
+            raise semantic_failures[0]
         patch_path, _ = _task_output_path(
             prepared_semantic, claimed_semantic, "source_acquisition_decision"
         )
         patch_sha256 = sha256_file(patch_path)
     except Exception:
-        _release_stage(
-            kernel=kernel,
-            proofs=proofs,
-            claimed=claimed_semantic,
-            launch_token=semantic_tokens[0],
-            stage="semantic",
-            artifacts={},
-            observed_at=recorded_at,
-            declared_outcome="failed",
-        )
+        if semantic_tokens:
+            _release_stage(
+                kernel=kernel,
+                proofs=proofs,
+                claimed=claimed_semantic,
+                launch_token=semantic_tokens[0],
+                stage="semantic",
+                artifacts={},
+                observed_at=recorded_at,
+                declared_outcome="failed",
+            )
         raise
     _release_stage(
         kernel=kernel,
@@ -1128,15 +1281,11 @@ def _execute_kernel_source_live_smoke(
         artifacts={"source_acquisition_decision": patch_sha256},
         observed_at=recorded_at,
     )
-    _complete_and_promote(
-        kernel, run_dir, prepared_semantic, claimed_semantic
-    )
+    _complete_and_promote(kernel, run_dir, prepared_semantic, claimed_semantic)
 
-    whisper_transcript = None
+    generated_whisper_transcript = None
     if patch["judgment"]["whisper_fallback"]["choice"] == "use_whisper":
-        inventory = read_json(
-            run_dir / "work/source-acquisition/candidate-inventory.json"
-        )
+        inventory = read_json(run_dir / "work/source-acquisition/candidate-inventory.json")
         audio_id = candidates.skeleton["allowed_judgment"][
             "whisper_audio_candidate_id"
         ]
@@ -1155,11 +1304,12 @@ def _execute_kernel_source_live_smoke(
                 "sha256": audio["sha256"],
             },
         )
-        claimed_whisper = kernel.claim_task(
+        claimed_whisper = _claim_or_reclaim_source_task(
+            kernel,
             run_dir,
-            prepared_whisper.task_id,
-            coordinator_session_id=f"source-live-smoke-{case.platform}",
-            worker_id=f"source-live-smoke-{case.platform}-whisper",
+            prepared_whisper,
+            coordinator_session_id=coordinator_id,
+            worker_id=f"{coordinator_id}-whisper",
         )
         whisper_tokens: list[str] = []
         whisper_failures: list[Exception] = []
@@ -1170,6 +1320,10 @@ def _execute_kernel_source_live_smoke(
                 output, _ = _task_output_path(
                     prepared_whisper, claimed_whisper, "source_transcription"
                 )
+                if whisper_transcript is not None:
+                    return _promote_supplied_whisper_transcript(
+                        whisper_transcript, output
+                    )
                 return _transcribe_whisper(
                     run_dir / Path(*audio["staged_path"].split("/")), output
                 )
@@ -1182,25 +1336,22 @@ def _execute_kernel_source_live_smoke(
             claim_generation=claimed_whisper.claim_generation,
             provider=transcribe,
         )
-        launch_token = whisper_tokens[0] if whisper_tokens else None
         try:
             if len(whisper_tokens) != 1:
-                raise ContractError(
-                    "source live smoke Whisper launch token is ambiguous"
-                )
+                raise ContractError("source Whisper launch token is ambiguous")
             if whisper_failures:
                 raise whisper_failures[0]
             whisper_output, _ = _task_output_path(
                 prepared_whisper, claimed_whisper, "source_transcription"
             )
-            whisper_output_sha256 = sha256_file(whisper_output)
+            whisper_sha256 = sha256_file(whisper_output)
         except Exception:
-            if launch_token is not None:
+            if whisper_tokens:
                 _release_stage(
                     kernel=kernel,
                     proofs=proofs,
                     claimed=claimed_whisper,
-                    launch_token=launch_token,
+                    launch_token=whisper_tokens[0],
                     stage="whisper",
                     artifacts={},
                     observed_at=recorded_at,
@@ -1211,19 +1362,17 @@ def _execute_kernel_source_live_smoke(
             kernel=kernel,
             proofs=proofs,
             claimed=claimed_whisper,
-            launch_token=launch_token,
+            launch_token=whisper_tokens[0],
             stage="whisper",
-            artifacts={"source_transcription": whisper_output_sha256},
+            artifacts={"source_transcription": whisper_sha256},
             observed_at=recorded_at,
         )
-        _complete_and_promote(
-            kernel, run_dir, prepared_whisper, claimed_whisper
-        )
-        run = read_json(run_dir / "workflow/run.json")
-        transcript_generation = run["artifact_generations"]["source_transcription"]
-        transcript_path = run_dir / transcript_generation["path"]
-        whisper_transcript = GeneratedWhisperTranscript(
-            staged_path=transcript_generation["path"],
+        _complete_and_promote(kernel, run_dir, prepared_whisper, claimed_whisper)
+        current = read_json(run_dir / "workflow/run.json")
+        generation = current["artifact_generations"]["source_transcription"]
+        transcript_path = run_dir / generation["path"]
+        generated_whisper_transcript = GeneratedWhisperTranscript(
+            staged_path=generation["path"],
             sha256=sha256_file(transcript_path),
             size_bytes=transcript_path.stat().st_size,
             media_type="application/x-subrip",
@@ -1234,14 +1383,17 @@ def _execute_kernel_source_live_smoke(
                 "stream_types": ["transcript"],
                 "codec_names": ["subrip"],
             },
-            generation=transcript_generation["generation"],
-            evidence_sha256=transcript_generation["sha256"],
+            generation=generation["generation"],
+            evidence_sha256=generation["sha256"],
         )
+
     finalized = kernel.finalize_production_source(
         run_dir,
         published_at=recorded_at,
-        whisper_transcript=whisper_transcript,
+        whisper_transcript=generated_whisper_transcript,
     )
+    if hasattr(runner, "assert_consumed"):
+        runner.assert_consumed()
     media_command = next(
         (
             evidence
@@ -1251,17 +1403,76 @@ def _execute_kernel_source_live_smoke(
         None,
     )
     if media_command is None:
-        raise ContractError("source live smoke lacks media download command evidence")
-    manifest_path = Path(finalized.manifest_path)
+        raise ContractError("source acquisition lacks media download command evidence")
     return SourceLiveSmokeExecution(
         run_path=run_dir / "workflow/run.json",
-        manifest_path=manifest_path,
+        manifest_path=Path(finalized.manifest_path),
         command_argv_redacted=tuple(media_command.argv),
         authentication_classification=probe.authentication_classification,
         tool_versions=versions,
-        runtime_policy_sha256=runtime_policy_sha,
+        runtime_policy_sha256=runtime_policy_sha256,
     )
 
+
+def _execute_kernel_source_live_smoke(
+    case: SourceLiveSmokeCase,
+    credential: CredentialBinding,
+    work_root: Path,
+    project_root: Path,
+    recorded_at: str,
+) -> SourceLiveSmokeExecution:
+    from .adapters import SubprocessCommandRunner
+    from .kernel import VideoWorkflowKernel
+    from .models import DeterministicLocatorRequest
+
+    work_root.mkdir(parents=True, exist_ok=True)
+    trash_root = work_root / "待删除" / "source-live-smoke"
+    trash_root.mkdir(parents=True, exist_ok=True)
+    runtime, versions, runtime_policy_sha = _runtime_tools(case, project_root)
+    adapter = _adapter_for(case, runtime)
+    runner = SubprocessCommandRunner()
+    proofs = _TerminalProofRegistry(trash_root / "terminal-proofs", project_root)
+    kernel = VideoWorkflowKernel(
+        work_root,
+        resource_provider_verifiers={"source-live-smoke": proofs.verify},
+    )
+    request_hash = sha256_bytes(
+        canonical_json_bytes(
+            {
+                "platform": case.platform,
+                "source_url": case.source_url,
+                "recorded_at": recorded_at,
+            }
+        )
+    )[:24]
+    bootstrap = kernel.bootstrap_production_source(
+        adapter=adapter,
+        request=DeterministicLocatorRequest(
+            source_url=case.source_url,
+            original_title=case.original_title,
+            explicit_item_selector=case.explicit_item_selector,
+        ),
+        runner=runner,
+        task_start=recorded_at,
+        request_id=f"source-live-smoke-{case.platform}-{request_hash}",
+        provider_kind="deterministic_locator",
+    )
+    initialized = kernel.initialize_production_source(bootstrap)
+    return acquire_source_for_initialized_run(
+        kernel=kernel,
+        run_dir=initialized.run_dir,
+        case=case,
+        credential=credential,
+        adapter=adapter,
+        runner=runner,
+        proofs=proofs,
+        recorded_at=recorded_at,
+        versions=versions,
+        runtime_policy_sha256=runtime_policy_sha,
+        provider_kind="live",
+        recording_sha256=None,
+        disposable_root=trash_root,
+    )
 
 def run_source_live_smoke(
     *,
@@ -1311,7 +1522,7 @@ __all__ = [
     "SourceLiveSmokeCase",
     "SourceLiveSmokeExecution",
     "build_smoke_report",
-    "build_deterministic_smoke_judgment_patch",
+    "build_policy_ranked_source_judgment_patch",
     "launch_admitted_platform_acquisition",
     "load_smoke_case",
     "resolve_credential_profile",

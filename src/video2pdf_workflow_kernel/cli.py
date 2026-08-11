@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from .adapters import FixturePlatformAdapter
+from .adapters import FixturePlatformAdapter, PlatformAdapterError
 from .contracts import ContractRegistry
 from .delivery_quality import DeliveryQualityRegistry
 from .control_store import ControlStore
@@ -20,7 +20,7 @@ from .errors import (
 )
 from .kernel import FAULT_POINTS, VideoWorkflowKernel
 from .models import BootstrapProbeResult, ProductionBootstrapResult
-from .source_live_smoke import run_source_live_smoke
+from .source_live_smoke import SOURCE_ACQUIRE_FAULT_POINTS, run_source_live_smoke
 from .task_execution import (
     CLAIM_FAULT_POINTS,
     COMPLETION_FAULT_POINTS,
@@ -48,6 +48,11 @@ from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcc
 from .platform_kernel import (
     ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
     BilibiliPlatformCutoverPublisher,
+)
+from .production_bootstrap import bootstrap_bilibili_production_probe
+from .source_acquire import (
+    acquire_bilibili_source_for_run,
+    reconcile_bilibili_source_acquire,
 )
 from .delivery_lifecycle import DeliveryLifecycleProvider, FAULT_POINTS as DELIVERY_FAULT_POINTS
 from .utils import read_json
@@ -375,7 +380,7 @@ def _parser() -> argparse.ArgumentParser:
     store_recovery_status.add_argument("--workspace-root", required=True, type=Path)
 
     probe = commands.add_parser("bootstrap-probe")
-    _add_trace_inputs(probe)
+    _add_bootstrap_probe_inputs(probe)
 
     init = commands.add_parser("init-run")
     init.add_argument("--workspace-root", required=True, type=Path)
@@ -423,6 +428,18 @@ def _parser() -> argparse.ArgumentParser:
     source_import.add_argument("--task-start")
     source_import.add_argument("--request-id")
     source_import.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
+
+    source_acquire = commands.add_parser("source-acquire")
+    source_acquire.add_argument("--run-dir", required=True, type=Path)
+    source_acquire.add_argument("--cookie-file", required=True, type=Path)
+    source_acquire.add_argument("--provider-recording", type=Path)
+    source_acquire.add_argument("--whisper-transcript", type=Path)
+    source_acquire.add_argument(
+        "--fault-point", choices=sorted(SOURCE_ACQUIRE_FAULT_POINTS)
+    )
+
+    source_acquire_reconcile = commands.add_parser("source-acquire-reconcile")
+    source_acquire_reconcile.add_argument("--run-dir", required=True, type=Path)
 
     source_blocker_resolve = commands.add_parser("source-blocker-resolve")
     source_blocker_resolve.add_argument("--run-dir", required=True, type=Path)
@@ -584,6 +601,21 @@ def _parser() -> argparse.ArgumentParser:
 def _add_trace_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", required=True, type=Path)
     parser.add_argument("--fixture", required=True, type=Path)
+    parser.add_argument("--task-start", required=True)
+    parser.add_argument("--request-id", required=True)
+    parser.add_argument("--title-override")
+
+
+def _add_bootstrap_probe_inputs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--workspace-root", required=True, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--fixture", type=Path)
+    mode.add_argument("--platform", choices=("bilibili",))
+    parser.add_argument("--source-url")
+    parser.add_argument("--cookie-file", type=Path)
+    parser.add_argument("--original-title")
+    parser.add_argument("--explicit-item-selector")
+    parser.add_argument("--provider-recording", type=Path)
     parser.add_argument("--task-start", required=True)
     parser.add_argument("--request-id", required=True)
     parser.add_argument("--title-override")
@@ -1181,16 +1213,54 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "bootstrap-probe":
         kernel = VideoWorkflowKernel(args.workspace_root)
-        result = kernel.bootstrap_probe(
-            fixture=args.fixture,
-            task_start=args.task_start,
-            request_id=args.request_id,
-            title_override=args.title_override,
-        )
+        if args.fixture is not None:
+            if any(
+                value is not None
+                for value in (
+                    args.source_url,
+                    args.cookie_file,
+                    args.original_title,
+                    args.explicit_item_selector,
+                    args.provider_recording,
+                )
+            ):
+                raise CliUsageError(
+                    "fixture Bootstrap cannot accept production source arguments"
+                )
+            result = kernel.bootstrap_probe(
+                fixture=args.fixture,
+                task_start=args.task_start,
+                request_id=args.request_id,
+                title_override=args.title_override,
+            )
+            data = {"run_id": result.run_id, "probe_record": str(result.record_path)}
+        else:
+            if args.title_override is not None:
+                raise CliUsageError(
+                    "production Bootstrap cannot accept --title-override"
+                )
+            result = bootstrap_bilibili_production_probe(
+                kernel=kernel,
+                workspace_root=args.workspace_root,
+                source_url=args.source_url,
+                cookie_file=args.cookie_file,
+                original_title=args.original_title,
+                task_start=args.task_start,
+                request_id=args.request_id,
+                explicit_item_selector=args.explicit_item_selector,
+                provider_recording=args.provider_recording,
+            )
+            data = {
+                "run_id": result.run_id,
+                "probe_record": str(result.record_path),
+                "canonical_item_id": result.canonical_item_id,
+                "source_identity": result.source_identity,
+                "original_title": result.original_title,
+            }
         return _ok(
             command,
             "probe_complete",
-            {"run_id": result.run_id, "probe_record": str(result.record_path)},
+            data,
             str(result.record_path),
         )
     if command == "source-import" and args.prior_run_dir is not None:
@@ -1232,6 +1302,50 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 ],
             },
             str(result.manifest_path),
+        )
+    if command == "source-acquire":
+        try:
+            result = acquire_bilibili_source_for_run(
+                run_dir=args.run_dir,
+                cookie_file=args.cookie_file,
+                provider_recording=args.provider_recording,
+                whisper_transcript=args.whisper_transcript,
+                fault_point=args.fault_point,
+            )
+        except PlatformAdapterError as error:
+            blocker = error.data.get("source_blocker")
+            if error.blocker_kind != "user_input" or not isinstance(blocker, dict):
+                raise
+            run_dir = args.run_dir.resolve()
+            return _ok(
+                command,
+                "user_input_required",
+                {
+                    "run_dir": str(run_dir),
+                    "source_blocker": blocker,
+                    "authentication_classification": error.data.get(
+                        "authentication_classification"
+                    ),
+                },
+                str(run_dir / "workflow" / "run.json"),
+            )
+        return _ok(
+            command,
+            (
+                "source_already_ready"
+                if result.get("idempotent") is True
+                else "source_acquired"
+            ),
+            result,
+            str(result["source_manifest"]),
+        )
+    if command == "source-acquire-reconcile":
+        result = reconcile_bilibili_source_acquire(run_dir=args.run_dir)
+        return _ok(
+            command,
+            "source_acquire_reconciled",
+            result,
+            str(args.run_dir.resolve() / "workflow" / "run.json"),
         )
     if command == "init-cutover-candidate":
         kernel = VideoWorkflowKernel(args.workspace_root)

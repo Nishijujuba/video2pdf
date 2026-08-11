@@ -39,7 +39,7 @@ Bilibili remains `active_legacy`; the Platform Kernel implementation and one-can
 
 The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
 
-Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance source and production through `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
 
 ### Cold-start cutover bootstrap
 
@@ -48,14 +48,30 @@ The current repository has no confirmed Bilibili platform authority and must use
 1. Run `bootstrap-probe` for the selected Bilibili source and retain the exact probe, Run identity, source identity, and candidate session identity.
 2. Run `platform-kernel-prepare` with the current implementation commit, the exact probe, and the candidate session. This creates one durable `PREPARED` candidate binding without publishing platform authority.
 3. Run `init-cutover-candidate` for that same probe and session. This is the only initialization path available before confirmation; ordinary `init-run` remains fail-closed.
-4. Advance the candidate through the normal Kernel source, production, and final-compile operations, then transition it to `ready_for_delivery` with current final-artifact evidence.
+4. Run `source-acquire` against the initialized candidate's existing `--run-dir`, advance that same Run to `source_ready`, continue through the normal Kernel production and final-compile operations, then transition it to `ready_for_delivery` with current final-artifact evidence.
 5. At `ready_for_delivery`, materialize a provider-current passing Acceptance Report v2. Run `platform-kernel-candidate-activate` for that exact ready candidate. The resulting `PROVISIONAL` state authorizes only that candidate to continue; it does not authorize any second Run or ordinary initialization.
 6. Transition the same candidate to `accepted`, generate a fresh current Delivery Guard, and use that Guard to transition to `delivered`. Then use `scripts/collect_issue13_exit_evidence.py collect` and `finalize` plus the formal Exit Evidence validator to collect and publish fingerprint-bound Slice 12 evidence for that delivered Run.
 7. Run `platform-kernel-activate` with the published Exit Evidence Manifest. Activation succeeds only when the manifest identifies the same delivered candidate and returns `CONFIRMED`. After confirmation, run `workflow-policy-check` and the platform-authority reconciliation/confirmation checks. Only `CONFIRMED` opens ordinary Bilibili `init-run` admission.
 
 At every intermediate state (`PREPARED`, `INITIALIZED`, or `PROVISIONAL`), startup and recovery must preserve the single candidate binding and reject ordinary Bilibili Run creation. Existing Bilibili directories remain Legacy throughout this bootstrap and cannot be converted into the candidate by synthesizing a Run Record.
 
-Canonical order: `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` never constitute `active_kernel`.
+After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
+
+Canonical order: `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` never constitute `active_kernel`.
 
 ## Semantic Roles
 

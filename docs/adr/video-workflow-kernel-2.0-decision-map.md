@@ -32,7 +32,23 @@ Kernel coordination is active only for new Bilibili Runs. Delivery Quality Slice
 
 During a cold start, `platform-kernel-prepare` and `init-cutover-candidate` bind one exact Bilibili evidence candidate while ordinary `init-run` remains closed. `platform-kernel-candidate-activate` requires that candidate to be `ready_for_delivery` with a provider-current passing Acceptance Report v2 and produces `PROVISIONAL`, which is candidate-only continuation authority and does not mean `active_kernel`. The candidate then advances to `accepted`, obtains a fresh current Delivery Guard, and uses that Guard to reach `delivered`; its evidence must then be collected, formally validated, and published. `platform-kernel-activate` confirms only that matching delivered candidate. `CONFIRMED` is the sole state that opens ordinary Bilibili initialization and changes the table to `active_kernel`.
 
-Canonical order: `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`.
+Canonical order: `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`.
+
+After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
 
 ```mermaid
 flowchart TD

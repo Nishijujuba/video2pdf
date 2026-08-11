@@ -6,6 +6,22 @@ Bilibili remains `active_legacy`; the Platform Kernel implementation and one-can
 
 During the cold-start cutover, one exact Bilibili Run may be bound as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are bounded candidate states and do not constitute `active_kernel`; ordinary `init-run` remains closed until final activation records `CONFIRMED` for the matching delivered candidate and its published Exit Evidence.
 
+After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
+
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 
 The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and the Pyramid Gate Report. The Final Acceptance Context owns acceptance criteria, Reviewer judgment, and the final semantic delivery decision; this context consumes those published decisions and owns their invocation timing, freshness consequences, repair routing, and delivery mechanics.
@@ -54,7 +70,7 @@ The candidate-only state published after the bound Run reaches `ready_for_delive
 
 The final platform authority recorded only after a published Exit Evidence Manifest identifies the same delivered candidate and passes formal validation. `CONFIRMED` opens ordinary new-run initialization and realizes the platform's `active_kernel` status.
 
-The cutover lifecycle follows `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain outside `active_kernel`.
+The cutover lifecycle follows `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain outside `active_kernel`.
 
 ## Contract Schema Version
 

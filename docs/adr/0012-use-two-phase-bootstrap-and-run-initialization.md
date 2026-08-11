@@ -14,6 +14,24 @@ Every new run starts with `bootstrap-probe`. The kernel freezes the local task s
 
 After a successful probe, `init-run` calculates the normalized and path-budgeted final directory name from the original title and frozen timestamp. It creates the Video Output Directory and initial workflow contracts, then moves bootstrap evidence into `<video-output-dir>/待删除/bootstrap/`. Full source acquisition begins only after this transition.
 
+For the one cold-start cutover candidate, `init-cutover-candidate` performs this initialization against the durable `PREPARED` binding. After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
+
+The candidate activation sequence is `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`.
+
 No bootstrap evidence is permanently deleted. A failed or interrupted probe remains under the project `待删除` boundary for audit and manual cleanup. A populated Video Output Directory is not renamed as part of normal initialization.
 
 ## Consequences

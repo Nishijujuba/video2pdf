@@ -19,11 +19,27 @@ The implementation and activation order is:
 
 Before a platform is activated, ordinary Kernel Run admission for that platform remains closed. Repository fixtures carry no delivery authority. A cold-start cutover may bind exactly one production candidate through the public two-stage seam: `platform-kernel-prepare` records the implementation commit, probe identity, Run identity, source identity, and session without publishing platform authority; `init-cutover-candidate` initializes only that binding. No ordinary `init-run` is admitted in this state.
 
+After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
+
 The candidate must reach `ready_for_delivery` through the normal Kernel lifecycle with a provider-current passing Acceptance Report v2. `platform-kernel-candidate-activate` may then publish a `PROVISIONAL` candidate-only state. That state permits only the bound candidate to advance to `accepted`, obtain a fresh current Delivery Guard, and use that Guard to advance to `delivered` so the guarded delivery can support the Exit Evidence Manifest. It does not transfer platform authority, admit a second candidate, or classify the platform as `active_kernel`.
 
 After the delivered candidate's evidence is collected, formally validated, and published, `platform-kernel-activate` must bind that exact Run and produce `CONFIRMED`. Only `CONFIRMED` transfers ordinary new-run authority and opens the platform's regular `init-run` path. Reconciliation preserves the same fail-closed distinction among `PREPARED`, `INITIALIZED`, `PROVISIONAL`, and `CONFIRMED`.
 
-The normative sequence is `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain non-active candidate states throughout this sequence.
+The normative sequence is `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain non-active candidate states throughout this sequence.
 
 After activation, every new run for that platform is a Kernel Track run. Existing output directories remain on the Legacy Track. One run cannot switch tracks, combine state writers, receive dual status updates, or gain a synthesized `workflow/run.json` through ordinary reconciliation.
 

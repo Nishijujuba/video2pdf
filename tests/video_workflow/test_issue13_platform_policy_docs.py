@@ -12,6 +12,59 @@ COLD_START_CUTOVER_SEQUENCE = (
     "published Slice 12 Exit Evidence -> `CONFIRMED`"
 )
 
+FULL_SOURCE_CUTOVER_SEQUENCE = (
+    "`PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a "
+    "provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> "
+    "fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> "
+    "`CONFIRMED`"
+)
+
+SAME_RUN_SOURCE_ACQUISITION = (
+    "After `init-cutover-candidate`, run the public `source-acquire` command against "
+    "the candidate's existing `--run-dir`; it attaches source evidence to that same "
+    "Run and must not create a second Run."
+)
+
+WHISPER_TASK_PROMOTION = (
+    "When no usable CC subtitle exists, `source-acquire` must stage Whisper output "
+    "through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt "
+    "before `source_ready` becomes current."
+)
+
+NO_SECOND_SMOKE_RUN = (
+    "The candidate workflow must never call `source-live-smoke`; no second Run may be "
+    "created for source acquisition."
+)
+
+RECOVERABLE_COOKIE_BLOCKER = (
+    "An expired or rejected Cookie is a recoverable `user_input` Source Blocker: "
+    "preserve the same Run and its evidence, do not count it as a delivery attempt "
+    "failure, and immediately request a refreshed Cookie from the user."
+)
+
+COOKIE_RETRY_SEQUENCE = (
+    "After receiving the refreshed Cookie, close the source circuit breaker, run "
+    "`source-blocker-resolve`, and retry `source-acquire` on the same Run with a new "
+    "`source_epoch`."
+)
+
+COOKIE_SECRET_BOUNDARY = (
+    "The Cookie path and Cookie contents are credential-bearing secrets and must "
+    "never appear in logs, reports, shared evidence, or task prompts."
+)
+
+SOURCE_ACQUIRE_RECONCILE = (
+    "If acquisition is interrupted after terminal proof persistence and before "
+    "Resource Lease release, run `source-acquire-reconcile --run-dir "
+    "<candidate-run-dir>`."
+)
+
+SOURCE_RECONCILE_SAME_RUN = (
+    "`source-acquire-reconcile` reloads the persisted terminal proof, releases the "
+    "existing Lease, and advances or retries the interrupted Task on the same Run; "
+    "it must not initialize or attach another Run."
+)
+
 CURRENT_BILIBILI_STATUS = (
     "Bilibili remains `active_legacy`; the Platform Kernel implementation and "
     "one-candidate cutover seam are available."
@@ -54,6 +107,57 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertIn(COLD_START_CUTOVER_SEQUENCE, text)
 
+    def test_candidate_source_acquisition_uses_one_public_same_run_seam(self) -> None:
+        paths = (
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+            "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
+            "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
+            "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
+            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+            "docs/contexts/video-workflow/CONTEXT.md",
+        )
+        for relative in paths:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(SAME_RUN_SOURCE_ACQUISITION, text)
+                self.assertIn(WHISPER_TASK_PROMOTION, text)
+                self.assertIn(NO_SECOND_SMOKE_RUN, text)
+                self.assertIn(FULL_SOURCE_CUTOVER_SEQUENCE, text)
+
+    def test_cookie_authentication_blocker_is_recoverable_on_the_same_run(self) -> None:
+        paths = (
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+            "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
+            "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
+            "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
+            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+            "docs/contexts/video-workflow/CONTEXT.md",
+        )
+        for relative in paths:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(RECOVERABLE_COOKIE_BLOCKER, text)
+                self.assertIn(COOKIE_RETRY_SEQUENCE, text)
+                self.assertIn(COOKIE_SECRET_BOUNDARY, text)
+
+    def test_source_acquisition_recovery_reconciles_the_same_run(self) -> None:
+        paths = (
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+            "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
+            "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
+            "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
+            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+            "docs/contexts/video-workflow/CONTEXT.md",
+        )
+        for relative in paths:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(SOURCE_ACQUIRE_RECONCILE, text)
+                self.assertIn(SOURCE_RECONCILE_SAME_RUN, text)
+
     def test_platform_activation_authority_is_consistent_across_active_docs(self) -> None:
         paths = (
             "AGENTS.md",
@@ -84,6 +188,8 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         for command in (
             "bootstrap-probe",
             "init-run",
+            "source-acquire",
+            "source-acquire-reconcile",
             "production-plan",
             "production-advance",
             "guarded-compile",

@@ -524,6 +524,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
     def test_public_final_compile_uses_registered_adapter_and_required_policy(self) -> None:
         fixture = GuardedFinalCompileAdapterTests(methodName="test_public_adapter_compiles_and_derives_complete_evidence")
         fixture.setUp()
+        fixture.source.write_bytes(b"Core claim\n")
         source_sha = hashlib.sha256(fixture.source.read_bytes()).hexdigest()
         generations = {"schema_name": "precompile-artifact-generation-set", "schema_version": "1.0.0",
             "generation_set_id": "adapter-public-1", "producer_ids": ["fixture-integration"],
@@ -565,6 +566,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         (binding / "artifact-generations.json").write_bytes(canonical_bytes(generations))
         manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
         manifest["precompile_text_seal_sha256"] = seal["seal_sha256"]
+        manifest["entries"][0]["sha256"] = source_sha
         manifest["runtime_policy"] = {
             "path": str(runtime_policy.resolve()),
             "sha256": hashlib.sha256(runtime_policy.read_bytes()).hexdigest(),

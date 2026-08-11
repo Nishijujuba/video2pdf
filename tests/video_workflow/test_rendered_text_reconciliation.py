@@ -119,7 +119,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             runtime_policy_path, runtime_policy = runtime_policy_fixture(root)
         compile_input = root / "integrated-main.tex"
         compile_input.write_text(
-            "\\documentclass{article}\\begin{document}Core claim\\end{document}\n"
+            "Core claim\n"
             if production_compile
             else "guarded final compile fixture\n",
             encoding="utf-8",

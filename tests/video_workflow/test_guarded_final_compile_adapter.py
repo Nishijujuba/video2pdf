@@ -164,6 +164,20 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         request["compile_manifest_sha256"] = manifest["manifest_sha256"]
         self.request.write_bytes(canonical_bytes(request))
 
+    def _write_engine_directive(self, directive: str) -> None:
+        self.source.write_text(
+            "\\documentclass{article}\\begin{document}Core claim\\end{document}\n"
+            f"% {directive}\n",
+            encoding="utf-8",
+        )
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["entries"][0]["sha256"] = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        manifest["manifest_sha256"] = fingerprint(manifest, "manifest_sha256")
+        self.manifest.write_bytes(canonical_bytes(manifest))
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        request["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        self.request.write_bytes(canonical_bytes(request))
+
     def _declare_raster(self, bbox: list[float], *, include_source: bool = True) -> None:
         source_sha = "9" * 64
         if include_source:
@@ -213,6 +227,35 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         self.assertEqual([1], rendered["coverage"]["pages_scanned"])
         self.assertEqual("Core claim", rendered["objects"][0]["exact_utf8_text"])
         self.assertTrue((self.output / "rendered_pages/page_001.png").is_file())
+
+    def test_public_adapter_records_successful_engine_stderr_without_exposing_text(self) -> None:
+        warning = b"fixture log4cxx root overlap warning\n"
+        self._write_engine_directive("VIDEO2PDF_FIXTURE_STDERR")
+        completed = self._run()
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        provenance_path = self.output / "compile-provenance.json"
+        provenance_bytes = provenance_path.read_bytes()
+        provenance = json.loads(provenance_bytes)
+        self.assertEqual({
+            "byte_length": len(warning),
+            "sha256": hashlib.sha256(warning).hexdigest(),
+        }, provenance["engine_stderr"])
+        self.assertNotIn(warning, provenance_bytes)
+        self.assertNotIn(warning.decode("ascii"), completed.stdout + completed.stderr)
+
+    def test_public_adapter_rejects_nonzero_engine_exit(self) -> None:
+        self._write_engine_directive("VIDEO2PDF_FIXTURE_NONZERO_EXIT")
+        completed = self._run()
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("guarded compile engine failed", completed.stderr)
+        self.assertFalse((self.output / "compile-provenance.json").exists())
+
+    def test_public_adapter_rejects_missing_engine_outputs(self) -> None:
+        self._write_engine_directive("VIDEO2PDF_FIXTURE_OMIT_PDF")
+        completed = self._run()
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("guarded compile omitted required output", completed.stderr)
+        self.assertFalse((self.output / "compile-provenance.json").exists())
 
     def test_public_adapter_rejects_manifest_drift_and_incomplete_pages(self) -> None:
         request = json.loads(self.request.read_text(encoding="utf-8"))

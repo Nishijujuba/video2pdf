@@ -120,7 +120,11 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
     return result, entry_tex, raster_sources
 
 
-def compile_pdf(staging: Path, entry: Path, policy: dict[str, Any]) -> tuple[Path, Path, dict[str, str]]:
+def compile_pdf(
+    staging: Path,
+    entry: Path,
+    policy: dict[str, Any],
+) -> tuple[Path, Path, dict[str, str], dict[str, int | str]]:
     engine = policy["engine"]
     command = [str(Path(engine["executable"]).resolve()), *map(str, engine.get("prefix_args", [])),
                "--disable-installer", "-no-shell-escape", "-recorder", "-interaction=nonstopmode", entry.name]
@@ -196,12 +200,16 @@ def compile_pdf(staging: Path, entry: Path, policy: dict[str, Any]) -> tuple[Pat
     })
     completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
-    if completed.returncode != 0 or completed.stderr:
+    if completed.returncode != 0:
         raise AdapterError("guarded compile engine failed")
+    stderr_summary = {
+        "byte_length": len(completed.stderr),
+        "sha256": hashlib.sha256(completed.stderr).hexdigest(),
+    }
     pdf, recorder = staging / f"{entry.stem}.pdf", staging / f"{entry.stem}.fls"
     if not pdf.is_file() or not recorder.is_file():
         raise AdapterError("guarded compile omitted required output")
-    return pdf, recorder, environment
+    return pdf, recorder, environment, stderr_summary
 
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
@@ -334,7 +342,9 @@ def run(request_path: Path) -> None:
     staging = output / "compiler-staging"
     staging.mkdir()
     inputs, entry, raster_sources = stage(manifest, staging, policy)
-    built_pdf, built_recorder, runtime_environment = compile_pdf(staging, entry, policy)
+    built_pdf, built_recorder, runtime_environment, engine_stderr = compile_pdf(
+        staging, entry, policy
+    )
     final_pdf, recorder = output / "final.pdf", output / "compile-recorder.fls"
     shutil.copyfile(built_pdf, final_pdf)
     shutil.copyfile(built_recorder, recorder)
@@ -363,6 +373,7 @@ def run(request_path: Path) -> None:
                  "compile_manifest_sha256": manifest["manifest_sha256"], "text_origin_plan_sha256": plan["plan_sha256"],
                  "final_artifact_seal_sha256": seal["seal_sha256"],
                  "invocation": {"recorder": True, "shell_escape": False, "automatic_package_install": False},
+                 "engine_stderr": engine_stderr,
                  "runtime_environment": runtime_environment,
                  "recorder_cwd": str(staging), "dependency_closure": {"complete": True,
                  "recorder_path": "compile-recorder.fls", "recorder_sha256": sha(recorder), "inputs": inputs,

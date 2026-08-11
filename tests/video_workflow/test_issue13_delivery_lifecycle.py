@@ -146,6 +146,25 @@ def _run_cli_with_formal_platform_authority(
     while leaving all lifecycle and decision validators active.
     """
 
+    def formal_guard_eligibility(*, workspace_root: Path) -> dict[str, object]:
+        report_path = workspace_root / "acceptance_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        passing = report.get("overall_status") == "pass"
+        return {
+            "eligible": passing,
+            "delivery_authority": passing,
+            "report_sha256": report.get("report_sha256"),
+        }
+
+    def formal_committed_successor(*, workspace_root: Path) -> dict[str, object]:
+        run_path = workspace_root.parents[1] / "workflow" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        return {
+            "run_id": run["run_id"],
+            "run_revision": run["coordination_revision"],
+            "run_record_sha256": _sha256(run_path),
+        }
+
     stdout = io.StringIO()
     with patch.object(
         BilibiliPlatformCutoverPublisher,
@@ -154,6 +173,14 @@ def _run_cli_with_formal_platform_authority(
             "platform": "bilibili",
             "authority_status": "current",
         },
+    ), patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "guard_eligibility",
+        side_effect=formal_guard_eligibility,
+    ), patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "require_committed_delivery_successor",
+        side_effect=formal_committed_successor,
     ), redirect_stdout(stdout):
         returncode = workflow_cli_main(list(arguments))
     completed = subprocess.CompletedProcess(

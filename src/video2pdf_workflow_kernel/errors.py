@@ -145,6 +145,18 @@ class ProductionFault(KernelError):
         self.fault_point = fault_point
 
 
+class FinalEvidenceFault(KernelError):
+    classification = "injected_final_evidence_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Final Evidence fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
 class ControlStoreUnavailable(KernelError):
     classification = "control_store_unavailable"
     exit_code = 50

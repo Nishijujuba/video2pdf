@@ -31,6 +31,10 @@ from .task_execution import (
 from .content_production import PRODUCTION_FAULT_POINTS
 from .guarded_compile import GuardedCompileProvider
 from .final_compile import GuardedFinalCompileProvider
+from .final_delivery_evidence import (
+    FINAL_EVIDENCE_FAULT_POINTS,
+    FinalDeliveryEvidenceProvider,
+)
 from .precompile_quality import (
     MATERIALIZE_FAULT_POINTS,
     PATCH_COMMIT_FAULT_POINTS,
@@ -55,6 +59,7 @@ from .source_acquire import (
     reconcile_bilibili_source_acquire,
 )
 from .delivery_lifecycle import DeliveryLifecycleProvider, FAULT_POINTS as DELIVERY_FAULT_POINTS
+from .delivery_acceptance_binding import DeliveryAcceptanceBindingProvider
 from .utils import read_json
 
 
@@ -203,6 +208,26 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
 
+    final_evidence = commands.add_parser("delivery-final-evidence-prepare")
+    final_evidence.add_argument("--run-dir", required=True, type=Path)
+    final_evidence.add_argument("--final-pdf", required=True, type=Path)
+    final_evidence.add_argument("--main-tex", required=True, type=Path)
+    final_evidence.add_argument("--final-compile-report", required=True, type=Path)
+    final_evidence.add_argument("--final-compile-manifest", required=True, type=Path)
+    final_evidence.add_argument("--precompile-quality-report", required=True, type=Path)
+    final_evidence.add_argument("--precompile-text-seal", required=True, type=Path)
+    final_evidence.add_argument("--final-artifact-seal", required=True, type=Path)
+    final_evidence.add_argument("--rendered-text-reconciliation", required=True, type=Path)
+    final_evidence.add_argument("--render-evidence-manifest", required=True, type=Path)
+    final_evidence.add_argument("--rendered-text-inventory", required=True, type=Path)
+    final_evidence.add_argument("--text-origin-manifest", required=True, type=Path)
+    final_evidence.add_argument("--global-gate-authority", required=True, type=Path)
+    final_evidence.add_argument("--allowed-manifest", required=True, type=Path)
+    final_evidence.add_argument("--prepared-at", required=True)
+    final_evidence.add_argument(
+        "--fault-point", choices=sorted(FINAL_EVIDENCE_FAULT_POINTS)
+    )
+
     acceptance_authority = commands.add_parser("acceptance-final-authority-publish")
     acceptance_authority.add_argument("--input-binding", required=True, type=Path)
 
@@ -323,6 +348,20 @@ def _parser() -> argparse.ArgumentParser:
     delivery_transition.add_argument(
         "--fault-point", choices=sorted(DELIVERY_FAULT_POINTS)
     )
+
+    delivery_acceptance_bind = commands.add_parser("delivery-acceptance-bind")
+    delivery_acceptance_bind.add_argument("--run-dir", required=True, type=Path)
+    delivery_acceptance_bind.add_argument("--session-id", required=True)
+    delivery_acceptance_bind.add_argument(
+        "--acceptance-report", required=True, type=Path
+    )
+    delivery_acceptance_bind.add_argument(
+        "--expected-run-revision", required=True, type=int
+    )
+    delivery_acceptance_bind.add_argument(
+        "--expected-ownership-generation", required=True, type=int
+    )
+    delivery_acceptance_bind.add_argument("--bound-at", required=True)
 
     delivery_handoff = commands.add_parser("delivery-handoff")
     delivery_handoff.add_argument("--run-dir", required=True, type=Path)
@@ -809,6 +848,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             result,
             result["run_record_path"],
         )
+    if command == "delivery-acceptance-bind":
+        result = DeliveryAcceptanceBindingProvider(project_root).bind(
+            run_dir=args.run_dir,
+            session_id=args.session_id,
+            acceptance_report=args.acceptance_report,
+            expected_run_revision=args.expected_run_revision,
+            expected_ownership_generation=args.expected_ownership_generation,
+            bound_at=args.bound_at,
+        )
+        return _ok(
+            command,
+            "delivery_acceptance_bound",
+            result,
+            result["run_record_path"],
+        )
     if command == "delivery-handoff":
         result = DeliveryLifecycleProvider(project_root).handoff(
             run_dir=args.run_dir,
@@ -853,6 +907,31 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command == "acceptance-final-authority-publish":
         result = AcceptanceV2Provider(project_root).publish_final_authority(input_binding_path=args.input_binding)
         return _ok(command, "acceptance_v2_final_authority_published", result)
+    if command == "delivery-final-evidence-prepare":
+        result = FinalDeliveryEvidenceProvider(project_root).prepare(
+            run_dir=args.run_dir,
+            final_pdf=args.final_pdf,
+            main_tex=args.main_tex,
+            final_compile_report=args.final_compile_report,
+            final_compile_manifest=args.final_compile_manifest,
+            precompile_quality_report=args.precompile_quality_report,
+            precompile_text_seal=args.precompile_text_seal,
+            final_artifact_seal=args.final_artifact_seal,
+            rendered_text_reconciliation=args.rendered_text_reconciliation,
+            render_evidence_manifest=args.render_evidence_manifest,
+            rendered_text_inventory=args.rendered_text_inventory,
+            text_origin_manifest=args.text_origin_manifest,
+            global_gate_authority=args.global_gate_authority,
+            allowed_manifest=args.allowed_manifest,
+            prepared_at=args.prepared_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "delivery_final_evidence_prepared",
+            result,
+            result["input_binding_path"],
+        )
     if command == "acceptance-prepare":
         result = AcceptanceV2Provider(project_root).prepare(
             workspace_root=args.workspace_root,

@@ -11,6 +11,7 @@ import sqlite3
 import time
 from typing import Any, Callable, Iterator, TypeVar
 
+from .acceptance_v2 import AcceptanceV2Provider
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .errors import (
@@ -19,9 +20,9 @@ from .errors import (
     ContractError,
     DeliveryLifecycleFault,
     KernelConflict,
+    KernelError,
 )
 from .guarded_delivery import (
-    validate_acceptance_report,
     validate_delivery_guard_report,
 )
 from .platform_kernel import BilibiliPlatformCutoverPublisher
@@ -289,6 +290,7 @@ class DeliveryLifecycleProvider:
         from_stage: str,
         to_stage: str,
         expected_run_revision: int,
+        current_run_record_sha256: str,
     ) -> dict[str, Any]:
         if not evidence_path.is_file():
             _reject(
@@ -340,16 +342,46 @@ class DeliveryLifecycleProvider:
                     "acceptance_decision",
                     "acceptance_report_v2_absent",
                 )
+            report_path = Path(acceptance_binding["path"]).resolve()
             try:
-                validate_acceptance_report(
-                    project_root=self.repository_root,
-                    report_path=Path(acceptance_binding["path"]),
-                    run_id=run_id,
-                    coordination_revision=expected_run_revision,
+                report = read_json(report_path)
+                provider = AcceptanceV2Provider(self.repository_root)
+                eligibility = provider.guard_eligibility(
+                    workspace_root=report_path.parent
                 )
-            except ContractError:
+                successor = provider.require_committed_delivery_successor(
+                    workspace_root=report_path.parent
+                )
+            except KernelError as exc:
+                if exc.data.get("error_code") == (
+                    "acceptance_delivery_successor_uncommitted"
+                ):
+                    raise ContractError(
+                        "Acceptance transition lacks an exact committed successor",
+                        data=dict(exc.data),
+                    ) from exc
                 _reject(
                     "Acceptance transition requires a current passing Acceptance Report v2",
+                    "acceptance_decision",
+                    "acceptance_report_v2_not_pass",
+                )
+            except (OSError, KeyError, TypeError, ValueError):
+                _reject(
+                    "Acceptance transition requires a current passing Acceptance Report v2",
+                    "acceptance_decision",
+                    "acceptance_report_v2_not_pass",
+                )
+            if not (
+                eligibility.get("eligible") is True
+                and eligibility.get("delivery_authority") is True
+                and eligibility.get("report_sha256") == report.get("report_sha256")
+                and successor.get("run_id") == run_id
+                and successor.get("run_revision") == expected_run_revision
+                and successor.get("run_record_sha256")
+                == current_run_record_sha256
+            ):
+                _reject(
+                    "Acceptance transition requires an exact committed ready successor",
                     "acceptance_decision",
                     "acceptance_report_v2_not_pass",
                 )
@@ -612,6 +644,7 @@ class DeliveryLifecycleProvider:
             from_stage=from_stage,
             to_stage=to_stage,
             expected_run_revision=expected_run_revision,
+            current_run_record_sha256=sha256_file(run_path),
         )
         projections = delivery["projections"]
         video_path = self._validate_binding(

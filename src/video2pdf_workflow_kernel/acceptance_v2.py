@@ -9,7 +9,13 @@ import sqlite3
 import stat
 from typing import Any
 
-from .errors import AcceptanceV2Fault, AcceptanceV2Rejected, ContractError, KernelError
+from .errors import (
+    AcceptanceV2Fault,
+    AcceptanceV2Rejected,
+    ArtifactDrift,
+    ContractError,
+    KernelError,
+)
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .delivery_quality import DeliveryQualityRegistry
@@ -74,6 +80,11 @@ JUDGMENT_DEPENDENCIES = {
 def _fingerprint_without(value: dict[str, Any], field: str) -> str:
     material = {key: item for key, item in value.items() if key != field}
     return hashlib.sha256(canonical_json_bytes(material)).hexdigest()
+
+
+def fingerprint_contract_without(value: dict[str, Any], field: str) -> str:
+    """Public canonical fingerprint primitive for Acceptance provider inputs."""
+    return _fingerprint_without(value, field)
 
 
 def _id(*parts: object, length: int = 32) -> str:
@@ -150,6 +161,11 @@ def _final_authority_generations(binding: dict[str, Any]) -> list[dict[str, Any]
             for item in binding["rendered_pages"]
         ],
     ]
+
+
+def final_authority_generations(binding: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the exact generation closure bound by Final Quality authority."""
+    return _final_authority_generations(binding)
 
 
 def _report_bundle_sha(report_sha256: str, attempt_record_sha256: str, ledger_sha256: str) -> str:
@@ -2025,6 +2041,22 @@ class AcceptanceV2Provider:
         ):
             _reject("Acceptance execution projection split lacks committed Control Store authority", "publication_recovery", "acceptance_execution_projection_stale")
 
+    def validate_input_binding(
+        self,
+        binding: dict[str, Any],
+        *,
+        verify_files: bool,
+        require_published_final_authority: bool = True,
+        allow_committed_delivery_successor: bool = False,
+    ) -> None:
+        """Validate one complete Legacy or Kernel Acceptance input authority."""
+        self._validate_binding(
+            binding,
+            verify_files=verify_files,
+            require_published_final_authority=require_published_final_authority,
+            allow_committed_delivery_successor=allow_committed_delivery_successor,
+        )
+
     def _validate_binding(
         self,
         binding: dict[str, Any],
@@ -2224,6 +2256,15 @@ class AcceptanceV2Provider:
                 if not path.is_relative_to(video_root):
                     _reject("Acceptance input path escapes the authorized video root", "input_path_boundary", "acceptance_input_path_escape", path=str(path))
                 if not path.is_file() or sha256_file(path) != item["sha256"]:
+                    if item.get("logical_id") == "final_pdf":
+                        raise ArtifactDrift(
+                            "Final PDF differs from its prepared Acceptance authority",
+                            data={
+                                "first_failing_gate": "input_freshness",
+                                "error_code": "acceptance_final_pdf_stale",
+                                "path": str(path),
+                            },
+                        )
                     _reject("Acceptance input artifact is stale", "input_freshness", "acceptance_input_stale", path=str(path))
             final_pdf_sha = next(item["sha256"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf")
             quality_values: dict[str, dict[str, Any]] = {}
@@ -2321,10 +2362,21 @@ class AcceptanceV2Provider:
                 {"page": item["page"], "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
                 for item in binding["rendered_pages"]
             ]
-            manifested_pages = [
-                {"page": item["page"], "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
-                for item in render_manifest.get("pages", [])
-            ]
+            render_manifest_path = Path(
+                binding["quality_inputs"]["render_evidence_manifest"]["path"]
+            ).resolve()
+            manifested_pages = []
+            for item in render_manifest.get("pages", []):
+                manifested_path = Path(item["path"])
+                if not manifested_path.is_absolute():
+                    manifested_path = render_manifest_path.parent / manifested_path
+                manifested_pages.append(
+                    {
+                        "page": item["page"],
+                        "path": str(manifested_path.resolve()),
+                        "sha256": item["sha256"],
+                    }
+                )
             if render_manifest.get("page_count") != len(bound_pages) or manifested_pages != bound_pages:
                 _reject("Rendered page binding differs from compiler-produced evidence", "quality_input_validity", "acceptance_rendered_pages_stale")
             if (
@@ -2363,7 +2415,8 @@ class AcceptanceV2Provider:
             or successor.get("schema_version") != "4.0.0"
             or successor.get("canonical_platform") != "bilibili"
             or successor.get("platform_adapter") != "bilibili"
-            or successor.get("delivery", {}).get("stage") != "accepted"
+            or successor.get("delivery", {}).get("stage")
+            not in {"ready_for_delivery", "accepted"}
             or not isinstance(intent_id, str)
             or not intent_id
         ):
@@ -2401,15 +2454,20 @@ class AcceptanceV2Provider:
                 "acceptance_delivery_successor_invalid",
                 detail=str(exc),
             )
+        successor_stage = successor["delivery"]["stage"]
+        stage_binding_valid = (
+            intent
+            and intent["prior_stage"] == "ready_for_delivery"
+            and intent["target_stage"] == successor_stage
+            and intent["operation"] == "transition"
+        )
         if not (
             intent
             and intent["state"] == "COMMITTED"
             and intent["run_id"] == run["run_id"]
             and intent["expected_run_revision"] == run["coordination_revision"]
             and intent["prior_run_record_sha256"] == run["run_record_sha256"]
-            and intent["prior_stage"] == "ready_for_delivery"
-            and intent["target_stage"] == "accepted"
-            and intent["operation"] == "transition"
+            and stage_binding_valid
             and intent["replacement_run_record_sha256"] == successor_sha256
             and replacement == successor
             and predecessor_authority_sha256 == successor_sha256
@@ -2419,7 +2477,295 @@ class AcceptanceV2Provider:
                 "run_lifecycle",
                 "acceptance_delivery_successor_uncommitted",
             )
+        if successor_stage == "ready_for_delivery":
+            self._require_committed_acceptance_binding_successor(
+                binding=binding,
+                successor=successor,
+                successor_sha256=successor_sha256,
+                intent=intent,
+                control_store_path=control_store_path,
+            )
         return True
+
+    def _require_committed_acceptance_binding_successor(
+        self,
+        *,
+        binding: dict[str, Any],
+        successor: dict[str, Any],
+        successor_sha256: str,
+        intent: sqlite3.Row,
+        control_store_path: Path,
+    ) -> None:
+        """Prove a ready->ready successor only registers the current report."""
+
+        run = binding["run"]
+        run_dir = Path(run["video_root"]).resolve()
+        intent_id = str(intent["intent_id"])
+        journal_path = (
+            run_dir
+            / "待删除"
+            / "delivery-lifecycle"
+            / intent_id
+            / "intent.json"
+        )
+        prior_run_path = journal_path.parent / "prior" / "03-run.json"
+        if (
+            not journal_path.is_file()
+            or not prior_run_path.is_file()
+            or sha256_file(prior_run_path) != run["run_record_sha256"]
+        ):
+            _reject(
+                "Acceptance binding successor lacks its exact predecessor",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+        journal = read_json(journal_path)
+        prior_run = read_json(prior_run_path)
+        identity = journal.get("identity", {})
+        report_binding = journal.get("acceptance_report", {})
+        report_path = (
+            run_dir / "review" / "acceptance" / "acceptance_report.json"
+        ).resolve()
+        report = read_json(report_path) if report_path.is_file() else {}
+        identity_sha256 = hashlib.sha256(
+            canonical_json_bytes(identity)
+        ).hexdigest()
+        if not (
+            journal.get("intent_id") == intent_id
+            and identity_sha256 == intent_id
+            and intent["intent_identity"] == identity_sha256
+            and journal.get("prior_run_sha256") == run["run_record_sha256"]
+            and journal.get("replacement_run_sha256") == successor_sha256
+            and identity.get("operation") == "delivery_acceptance_bind"
+            and identity.get("run_id") == run["run_id"]
+            and identity.get("expected_run_revision")
+            == run["coordination_revision"]
+            and identity.get("acceptance_report_path") == str(report_path)
+            and report_path.is_file()
+            and identity.get("acceptance_report_file_sha256")
+            == sha256_file(report_path)
+            and identity.get("acceptance_report_sha256")
+            == report.get("report_sha256")
+            and report_binding.get("path") == str(report_path)
+            and report_binding.get("sha256") == sha256_file(report_path)
+            and report_binding.get("provider_report_sha256")
+            == report.get("report_sha256")
+        ):
+            _reject(
+                "Acceptance binding successor report authority is invalid",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+
+        preservations = journal.get("preservations")
+        if not isinstance(preservations, list) or len(preservations) != 3:
+            _reject(
+                "Acceptance binding successor preservation set is incomplete",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+        prior_by_path: dict[str, dict[str, Any]] = {}
+        prior_sha_by_path: dict[str, str] = {}
+        for item in preservations:
+            if (
+                item.get("state") != "present"
+                or not isinstance(item.get("path"), str)
+                or not isinstance(item.get("backup_path"), str)
+            ):
+                _reject(
+                    "Acceptance binding successor preservation is invalid",
+                    "run_lifecycle",
+                    "acceptance_delivery_successor_uncommitted",
+                )
+            backup = Path(item["backup_path"])
+            if not backup.is_file() or sha256_file(backup) != item.get("sha256"):
+                _reject(
+                    "Acceptance binding successor predecessor drifted",
+                    "run_lifecycle",
+                    "acceptance_delivery_successor_uncommitted",
+                )
+            normalized_prior_path = str(Path(item["path"]).resolve())
+            prior_by_path[normalized_prior_path] = read_json(backup)
+            prior_sha_by_path[normalized_prior_path] = item["sha256"]
+
+        projections = successor["delivery"]["projections"]
+        raw_video_path = Path(projections["video_target"]["path"])
+        video_path = (
+            run_dir / raw_video_path
+            if not raw_video_path.is_absolute()
+            else raw_video_path
+        ).resolve()
+        session_path = Path(projections["session_target"]["path"]).resolve()
+        index_path = Path(projections["task_index"]["path"]).resolve()
+        if set(prior_by_path) != {
+            str(video_path),
+            str(session_path),
+            str(index_path),
+        }:
+            _reject(
+                "Acceptance binding successor projection set is invalid",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+        video = read_json(video_path)
+        session = read_json(session_path)
+        index = read_json(index_path)
+        prior_video = prior_by_path[str(video_path)]
+        prior_session = prior_by_path[str(session_path)]
+        prior_index = prior_by_path[str(index_path)]
+        expected_revision = run["coordination_revision"] + 1
+        expected_acceptance_binding = {
+            "path": str(report_path),
+            "sha256": sha256_file(report_path),
+        }
+
+        expected_video = copy.deepcopy(prior_video)
+        expected_video.update(
+            {
+                "projection_revision": prior_video["projection_revision"] + 1,
+                "run_revision": expected_revision,
+                "lifecycle_intent_id": intent_id,
+            }
+        )
+        expected_video["artifacts"]["acceptance_report"] = (
+            expected_acceptance_binding
+        )
+        expected_video_sha256 = hashlib.sha256(
+            canonical_json_bytes(expected_video)
+        ).hexdigest()
+
+        expected_session = copy.deepcopy(prior_session)
+        expected_session.update(
+            {
+                "projection_revision": prior_session["projection_revision"] + 1,
+                "run_revision": expected_revision,
+                "lifecycle_intent_id": intent_id,
+                "video_target": {
+                    "path": str(video_path),
+                    "projection_revision": expected_video["projection_revision"],
+                    "sha256": expected_video_sha256,
+                },
+            }
+        )
+        expected_session_sha256 = hashlib.sha256(
+            canonical_json_bytes(expected_session)
+        ).hexdigest()
+
+        expected_index = copy.deepcopy(prior_index)
+        expected_index["projection_revision"] = (
+            prior_index["projection_revision"] + 1
+        )
+        matching = [
+            item
+            for item in expected_index["entries"]
+            if item["run_id"] == run["run_id"]
+        ]
+        if len(matching) != 1:
+            _reject(
+                "Acceptance binding successor task index identity is invalid",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
+        matching[0].update(
+            {
+                "run_revision": expected_revision,
+                "lifecycle_intent_id": intent_id,
+                "video_target": {
+                    "path": str(video_path),
+                    "projection_revision": expected_video["projection_revision"],
+                    "sha256": expected_video_sha256,
+                },
+                "session_target": {
+                    "path": str(session_path),
+                    "projection_revision": expected_session["projection_revision"],
+                    "sha256": expected_session_sha256,
+                },
+            }
+        )
+        expected_index["entries"] = sorted(
+            expected_index["entries"], key=lambda item: item["run_id"]
+        )
+        expected_index_sha256 = hashlib.sha256(
+            canonical_json_bytes(expected_index)
+        ).hexdigest()
+
+        expected_successor = copy.deepcopy(prior_run)
+        expected_successor.update(
+            {
+                "coordination_revision": expected_revision,
+                "last_mutation_intent_id": intent_id,
+            }
+        )
+        expected_successor["delivery"]["projections"].update(
+            {
+                "video_target": {
+                    "path": "review/acceptance/delivery_target.json",
+                    "projection_revision": expected_video["projection_revision"],
+                    "sha256": expected_video_sha256,
+                },
+                "session_target": {
+                    "path": str(session_path),
+                    "projection_revision": expected_session[
+                        "projection_revision"
+                    ],
+                    "sha256": expected_session_sha256,
+                },
+                "task_index": {
+                    "path": str(index_path),
+                    "projection_revision": expected_index[
+                        "projection_revision"
+                    ],
+                    "sha256": expected_index_sha256,
+                },
+            }
+        )
+        with sqlite3.connect(
+            f"file:{control_store_path.as_posix()}?mode=ro", uri=True
+        ) as control:
+            control.row_factory = sqlite3.Row
+            slots = control.execute(
+                "SELECT * FROM projection_publication_slots WHERE intent_id=? "
+                "ORDER BY normalized_path",
+                (intent_id,),
+            ).fetchall()
+        expected_slot_bindings = {
+            normalized_physical_path(video_path): (
+                prior_sha_by_path[str(video_path)],
+                expected_video_sha256,
+            ),
+            normalized_physical_path(session_path): (
+                prior_sha_by_path[str(session_path)],
+                expected_session_sha256,
+            ),
+            normalized_physical_path(index_path): (
+                prior_sha_by_path[str(index_path)],
+                expected_index_sha256,
+            ),
+            normalized_physical_path(Path(run["run_record_path"])): (
+                run["run_record_sha256"],
+                successor_sha256,
+            ),
+        }
+        if not (
+            video == expected_video
+            and session == expected_session
+            and index == expected_index
+            and successor == expected_successor
+            and len(slots) == 4
+            and all(
+                row["state"] == "RELEASED"
+                and row["expected_state"] == "present"
+                and row["proposed_state"] == "present"
+                and expected_slot_bindings.get(row["normalized_path"])
+                == (row["expected_sha256"], row["proposed_sha256"])
+                for row in slots
+            )
+        ):
+            _reject(
+                "Acceptance binding successor is not the exact committed projection",
+                "run_lifecycle",
+                "acceptance_delivery_successor_uncommitted",
+            )
 
     def _validate_patch(self, patch: dict[str, Any], dimension: str, skeleton: dict[str, Any], binding: dict[str, Any]) -> None:
         domain = AcceptanceInputDomain.from_binding(binding)

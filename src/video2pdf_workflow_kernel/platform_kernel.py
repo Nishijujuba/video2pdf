@@ -1084,9 +1084,11 @@ class BilibiliPlatformCutoverPublisher:
                 project_root=PROJECT_ROOT,
                 report_path=acceptance_path,
                 run_id=run["run_id"],
-                coordination_revision=run["coordination_revision"],
+                coordination_revision=read_json(acceptance_path)["run_binding"][
+                    "coordination_revision"
+                ],
             )
-            eligibility = AcceptanceV2Provider(run_dir.parents[1]).guard_eligibility(
+            eligibility = AcceptanceV2Provider(PROJECT_ROOT).guard_eligibility(
                 workspace_root=acceptance_path.parent
             )
             if (

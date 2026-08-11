@@ -38,7 +38,16 @@ _FIXTURE_PACKAGE_INVENTORY = (
 ).resolve()
 _MIKTEX_ENGINE = Path(r"D:\kits\MiKTex\miktex\bin\x64\xelatex.exe").resolve()
 _MIKTEX_RUNTIME_ROOTS = (Path(r"D:\kits\MiKTex").resolve(),)
-_MIKTEX_STARTUP = b"[Auto]\nConfig=Regular\n\n[Setup]\nVersion=25.12\n"
+_MIKTEX_CONFIGURED_RUNTIME = (
+    _MIKTEX_RUNTIME_ROOTS[0] / "video2pdf-runtime-v2"
+).resolve()
+_MIKTEX_DURABLE_DIRECTORIES = {
+    "MIKTEX_COMMONCONFIG": (_MIKTEX_CONFIGURED_RUNTIME / "common-config").resolve(),
+    "MIKTEX_COMMONDATA": (_MIKTEX_CONFIGURED_RUNTIME / "common-data").resolve(),
+    "MIKTEX_USERCONFIG": (_MIKTEX_CONFIGURED_RUNTIME / "user-config").resolve(),
+    "MIKTEX_USERDATA": (_MIKTEX_CONFIGURED_RUNTIME / "user-data").resolve(),
+    "MIKTEX_USERINSTALL": (_MIKTEX_CONFIGURED_RUNTIME / "user-install").resolve(),
+}
 _TRUSTED_FONT_ROOTS = tuple(
     root.resolve()
     for root in (
@@ -268,6 +277,14 @@ class GuardedCompileProvider:
                 raise ContractError("registered MiKTeX engine identity changed")
             if runtime_roots != list(_MIKTEX_RUNTIME_ROOTS):
                 raise ContractError("registered MiKTeX runtime roots changed")
+            for name, configured_root in _MIKTEX_DURABLE_DIRECTORIES.items():
+                require_contained_path(
+                    configured_root,
+                    _MIKTEX_RUNTIME_ROOTS[0],
+                    purpose=f"registered MiKTeX {name}",
+                    error_type=ContractError,
+                    leaf_kind="directory",
+                )
         inventory_binding = policy["package_inventory"]
         inventory_path = Path(inventory_binding["path"]).resolve()
         if fixture_policy and inventory_path != _FIXTURE_PACKAGE_INVENTORY:
@@ -493,71 +510,36 @@ class GuardedCompileProvider:
             )
         profile = runtime_directories["engine-profile"]
         temporary = runtime_directories["engine-temp"]
-        startup_parent = profile
-        for name in ("MiKTeX", "miktex", "config"):
-            startup_parent = require_contained_path(
-                startup_parent / name,
-                profile,
-                purpose="Diagnostic Compile MiKTeX startup directory",
-                error_type=ContractError,
-                leaf_kind="directory",
-                allow_missing=True,
-            )
-            try:
-                startup_parent.mkdir()
-            except OSError as exc:
-                raise ContractError(
-                    "Diagnostic Compile MiKTeX startup directory is unavailable"
-                ) from exc
-            startup_parent = require_contained_path(
-                startup_parent,
-                profile,
-                purpose="Diagnostic Compile MiKTeX startup directory",
-                error_type=ContractError,
-                leaf_kind="directory",
-            )
-        startup = require_contained_path(
-            startup_parent / "miktexstartup.ini",
-            profile,
-            purpose="Diagnostic Compile MiKTeX startup file",
-            error_type=ContractError,
-            leaf_kind="file",
-            allow_missing=True,
-        )
-        try:
-            with startup.open("xb") as stream:
-                stream.write(_MIKTEX_STARTUP)
-        except OSError as exc:
-            raise ContractError(
-                "Diagnostic Compile MiKTeX startup file is unavailable"
-            ) from exc
-        require_contained_path(
-            startup,
-            profile,
-            purpose="Diagnostic Compile MiKTeX startup file",
-            error_type=ContractError,
-            leaf_kind="file",
-            require_single_link=True,
-        )
-        miktex_profile = profile / "MiKTeX"
         environment = {
             "PYTHONUTF8": "1",
             "MIKTEX_ENABLE_INSTALLER": "0",
-            "MIKTEX_USERDATA": str(miktex_profile),
-            "MIKTEX_USERCONFIG": str(miktex_profile),
-            "MIKTEX_USERINSTALL": str(miktex_profile),
-            "MIKTEX_USERLOGDIRECTORY": str(miktex_profile),
-            "USERPROFILE": str(profile),
-            "HOME": str(profile),
-            "APPDATA": str(profile),
-            "LOCALAPPDATA": str(profile),
-            "HOMEDRIVE": profile.drive,
-            "HOMEPATH": str(profile)[len(profile.drive):],
             "USERNAME": "video2pdf",
             "USERDOMAIN": "LOCAL",
             "TEMP": str(temporary),
             "TMP": str(temporary),
         }
+        if runtime_policy["policy_id"] == "miktex-xelatex-runtime":
+            environment.update({
+                name: str(path)
+                for name, path in _MIKTEX_DURABLE_DIRECTORIES.items()
+            })
+            environment["MIKTEX_COMMONINSTALL"] = str(_MIKTEX_RUNTIME_ROOTS[0])
+            environment["MIKTEX_USERLOGDIRECTORY"] = str(profile)
+            identity_profile = _MIKTEX_DURABLE_DIRECTORIES["MIKTEX_USERDATA"]
+        else:
+            environment.update({
+                "MIKTEX_USERDATA": str(profile),
+                "MIKTEX_USERCONFIG": str(profile),
+                "MIKTEX_USERINSTALL": str(profile),
+                "MIKTEX_USERLOGDIRECTORY": str(profile),
+            })
+            identity_profile = profile
+        environment.update({
+            "USERPROFILE": str(identity_profile),
+            "HOME": str(identity_profile),
+            "HOMEDRIVE": identity_profile.drive,
+            "HOMEPATH": str(identity_profile)[len(identity_profile.drive):],
+        })
         host_environment = {
             key.upper(): value for key, value in os.environ.items()
         }
@@ -609,12 +591,7 @@ class GuardedCompileProvider:
                 gaps.append(str(observed_path))
                 continue
             identity = str(observed_path).casefold()
-            if observed_path == startup:
-                if observed_path.read_bytes() != _MIKTEX_STARTUP:
-                    gaps.append(str(observed_path))
-                    continue
-                classification = "attempt_generated_auxiliary"
-            elif identity in staged:
+            if identity in staged:
                 classification = "manifest_entry"
             elif identity in allowed_fonts:
                 if _sha256_path(observed_path) != allowed_fonts[identity]["sha256"]:

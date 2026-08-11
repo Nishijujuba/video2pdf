@@ -593,10 +593,15 @@ class SingleSectionProductionTests(unittest.TestCase):
         manifest_path = self.run_dir / "workflow/compile-manifest.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         captured_command: list[str] = []
+        captured_environment: dict[str, str] = {}
+        captured_staging: Path | None = None
 
         def complete_without_starting_miktex(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal captured_staging
             captured_command.extend(command)
             staging = Path(str(kwargs["cwd"]))
+            captured_staging = staging
+            captured_environment.update(kwargs["env"])
             (staging / "main.pdf").write_bytes(b"fixture-pdf")
             (staging / "main.fls").write_text(
                 f"INPUT {staging / 'main.tex'}\nOUTPUT {staging / 'main.pdf'}\n",
@@ -615,6 +620,21 @@ class SingleSectionProductionTests(unittest.TestCase):
             ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],
             captured_command[installer_index - 2:installer_index],
         )
+        configured = Path(r"D:\kits\MiKTex\video2pdf-runtime-v2")
+        self.assertEqual(str(configured / "common-config"), captured_environment["MIKTEX_COMMONCONFIG"])
+        self.assertEqual(str(configured / "common-data"), captured_environment["MIKTEX_COMMONDATA"])
+        self.assertEqual(r"D:\kits\MiKTex", captured_environment["MIKTEX_COMMONINSTALL"])
+        self.assertEqual(str(configured / "user-config"), captured_environment["MIKTEX_USERCONFIG"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["MIKTEX_USERDATA"])
+        self.assertEqual(str(configured / "user-install"), captured_environment["MIKTEX_USERINSTALL"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["USERPROFILE"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["HOME"])
+        self.assertNotIn("APPDATA", captured_environment)
+        self.assertNotIn("LOCALAPPDATA", captured_environment)
+        self.assertIsNotNone(captured_staging)
+        self.assertEqual(captured_staging, Path(captured_environment["MIKTEX_USERLOGDIRECTORY"]).parent)
+        self.assertEqual(captured_staging, Path(captured_environment["TEMP"]).parent)
+        self.assertEqual([], list(captured_staging.rglob("miktexstartup.ini")))
 
     def test_runtime_policy_and_recorder_evidence_fail_closed(self) -> None:
         from video2pdf_workflow_kernel.errors import CompileDependencyGap, ContractError
@@ -784,12 +804,11 @@ class SingleSectionProductionTests(unittest.TestCase):
         self.assertEqual(1, len(captures))
         environment = json.loads(captures[0].read_text(encoding="utf-8"))
         staging = captures[0].parent.resolve()
-        profile = Path(environment["USERPROFILE"]).resolve()
-        miktex_profile = Path(environment["MIKTEX_USERDATA"]).resolve()
+        profile = Path(environment["MIKTEX_USERDATA"]).resolve()
         temporary = Path(environment["TEMP"]).resolve()
         self.assertEqual(
             {
-                str(miktex_profile),
+                str(profile),
             },
             {
                 environment["MIKTEX_USERDATA"],
@@ -798,21 +817,14 @@ class SingleSectionProductionTests(unittest.TestCase):
                 environment["MIKTEX_USERLOGDIRECTORY"],
             },
         )
+        self.assertEqual(str(profile), environment["USERPROFILE"])
         self.assertEqual(str(profile), environment["HOME"])
-        self.assertEqual(str(profile), environment["APPDATA"])
-        self.assertEqual(str(profile), environment["LOCALAPPDATA"])
-        self.assertEqual(profile / "MiKTeX", miktex_profile)
+        self.assertNotIn("APPDATA", environment)
+        self.assertNotIn("LOCALAPPDATA", environment)
         self.assertEqual(str(temporary), environment["TMP"])
         self.assertEqual(staging, profile.parent)
         self.assertEqual(staging, temporary.parent)
-        startup = miktex_profile / "miktex/config/miktexstartup.ini"
-        self.assertEqual(
-            b"[Auto]\nConfig=Regular\n\n[Setup]\nVersion=25.12\n",
-            startup.read_bytes(),
-        )
-        self.assertEqual(miktex_profile, startup.resolve().parents[2])
-        self.assertFalse(startup.is_symlink())
-        self.assertFalse(startup.parent.is_symlink())
+        self.assertEqual([], list(staging.rglob("miktexstartup.ini")))
         self.assertTrue(profile.is_dir())
         self.assertTrue(temporary.is_dir())
         self.assertFalse(profile.is_symlink())

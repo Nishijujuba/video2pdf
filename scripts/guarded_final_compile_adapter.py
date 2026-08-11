@@ -155,11 +155,45 @@ def compile_pdf(staging: Path, entry: Path, policy: dict[str, Any]) -> tuple[Pat
             environment[normalized_key] = value
     runtime_roots = [Path(value).resolve() for value in policy["allowed_runtime_roots"]]
     for key, value in os.environ.items():
-        if not key.upper().startswith("MIKTEX_"):
+        normalized_key = key.upper()
+        if not normalized_key.startswith("MIKTEX_"):
             continue
         paths = [Path(item).resolve() for item in value.split(os.pathsep) if item]
         if paths and all(any(path == root or root in path.parents for root in runtime_roots) for path in paths):
-            environment[key] = value
+            environment[normalized_key] = value
+    governed_userdata = environment.get("MIKTEX_USERDATA")
+    if governed_userdata and len(governed_userdata.split(os.pathsep)) == 1:
+        profile_root = Path(governed_userdata).resolve()
+    else:
+        profile_root = require_contained_path(
+            staging / "engine-profile",
+            staging,
+            purpose="Final Compile synthetic engine profile",
+            error_type=AdapterError,
+            leaf_kind="directory",
+            allow_missing=True,
+        )
+        try:
+            profile_root.mkdir()
+        except OSError as exc:
+            raise AdapterError("Final Compile synthetic engine profile is unavailable") from exc
+        profile_root = require_contained_path(
+            profile_root,
+            staging,
+            purpose="Final Compile synthetic engine profile",
+            error_type=AdapterError,
+            leaf_kind="directory",
+        )
+    profile_drive = profile_root.drive
+    environment.update({
+        "USERPROFILE": str(profile_root),
+        "HOME": str(profile_root),
+        "HOMEDRIVE": profile_drive,
+        "HOMEPATH": str(profile_root)[len(profile_drive):],
+        "USERNAME": "video2pdf",
+        "USERDOMAIN": "LOCAL",
+        "SYSTEMDRIVE": Path(environment["SYSTEMROOT"]).drive,
+    })
     completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
     if completed.returncode != 0 or completed.stderr:

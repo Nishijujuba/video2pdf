@@ -350,6 +350,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "SYSTEMROOT": system_root,
             "WINDIR": windows_directory,
             "MIKTEX_VALID_PATHS": valid_miktex_paths,
+            "MIKTEX_USERDATA": str(allowed_root),
             "MIKTEX_MIXED_AUTHORITY": os.pathsep.join(
                 (str(allowed_root), str(self.root))
             ),
@@ -360,6 +361,12 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "COMSPEC": "SHOULD_NOT_CROSS",
             "APPDATA": "SHOULD_NOT_CROSS",
             "USERPROFILE": "SHOULD_NOT_CROSS",
+            "HOME": "SHOULD_NOT_CROSS",
+            "HOMEDRIVE": "X:",
+            "HOMEPATH": "\\hostile-profile",
+            "USERNAME": "hostile-user",
+            "USERDOMAIN": "HOSTILE-DOMAIN",
+            "SYSTEMDRIVE": "X:",
             "TEMP": "SHOULD_NOT_CROSS",
             "TMP": "SHOULD_NOT_CROSS",
         })
@@ -372,13 +379,24 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         self.assertEqual(system_root, runtime_environment["SYSTEMROOT"])
         self.assertEqual(windows_directory, runtime_environment["WINDIR"])
         self.assertEqual(valid_miktex_paths, runtime_environment["MIKTEX_VALID_PATHS"])
+        self.assertEqual(str(allowed_root), runtime_environment["MIKTEX_USERDATA"])
         self.assertEqual(str(engine_temp), runtime_environment["TEMP"])
         self.assertEqual(str(engine_temp), runtime_environment["TMP"])
+        self.assertEqual(str(allowed_root), runtime_environment["USERPROFILE"])
+        self.assertEqual(str(allowed_root), runtime_environment["HOME"])
+        self.assertEqual(allowed_root.drive, runtime_environment["HOMEDRIVE"])
+        self.assertEqual(
+            str(allowed_root)[len(allowed_root.drive):],
+            runtime_environment["HOMEPATH"],
+        )
+        self.assertEqual("video2pdf", runtime_environment["USERNAME"])
+        self.assertEqual("LOCAL", runtime_environment["USERDOMAIN"])
+        self.assertEqual(Path(system_root).drive, runtime_environment["SYSTEMDRIVE"])
         self.assertTrue(engine_temp.is_dir())
         self.assertEqual(staging, engine_temp.parent)
         for forbidden in (
             "MIKTEX_MIXED_AUTHORITY", "UNNAMED_CREDENTIAL", "PYTHONPATH", "TEXINPUTS",
-            "PATH", "COMSPEC", "APPDATA", "USERPROFILE",
+            "PATH", "COMSPEC", "APPDATA",
         ):
             self.assertNotIn(forbidden, runtime_environment)
 

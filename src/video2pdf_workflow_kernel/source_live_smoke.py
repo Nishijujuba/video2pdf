@@ -1153,6 +1153,7 @@ def acquire_source_for_initialized_run(
         )
         scratch_run = (
             trash_root / "candidate-materialization" / prepared_provider.task_id
+            / f"{claimed_provider.attempt_id}.g{claimed_provider.claim_generation}"
         )
         candidates = materialize_source_candidates(
             scratch_run,

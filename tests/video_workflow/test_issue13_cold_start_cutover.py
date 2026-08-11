@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
@@ -419,6 +420,42 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             encoding="utf-8",
         )
         original_cookie_bytes = cookie_file.read_bytes()
+        provider_recording = (
+            PROJECT_ROOT
+            / "tests"
+            / "video_workflow"
+            / "fixtures"
+            / "providers"
+            / "bilibili"
+            / "fresh-download"
+        )
+        replacement_recording = control.parent / "provider-generation-2"
+        shutil.copytree(provider_recording, replacement_recording)
+        replacement_subtitle = (
+            replacement_recording / "outputs" / "subtitle.manual.en.srt"
+        )
+        replacement_subtitle.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n"
+            "generation two provider subtitle\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        replacement_record = json.loads(
+            (replacement_recording / "recording.json").read_text(encoding="utf-8")
+        )
+        manual_command = next(
+            item
+            for item in replacement_record["commands"]
+            if item["operation"] == "subtitle_manual"
+        )
+        manual_command["outputs"][0]["sha256"] = hashlib.sha256(
+            replacement_subtitle.read_bytes()
+        ).hexdigest()
+        (replacement_recording / "recording.json").write_text(
+            json.dumps(replacement_record, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+            newline="\n",
+        )
 
         faulted = _run_public_cli(
             self.id() + "-source-acquire-faulted",
@@ -428,15 +465,7 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             "--cookie-file",
             str(cookie_file),
             "--provider-recording",
-            str(
-                PROJECT_ROOT
-                / "tests"
-                / "video_workflow"
-                / "fixtures"
-                / "providers"
-                / "bilibili"
-                / "fresh-download"
-            ),
+            str(provider_recording),
             "--fault-point",
             "after_provider_terminal_proof_persisted",
         )
@@ -453,6 +482,27 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             )
         )
         self.assertEqual(1, len(first_working_copies))
+        first_scratch_inventories = list(
+            (
+                run_dir.parent.parent
+                / "待删除"
+                / "source-acquire"
+                / initialized_record["run_id"]
+                / "candidate-materialization"
+            ).rglob("candidate-inventory.json")
+        )
+        self.assertEqual(1, len(first_scratch_inventories))
+        first_scratch_inventory_path = first_scratch_inventories[0]
+        first_scratch_inventory_bytes = first_scratch_inventory_path.read_bytes()
+        self.assertFalse(
+            (
+                run_dir
+                / "work"
+                / "source-acquisition"
+                / "candidate-inventory.json"
+            ).exists(),
+            "generation 1 must remain unpromoted after the injected fault",
+        )
         first_working_copies[0].write_bytes(
             b"# Netscape HTTP Cookie File\nprovider-writeback-generation-1\n"
         )
@@ -478,15 +528,7 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             "--cookie-file",
             str(cookie_file),
             "--provider-recording",
-            str(
-                PROJECT_ROOT
-                / "tests"
-                / "video_workflow"
-                / "fixtures"
-                / "providers"
-                / "bilibili"
-                / "fresh-download"
-            ),
+            str(replacement_recording),
         )
 
         self.assertEqual(0, acquired.returncode, acquired.stdout + acquired.stderr)
@@ -521,6 +563,35 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             key=lambda item: item["claim_generation"],
         )
         self.assertEqual([1, 2], [item["claim_generation"] for item in attempts])
+        scratch_inventories = list(
+            (
+                run_dir.parent.parent
+                / "待删除"
+                / "source-acquire"
+                / initialized_record["run_id"]
+                / "candidate-materialization"
+            ).rglob("candidate-inventory.json")
+        )
+        self.assertEqual(2, len(scratch_inventories))
+        self.assertEqual(
+            first_scratch_inventory_bytes,
+            first_scratch_inventory_path.read_bytes(),
+            "generation 2 must preserve generation 1 scratch evidence",
+        )
+        scratch_inventory_values = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in scratch_inventories
+        ]
+        self.assertEqual(
+            2,
+            len(
+                {
+                    inventory["provider"]["recording_sha256"]
+                    for inventory in scratch_inventory_values
+                }
+            ),
+            "each provider generation must retain its own semantic inventory",
+        )
         working_copies = list(
             (run_dir / "待删除" / "source-acquire" / "credentials").glob(
                 "**/cookies.txt"
@@ -562,8 +633,8 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             json.loads(planned.stdout)["classification"],
         )
 
-        replayed = _run_public_cli(
-            self.id() + "-source-acquire-replay",
+        stale_replay = _run_public_cli(
+            self.id() + "-source-acquire-stale-replay",
             "source-acquire",
             "--run-dir",
             str(run_dir),
@@ -579,6 +650,21 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
                 / "bilibili"
                 / "fresh-download"
             ),
+        )
+        self.assertEqual(20, stale_replay.returncode)
+        self.assertEqual(
+            "contract_invalid", json.loads(stale_replay.stdout)["classification"]
+        )
+
+        replayed = _run_public_cli(
+            self.id() + "-source-acquire-current-replay",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(replacement_recording),
         )
         self.assertEqual(0, replayed.returncode, replayed.stdout + replayed.stderr)
         self.assertEqual(

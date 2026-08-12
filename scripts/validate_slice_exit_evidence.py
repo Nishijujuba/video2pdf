@@ -369,7 +369,10 @@ class EvidenceError(ValueError):
 
 def git(*arguments: str) -> str:
     try:
-        return git_output(PROJECT_ROOT, *arguments)
+        # Path-bearing outputs (diff-tree --name-only, ls-files) must stay in
+        # raw UTF-8 so they compare against manifest evidence paths; git quotes
+        # non-ASCII paths by default when core.quotePath is true.
+        return git_output(PROJECT_ROOT, "-c", "core.quotePath=false", *arguments)
     except EvidenceSupportError as exc:
         raise EvidenceError(str(exc)) from exc
 

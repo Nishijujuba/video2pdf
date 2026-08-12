@@ -176,6 +176,37 @@ def implementation_change_paths(
     return tuple(sorted(paths))
 
 
+def sha256_git_archive(project_root: Path, commit: str, path: str) -> str:
+    """Hash a committed file exactly as the evidence collector fingerprints it.
+
+    ``fingerprint_implementation_changes`` hashes files from ``git archive``,
+    which applies repository text conversion (CRLF) to files without an
+    explicit ``eol=lf`` attribute.  The activation authority must verify the
+    same bytes, so it re-archives each declared path instead of reading the
+    raw blob.
+    """
+
+    raw = _run_git(
+        project_root,
+        ("archive", "--format=tar", commit, "--", path),
+    )
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as handle:
+            member = handle.getmember(path)
+            if not member.isfile() or member.issym() or member.islnk():
+                raise EvidenceSupportError(
+                    f"implementation path is not a regular Git file: {path}"
+                )
+            extracted = handle.extractfile(member)
+            if extracted is None:
+                raise EvidenceSupportError(
+                    f"implementation Git file cannot be read: {path}"
+                )
+            return hashlib.sha256(extracted.read()).hexdigest()
+    except tarfile.TarError as exc:
+        raise EvidenceSupportError("Git implementation archive is invalid") from exc
+
+
 def fingerprint_implementation_changes(
     project_root: Path,
     slice_base_commit: str,

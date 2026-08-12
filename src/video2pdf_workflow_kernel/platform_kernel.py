@@ -20,7 +20,11 @@ from .errors import (
     KernelConflict,
     PlatformKernelFault,
 )
-from .evidence import EvidenceSupportError, git_output, sha256_git_blob
+from .evidence import (
+    EvidenceSupportError,
+    git_output,
+    sha256_git_archive,
+)
 from .global_gate import GlobalGatePublisher
 from .kernel import VideoWorkflowKernel
 from .guarded_delivery import (
@@ -344,15 +348,13 @@ def _validate_evidence(value: Any) -> dict[str, Any]:
                 not isinstance(item, dict)
                 or not isinstance(item.get("path"), str)
                 or not isinstance(item.get("sha256"), str)
-                or sha256_git_blob(
-                    PROJECT_ROOT,
-                    implementation_commit,
-                    item["path"],
+                or sha256_git_archive(
+                    PROJECT_ROOT, implementation_commit, item["path"]
                 )
                 != item["sha256"]
             ):
                 raise EvidenceSupportError(
-                    "implementation fingerprint differs from its committed blob"
+                    "implementation fingerprint differs from its committed archive"
                 )
     except EvidenceSupportError as exc:
         raise ContractError(

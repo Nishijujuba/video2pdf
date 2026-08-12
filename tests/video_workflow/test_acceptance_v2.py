@@ -230,6 +230,10 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "provider_id": "guarded-final-compile-provider",
             "provider_sha256": file_sha(PROJECT_ROOT / "src/video2pdf_workflow_kernel/final_compile.py"),
         }
+        runtime_policy_path = write_json(
+            artifacts / "runtime-policy.json",
+            {"fixture": "acceptance-v2"},
+        )
         compile_manifest = {
             "schema_name": "final-compile-manifest", "schema_version": "1.0.0",
             "activation_status": "target_only", "mode": "final",
@@ -237,6 +241,10 @@ class AcceptanceV2CliTests(unittest.TestCase):
             "entries": [{"logical_id": "integrated_main_tex", "generation": generation,
                          "sha256": file_sha(main_tex), "source_path": str(main_tex), "staging_path": "main.tex"}],
             "approved_runtime_inputs": [],
+            "runtime_policy": {
+                "path": str(runtime_policy_path),
+                "sha256": file_sha(runtime_policy_path),
+            },
         }
         compile_manifest["manifest_sha256"] = canonical_sha(compile_manifest)
         final_seal = {

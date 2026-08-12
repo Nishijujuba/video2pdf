@@ -460,6 +460,21 @@ def _parser() -> argparse.ArgumentParser:
         "--candidate-session-id", required=True
     )
 
+    cutover_candidate_rebind = commands.add_parser(
+        "platform-kernel-candidate-rebind"
+    )
+    cutover_candidate_rebind.add_argument(
+        "--platform", required=True, choices=("bilibili",)
+    )
+    cutover_candidate_rebind.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    cutover_candidate_rebind.add_argument(
+        "--candidate-run-dir", required=True, type=Path
+    )
+    cutover_candidate_rebind.add_argument("--implementation-commit", required=True)
+    cutover_candidate_rebind.add_argument("--rebound-at", required=True)
+
     source_import = commands.add_parser("source-import")
     source_import.add_argument("--workspace-root", required=True, type=Path)
     source_import.add_argument("--probe", type=Path)
@@ -1596,6 +1611,20 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "reconcile_classification": result.outcome,
             },
             str(result.run_dir / "workflow/run.json"),
+        )
+    if command == "platform-kernel-candidate-rebind":
+        result = BilibiliPlatformCutoverPublisher().rebind_candidate_implementation(
+            platform=args.platform,
+            control_store_root=args.control_store_root,
+            candidate_run_dir=args.candidate_run_dir,
+            implementation_commit=args.implementation_commit,
+            rebound_at=args.rebound_at,
+        )
+        return _ok(
+            command,
+            "platform_kernel_candidate_rebound",
+            result,
+            result["run_record_path"],
         )
     if command == "init-run" and args.fixture is None:
         if args.control_store_root is None or not args.session_id:

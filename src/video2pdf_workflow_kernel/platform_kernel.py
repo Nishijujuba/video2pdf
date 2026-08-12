@@ -12,7 +12,9 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from .acceptance_v2 import AcceptanceV2Provider
 from .contracts import ContractRegistry
+from .control_store import ControlStore
 from .errors import (
+    AcceptanceV2Rejected,
     ContractError,
     ControlStoreUnavailable,
     KernelConflict,
@@ -1937,6 +1939,476 @@ class BilibiliPlatformCutoverPublisher:
                 "youtube": "active_legacy",
             },
         }
+
+    def rebind_candidate_implementation(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        candidate_run_dir: Path,
+        implementation_commit: str,
+        rebound_at: str,
+    ) -> dict[str, Any]:
+        """Rebind the sole PROVISIONAL candidate to a direct-child commit.
+
+        This is a narrow recovery authority for the single Issue #13 Run.  It
+        proves the exact rev6->rev7->rev8 committed Delivery Lifecycle chain at
+        stage ``accepted``, rewrites only the candidate implementation binding,
+        and grants no ``delivered``, ``CONFIRMED``, or ordinary init-run
+        authority.
+        """
+
+        if platform != SUPPORTED_PLATFORM:
+            raise ContractError("Only a Bilibili cutover candidate can be rebound")
+        root = control_store_root.resolve()
+        new_commit = implementation_commit.strip() if isinstance(
+            implementation_commit, str
+        ) else ""
+        try:
+            git_output(
+                PROJECT_ROOT,
+                "cat-file",
+                "-e",
+                f"{new_commit}^{{commit}}",
+            )
+            current_head = git_output(PROJECT_ROOT, "rev-parse", "HEAD")
+        except EvidenceSupportError as exc:
+            raise KernelConflict(
+                "Bilibili candidate rebind implementation lineage is invalid",
+                data={
+                    "first_failing_gate": "implementation_artifacts",
+                    "error_code": "bilibili_candidate_implementation_invalid",
+                },
+            ) from exc
+        with self._connect(root) as connection:
+            row = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            authority = connection.execute(
+                "SELECT 1 FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            pending_intent = connection.execute(
+                "SELECT 1 FROM platform_cutover_intents "
+                "WHERE platform=? AND state='PREPARED'",
+                (platform,),
+            ).fetchone()
+        if authority is not None:
+            raise KernelConflict(
+                "Bilibili Platform Kernel is already confirmed",
+                data={
+                    "first_failing_gate": "platform_kernel_authority",
+                    "error_code": "bilibili_platform_authority_already_confirmed",
+                },
+            )
+        if pending_intent is not None:
+            raise KernelConflict(
+                "Bilibili PROVISIONAL rebind requires no pending platform intent",
+                data={
+                    "first_failing_gate": "platform_kernel_authority",
+                    "error_code": "bilibili_candidate_rebind_platform_intent_pending",
+                },
+            )
+        if row is None:
+            raise KernelConflict(
+                "Bilibili cutover candidate is absent",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_unavailable",
+                },
+            )
+        if row["state"] != "PROVISIONAL":
+            raise KernelConflict(
+                "Bilibili cutover candidate is not provisional",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_cutover_candidate_unavailable",
+                },
+            )
+        if new_commit != current_head:
+            raise KernelConflict(
+                "Bilibili candidate rebind implementation is not current HEAD",
+                data={
+                    "first_failing_gate": "implementation_artifacts",
+                    "error_code": "bilibili_candidate_implementation_invalid",
+                },
+            )
+        candidate = self._candidate_snapshot(row)
+        old_commit = row["implementation_commit"]
+        if old_commit != new_commit:
+            try:
+                requested_lineage = git_output(
+                    PROJECT_ROOT,
+                    "rev-list",
+                    "--parents",
+                    "-n",
+                    "1",
+                    new_commit,
+                ).split()
+                if (
+                    len(requested_lineage) != 2
+                    or requested_lineage[1] != old_commit
+                ):
+                    raise EvidenceSupportError(
+                        "candidate implementation is not the single direct parent"
+                    )
+            except EvidenceSupportError as exc:
+                raise KernelConflict(
+                    "Bilibili candidate rebind implementation is not a direct child",
+                    data={
+                        "first_failing_gate": "implementation_artifacts",
+                        "error_code": "bilibili_candidate_implementation_invalid",
+                    },
+                ) from exc
+        run_dir, run, _video = self._current_candidate_run(
+            root=root, row=row, expected_stage="accepted"
+        )
+        if run_dir != candidate_run_dir.resolve():
+            raise KernelConflict(
+                "Bilibili candidate rebind targets another Run",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_run_mismatch",
+                },
+            )
+        if (
+            run.get("delivery", {}).get("ownership", {}).get("generation") != 1
+        ):
+            raise KernelConflict(
+                "Bilibili candidate rebind is not the exact owned accepted Run",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_run_mismatch",
+                },
+            )
+        self._require_exact_accepted_chain(run_dir=run_dir, run=run)
+        control_database = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        try:
+            with sqlite3.connect(control_database) as run_connection:
+                run_connection.row_factory = sqlite3.Row
+                pending_lifecycle = run_connection.execute(
+                    "SELECT 1 FROM delivery_lifecycle_intents WHERE run_id=? "
+                    "AND state IN ('PREPARED','ABORTED') LIMIT 1",
+                    (run["run_id"],),
+                ).fetchone()
+                held_slots = run_connection.execute(
+                    "SELECT 1 FROM projection_publication_slots WHERE intent_id IN "
+                    "(SELECT intent_id FROM delivery_lifecycle_intents WHERE run_id=?) "
+                    "AND state IN ('HELD','PREPARED') LIMIT 1",
+                    (run["run_id"],),
+                ).fetchone()
+        except (sqlite3.DatabaseError, OSError) as exc:
+            raise KernelConflict(
+                "Bilibili candidate rebind lifecycle authority is unavailable",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_lifecycle_intent_pending",
+                },
+            ) from exc
+        if pending_lifecycle is not None or held_slots is not None:
+            raise KernelConflict(
+                "Bilibili candidate rebind has pending lifecycle authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_lifecycle_intent_pending",
+                },
+            )
+        run_path = run_dir / "workflow" / "run.json"
+        current_sha = ControlStore(
+            run_dir.parent, ContractRegistry(PROJECT_ROOT)
+        ).current_run_record_sha(run["run_id"])
+        if current_sha != sha256_file(run_path):
+            raise KernelConflict(
+                "Bilibili candidate rebind Run record is not current",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_run_record_stale",
+                },
+            )
+        try:
+            eligibility = AcceptanceV2Provider(PROJECT_ROOT).guard_eligibility(
+                workspace_root=run_dir / "review" / "acceptance"
+            )
+        except (
+            AcceptanceV2Rejected,
+            ContractError,
+            KernelConflict,
+            OSError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise KernelConflict(
+                "Bilibili candidate rebind lacks current Acceptance authority",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": (
+                        "bilibili_candidate_rebind_acceptance_authority_invalid"
+                    ),
+                },
+            ) from exc
+        if (
+            eligibility.get("eligible") is not True
+            or eligibility.get("delivery_authority") is not True
+        ):
+            raise KernelConflict(
+                "Bilibili candidate rebind lacks a passing Acceptance decision",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": (
+                        "bilibili_candidate_rebind_acceptance_authority_invalid"
+                    ),
+                },
+            )
+        rebound = dict(candidate)
+        rebound["implementation_commit"] = new_commit
+        if old_commit != new_commit:
+            rebound["rebound_from_commit"] = old_commit
+        rebound["rebound_at"] = rebound_at
+        encoded = json.dumps(rebound, sort_keys=True, separators=(",", ":"))
+        if old_commit == new_commit:
+            # Already rebound to this commit: an exact retry is idempotent and
+            # any other rebound metadata conflicts with committed authority.
+            if "rebound_from_commit" not in candidate:
+                raise KernelConflict(
+                    "Bilibili candidate rebind conflicts with committed authority",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_rebind_conflict",
+                    },
+                )
+            with self._connect(root) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                current = connection.execute(
+                    "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                    (platform,),
+                ).fetchone()
+                if (
+                    current is None
+                    or current["state"] != "PROVISIONAL"
+                    or current["implementation_commit"] != new_commit
+                    or current["candidate_json"] != encoded
+                ):
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Bilibili candidate rebind lost its committed fence",
+                        data={
+                            "first_failing_gate": "platform_kernel_candidate",
+                            "error_code": "bilibili_candidate_rebind_conflict",
+                        },
+                    )
+                connection.execute("COMMIT")
+            return {
+                "platform": platform,
+                "cutover_state": "PROVISIONAL",
+                "candidate_run_id": run["run_id"],
+                "candidate_run_dir": str(run_dir),
+                "implementation_commit": new_commit,
+                "rebound_from_commit": old_commit,
+                "rebound_at": rebound_at,
+                "platform_statuses": {
+                    "bilibili": "active_legacy",
+                    "youtube": "active_legacy",
+                },
+                "idempotent": True,
+                "run_record_path": str(run_path),
+            }
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if (
+                current is None
+                or current["state"] != "PROVISIONAL"
+                or current["implementation_commit"] != old_commit
+                or current["candidate_json"] != row["candidate_json"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate rebind lost its committed fence",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_rebind_conflict",
+                    },
+                )
+            if current["implementation_commit"] == new_commit:
+                if current["candidate_json"] == encoded:
+                    connection.execute("COMMIT")
+                    return {
+                        "platform": platform,
+                        "cutover_state": "PROVISIONAL",
+                        "candidate_run_id": run["run_id"],
+                        "candidate_run_dir": str(run_dir),
+                        "implementation_commit": new_commit,
+                        "rebound_from_commit": old_commit,
+                        "rebound_at": rebound_at,
+                        "platform_statuses": {
+                            "bilibili": "active_legacy",
+                            "youtube": "active_legacy",
+                        },
+                        "idempotent": True,
+                        "run_record_path": str(run_path),
+                    }
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate rebind conflicts with committed authority",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_rebind_conflict",
+                    },
+                )
+            if "rebound_at" in json.loads(current["candidate_json"]):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate rebind already consumed its single-shot authority",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_rebind_conflict",
+                    },
+                )
+            changed = connection.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?,"
+                "candidate_json=? "
+                "WHERE platform=? AND state='PROVISIONAL' AND candidate_run_id=? "
+                "AND source_identity=? AND session_id=? AND global_gate_sha256=? "
+                "AND probe_sha256=? AND implementation_commit=? AND candidate_json=?",
+                (
+                    new_commit,
+                    encoded,
+                    platform,
+                    row["candidate_run_id"],
+                    row["source_identity"],
+                    row["session_id"],
+                    row["global_gate_sha256"],
+                    row["probe_sha256"],
+                    old_commit,
+                    row["candidate_json"],
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Bilibili candidate rebind lost its CAS fence",
+                    data={
+                        "first_failing_gate": "platform_kernel_candidate",
+                        "error_code": "bilibili_candidate_rebind_conflict",
+                    },
+                )
+            connection.execute("COMMIT")
+        return {
+            "platform": platform,
+            "cutover_state": "PROVISIONAL",
+            "candidate_run_id": run["run_id"],
+            "candidate_run_dir": str(run_dir),
+            "implementation_commit": new_commit,
+            "rebound_from_commit": old_commit,
+            "rebound_at": rebound_at,
+            "platform_statuses": {
+                "bilibili": "active_legacy",
+                "youtube": "active_legacy",
+            },
+            "idempotent": False,
+            "run_record_path": str(run_path),
+        }
+
+    def _require_exact_accepted_chain(
+        self, *, run_dir: Path, run: dict[str, Any]
+    ) -> None:
+        """Prove the exact rev6->rev7->rev8 committed Delivery Lifecycle chain."""
+
+        rev = run["coordination_revision"]
+        run_id = run["run_id"]
+        control_database = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        try:
+            with sqlite3.connect(control_database) as connection:
+                connection.row_factory = sqlite3.Row
+                committed = connection.execute(
+                    "SELECT * FROM delivery_lifecycle_intents "
+                    "WHERE run_id=? AND state='COMMITTED' "
+                    "ORDER BY expected_run_revision",
+                    (run_id,),
+                ).fetchall()
+            bind_intents = [
+                item
+                for item in committed
+                if item["expected_run_revision"] == rev - 2
+                and item["target_stage"] == "ready_for_delivery"
+            ]
+            accepted_intents = [
+                item
+                for item in committed
+                if item["expected_run_revision"] == rev - 1
+                and item["target_stage"] == "accepted"
+            ]
+            if len(bind_intents) != 1 or len(accepted_intents) != 1:
+                raise EvidenceSupportError(
+                    "accepted chain is not exactly two committed intents"
+                )
+            bind_intent = bind_intents[0]
+            accepted_intent = accepted_intents[0]
+            rev7 = json.loads(bind_intent["replacement_run_record_json"])
+            rev8 = json.loads(accepted_intent["replacement_run_record_json"])
+            rev7_sha = hashlib.sha256(canonical_json_bytes(rev7)).hexdigest()
+            rev8_sha = hashlib.sha256(canonical_json_bytes(rev8)).hexdigest()
+            run_sha = hashlib.sha256(canonical_json_bytes(run)).hexdigest()
+            run_path = run_dir / "workflow" / "run.json"
+            bind_journal = read_json(
+                run_dir
+                / "待删除"
+                / "delivery-lifecycle"
+                / bind_intent["intent_id"]
+                / "intent.json"
+            )
+            accepted_journal = read_json(
+                run_dir
+                / "待删除"
+                / "delivery-lifecycle"
+                / accepted_intent["intent_id"]
+                / "intent.json"
+            )
+            if (
+                rev7.get("run_id") != run_id
+                or rev7.get("coordination_revision") != rev - 1
+                or rev7.get("delivery", {}).get("stage") != "ready_for_delivery"
+                or rev7_sha != bind_intent["replacement_run_record_sha256"]
+                or accepted_intent["prior_run_record_sha256"]
+                != bind_intent["replacement_run_record_sha256"]
+                or rev8.get("run_id") != run_id
+                or rev8.get("coordination_revision") != rev
+                or rev8.get("delivery", {}).get("stage") != "accepted"
+                or rev8 != run
+                or rev8_sha != accepted_intent["replacement_run_record_sha256"]
+                or run_sha != sha256_file(run_path)
+                or run.get("last_mutation_intent_id")
+                != accepted_intent["intent_id"]
+                or bind_journal.get("prior_run_sha256")
+                != bind_intent["prior_run_record_sha256"]
+                or accepted_journal.get("prior_run_sha256")
+                != accepted_intent["prior_run_record_sha256"]
+            ):
+                raise EvidenceSupportError(
+                    "accepted chain record authority drifted"
+                )
+        except (
+            EvidenceSupportError,
+            OSError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.DatabaseError,
+        ) as exc:
+            raise KernelConflict(
+                "Bilibili PROVISIONAL/accepted chain is not the exact "
+                "rev6-rev7-rev8 lineage",
+                data={
+                    "first_failing_gate": "platform_kernel_candidate",
+                    "error_code": "bilibili_candidate_rebind_chain_invalid",
+                },
+            ) from exc
 
     def authorize_delivery_transition(
         self,

@@ -2408,15 +2408,21 @@ class AcceptanceV2Provider:
 
         run = binding["run"]
         intent_id = successor.get("last_mutation_intent_id")
+        successor_stage = successor.get("delivery", {}).get("stage")
+        expected_revision_delta = {
+            "ready_for_delivery": 1,
+            "accepted": 2,
+        }.get(successor_stage)
         if (
             successor.get("run_id") != run.get("run_id")
             or successor.get("coordination_revision")
-            != run.get("coordination_revision", -2) + 1
+            != run.get("coordination_revision", -3) + (
+                expected_revision_delta or 0
+            )
             or successor.get("schema_version") != "4.0.0"
             or successor.get("canonical_platform") != "bilibili"
             or successor.get("platform_adapter") != "bilibili"
-            or successor.get("delivery", {}).get("stage")
-            not in {"ready_for_delivery", "accepted"}
+            or expected_revision_delta is None
             or not isinstance(intent_id, str)
             or not intent_id
         ):
@@ -2438,6 +2444,20 @@ class AcceptanceV2Provider:
                     "SELECT * FROM delivery_lifecycle_intents WHERE intent_id=?",
                     (intent_id,),
                 ).fetchone()
+                binding_intents = (
+                    control.execute(
+                        "SELECT * FROM delivery_lifecycle_intents "
+                        "WHERE run_id=? AND expected_run_revision=? "
+                        "AND replacement_run_record_sha256=?",
+                        (
+                            run["run_id"],
+                            run["coordination_revision"],
+                            intent["prior_run_record_sha256"] if intent else "",
+                        ),
+                    ).fetchall()
+                    if successor_stage == "accepted"
+                    else []
+                )
         except (sqlite3.DatabaseError, OSError) as exc:
             _reject(
                 "Delivery Lifecycle authority is unavailable",
@@ -2454,7 +2474,49 @@ class AcceptanceV2Provider:
                 "acceptance_delivery_successor_invalid",
                 detail=str(exc),
             )
-        successor_stage = successor["delivery"]["stage"]
+        binding_intent = intent
+        binding_successor = successor
+        binding_successor_sha256 = successor_sha256
+        if successor_stage == "accepted":
+            binding_intent = (
+                binding_intents[0] if len(binding_intents) == 1 else None
+            )
+            try:
+                binding_successor = (
+                    json.loads(binding_intent["replacement_run_record_json"])
+                    if binding_intent
+                    else None
+                )
+            except (json.JSONDecodeError, TypeError) as exc:
+                _reject(
+                    "Committed Acceptance binding successor is malformed",
+                    "run_lifecycle",
+                    "acceptance_delivery_successor_uncommitted",
+                    detail=str(exc),
+                )
+            binding_successor_sha256 = (
+                str(intent["prior_run_record_sha256"]) if intent else ""
+            )
+            if not (
+                binding_intent
+                and binding_successor
+                and binding_successor.get("run_id") == run["run_id"]
+                and binding_successor.get("coordination_revision")
+                == run["coordination_revision"] + 1
+                and binding_successor.get("delivery", {}).get("stage")
+                == "ready_for_delivery"
+                and binding_successor.get("last_mutation_intent_id")
+                == binding_intent["intent_id"]
+                and hashlib.sha256(
+                    canonical_json_bytes(binding_successor)
+                ).hexdigest()
+                == binding_successor_sha256
+            ):
+                _reject(
+                    "Accepted delivery lacks its exact Acceptance-bound predecessor",
+                    "run_lifecycle",
+                    "acceptance_delivery_successor_uncommitted",
+                )
         stage_binding_valid = (
             intent
             and intent["prior_stage"] == "ready_for_delivery"
@@ -2465,8 +2527,14 @@ class AcceptanceV2Provider:
             intent
             and intent["state"] == "COMMITTED"
             and intent["run_id"] == run["run_id"]
-            and intent["expected_run_revision"] == run["coordination_revision"]
-            and intent["prior_run_record_sha256"] == run["run_record_sha256"]
+            and intent["expected_run_revision"]
+            == run["coordination_revision"] + expected_revision_delta - 1
+            and intent["prior_run_record_sha256"]
+            == (
+                run["run_record_sha256"]
+                if successor_stage == "ready_for_delivery"
+                else binding_successor_sha256
+            )
             and stage_binding_valid
             and intent["replacement_run_record_sha256"] == successor_sha256
             and replacement == successor
@@ -2477,14 +2545,14 @@ class AcceptanceV2Provider:
                 "run_lifecycle",
                 "acceptance_delivery_successor_uncommitted",
             )
-        if successor_stage == "ready_for_delivery":
-            self._require_committed_acceptance_binding_successor(
-                binding=binding,
-                successor=successor,
-                successor_sha256=successor_sha256,
-                intent=intent,
-                control_store_path=control_store_path,
-            )
+        self._require_committed_acceptance_binding_successor(
+            binding=binding,
+            successor=binding_successor,
+            successor_sha256=binding_successor_sha256,
+            intent=binding_intent,
+            control_store_path=control_store_path,
+            require_current_projections=successor_stage == "ready_for_delivery",
+        )
         return True
 
     def _require_committed_acceptance_binding_successor(
@@ -2495,6 +2563,7 @@ class AcceptanceV2Provider:
         successor_sha256: str,
         intent: sqlite3.Row,
         control_store_path: Path,
+        require_current_projections: bool = True,
     ) -> None:
         """Prove a ready->ready successor only registers the current report."""
 
@@ -2747,9 +2816,14 @@ class AcceptanceV2Provider:
             ),
         }
         if not (
-            video == expected_video
-            and session == expected_session
-            and index == expected_index
+            (
+                not require_current_projections
+                or (
+                    video == expected_video
+                    and session == expected_session
+                    and index == expected_index
+                )
+            )
             and successor == expected_successor
             and len(slots) == 4
             and all(

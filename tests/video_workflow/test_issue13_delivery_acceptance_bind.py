@@ -389,6 +389,7 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             candidate_test._sha256(paths["run"]),
             store.current_run_record_sha(run["run_id"]),
         )
+
         guarded_returncode, guarded_envelope = _run_in_process_public_cli(
             "acceptance-guard-eligibility",
             "--workspace-root",
@@ -609,6 +610,105 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             store.current_run_record_sha(run["run_id"]),
         )
 
+        accepted_intent_id = run["last_mutation_intent_id"]
+
+        def guard_eligibility() -> tuple[int, dict]:
+            return _run_in_process_public_cli(
+                "acceptance-guard-eligibility",
+                "--workspace-root",
+                str(report_path.parent),
+            )
+
+        # scenario_id: uncommitted_acceptance_bind_in_two_intent_chain
+        # target_invariant: the R+1 bind intent must remain COMMITTED
+        # mutation_seam: bind intent state; rematerialized_nodes: none
+        # intentionally_stale_nodes: bind intent state only
+        # expected_first_gate/code: run_lifecycle / run_authority_invalid
+        with sqlite3.connect(lifecycle_control) as db:
+            db.execute(
+                "UPDATE delivery_lifecycle_intents SET state='RECORD_COMMITTED' "
+                "WHERE intent_id=?",
+                (bind_intent_id,),
+            )
+        try:
+            code, envelope = guard_eligibility()
+            self.assertNotEqual(0, code)
+            self.assertEqual("run_lifecycle", envelope["data"]["first_failing_gate"])
+            self.assertEqual(
+                "acceptance_run_authority_invalid",
+                envelope["data"]["error_code"],
+            )
+        finally:
+            with sqlite3.connect(lifecycle_control) as db:
+                db.execute(
+                    "UPDATE delivery_lifecycle_intents SET state='COMMITTED' "
+                    "WHERE intent_id=?",
+                    (bind_intent_id,),
+                )
+
+        # scenario_id: accepted_successor_has_stale_predecessor
+        # target_invariant: the R+2 intent must consume the exact bound R+1 SHA
+        # mutation_seam: accepted intent predecessor SHA; rematerialized_nodes: none
+        # intentionally_stale_nodes: accepted intent predecessor SHA only
+        # expected_first_gate/code: run_lifecycle / run_authority_invalid
+        with sqlite3.connect(lifecycle_control) as db:
+            accepted_prior_sha = db.execute(
+                "SELECT prior_run_record_sha256 FROM delivery_lifecycle_intents "
+                "WHERE intent_id=?",
+                (accepted_intent_id,),
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE delivery_lifecycle_intents SET prior_run_record_sha256=? "
+                "WHERE intent_id=?",
+                ("f" * 64, accepted_intent_id),
+            )
+        try:
+            code, envelope = guard_eligibility()
+            self.assertNotEqual(0, code)
+            self.assertEqual("run_lifecycle", envelope["data"]["first_failing_gate"])
+            self.assertEqual(
+                "acceptance_run_authority_invalid",
+                envelope["data"]["error_code"],
+            )
+        finally:
+            with sqlite3.connect(lifecycle_control) as db:
+                db.execute(
+                    "UPDATE delivery_lifecycle_intents SET prior_run_record_sha256=? "
+                    "WHERE intent_id=?",
+                    (accepted_prior_sha, accepted_intent_id),
+                )
+
+        # scenario_id: accepted_transition_stage_mismatch
+        # target_invariant: the R+2 intent must be ready_for_delivery -> accepted
+        # mutation_seam: accepted intent target stage; rematerialized_nodes: none
+        # intentionally_stale_nodes: accepted intent target stage only
+        # expected_first_gate/code: run_lifecycle / successor_uncommitted
+        with sqlite3.connect(lifecycle_control) as db:
+            db.execute(
+                "UPDATE delivery_lifecycle_intents SET target_stage='ready_for_delivery' "
+                "WHERE intent_id=?",
+                (accepted_intent_id,),
+            )
+        try:
+            code, envelope = guard_eligibility()
+            self.assertNotEqual(0, code)
+            self.assertEqual("run_lifecycle", envelope["data"]["first_failing_gate"])
+            self.assertEqual(
+                "acceptance_delivery_successor_uncommitted",
+                envelope["data"]["error_code"],
+            )
+        finally:
+            with sqlite3.connect(lifecycle_control) as db:
+                db.execute(
+                    "UPDATE delivery_lifecycle_intents SET target_stage='accepted' "
+                    "WHERE intent_id=?",
+                    (accepted_intent_id,),
+                )
+
+        guard_returncode, guard_envelope = guard_eligibility()
+        self.assertEqual(0, guard_returncode, guard_envelope)
+        self.assertTrue(guard_envelope["data"]["eligible"])
+
     def test_public_cli_fences_expected_revision_drift_without_any_bind_write(
         self,
     ) -> None:
@@ -812,6 +912,423 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
         retried, retry_envelope = _run_in_process_public_cli(*arguments)
         self.assertEqual(0, retried, retry_envelope)
         self.assertFalse(retry_envelope["data"]["idempotent"])
+
+    def test_public_candidate_rebind_requires_exact_provisional_accepted_direct_child(
+        self,
+    ) -> None:
+        # Fixture graph: report predecessor R (rev6) -> committed acceptance
+        # bind successor R+1 (rev7) -> committed accepted transition R+2 (rev8),
+        # with the candidate activated PROVISIONAL at the ready successor.  The
+        # rebind seam must rewrite only the implementation binding of that exact
+        # PROVISIONAL/accepted Run against a real direct-child commit.
+        control_root, run_dir, report_path, revision, ownership_generation = (
+            self._materialize_provider_current_ready_candidate()
+        )
+        bind_code, bind_envelope = _run_in_process_public_cli(
+            *self._bind_arguments(
+                run_dir,
+                report_path,
+                revision,
+                ownership_generation,
+            )
+        )
+        self.assertEqual(0, bind_code, bind_envelope)
+        activation_code, activation_envelope = _run_in_process_public_cli(
+            "platform-kernel-candidate-activate",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control_root),
+            "--candidate-run-dir",
+            str(run_dir),
+            "--activated-at",
+            "2026-08-11T02:03:00Z",
+        )
+        self.assertEqual(0, activation_code, activation_envelope)
+        self.assertEqual("PROVISIONAL", activation_envelope["data"]["cutover_state"])
+        candidate = candidate_test.Issue13CandidateConfirmationTests(
+            "test_candidate_activation_rejects_generating_candidate"
+        )
+        accepted_evidence = candidate._transition_evidence(
+            run_dir,
+            from_stage="ready_for_delivery",
+            to_stage="accepted",
+            artifacts={"acceptance_report": report_path},
+        )
+        accepted_code, accepted_envelope = _run_in_process_public_cli(
+            "delivery-transition",
+            "--run-dir",
+            str(run_dir),
+            "--from-stage",
+            "ready_for_delivery",
+            "--to-stage",
+            "accepted",
+            "--session-id",
+            candidate_test.CANDIDATE_SESSION_ID,
+            "--expected-run-revision",
+            str(revision + 1),
+            "--expected-ownership-generation",
+            str(ownership_generation),
+            "--evidence",
+            str(accepted_evidence),
+            "--transitioned-at",
+            "2026-08-11T02:04:00Z",
+        )
+        self.assertEqual(0, accepted_code, accepted_envelope)
+        paths = self._authority_paths(run_dir)
+        run = json.loads(paths["run"].read_text(encoding="utf-8"))
+        self.assertEqual(revision + 2, run["coordination_revision"])
+        self.assertEqual("accepted", run["delivery"]["stage"])
+        accepted_intent_id = run["last_mutation_intent_id"]
+        lifecycle_control = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        platform_db = control_root / "platform-kernel-control.sqlite3"
+
+        def git_commit(reference: str) -> str:
+            return subprocess.run(
+                ["git", "rev-parse", reference],
+                cwd=PROJECT_ROOT,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+
+        head = git_commit("HEAD")
+        parent = git_commit("HEAD~1")
+
+        # Point the candidate at a real parent commit so the requested HEAD is
+        # its genuine direct child in repository topology.
+        with sqlite3.connect(platform_db) as database:
+            row = database.execute(
+                "SELECT candidate_json FROM platform_cutover_candidates "
+                "WHERE platform='bilibili'"
+            ).fetchone()
+            candidate_json = json.loads(row[0])
+            candidate_json["implementation_commit"] = parent
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    parent,
+                    json.dumps(candidate_json, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+
+        def rebind_arguments(
+            implementation_commit: str,
+            *,
+            rebound_at: str = "2026-08-11T02:05:00Z",
+        ) -> tuple[str, ...]:
+            return (
+                "platform-kernel-candidate-rebind",
+                "--platform",
+                "bilibili",
+                "--control-store-root",
+                str(control_root),
+                "--candidate-run-dir",
+                str(run_dir),
+                "--implementation-commit",
+                implementation_commit,
+                "--rebound-at",
+                rebound_at,
+            )
+
+        def candidate_state() -> tuple:
+            with sqlite3.connect(platform_db) as database:
+                return database.execute(
+                    "SELECT state,implementation_commit,candidate_json "
+                    "FROM platform_cutover_candidates WHERE platform='bilibili'"
+                ).fetchone()
+
+        def rejected(
+            label: str,
+            implementation_commit: str,
+            expected_gate: str,
+            expected_code: str,
+        ) -> None:
+            before = candidate_state()
+            code, envelope = _run_in_process_public_cli(
+                *rebind_arguments(implementation_commit)
+            )
+            self.assertNotEqual(0, code, envelope)
+            self.assertEqual(
+                expected_gate, envelope["data"]["first_failing_gate"], label
+            )
+            self.assertEqual(
+                expected_code, envelope["data"]["error_code"], label
+            )
+            self.assertEqual(before, candidate_state(), label)
+
+        # scenario_id: rebind_non_parent_commit
+        # target_invariant: the requested implementation commit is a direct child
+        # mutation_seam: requested --implementation-commit; rematerialized_nodes: none
+        # intentionally_stale_nodes: none
+        # expected_first_gate/code: implementation_artifacts / bilibili_candidate_implementation_invalid
+        rejected(
+            "rebind-non-parent",
+            git_commit("HEAD~2"),
+            "implementation_artifacts",
+            "bilibili_candidate_implementation_invalid",
+        )
+
+        # scenario_id: rebind_identity_drift
+        # target_invariant: candidate SQL and JSON states agree and stay PROVISIONAL
+        # mutation_seam: candidate_json state; rematerialized_nodes: none
+        # intentionally_stale_nodes: candidate_json state only
+        # expected_first_gate/code: platform_kernel_candidate / bilibili_candidate_state_inconsistent
+        original_candidate_row = candidate_state()
+        with sqlite3.connect(platform_db) as database:
+            drifted = json.loads(original_candidate_row[2])
+            drifted["state"] = "CONFIRMED"
+            database.execute(
+                "UPDATE platform_cutover_candidates SET candidate_json=? "
+                "WHERE platform='bilibili'",
+                (json.dumps(drifted, sort_keys=True, separators=(",", ":")),),
+            )
+        try:
+            rejected(
+                "rebind-identity-drift",
+                head,
+                "platform_kernel_candidate",
+                "bilibili_candidate_state_inconsistent",
+            )
+        finally:
+            with sqlite3.connect(platform_db) as database:
+                database.execute(
+                    "UPDATE platform_cutover_candidates SET candidate_json=? "
+                    "WHERE platform='bilibili'",
+                    (original_candidate_row[2],),
+                )
+
+        # scenario_id: rebind_pending_platform_intent
+        # target_invariant: no PREPARED platform cutover intent may exist
+        # mutation_seam: platform_cutover_intents row; rematerialized_nodes: none
+        # intentionally_stale_nodes: pending intent only
+        # expected_first_gate/code: platform_kernel_authority / bilibili_candidate_rebind_platform_intent_pending
+        pending_intent_id = "f" * 64
+        with sqlite3.connect(platform_db) as database:
+            database.execute(
+                "INSERT INTO platform_cutover_intents("
+                "intent_id,platform,evidence_sha256,authority_json,"
+                "candidate_snapshot_sha256,state) "
+                "VALUES(?,?,?,?,?, 'PREPARED')",
+                (
+                    pending_intent_id,
+                    "bilibili",
+                    "0" * 64,
+                    "{}",
+                    "0" * 64,
+                ),
+            )
+        try:
+            rejected(
+                "rebind-pending-intent",
+                head,
+                "platform_kernel_authority",
+                "bilibili_candidate_rebind_platform_intent_pending",
+            )
+        finally:
+            with sqlite3.connect(platform_db) as database:
+                database.execute(
+                    "DELETE FROM platform_cutover_intents WHERE intent_id=?",
+                    (pending_intent_id,),
+                )
+
+        # scenario_id: rebind_tampered_rev7
+        # target_invariant: the committed bind successor record must be exact
+        # mutation_seam: bind intent replacement SHA; rematerialized_nodes: none
+        # intentionally_stale_nodes: bind replacement SHA only
+        # expected_first_gate/code: platform_kernel_candidate / bilibili_candidate_rebind_chain_invalid
+        with sqlite3.connect(lifecycle_control) as database:
+            bind_row = database.execute(
+                "SELECT intent_id,replacement_run_record_sha256 "
+                "FROM delivery_lifecycle_intents WHERE run_id=? "
+                "AND expected_run_revision=? AND state='COMMITTED'",
+                (run["run_id"], revision),
+            ).fetchone()
+        bind_intent_id = bind_row[0]
+        original_bind_sha = bind_row[1]
+        with sqlite3.connect(lifecycle_control) as database:
+            database.execute(
+                "UPDATE delivery_lifecycle_intents SET replacement_run_record_sha256=? "
+                "WHERE intent_id=?",
+                ("d" * 64, bind_intent_id),
+            )
+        try:
+            rejected(
+                "rebind-tampered-rev7",
+                head,
+                "platform_kernel_candidate",
+                "bilibili_candidate_rebind_chain_invalid",
+            )
+        finally:
+            with sqlite3.connect(lifecycle_control) as database:
+                database.execute(
+                    "UPDATE delivery_lifecycle_intents SET replacement_run_record_sha256=? "
+                    "WHERE intent_id=?",
+                    (original_bind_sha, bind_intent_id),
+                )
+
+        # scenario_id: rebind_unrelated_plus_two
+        # target_invariant: the R+2 intent consumes the exact bound R+1 SHA
+        # mutation_seam: accepted intent predecessor SHA; rematerialized_nodes: none
+        # intentionally_stale_nodes: accepted intent predecessor SHA only
+        # expected_first_gate/code: platform_kernel_candidate / bilibili_candidate_rebind_chain_invalid
+        with sqlite3.connect(lifecycle_control) as database:
+            accepted_prior_sha = database.execute(
+                "SELECT prior_run_record_sha256 FROM delivery_lifecycle_intents "
+                "WHERE intent_id=?",
+                (accepted_intent_id,),
+            ).fetchone()[0]
+            database.execute(
+                "UPDATE delivery_lifecycle_intents SET prior_run_record_sha256=? "
+                "WHERE intent_id=?",
+                ("e" * 64, accepted_intent_id),
+            )
+        try:
+            rejected(
+                "rebind-unrelated-plus-two",
+                head,
+                "platform_kernel_candidate",
+                "bilibili_candidate_rebind_chain_invalid",
+            )
+        finally:
+            with sqlite3.connect(lifecycle_control) as database:
+                database.execute(
+                    "UPDATE delivery_lifecycle_intents SET prior_run_record_sha256=? "
+                    "WHERE intent_id=?",
+                    (accepted_prior_sha, accepted_intent_id),
+                )
+
+        # scenario_id: rebind_wrong_report_binding
+        # target_invariant: the Acceptance provider authority must stay current
+        # mutation_seam: acceptance_report.json bytes; rematerialized_nodes: none
+        # intentionally_stale_nodes: report file only
+        # expected_first_gate/code: platform_kernel_candidate / bilibili_candidate_rebind_acceptance_authority_invalid
+        original_report = report_path.read_bytes()
+        report_path.write_bytes(original_report.rstrip(b"\n") + b" \n")
+        try:
+            rejected(
+                "rebind-wrong-report-binding",
+                head,
+                "platform_kernel_candidate",
+                "bilibili_candidate_rebind_acceptance_authority_invalid",
+            )
+        finally:
+            report_path.write_bytes(original_report)
+
+        # scenario_id: rebind_non_direct_child
+        # target_invariant: the new commit is a strict single-parent child
+        # mutation_seam: candidate implementation commit; rematerialized_nodes: none
+        # intentionally_stale_nodes: none
+        # expected_first_gate/code: implementation_artifacts / bilibili_candidate_implementation_invalid
+        grandparent = git_commit("HEAD~2")
+        with sqlite3.connect(platform_db) as database:
+            row = database.execute(
+                "SELECT candidate_json FROM platform_cutover_candidates "
+                "WHERE platform='bilibili'"
+            ).fetchone()
+            non_direct = json.loads(row[0])
+            non_direct["implementation_commit"] = grandparent
+            database.execute(
+                "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                "candidate_json=? WHERE platform='bilibili'",
+                (
+                    grandparent,
+                    json.dumps(non_direct, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+        try:
+            rejected(
+                "rebind-non-direct-child",
+                head,
+                "implementation_artifacts",
+                "bilibili_candidate_implementation_invalid",
+            )
+        finally:
+            with sqlite3.connect(platform_db) as database:
+                database.execute(
+                    "UPDATE platform_cutover_candidates SET implementation_commit=?, "
+                    "candidate_json=? WHERE platform='bilibili'",
+                    (parent, original_candidate_row[2]),
+                )
+
+        # Positive: rebind to the real direct child of the candidate commit.
+        before_run_sha = run["run_id"]
+        rebound_code, rebound_envelope = _run_in_process_public_cli(
+            *rebind_arguments(head)
+        )
+        self.assertEqual(0, rebound_code, rebound_envelope)
+        self.assertEqual("PROVISIONAL", rebound_envelope["data"]["cutover_state"])
+        self.assertEqual(head, rebound_envelope["data"]["implementation_commit"])
+        rebound_state = candidate_state()
+        self.assertEqual("PROVISIONAL", rebound_state[0])
+        self.assertEqual(head, rebound_state[1])
+        rebound_json = json.loads(rebound_state[2])
+        self.assertEqual("PROVISIONAL", rebound_json["state"])
+        self.assertEqual(head, rebound_json["implementation_commit"])
+        self.assertEqual(parent, rebound_json["rebound_from_commit"])
+        self.assertEqual(before_run_sha, rebound_json["candidate_run_id"])
+        run_after = json.loads(paths["run"].read_text(encoding="utf-8"))
+        self.assertEqual("accepted", run_after["delivery"]["stage"])
+        self.assertEqual(revision + 2, run_after["coordination_revision"])
+        self.assertEqual(before_run_sha, run_after["run_id"])
+
+        # Exact retry is idempotent.
+        retry_code, retry_envelope = _run_in_process_public_cli(
+            *rebind_arguments(head)
+        )
+        self.assertEqual(0, retry_code, retry_envelope)
+        self.assertTrue(retry_envelope["data"]["idempotent"])
+        self.assertEqual(rebound_state, candidate_state())
+
+        # scenario_id: rebind_conflicting_retry
+        # target_invariant: a second rebind with different metadata fails closed
+        # mutation_seam: requested --rebound-at; rematerialized_nodes: none
+        # intentionally_stale_nodes: none
+        # expected_first_gate/code: platform_kernel_candidate / bilibili_candidate_rebind_conflict
+        conflict_code, conflict_envelope = _run_in_process_public_cli(
+            *rebind_arguments(head, rebound_at="2026-08-11T02:06:00Z")
+        )
+        self.assertNotEqual(0, conflict_code, conflict_envelope)
+        self.assertEqual(
+            "platform_kernel_candidate",
+            conflict_envelope["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "bilibili_candidate_rebind_conflict",
+            conflict_envelope["data"]["error_code"],
+        )
+        self.assertEqual(rebound_state, candidate_state())
+
+        # The recovery seam grants no ordinary init-run authority.
+        ordinary = candidate_test._run_public_cli(
+            self.id() + "-rebind-ordinary-init",
+            "init-run",
+            "--workspace-root",
+            str(run_dir.parents[1]),
+            "--control-store-root",
+            str(control_root),
+            "--probe",
+            str(control_root.parent / "candidate-probe.json"),
+            "--session-id",
+            "session-ordinary-run",
+        )
+        self.assertEqual(30, ordinary.returncode, ordinary.stdout + ordinary.stderr)
+        ordinary_envelope = json.loads(ordinary.stdout)
+        self.assertEqual(
+            "bilibili_platform_authority_pending_confirmation",
+            ordinary_envelope["data"]["error_code"],
+        )
+
+        # The rebind preserved Acceptance provider authority at rev8.
+        guarded_code, guarded_envelope = _run_in_process_public_cli(
+            "acceptance-guard-eligibility",
+            "--workspace-root",
+            str(report_path.parent),
+        )
+        self.assertEqual(0, guarded_code, guarded_envelope)
+        self.assertTrue(guarded_envelope["data"]["eligible"])
 
 
 if __name__ == "__main__":

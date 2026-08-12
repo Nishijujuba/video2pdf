@@ -336,10 +336,10 @@ def _subtitle_technical_probe(path: Path, video_duration: float) -> dict[str, An
         lines = block.splitlines()
         if lines and lines[0].strip().isdigit():
             lines = lines[1:]
-        if len(lines) < 2:
+        if not lines:
             raise ContractError("Subtitle Candidate cue is incomplete")
         match = _SRT_TIMESTAMP.fullmatch(lines[0].strip())
-        if match is None or not any(line.strip() for line in lines[1:]):
+        if match is None:
             raise ContractError("Subtitle Candidate cue structure is invalid")
         start = _srt_seconds(match.group("start"))
         end = _srt_seconds(match.group("end"))

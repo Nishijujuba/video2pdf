@@ -11,6 +11,7 @@ from .adapters import (
     BilibiliPlatformAdapter,
     RecordedCommandRunner,
     SubprocessCommandRunner,
+    YouTubePlatformAdapter,
     YtDlpRuntime,
 )
 from .errors import ContractError, KernelConflict
@@ -28,6 +29,12 @@ from .utils import (
     require_contained_path,
     sha256_file,
 )
+
+
+def _platform_adapter(platform: str, runtime: YtDlpRuntime):
+    if platform == "youtube":
+        return YouTubePlatformAdapter(runtime)
+    return BilibiliPlatformAdapter(runtime)
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -152,13 +159,14 @@ def acquire_bilibili_source_for_run(
     whisper_transcript: Path | None = None,
     fault_point: str | None = None,
 ) -> dict[str, object]:
-    """Run the Bilibili provider against the identity of one existing Run."""
+    """Run the platform provider against the identity of one existing Run."""
 
     run_dir = run_dir.resolve()
     project_root = Path(__file__).resolve().parents[2]
     run = read_json(run_dir / "workflow" / "run.json")
-    if run.get("canonical_platform") != "bilibili":
-        raise ContractError("source-acquire currently supports Bilibili Runs only")
+    canonical_platform = str(run.get("canonical_platform"))
+    if canonical_platform not in {"bilibili", "youtube"}:
+        raise ContractError("source-acquire currently supports Bilibili or YouTube Runs only")
     if (
         run.get("source_state") == "ready"
         and run.get("checkpoints", {}).get("source_ready", {}).get("status")
@@ -205,9 +213,12 @@ def acquire_bilibili_source_for_run(
     item_id = str(run["canonical_item_id"])
     base_item_id, separator, part = item_id.partition(":")
     explicit_selector = part if separator else None
-    source_url = f"https://www.bilibili.com/video/{base_item_id}/"
+    if canonical_platform == "youtube":
+        source_url = f"https://www.youtube.com/watch?v={base_item_id}"
+    else:
+        source_url = f"https://www.bilibili.com/video/{base_item_id}/"
     case = SourceLiveSmokeCase(
-        platform="bilibili",
+        platform=canonical_platform,
         source_url=source_url,
         original_title=str(run["original_title"]),
         explicit_item_selector=explicit_selector,
@@ -224,9 +235,9 @@ def acquire_bilibili_source_for_run(
             ffmpeg_dir=Path("ffmpeg-bin"),
             ffprobe_executable=Path("ffprobe"),
         )
-        adapter = BilibiliPlatformAdapter(runtime)
+        adapter = _platform_adapter(canonical_platform, runtime)
         runner.assert_adapter_binding(
-            canonical_platform="bilibili",
+            canonical_platform=canonical_platform,
             adapter_id=adapter.adapter_id,
             adapter_contract_version=adapter.adapter_contract_version,
         )
@@ -247,7 +258,7 @@ def acquire_bilibili_source_for_run(
             project_root,
             policy_schema_name="source-acquire-runtime-policy",
         )
-        adapter = BilibiliPlatformAdapter(runtime)
+        adapter = _platform_adapter(canonical_platform, runtime)
         runner = SubprocessCommandRunner()
         evidence = None
         provider_kind = "live"
@@ -274,7 +285,8 @@ def acquire_bilibili_source_for_run(
         run_dir=run_dir,
         case=case,
         credential=CredentialBinding(
-            platform="bilibili", localized_cookie_file=cookie_file.resolve()
+            platform=canonical_platform,
+            localized_cookie_file=cookie_file.resolve(),
         ),
         credential_materializer=lambda binding, claim: CredentialBinding(
             platform=binding.platform,

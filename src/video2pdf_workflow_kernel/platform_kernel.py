@@ -2260,15 +2260,6 @@ class BilibiliPlatformCutoverPublisher:
                         "error_code": "bilibili_candidate_rebind_conflict",
                     },
                 )
-            if "rebound_at" in json.loads(current["candidate_json"]):
-                connection.execute("ROLLBACK")
-                raise KernelConflict(
-                    "Bilibili candidate rebind already consumed its single-shot authority",
-                    data={
-                        "first_failing_gate": "platform_kernel_candidate",
-                        "error_code": "bilibili_candidate_rebind_conflict",
-                    },
-                )
             changed = connection.execute(
                 "UPDATE platform_cutover_candidates SET implementation_commit=?,"
                 "candidate_json=? "

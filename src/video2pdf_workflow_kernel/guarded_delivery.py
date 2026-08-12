@@ -287,7 +287,9 @@ def require_current_kernel_guarded_decision(
         project_root=project,
         report_path=acceptance_path,
         run_id=run_id,
-        coordination_revision=run_revision,
+        coordination_revision=read_json(acceptance_path)["run_binding"][
+            "coordination_revision"
+        ],
     )
 
     active_guard = _load_active_delivery_guard(project)

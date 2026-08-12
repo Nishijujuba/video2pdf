@@ -137,6 +137,18 @@ from issue13_exit_evidence_contract import (
     RESULTS as ISSUE13_RESULTS,
     SLICE_BASE_COMMIT as ISSUE13_BASE_COMMIT,
 )
+from issue14_exit_evidence_contract import (
+    ACTIVATION_SCOPE as ISSUE14_ACTIVATION_SCOPE,
+    ATOMIC_MEMBERS as ISSUE14_ATOMIC_MEMBERS,
+    COMMANDS as ISSUE14_COMMANDS,
+    EVIDENCE_PREFIX as ISSUE14_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as ISSUE14_EXPECTED_CHECKPOINTS,
+    FIXTURE_SPECS as ISSUE14_FIXTURE_SPECS,
+    PLATFORM_STATUSES as ISSUE14_PLATFORM_STATUSES,
+    RESULT_BINDINGS as ISSUE14_RESULT_BINDINGS,
+    RESULTS as ISSUE14_RESULTS,
+    SLICE_BASE_COMMIT as ISSUE14_BASE_COMMIT,
+)
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
@@ -350,6 +362,21 @@ SLICE_CONFIGS = {
         "result_bindings": ISSUE13_RESULT_BINDINGS,
         "fixture_specs": ISSUE13_FIXTURE_SPECS,
         "activation_scope": ISSUE13_ACTIVATION_SCOPE,
+    },
+    13: {
+        "base_commit": ISSUE14_BASE_COMMIT,
+        "evidence_prefix": ISSUE14_EVIDENCE_PREFIX,
+        "checkpoints": ISSUE14_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _, _ in ISSUE14_COMMANDS],
+        "commands": [
+            {"test_id": test_id, "command": list(command), "expected_exit_code": expected_exit_code}
+            for test_id, command, expected_exit_code in ISSUE14_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "recovery"],
+        "results": ISSUE14_RESULTS,
+        "result_bindings": ISSUE14_RESULT_BINDINGS,
+        "fixture_specs": ISSUE14_FIXTURE_SPECS,
+        "activation_scope": ISSUE14_ACTIVATION_SCOPE,
     },
 }
 
@@ -670,9 +697,83 @@ def validate_issue13_cutover(manifest: dict[str, Any]) -> None:
         )
 
 
+def validate_issue14_cutover(manifest: dict[str, Any]) -> None:
+    if manifest.get("slice", {}).get("number") != 13:
+        return
+    if manifest.get("activation_scope") != ISSUE14_ACTIVATION_SCOPE:
+        raise EvidenceError(
+            "YouTube cutover activation scope differs from its closed authority",
+            first_failing_gate="activation_scope",
+            error_code="unsupported_activation_scope",
+        )
+    statuses = manifest.get("platform_statuses")
+    if isinstance(statuses, dict) and statuses.get("bilibili") != "active_kernel":
+        raise EvidenceError(
+            "Bilibili must retain active Kernel platform authority during YouTube cutover",
+            first_failing_gate="platform_statuses",
+            error_code="bilibili_platform_authority_changed",
+        )
+    if statuses != ISSUE14_PLATFORM_STATUSES:
+        raise EvidenceError(
+            "YouTube cutover platform statuses differ from their closed authority",
+            first_failing_gate="platform_statuses",
+            error_code="platform_status_set_mismatch",
+        )
+    if manifest.get("atomic_members") != list(ISSUE14_ATOMIC_MEMBERS):
+        raise EvidenceError(
+            "YouTube cutover atomic member registry is incomplete or reordered",
+            first_failing_gate="atomic_members",
+            error_code="atomic_member_set_mismatch",
+        )
+    expected_status = {member: "active" for member in ISSUE14_ATOMIC_MEMBERS}
+    if manifest.get("atomic_member_status") != expected_status:
+        raise EvidenceError(
+            "Every YouTube cutover atomic member must be active",
+            first_failing_gate="atomic_member_status",
+            error_code="atomic_member_inactive",
+        )
+    guarded = manifest.get("guarded_delivery_evidence")
+    if not isinstance(guarded, dict):
+        raise EvidenceError(
+            "YouTube cutover lacks collected guarded-delivery evidence",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_evidence_missing",
+        )
+    expected_roles = {
+        "run_record",
+        "source_manifest",
+        "acceptance_report_v2",
+        "delivery_guard_report",
+        "video_delivery_target",
+        "session_delivery_target",
+        "delivery_task_index",
+        "global_gate_authority",
+        "final_pdf",
+    }
+    artifacts = guarded.get("artifacts")
+    roles = {
+        artifact.get("role")
+        for artifact in artifacts
+        if isinstance(artifact, dict)
+    } if isinstance(artifacts, list) else set()
+    if (
+        guarded.get("canonical_platform") != "youtube"
+        or guarded.get("delivery_stage") != "delivered"
+        or roles != expected_roles
+        or not isinstance(guarded.get("collection"), dict)
+        or not isinstance(guarded.get("qualification_run"), dict)
+    ):
+        raise EvidenceError(
+            "YouTube guarded-delivery collection is incomplete",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_evidence_invalid",
+        )
+
+
 def validate_semantics(manifest: dict[str, Any]) -> None:
     validate_issue43_cutover(manifest)
     validate_issue13_cutover(manifest)
+    validate_issue14_cutover(manifest)
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):

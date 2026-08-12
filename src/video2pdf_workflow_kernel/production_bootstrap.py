@@ -11,6 +11,7 @@ from .adapters import (
     BilibiliPlatformAdapter,
     PlatformProbeRequest,
     RecordedCommandRunner,
+    YouTubePlatformAdapter,
     YtDlpRuntime,
 )
 from .errors import ContractError, KernelConflict
@@ -139,6 +140,59 @@ def bootstrap_bilibili_production_probe(
     explicit_item_selector: str | None,
     provider_recording: Path | None,
 ) -> Any:
+    return _bootstrap_platform_production_probe(
+        platform="bilibili",
+        kernel=kernel,
+        workspace_root=workspace_root,
+        source_url=source_url,
+        cookie_file=cookie_file,
+        original_title=original_title,
+        task_start=task_start,
+        request_id=request_id,
+        explicit_item_selector=explicit_item_selector,
+        provider_recording=provider_recording,
+    )
+
+
+def bootstrap_youtube_production_probe(
+    *,
+    kernel: Any,
+    workspace_root: Path,
+    source_url: str | None,
+    cookie_file: Path | None,
+    original_title: str | None,
+    task_start: str,
+    request_id: str,
+    explicit_item_selector: str | None,
+    provider_recording: Path | None,
+) -> Any:
+    return _bootstrap_platform_production_probe(
+        platform="youtube",
+        kernel=kernel,
+        workspace_root=workspace_root,
+        source_url=source_url,
+        cookie_file=cookie_file,
+        original_title=original_title,
+        task_start=task_start,
+        request_id=request_id,
+        explicit_item_selector=explicit_item_selector,
+        provider_recording=provider_recording,
+    )
+
+
+def _bootstrap_platform_production_probe(
+    *,
+    platform: str,
+    kernel: Any,
+    workspace_root: Path,
+    source_url: str | None,
+    cookie_file: Path | None,
+    original_title: str | None,
+    task_start: str,
+    request_id: str,
+    explicit_item_selector: str | None,
+    provider_recording: Path | None,
+) -> Any:
     if not source_url:
         raise ContractError("production Bootstrap requires --source-url")
 
@@ -147,7 +201,10 @@ def bootstrap_bilibili_production_probe(
         ffmpeg_dir=Path("ffmpeg-bin"),
         ffprobe_executable=Path("ffprobe"),
     )
-    adapter = BilibiliPlatformAdapter(runtime)
+    if platform == "youtube":
+        adapter = YouTubePlatformAdapter(runtime)
+    else:
+        adapter = BilibiliPlatformAdapter(runtime)
     if provider_recording is None:
         if cookie_file is not None:
             raise ContractError(

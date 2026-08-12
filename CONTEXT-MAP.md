@@ -4,7 +4,7 @@ This repository uses four active contexts and one supporting context. Delivery Q
 
 Runtime activation is independent from domain-document presence. The [Video Workflow Kernel 2.0 decision map](./docs/adr/video-workflow-kernel-2.0-decision-map.md) records component-level `target_only`, `active_legacy`, `active_global_gate`, and `active_kernel` status.
 
-Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy pending explicit migration. YouTube remains `active_legacy`. Delivery Quality and Acceptance Report v2 remain the shared `active_global_gate` for every input track.
+Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy pending explicit migration. YouTube remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy pending explicit migration. Delivery Quality and Acceptance Report v2 remain the shared `active_global_gate` for every input track.
 
 ## Contexts
 

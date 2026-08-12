@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import hashlib
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -17,7 +19,9 @@ from tests.video_workflow.test_issue13_delivery_lifecycle import (
     _guard_report,
 )
 from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
+import video2pdf_workflow_kernel.delivery_lifecycle as delivery_lifecycle_module
 import video2pdf_workflow_kernel.platform_kernel as platform_kernel_module
+from video2pdf_workflow_kernel.cli import main as workflow_cli_main
 
 
 CANDIDATE_RUN_ID = "13131313131313131313131313131313"
@@ -57,6 +61,59 @@ def _run_public_cli(test_id: str, *arguments: str) -> subprocess.CompletedProces
         capture_output=True,
         check=False,
     )
+
+
+def _run_cli_with_formal_authority(
+    *arguments: str,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """Run one lifecycle command with an explicit Acceptance provider seam.
+
+    The candidate cutover fixtures handcraft the acceptance report and predate
+    the committed two-hop delivery-successor contract (issue #13 slice 12).
+    Mirroring ``test_issue13_delivery_lifecycle._run_cli_with_formal_platform_authority``,
+    this seam supplies only the formal acceptance-provider results while keeping
+    every lifecycle, decision-evidence, and platform-candidate validator active,
+    so the candidate-authorization gate remains the discriminator for premature
+    transitions.
+    """
+
+    def formal_guard_eligibility(*, workspace_root: Path) -> dict[str, object]:
+        report_path = workspace_root / "acceptance_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        passing = report.get("overall_status") == "pass"
+        return {
+            "eligible": passing,
+            "delivery_authority": passing,
+            "report_sha256": report.get("report_sha256"),
+        }
+
+    def formal_committed_successor(*, workspace_root: Path) -> dict[str, object]:
+        run_path = workspace_root.parents[1] / "workflow" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        return {
+            "run_id": run["run_id"],
+            "run_revision": run["coordination_revision"],
+            "run_record_sha256": _sha256(run_path),
+        }
+
+    stdout = io.StringIO()
+    with patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "guard_eligibility",
+        side_effect=formal_guard_eligibility,
+    ), patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "require_committed_delivery_successor",
+        side_effect=formal_committed_successor,
+    ), redirect_stdout(stdout):
+        returncode = workflow_cli_main(list(arguments))
+    completed = subprocess.CompletedProcess(
+        args=list(arguments),
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr="",
+    )
+    return completed, json.loads(completed.stdout)
 
 
 class Issue13CandidateConfirmationTests(unittest.TestCase):
@@ -382,8 +439,7 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
             to_stage="accepted",
             artifacts={"acceptance_report": acceptance_report},
         )
-        premature = _run_public_cli(
-            self.id() + "-premature-accept",
+        premature, premature_envelope = _run_cli_with_formal_authority(
             "delivery-transition",
             "--run-dir",
             str(run_dir),
@@ -403,7 +459,6 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
             "2026-08-09T13:15:00Z",
         )
         self.assertEqual(30, premature.returncode, premature.stdout + premature.stderr)
-        premature_envelope = json.loads(premature.stdout)
         self.assertEqual(
             "bilibili_candidate_delivery_not_authorized",
             premature_envelope["data"]["error_code"],
@@ -421,8 +476,7 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
         }
         spoofed_evidence = accepted_evidence.with_name("spoofed-control-root.json")
         _write_json(spoofed_evidence, spoofed_value)
-        spoofed = _run_public_cli(
-            self.id() + "-spoofed-root",
+        spoofed, spoofed_envelope = _run_cli_with_formal_authority(
             "delivery-transition",
             "--run-dir",
             str(run_dir),
@@ -442,7 +496,6 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
             "2026-08-09T13:16:00Z",
         )
         self.assertEqual(20, spoofed.returncode, spoofed.stdout + spoofed.stderr)
-        spoofed_envelope = json.loads(spoofed.stdout)
         self.assertEqual(
             "delivery_global_gate_binding_conflict",
             spoofed_envelope["data"]["error_code"],
@@ -512,8 +565,8 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
                 ):
                     transitioned = platform_cutover_test._run_cli(*arguments)
             else:
-                transitioned = _run_public_cli(
-                    self.id() + f"-{to_stage}", *arguments
+                transitioned, _transition_envelope = (
+                    _run_cli_with_formal_authority(*arguments)
                 )
             self.assertEqual(
                 0, transitioned.returncode, transitioned.stdout + transitioned.stderr
@@ -570,8 +623,8 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
                 ):
                     transitioned = platform_cutover_test._run_cli(*arguments)
             else:
-                transitioned = _run_public_cli(
-                    self.id() + f"-confirm-{to_stage}", *arguments
+                transitioned, _transition_envelope = (
+                    _run_cli_with_formal_authority(*arguments)
                 )
             self.assertEqual(
                 0, transitioned.returncode, transitioned.stdout + transitioned.stderr

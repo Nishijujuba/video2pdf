@@ -1,0 +1,14 @@
+{
+  "scenario_id": "slice13_valid_authority",
+  "manifest_authority": {
+    "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
+    "slice_base_commit": "f20b9caff0aa0af1a83f89877ab0c7c0292308d6",
+    "platform_statuses": {"bilibili": "active_kernel", "youtube": "active_kernel"},
+    "atomic_members": [
+      "youtube_adapter", "kernel_run_authority", "task_ownership",
+      "delivery_contracts", "delivery_lifecycle", "acceptance_v2_binding",
+      "delivery_guard_binding", "hooks", "youtube_skill", "project_instructions",
+      "validators", "tests", "activation_documentation", "guarded_delivery_evidence"
+    ]
+  }
+}

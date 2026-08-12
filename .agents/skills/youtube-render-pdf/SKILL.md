@@ -21,6 +21,30 @@ The output must:
 - be a complete `.tex` document from `\documentclass` to `\end{document}`
 - be compiled successfully to PDF as part of the final delivery
 
+## Active Authority Boundary
+
+YouTube remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Until then, ordinary YouTube `init-run` remains closed and only the exact prepared candidate may use the public cutover seam. Existing Bilibili directories remain Legacy. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both tracks.
+
+The skill owns teaching intent, YouTube-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
+
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+
+### Cold-start cutover bootstrap
+
+The current repository has no confirmed YouTube platform authority and must use the one-candidate public bootstrap seam below. The provisional candidate is bounded evidence-generation authority for one exact Run; it is not `active_kernel` and cannot admit an ordinary `init-run`.
+
+1. Run `bootstrap-probe` for the selected YouTube source and retain the exact probe, Run identity, source identity, and candidate session identity.
+2. Run `platform-kernel-prepare --platform youtube` with the current implementation commit, the exact probe, and the candidate session. This creates one durable `PREPARED` candidate binding without publishing platform authority.
+3. Run `init-cutover-candidate` for that same probe and session. This is the only initialization path available before confirmation; ordinary `init-run` remains fail-closed.
+4. Run `source-acquire` against the initialized candidate's existing `--run-dir`, advance that same Run to `source_ready`, continue through the normal Kernel production and final-compile operations, then transition it to `ready_for_delivery` with current final-artifact evidence.
+5. At `ready_for_delivery`, materialize a provider-current passing Acceptance Report v2. Run `platform-kernel-candidate-activate` for that exact ready candidate. The resulting `PROVISIONAL` state authorizes only that candidate to continue; it does not authorize any second Run or ordinary initialization.
+6. Transition the same candidate to `accepted`, generate a fresh current Delivery Guard, and use that Guard to transition to `delivered`. Then use `scripts/collect_issue14_exit_evidence.py collect` and `finalize` plus the formal Exit Evidence validator to collect and publish fingerprint-bound Slice 13 evidence for that delivered Run.
+7. Run `platform-kernel-activate` with the published Exit Evidence Manifest. Activation succeeds only when the manifest identifies the same delivered candidate and returns `CONFIRMED`. After confirmation, run `workflow-policy-check` and the platform-authority reconciliation/confirmation checks. Only `CONFIRMED` opens ordinary YouTube `init-run` admission.
+
+At every intermediate state (`PREPARED`, `INITIALIZED`, or `PROVISIONAL`), startup and recovery must preserve the single candidate binding and reject ordinary YouTube Run creation. Existing YouTube directories remain Legacy throughout this bootstrap and cannot be converted into the candidate by synthesizing a Run Record.
+
+Canonical order: `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 13 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` never constitute `active_kernel`.
+
 ## Local Environment On This Machine
 
 When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
@@ -107,6 +131,18 @@ The `workspace` directory is the default parent for new YouTube PDF outputs. Do 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 
 The final delivered PDF basename must come from the PDF article title when one exists, or the original video title when no separate article title exists. Apply the same normalization before appending `.pdf`.
+
+## Multi-Agent Orchestration
+
+When subagents are available, the main agent spawns multiple subagents to isolate context and reduce master-agent context pressure:
+
+- **Data Preparation agent**: downloads the original video and usable subtitle tracks, collects metadata, cover, and source assets, preserves subtitle timestamps, and records the source-material handoff and any acquisition limitations for downstream agents.
+- **Outline agent**: defines the global table of contents, terminology, symbol table, chapter boundaries, writing contract, and cross-section conventions before chapter writing begins.
+- **Writer agents**: write complete, source-faithful `section_*.tex` drafts inside their declared task write sets.
+- **Figure agents**: select and explain high-value frames, crops, or teaching diagrams with timestamp provenance.
+- **Consistency agent**: checks terminology, notation, transitions, references, and Delivery Glossary conformance.
+- **Independent review agent**: compares the integrated teaching content with the validated source package and reports omissions or distortions.
+- **Acceptance Reviewer**: inspects the rendered pages and commits one bounded visual-quality Judgment Patch from the provider-created Task Envelope.
 
 ## Long Video Strategy
 

@@ -1126,8 +1126,8 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
                 ):
                     completed = platform_test._run_cli(*arguments)
             else:
-                completed = candidate_test._run_public_cli(
-                    self.id() + f"-{to_stage}", *arguments
+                completed, _transition_envelope = (
+                    candidate_test._run_cli_with_formal_authority(*arguments)
                 )
             self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self._bind_exit_evidence_to_candidate(evidence, run_dir)

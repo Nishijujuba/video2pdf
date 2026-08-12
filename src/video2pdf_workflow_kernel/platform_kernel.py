@@ -43,66 +43,137 @@ from .utils import (
 
 PLATFORM_KERNEL_DB = "platform-kernel-control.sqlite3"
 PLATFORM_AUTHORITY_DIR = "platform-authorities"
-SUPPORTED_PLATFORM = "bilibili"
-EXPECTED_SLICE = {
-    "number": 12,
-    "name": "bilibili-platform-kernel-cutover",
+SUPPORTED_PLATFORMS = frozenset({"bilibili", "youtube"})
+PLATFORM_SPECS = {
+    "bilibili": {
+        "display_name": "Bilibili",
+        "error_prefix": "bilibili",
+        "expected_slice": {
+            "number": 12,
+            "name": "bilibili-platform-kernel-cutover",
+        },
+        "expected_activation_scope": {
+            "kind": "platform_kernel_cutover",
+            "runtime_authority_change": True,
+            "components_activated": ["bilibili_platform_kernel"],
+            "platform": "bilibili",
+            "global_gate_authority": "unchanged",
+            "qualification_contract_sha256": (
+                "927022a0bcf5f626f4b9275928dce9de201775523ab1bf4c0c9b6803f0012461"
+            ),
+        },
+        "atomic_members": frozenset(
+            {
+                "bilibili_adapter",
+                "kernel_run_authority",
+                "task_ownership",
+                "delivery_contracts",
+                "delivery_lifecycle",
+                "acceptance_v2_binding",
+                "delivery_guard_binding",
+                "hooks",
+                "bilibili_skill",
+                "project_instructions",
+                "validators",
+                "tests",
+                "activation_documentation",
+                "guarded_delivery_evidence",
+            }
+        ),
+        "platform_statuses": {
+            "bilibili": "active_kernel",
+            "youtube": "active_legacy",
+        },
+        "qualification_test_module": (
+            "tests.video_workflow.test_issue13_exit_evidence"
+        ),
+        "collection_schema_name": "issue13-exit-evidence-collection",
+    },
+    "youtube": {
+        "display_name": "YouTube",
+        "error_prefix": "youtube",
+        "expected_slice": {
+            "number": 13,
+            "name": "youtube-platform-kernel-cutover",
+        },
+        "expected_activation_scope": {
+            "kind": "platform_kernel_cutover",
+            "runtime_authority_change": True,
+            "components_activated": ["youtube_platform_kernel"],
+            "platform": "youtube",
+            "global_gate_authority": "unchanged",
+            "qualification_contract_sha256": (
+                "ee5d74bbb55b1854d495af62be1a3d784021b636f58dce50f55039eef8a2df31"
+            ),
+        },
+        "atomic_members": frozenset(
+            {
+                "youtube_adapter",
+                "kernel_run_authority",
+                "task_ownership",
+                "delivery_contracts",
+                "delivery_lifecycle",
+                "acceptance_v2_binding",
+                "delivery_guard_binding",
+                "hooks",
+                "youtube_skill",
+                "project_instructions",
+                "validators",
+                "tests",
+                "activation_documentation",
+                "guarded_delivery_evidence",
+            }
+        ),
+        "platform_statuses": {
+            "bilibili": "active_kernel",
+            "youtube": "active_kernel",
+        },
+        "qualification_test_module": (
+            "tests.video_workflow.test_issue14_exit_evidence"
+        ),
+        "collection_schema_name": "issue14-exit-evidence-collection",
+    },
 }
-EXPECTED_ACTIVATION_SCOPE = {
-    "kind": "platform_kernel_cutover",
-    "runtime_authority_change": True,
-    "components_activated": ["bilibili_platform_kernel"],
-    "platform": "bilibili",
-    "global_gate_authority": "unchanged",
-    "qualification_contract_sha256": (
-        "927022a0bcf5f626f4b9275928dce9de201775523ab1bf4c0c9b6803f0012461"
-    ),
-}
-ATOMIC_MEMBERS = frozenset(
-    {
-        "bilibili_adapter",
-        "kernel_run_authority",
-        "task_ownership",
-        "delivery_contracts",
-        "delivery_lifecycle",
-        "acceptance_v2_binding",
-        "delivery_guard_binding",
-        "hooks",
-        "bilibili_skill",
-        "project_instructions",
-        "validators",
-        "tests",
-        "activation_documentation",
-        "guarded_delivery_evidence",
-    }
-)
 ACTIVATION_FAULT_POINTS = frozenset(
     {"after_intent", "after_authority_write", "after_control_commit"}
 )
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _require_formal_exit_evidence(evidence_path: Path) -> None:
+def _platform_spec(platform: str) -> dict[str, Any]:
+    """Validate a platform name and return its Platform Kernel cutover spec."""
+    spec = PLATFORM_SPECS.get(platform)
+    if spec is None:
+        raise ContractError(
+            "Only the Bilibili or YouTube Platform Kernel Cutover is active"
+        )
+    return spec
+
+
+def _require_formal_exit_evidence(evidence_path: Path, platform: str) -> None:
     """Bind platform authority to the repository's post-publication validator."""
 
+    spec = _platform_spec(platform)
     validator_path = PROJECT_ROOT / "scripts" / "validate_slice_exit_evidence.py"
     try:
-        spec = importlib.util.spec_from_file_location(
-            "video2pdf_issue13_exit_evidence_validator", validator_path
+        spec_loader = importlib.util.spec_from_file_location(
+            f"video2pdf_{spec['error_prefix']}_exit_evidence_validator",
+            validator_path,
         )
-        if spec is None or spec.loader is None:
+        if spec_loader is None or spec_loader.loader is None:
             raise RuntimeError("validator module cannot be loaded")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = importlib.util.module_from_spec(spec_loader)
+        spec_loader.loader.exec_module(module)
         module.validate_manifest(
             evidence_path.resolve(), schema_only=False, pre_publication=False
         )
     except Exception as exc:
         raise ContractError(
-            "Bilibili Platform Kernel requires current post-publication Exit Evidence",
+            f"{spec['display_name']} Platform Kernel requires current "
+            "post-publication Exit Evidence",
             data={
                 "first_failing_gate": "exit_evidence_lineage",
-                "error_code": "bilibili_exit_evidence_lineage_invalid",
+                "error_code": f"{spec['error_prefix']}_exit_evidence_lineage_invalid",
             },
         ) from exc
 
@@ -133,7 +204,10 @@ def _evidence_path(binding: Any, *, label: str, allow_absolute: bool) -> Path:
     return path
 
 
-def _validate_guarded_delivery(value: dict[str, Any]) -> None:
+def _validate_guarded_delivery(value: dict[str, Any], platform: str) -> None:
+    spec = _platform_spec(platform)
+    prefix = spec["error_prefix"]
+    display_name = spec["display_name"]
     guarded = value.get("guarded_delivery_evidence")
     expected_roles = {
         "run_record",
@@ -148,7 +222,7 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
     }
     if not isinstance(guarded, dict):
         raise ContractError(
-            "Bilibili cutover lacks collected guarded-delivery evidence",
+            f"{display_name} cutover lacks collected guarded-delivery evidence",
             data={
                 "first_failing_gate": "guarded_delivery_evidence",
                 "error_code": "guarded_delivery_evidence_missing",
@@ -161,12 +235,12 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
         item.get("role"): item for item in artifacts if isinstance(item, dict)
     }
     if (
-        guarded.get("canonical_platform") != "bilibili"
+        guarded.get("canonical_platform") != platform
         or guarded.get("delivery_stage") != "delivered"
         or set(manifest_artifacts) != expected_roles
     ):
         raise ContractError(
-            "Bilibili guarded-delivery evidence is incomplete",
+            f"{display_name} guarded-delivery evidence is incomplete",
             data={
                 "first_failing_gate": "guarded_delivery_evidence",
                 "error_code": "guarded_delivery_evidence_invalid",
@@ -180,15 +254,19 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
         )
         collection = read_json(collection_path)
         if (
-            collection.get("schema_name") != "issue13-exit-evidence-collection"
+            collection.get("schema_name") != spec["collection_schema_name"]
             or collection.get("run_id") != guarded.get("run_id")
-            or collection.get("canonical_platform") != "bilibili"
+            or collection.get("canonical_platform") != platform
             or collection.get("delivery_stage") != "delivered"
         ):
-            raise ContractError("Bilibili guarded-delivery collection identity is invalid")
+            raise ContractError(
+                f"{display_name} guarded-delivery collection identity is invalid"
+            )
         collected_artifacts = collection.get("artifacts")
         if not isinstance(collected_artifacts, dict) or set(collected_artifacts) != expected_roles:
-            raise ContractError("Bilibili guarded-delivery collection artifact set is invalid")
+            raise ContractError(
+                f"{display_name} guarded-delivery collection artifact set is invalid"
+            )
         resolved_artifacts: dict[str, Path] = {}
         for role in expected_roles:
             manifest_path = _evidence_path(
@@ -203,7 +281,7 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
                 != collected_artifacts[role]["sha256"]
             ):
                 raise ContractError(
-                    f"Bilibili guarded-delivery {role} differs from its collection"
+                    f"{display_name} guarded-delivery {role} differs from its collection"
                 )
             resolved_artifacts[role] = collected_path
         run_id = guarded.get("run_id")
@@ -220,9 +298,9 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
         if not isinstance(manifest_qualification, dict) or not isinstance(
             collected_qualification, dict
         ):
-            raise ContractError("Bilibili qualification evidence is absent")
+            raise ContractError(f"{display_name} qualification evidence is absent")
         if manifest_qualification.get("run_id") != collected_qualification.get("run_id"):
-            raise ContractError("Bilibili qualification Run identity differs")
+            raise ContractError(f"{display_name} qualification Run identity differs")
         for manifest_key, collected_key in (
             ("command_record", "command_record"),
             ("terminal_status", "terminal_status"),
@@ -239,7 +317,9 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
                 allow_absolute=True,
             )
             if manifest_path != collected_path:
-                raise ContractError("Bilibili qualification binding differs from collection")
+                raise ContractError(
+                    f"{display_name} qualification binding differs from collection"
+                )
         command = read_json(
             _evidence_path(
                 collected_qualification["command_record"],
@@ -272,7 +352,7 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
                 "-m",
                 "unittest",
                 "-v",
-                "tests.video_workflow.test_issue13_exit_evidence",
+                spec["qualification_test_module"],
             ]
             or command.get("cwd") != str(PROJECT_ROOT.resolve())
             or command.get("accepted_exit_codes") != [0]
@@ -283,53 +363,63 @@ def _validate_guarded_delivery(value: dict[str, Any]) -> None:
             or status.get("security", {}).get("acceptance_evidence_eligible") is not True
             or collected_qualification.get("acceptance_evidence_eligible") is not True
         ):
-            raise ContractError("Bilibili qualification Run is not succeeded evidence")
+            raise ContractError(
+                f"{display_name} qualification Run is not succeeded evidence"
+            )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, KeyError) as exc:
-        raise ContractError("Bilibili guarded-delivery evidence cannot be decoded") from exc
+        raise ContractError(
+            f"{display_name} guarded-delivery evidence cannot be decoded"
+        ) from exc
 
 
-def _validate_evidence(value: Any) -> dict[str, Any]:
+def _validate_evidence(value: Any, platform: str) -> dict[str, Any]:
+    spec = _platform_spec(platform)
+    prefix = spec["error_prefix"]
+    display_name = spec["display_name"]
+    expected_slice = spec["expected_slice"]
+    expected_activation_scope = spec["expected_activation_scope"]
+    atomic_members = spec["atomic_members"]
+    expected_statuses = spec["platform_statuses"]
     if not isinstance(value, dict):
-        raise ContractError("Bilibili cutover Exit Evidence must be an object")
+        raise ContractError(f"{display_name} cutover Exit Evidence must be an object")
     if (
         value.get("kind") != "video-workflow-exit-evidence"
         or value.get("schema_version") != 2
-        or value.get("slice") != EXPECTED_SLICE
+        or value.get("slice") != expected_slice
         or value.get("overall_decision") != "pass"
-        or value.get("platform_statuses")
-        != {"bilibili": "active_kernel", "youtube": "active_legacy"}
+        or value.get("platform_statuses") != expected_statuses
     ):
-        raise ContractError("Bilibili cutover Exit Evidence identity is invalid")
+        raise ContractError(f"{display_name} cutover Exit Evidence identity is invalid")
     scope = value.get("activation_scope")
     if not isinstance(scope, dict):
-        raise ContractError("Bilibili cutover activation scope is invalid")
+        raise ContractError(f"{display_name} cutover activation scope is invalid")
     comparable_scope = {
-        key: scope.get(key) for key in EXPECTED_ACTIVATION_SCOPE
+        key: scope.get(key) for key in expected_activation_scope
     }
-    if comparable_scope != EXPECTED_ACTIVATION_SCOPE:
+    if comparable_scope != expected_activation_scope:
         raise ContractError(
-            "Bilibili cutover activation scope is invalid",
+            f"{display_name} cutover activation scope is invalid",
             data={
                 "first_failing_gate": "activation_scope",
-                "error_code": "bilibili_activation_scope_invalid",
+                "error_code": f"{prefix}_activation_scope_invalid",
             },
         )
-    if set(value.get("atomic_members", [])) != ATOMIC_MEMBERS:
-        raise ContractError("Bilibili cutover atomic member set is incomplete")
+    if set(value.get("atomic_members", [])) != atomic_members:
+        raise ContractError(f"{display_name} cutover atomic member set is incomplete")
     statuses = value.get("atomic_member_status")
     if (
         not isinstance(statuses, dict)
-        or set(statuses) != ATOMIC_MEMBERS
-        or any(statuses[member] != "active" for member in ATOMIC_MEMBERS)
+        or set(statuses) != atomic_members
+        or any(statuses[member] != "active" for member in atomic_members)
     ):
         raise ContractError(
-            "Bilibili cutover atomic member is inactive",
+            f"{display_name} cutover atomic member is inactive",
             data={
                 "first_failing_gate": "atomic_member_status",
-                "error_code": "bilibili_cutover_atomic_member_failed",
+                "error_code": f"{prefix}_cutover_atomic_member_failed",
             },
         )
-    _validate_guarded_delivery(value)
+    _validate_guarded_delivery(value, platform)
     implementation_commit = value.get("implementation_commit")
     fingerprints = value.get("artifact_fingerprints")
     try:
@@ -358,10 +448,10 @@ def _validate_evidence(value: Any) -> dict[str, Any]:
                 )
     except EvidenceSupportError as exc:
         raise ContractError(
-            "Bilibili cutover implementation lineage is invalid",
+            f"{display_name} cutover implementation lineage is invalid",
             data={
                 "first_failing_gate": "implementation_artifacts",
-                "error_code": "bilibili_implementation_lineage_invalid",
+                "error_code": f"{prefix}_implementation_lineage_invalid",
             },
         ) from exc
     schema_path = (
@@ -374,17 +464,47 @@ def _validate_evidence(value: Any) -> dict[str, Any]:
         Draft202012Validator(schema).validate(value)
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
         raise ContractError(
-            "Bilibili cutover Exit Evidence is schema-invalid",
+            f"{display_name} cutover Exit Evidence is schema-invalid",
             data={
                 "first_failing_gate": "exit_evidence_contract",
-                "error_code": "bilibili_exit_evidence_schema_invalid",
+                "error_code": f"{prefix}_exit_evidence_schema_invalid",
             },
         ) from exc
     return value
 
 
 class BilibiliPlatformCutoverPublisher:
-    """Owns the independent authority transfer for new Bilibili Kernel Runs."""
+    """Owns the independent authority transfer for Platform Kernel Runs."""
+
+    @staticmethod
+    def _platform_spec(platform: str) -> dict[str, Any]:
+        """Validate a platform name and return its cutover spec."""
+        return _platform_spec(platform)
+
+    def _fallback_platform_statuses(
+        self, *, platform: str, control_store_root: Path
+    ) -> dict[str, str]:
+        """Return the pre-cutover fallback statuses for one platform.
+
+        The queried platform is reported ``active_legacy`` while the other
+        platform keeps its CURRENT committed authority status when one exists.
+        """
+        self._platform_spec(platform)
+        statuses = {"bilibili": "active_legacy", "youtube": "active_legacy"}
+        other = next(name for name in SUPPORTED_PLATFORMS if name != platform)
+        root = control_store_root.resolve()
+        if (root / PLATFORM_KERNEL_DB).is_file():
+            try:
+                with self._connect(root) as connection:
+                    row = connection.execute(
+                        "SELECT 1 FROM platform_cutover_authority WHERE platform=?",
+                        (other,),
+                    ).fetchone()
+                if row is not None:
+                    statuses[other] = "active_kernel"
+            except ControlStoreUnavailable:
+                pass
+        return statuses
 
     def _connect(self, root: Path) -> sqlite3.Connection:
         if not root.is_dir():
@@ -556,8 +676,8 @@ class BilibiliPlatformCutoverPublisher:
     ) -> dict[str, Any]:
         """Durably bind the single pre-confirmation Run without activating it."""
 
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only a Bilibili cutover candidate can be prepared")
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         session_id = require_safe_path_segment(
             candidate_session_id,
             purpose="cutover candidate session_id",
@@ -565,7 +685,7 @@ class BilibiliPlatformCutoverPublisher:
         )
         probe_path = candidate_probe.resolve()
         if not probe_path.is_file():
-            raise ContractError("Bilibili cutover candidate probe is unavailable")
+            raise ContractError(f"{display_name} cutover candidate probe is unavailable")
         probe = read_json(probe_path)
         adapter = probe.get("adapter")
         if (
@@ -653,6 +773,7 @@ class BilibiliPlatformCutoverPublisher:
                         connection=connection,
                         row=existing,
                         requested_candidate=candidate,
+                        platform=platform,
                     )
                     candidate_run_dir = rebound_candidate["candidate_run_dir"]
                     if (
@@ -762,10 +883,9 @@ class BilibiliPlatformCutoverPublisher:
             "source_identity": candidate["source_identity"],
             "global_gate_binding": candidate["global_gate_binding"],
             "implementation_commit": implementation_commit,
-            "platform_statuses": {
-                "bilibili": "active_legacy",
-                "youtube": "active_legacy",
-            },
+            "platform_statuses": self._fallback_platform_statuses(
+                platform=platform, control_store_root=root
+            ),
             "idempotent": idempotent,
             "reprepared": reprepared,
             **(
@@ -782,9 +902,12 @@ class BilibiliPlatformCutoverPublisher:
         connection: sqlite3.Connection,
         row: sqlite3.Row,
         requested_candidate: dict[str, Any],
+        platform: str,
     ) -> dict[str, Any]:
         """Prove that an initialized candidate still has only initialization authority."""
 
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         candidate = self._candidate_snapshot(row)
         comparable = dict(candidate)
         comparable.pop("workspace_root", None)
@@ -796,7 +919,7 @@ class BilibiliPlatformCutoverPublisher:
         comparable["prepared_at"] = requested_candidate["prepared_at"]
         if comparable != requested_candidate:
             raise KernelConflict(
-                "Bilibili initialized candidate identity differs from preparation",
+                f"{display_name} initialized candidate identity differs from preparation",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
                     "error_code": "bilibili_initialized_reprepare_identity_mismatch",
@@ -804,11 +927,11 @@ class BilibiliPlatformCutoverPublisher:
             )
         pending_platform_intent = connection.execute(
             "SELECT 1 FROM platform_cutover_intents WHERE platform=? AND state='PREPARED'",
-            (SUPPORTED_PLATFORM,),
+            (platform,),
         ).fetchone()
         if pending_platform_intent is not None:
             raise KernelConflict(
-                "Bilibili initialized candidate has a pending platform intent",
+                f"{display_name} initialized candidate has a pending platform intent",
                 data={
                     "first_failing_gate": "platform_kernel_authority",
                     "error_code": "bilibili_initialized_reprepare_intent_pending",
@@ -816,12 +939,12 @@ class BilibiliPlatformCutoverPublisher:
             )
 
         run_dir, run, video = self._current_candidate_run(
-            root=root, row=row, expected_stage="generating"
+            root=root, row=row, expected_stage="generating", platform=platform
         )
         workspace = Path(str(candidate.get("workspace_root", ""))).resolve()
         if run_dir.parent != workspace:
             raise KernelConflict(
-                "Bilibili initialized candidate Run path differs from preparation",
+                f"{display_name} initialized candidate Run path differs from preparation",
                 data={
                     "first_failing_gate": "path_boundary",
                     "error_code": "bilibili_initialized_reprepare_run_path_invalid",
@@ -1482,8 +1605,8 @@ class BilibiliPlatformCutoverPublisher:
         candidate_probe: Path,
         candidate_session_id: str,
     ) -> dict[str, Any]:
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only a Bilibili cutover candidate can initialize")
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         root = control_store_root.resolve()
         with self._connect(root) as connection:
             row = connection.execute(
@@ -1592,6 +1715,7 @@ class BilibiliPlatformCutoverPublisher:
     def record_candidate_initialized(
         self, *, platform: str, control_store_root: Path, candidate_run_dir: Path
     ) -> None:
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         run_dir = candidate_run_dir.resolve()
         run_path = run_dir / "workflow" / "run.json"
@@ -1640,6 +1764,7 @@ class BilibiliPlatformCutoverPublisher:
         candidate_run_id: str,
         workspace_root: Path,
     ) -> None:
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         workspace = workspace_root.resolve()
         with self._connect(root) as connection:
@@ -1716,6 +1841,7 @@ class BilibiliPlatformCutoverPublisher:
         root: Path,
         row: sqlite3.Row,
         expected_stage: str,
+        platform: str,
     ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
         candidate = self._candidate_snapshot(row)
         declared = candidate.get("candidate_run_dir")
@@ -1729,7 +1855,7 @@ class BilibiliPlatformCutoverPublisher:
         delivery = run.get("delivery")
         if (
             run.get("schema_version") != "4.0.0"
-            or run.get("canonical_platform") != SUPPORTED_PLATFORM
+            or run.get("canonical_platform") != platform
             or run.get("run_id") != row["candidate_run_id"]
             or Path(str(run.get("output_path", ""))).resolve() != run_dir
             or not isinstance(delivery, dict)
@@ -1819,8 +1945,7 @@ class BilibiliPlatformCutoverPublisher:
         candidate_run_dir: Path,
         activated_at: str,
     ) -> dict[str, Any]:
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only a Bilibili cutover candidate can activate")
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         with self._connect(root) as connection:
             row = connection.execute(
@@ -1847,7 +1972,7 @@ class BilibiliPlatformCutoverPublisher:
             )
         self._candidate_snapshot(row)
         run_dir, run, video = self._current_candidate_run(
-            root=root, row=row, expected_stage="ready_for_delivery"
+            root=root, row=row, expected_stage="ready_for_delivery", platform=platform
         )
         if run_dir != candidate_run_dir.resolve():
             raise KernelConflict("Bilibili candidate activation targets another Run")
@@ -1936,10 +2061,9 @@ class BilibiliPlatformCutoverPublisher:
             "cutover_state": "PROVISIONAL",
             "candidate_run_id": run["run_id"],
             "candidate_run_dir": str(run_dir),
-            "platform_statuses": {
-                "bilibili": "active_legacy",
-                "youtube": "active_legacy",
-            },
+            "platform_statuses": self._fallback_platform_statuses(
+                platform=platform, control_store_root=root
+            ),
         }
 
     def rebind_candidate_implementation(
@@ -1960,8 +2084,7 @@ class BilibiliPlatformCutoverPublisher:
         authority.
         """
 
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only a Bilibili cutover candidate can be rebound")
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         new_commit = implementation_commit.strip() if isinstance(
             implementation_commit, str
@@ -2064,7 +2187,7 @@ class BilibiliPlatformCutoverPublisher:
                     },
                 ) from exc
         run_dir, run, _video = self._current_candidate_run(
-            root=root, row=row, expected_stage="accepted"
+            root=root, row=row, expected_stage="accepted", platform=platform
         )
         if run_dir != candidate_run_dir.resolve():
             raise KernelConflict(
@@ -2209,10 +2332,9 @@ class BilibiliPlatformCutoverPublisher:
                 "implementation_commit": new_commit,
                 "rebound_from_commit": old_commit,
                 "rebound_at": rebound_at,
-                "platform_statuses": {
-                    "bilibili": "active_legacy",
-                    "youtube": "active_legacy",
-                },
+                "platform_statuses": self._fallback_platform_statuses(
+                    platform=platform, control_store_root=root
+                ),
                 "idempotent": True,
                 "run_record_path": str(run_path),
             }
@@ -2247,10 +2369,9 @@ class BilibiliPlatformCutoverPublisher:
                         "implementation_commit": new_commit,
                         "rebound_from_commit": old_commit,
                         "rebound_at": rebound_at,
-                        "platform_statuses": {
-                            "bilibili": "active_legacy",
-                            "youtube": "active_legacy",
-                        },
+                        "platform_statuses": self._fallback_platform_statuses(
+                            platform=platform, control_store_root=root
+                        ),
                         "idempotent": True,
                         "run_record_path": str(run_path),
                     }
@@ -2299,10 +2420,9 @@ class BilibiliPlatformCutoverPublisher:
             "implementation_commit": new_commit,
             "rebound_from_commit": old_commit,
             "rebound_at": rebound_at,
-            "platform_statuses": {
-                "bilibili": "active_legacy",
-                "youtube": "active_legacy",
-            },
+            "platform_statuses": self._fallback_platform_statuses(
+                platform=platform, control_store_root=root
+            ),
             "idempotent": False,
             "run_record_path": str(run_path),
         }
@@ -2414,6 +2534,7 @@ class BilibiliPlatformCutoverPublisher:
     ) -> None:
         if to_stage not in {"accepted", "delivered"}:
             return
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         if not (root / PLATFORM_KERNEL_DB).is_file():
             raise KernelConflict(
@@ -2484,6 +2605,7 @@ class BilibiliPlatformCutoverPublisher:
         control_store_root: Path,
         run_id: str,
     ) -> None:
+        self._platform_spec(platform)
         root = control_store_root.resolve()
         if not (root / PLATFORM_KERNEL_DB).is_file():
             return
@@ -2513,19 +2635,22 @@ class BilibiliPlatformCutoverPublisher:
         root: Path,
         evidence: dict[str, Any],
         candidate_row: sqlite3.Row | None = None,
+        platform: str,
     ) -> sqlite3.Row:
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         row = candidate_row
         if row is None:
             with self._connect(root) as connection:
                 row = connection.execute(
                     "SELECT * FROM platform_cutover_candidates WHERE platform=?",
-                    (SUPPORTED_PLATFORM,),
+                    (platform,),
                 ).fetchone()
         guarded = evidence.get("guarded_delivery_evidence")
         guarded_run_id = guarded.get("run_id") if isinstance(guarded, dict) else None
         if row is None or row["state"] not in {"PROVISIONAL", "CONFIRMED"}:
             raise KernelConflict(
-                "Bilibili activation requires one provisional candidate",
+                f"{display_name} activation requires one provisional candidate",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
                     "error_code": "bilibili_provisional_candidate_absent",
@@ -2533,18 +2658,19 @@ class BilibiliPlatformCutoverPublisher:
             )
         if evidence.get("implementation_commit") != row["implementation_commit"]:
             raise KernelConflict(
-                "Bilibili activation evidence differs from the candidate implementation",
+                f"{display_name} activation evidence differs from the candidate "
+                "implementation",
                 data={
                     "first_failing_gate": "implementation_artifacts",
                     "error_code": "bilibili_candidate_implementation_evidence_mismatch",
                 },
             )
         run_dir, run, video = self._current_candidate_run(
-            root=root, row=row, expected_stage="delivered"
+            root=root, row=row, expected_stage="delivered", platform=platform
         )
         if guarded_run_id != row["candidate_run_id"] or run["run_id"] != guarded_run_id:
             raise KernelConflict(
-                "Bilibili guarded delivery differs from the delivered candidate",
+                f"{display_name} guarded delivery differs from the delivered candidate",
                 data={
                     "first_failing_gate": "guarded_delivery_candidate_binding",
                     "error_code": (
@@ -2600,7 +2726,7 @@ class BilibiliPlatformCutoverPublisher:
             != sha256_file(expected_paths["source_manifest"])
         ):
             raise KernelConflict(
-                "Bilibili candidate source manifest authority is absent or stale",
+                f"{display_name} candidate source manifest authority is absent or stale",
                 data={
                     "first_failing_gate": "guarded_delivery_candidate_binding",
                     "error_code": "bilibili_candidate_source_manifest_stale",
@@ -2621,7 +2747,7 @@ class BilibiliPlatformCutoverPublisher:
                 or binding.get("sha256") != sha256_file(resolved)
             ):
                 raise KernelConflict(
-                    f"Bilibili guarded delivery role differs from candidate: {role}",
+                    f"{display_name} guarded delivery role differs from candidate: {role}",
                     data={
                         "first_failing_gate": "guarded_delivery_candidate_binding",
                         "error_code": "bilibili_guarded_candidate_role_mismatch",
@@ -2639,20 +2765,20 @@ class BilibiliPlatformCutoverPublisher:
         activated_at: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only the Bilibili Platform Kernel Cutover is active")
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         evidence_path = exit_evidence.resolve()
         if not evidence_path.is_file():
-            raise ContractError("Bilibili cutover Exit Evidence is unavailable")
-        evidence = _validate_evidence(read_json(evidence_path))
-        _require_formal_exit_evidence(evidence_path)
+            raise ContractError(f"{display_name} cutover Exit Evidence is unavailable")
+        evidence = _validate_evidence(read_json(evidence_path), platform)
+        _require_formal_exit_evidence(evidence_path, platform)
         evidence_sha256 = sha256_file(evidence_path)
         root = control_store_root.resolve()
         global_gate = GlobalGatePublisher().require_current(
             control_store_root=root
         )
         confirmable_candidate = self._require_confirmable_candidate(
-            root=root, evidence=evidence
+            root=root, evidence=evidence, platform=platform
         )
         candidate_snapshot_sha256 = self._confirmation_snapshot_fingerprint(
             confirmable_candidate, evidence
@@ -2695,7 +2821,7 @@ class BilibiliPlatformCutoverPublisher:
                 if current["evidence_sha256"] != evidence_sha256:
                     connection.execute("ROLLBACK")
                     raise KernelConflict(
-                        "A different Bilibili Platform Kernel authority already exists"
+                        f"A different {display_name} Platform Kernel authority already exists"
                     )
                 if (
                     not authority_path.is_file()
@@ -2703,7 +2829,7 @@ class BilibiliPlatformCutoverPublisher:
                 ):
                     connection.execute("ROLLBACK")
                     raise KernelConflict(
-                        "Committed Bilibili Platform Kernel authority is stale"
+                        f"Committed {display_name} Platform Kernel authority is stale"
                     )
                 connection.execute("COMMIT")
                 return {
@@ -2711,10 +2837,7 @@ class BilibiliPlatformCutoverPublisher:
                     "generation": int(current["generation"]),
                     "authority_path": str(authority_path),
                     "authority_sha256": current["authority_sha256"],
-                    "platform_statuses": {
-                        "bilibili": "active_kernel",
-                        "youtube": "active_legacy",
-                    },
+                    "platform_statuses": spec["platform_statuses"],
                     "cutover_state": "CONFIRMED",
                     "idempotent": True,
                 }
@@ -2724,7 +2847,8 @@ class BilibiliPlatformCutoverPublisher:
             if pending:
                 connection.execute("ROLLBACK")
                 raise KernelConflict(
-                    "An interrupted Bilibili Platform Kernel publication requires reconciliation"
+                    f"An interrupted {display_name} Platform Kernel publication "
+                    "requires reconciliation"
                 )
             connection.execute(
                 "INSERT INTO platform_cutover_intents("
@@ -2804,10 +2928,7 @@ class BilibiliPlatformCutoverPublisher:
             "generation": 1,
             "authority_path": str(authority_path),
             "authority_sha256": file_sha256,
-            "platform_statuses": {
-                "bilibili": "active_kernel",
-                "youtube": "active_legacy",
-            },
+            "platform_statuses": spec["platform_statuses"],
             "cutover_state": "CONFIRMED",
             "idempotent": False,
         }
@@ -2815,8 +2936,8 @@ class BilibiliPlatformCutoverPublisher:
     def reconcile(
         self, *, platform: str, control_store_root: Path
     ) -> dict[str, Any]:
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only the Bilibili Platform Kernel Cutover is active")
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
         root = control_store_root.resolve()
         authority_path = root / PLATFORM_AUTHORITY_DIR / f"{platform}.json"
         with self._connect(root) as connection:
@@ -2827,7 +2948,8 @@ class BilibiliPlatformCutoverPublisher:
             if len(pending) != 1:
                 connection.execute("ROLLBACK")
                 raise KernelConflict(
-                    "Bilibili Platform Kernel reconciliation requires one prepared intent"
+                    f"{display_name} Platform Kernel reconciliation requires one "
+                    "prepared intent"
                 )
             intent = pending[0]
             authority = __import__("json").loads(intent["authority_json"])
@@ -2839,10 +2961,10 @@ class BilibiliPlatformCutoverPublisher:
             ):
                 connection.execute("ROLLBACK")
                 raise KernelConflict(
-                    "Interrupted Bilibili Platform Kernel Exit Evidence drifted"
+                    f"Interrupted {display_name} Platform Kernel Exit Evidence drifted"
                 )
-            evidence = _validate_evidence(read_json(evidence_path))
-            _require_formal_exit_evidence(evidence_path)
+            evidence = _validate_evidence(read_json(evidence_path), platform)
+            _require_formal_exit_evidence(evidence_path, platform)
             global_gate_binding = authority.get("global_gate_binding")
             if not isinstance(global_gate_binding, dict):
                 connection.execute("ROLLBACK")
@@ -2903,7 +3025,7 @@ class BilibiliPlatformCutoverPublisher:
             prepared_snapshot_sha256 = intent["candidate_snapshot_sha256"]
             if prepared_snapshot_sha256 is None:
                 self._require_confirmable_candidate(
-                    root=root, evidence=evidence, candidate_row=candidate
+                    root=root, evidence=evidence, candidate_row=candidate, platform=platform
                 )
                 changed = connection.execute(
                     "UPDATE platform_cutover_intents "
@@ -2953,7 +3075,7 @@ class BilibiliPlatformCutoverPublisher:
             )
             confirmed_candidate = self._candidate_snapshot(candidate)
             self._current_candidate_run(
-                root=root, row=candidate, expected_stage="delivered"
+                root=root, row=candidate, expected_stage="delivered", platform=platform
             )
             confirmed_candidate["state"] = "CONFIRMED"
             connection.execute(
@@ -2983,8 +3105,9 @@ class BilibiliPlatformCutoverPublisher:
     def require_current(
         self, *, platform: str, control_store_root: Path
     ) -> dict[str, Any]:
-        if platform != SUPPORTED_PLATFORM:
-            raise ContractError("Only the Bilibili Platform Kernel Cutover is active")
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
+        prefix = spec["error_prefix"]
         root = control_store_root.resolve()
         authority_path = root / PLATFORM_AUTHORITY_DIR / f"{platform}.json"
         with self._connect(root) as connection:
@@ -3001,10 +3124,10 @@ class BilibiliPlatformCutoverPublisher:
             ).fetchone()[0]
         if current is None and candidate is not None and candidate["state"] != "CONFIRMED":
             raise KernelConflict(
-                "Bilibili Platform Kernel candidate awaits confirmation",
+                f"{display_name} Platform Kernel candidate awaits confirmation",
                 data={
                     "first_failing_gate": "platform_kernel_authority",
-                    "error_code": "bilibili_platform_authority_pending_confirmation",
+                    "error_code": f"{prefix}_platform_authority_pending_confirmation",
                 },
             )
         if (
@@ -3014,10 +3137,10 @@ class BilibiliPlatformCutoverPublisher:
             or sha256_file(authority_path) != current["authority_sha256"]
         ):
             raise KernelConflict(
-                "Bilibili Platform Kernel authority is absent, stale, or incomplete",
+                f"{display_name} Platform Kernel authority is absent, stale, or incomplete",
                 data={
                     "first_failing_gate": "platform_kernel_authority",
-                    "error_code": "bilibili_platform_authority_stale",
+                    "error_code": f"{prefix}_platform_authority_stale",
                 },
             )
         authority = read_json(authority_path)
@@ -3033,14 +3156,14 @@ class BilibiliPlatformCutoverPublisher:
             or sha256_file(evidence_path) != current["evidence_sha256"]
         ):
             raise KernelConflict(
-                "Bilibili Platform Kernel authority content conflicts with control state",
+                f"{display_name} Platform Kernel authority content conflicts with control state",
                 data={
                     "first_failing_gate": "platform_kernel_authority",
-                    "error_code": "bilibili_platform_authority_conflict",
+                    "error_code": f"{prefix}_platform_authority_conflict",
                 },
             )
-        evidence = _validate_evidence(read_json(evidence_path))
-        _require_formal_exit_evidence(evidence_path)
+        evidence = _validate_evidence(read_json(evidence_path), platform)
+        _require_formal_exit_evidence(evidence_path, platform)
         return {
             "platform": platform,
             "generation": int(current["generation"]),
@@ -3064,4 +3187,12 @@ class BilibiliPlatformCutoverPublisher:
         }
 
 
-__all__ = ["ACTIVATION_FAULT_POINTS", "BilibiliPlatformCutoverPublisher"]
+# The publisher machinery serves every supported platform; the class keeps its
+# original name for CLI and test compatibility.
+PlatformCutoverPublisher = BilibiliPlatformCutoverPublisher
+
+__all__ = [
+    "ACTIVATION_FAULT_POINTS",
+    "BilibiliPlatformCutoverPublisher",
+    "PlatformCutoverPublisher",
+]

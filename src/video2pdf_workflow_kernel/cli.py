@@ -53,7 +53,10 @@ from .platform_kernel import (
     ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
     BilibiliPlatformCutoverPublisher,
 )
-from .production_bootstrap import bootstrap_bilibili_production_probe
+from .production_bootstrap import (
+    bootstrap_bilibili_production_probe,
+    bootstrap_youtube_production_probe,
+)
 from .source_acquire import (
     acquire_bilibili_source_for_run,
     reconcile_bilibili_source_acquire,
@@ -445,7 +448,7 @@ def _parser() -> argparse.ArgumentParser:
         "platform-kernel-candidate-reconcile"
     )
     cutover_candidate_reconcile.add_argument(
-        "--platform", required=True, choices=("bilibili",)
+        "--platform", required=True, choices=("bilibili", "youtube")
     )
     cutover_candidate_reconcile.add_argument(
         "--control-store-root", required=True, type=Path
@@ -464,7 +467,7 @@ def _parser() -> argparse.ArgumentParser:
         "platform-kernel-candidate-rebind"
     )
     cutover_candidate_rebind.add_argument(
-        "--platform", required=True, choices=("bilibili",)
+        "--platform", required=True, choices=("bilibili", "youtube")
     )
     cutover_candidate_rebind.add_argument(
         "--control-store-root", required=True, type=Path
@@ -665,7 +668,7 @@ def _add_bootstrap_probe_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", required=True, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fixture", type=Path)
-    mode.add_argument("--platform", choices=("bilibili",))
+    mode.add_argument("--platform", choices=("bilibili", "youtube"))
     parser.add_argument("--source-url")
     parser.add_argument("--cookie-file", type=Path)
     parser.add_argument("--original-title")
@@ -735,6 +738,35 @@ def _error(command: str, error: KernelError) -> dict:
     }
 
 
+def _platform_cutover_presence(db_path: Path) -> set[str]:
+    """Return platforms with any committed platform-kernel control state."""
+    import sqlite3
+
+    platforms: set[str] = set()
+    try:
+        connection = sqlite3.connect(
+            db_path, timeout=0.05, isolation_level=None
+        )
+        try:
+            for table in (
+                "platform_cutover_authority",
+                "platform_cutover_candidates",
+                "platform_cutover_intents",
+            ):
+                try:
+                    rows = connection.execute(
+                        f"SELECT DISTINCT platform FROM {table}"
+                    ).fetchall()
+                except sqlite3.DatabaseError:
+                    continue
+                platforms.update(row[0] for row in rows)
+        finally:
+            connection.close()
+    except (OSError, sqlite3.DatabaseError):
+        return platforms
+    return platforms
+
+
 def _resource_status_data(status: Any) -> dict[str, Any]:
     return {
         "queue_id": status.queue_id,
@@ -787,17 +819,24 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command == "workflow-policy-check":
         result = GlobalGatePublisher().check_policy(control_store_root=args.control_store_root)
         platform_db = args.control_store_root.resolve() / "platform-kernel-control.sqlite3"
+        platform_statuses = {"bilibili": "active_legacy", "youtube": "active_legacy"}
         if platform_db.is_file():
-            platform_policy = BilibiliPlatformCutoverPublisher().check_policy(
-                platform="bilibili",
-                control_store_root=args.control_store_root,
-            )
-            result.update(platform_policy)
-        else:
-            result["platform_statuses"] = {
-                "bilibili": "active_legacy",
-                "youtube": "active_legacy",
-            }
+            publisher = BilibiliPlatformCutoverPublisher()
+            with_control_presence = _platform_cutover_presence(platform_db)
+            for platform in ("bilibili", "youtube"):
+                try:
+                    platform_policy = publisher.check_policy(
+                        platform=platform,
+                        control_store_root=args.control_store_root,
+                    )
+                    platform_statuses.update(platform_policy["platform_statuses"])
+                except KernelError:
+                    if platform in with_control_presence:
+                        raise
+                    # No committed authority, candidate, or intent for this
+                    # platform: keep its legacy fallback status.
+                    continue
+        result["platform_statuses"] = platform_statuses
         return _ok(command, "workflow_policy_current", result, result["global_gate_authority"]["path"])
     if command == "platform-kernel-prepare":
         result = BilibiliPlatformCutoverPublisher().prepare_candidate(
@@ -1335,17 +1374,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 raise CliUsageError(
                     "production Bootstrap cannot accept --title-override"
                 )
-            result = bootstrap_bilibili_production_probe(
-                kernel=kernel,
-                workspace_root=args.workspace_root,
-                source_url=args.source_url,
-                cookie_file=args.cookie_file,
-                original_title=args.original_title,
-                task_start=args.task_start,
-                request_id=args.request_id,
-                explicit_item_selector=args.explicit_item_selector,
-                provider_recording=args.provider_recording,
-            )
+            probe_kwargs = {
+                "kernel": kernel,
+                "workspace_root": args.workspace_root,
+                "source_url": args.source_url,
+                "cookie_file": args.cookie_file,
+                "original_title": args.original_title,
+                "task_start": args.task_start,
+                "request_id": args.request_id,
+                "explicit_item_selector": args.explicit_item_selector,
+                "provider_recording": args.provider_recording,
+            }
+            if args.platform == "youtube":
+                result = bootstrap_youtube_production_probe(**probe_kwargs)
+            else:
+                result = bootstrap_bilibili_production_probe(**probe_kwargs)
             data = {
                 "run_id": result.run_id,
                 "probe_record": str(result.record_path),
@@ -1449,13 +1492,13 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             args.workspace_root, kernel.contracts
         )
         probe = _production_probe_from_path(args.probe, kernel.contracts)
-        if probe.canonical_platform != "bilibili":
+        if probe.canonical_platform not in {"bilibili", "youtube"}:
             raise CliUsageError(
-                "cutover candidate init is active only for Bilibili"
+                "cutover candidate init is active only for Bilibili or YouTube"
             )
         publisher = BilibiliPlatformCutoverPublisher()
         candidate = publisher.begin_candidate_initialization(
-            platform="bilibili",
+            platform=probe.canonical_platform,
             control_store_root=args.control_store_root,
             candidate_probe=args.probe,
             candidate_session_id=args.session_id,
@@ -1470,7 +1513,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             fault_point=args.fault_point,
         )
         publisher.record_candidate_initialized(
-            platform="bilibili",
+            platform=probe.canonical_platform,
             control_store_root=args.control_store_root,
             candidate_run_dir=result.run_dir,
         )
@@ -1480,7 +1523,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             {
                 "run_id": result.run_id,
                 "run_dir": str(result.run_dir),
-                "platform": "bilibili",
+                "platform": probe.canonical_platform,
                 "stage": "generating",
                 "session_id": args.session_id,
             },
@@ -1636,12 +1679,12 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             args.workspace_root, kernel.contracts
         )
         probe = _production_probe_from_path(args.probe, kernel.contracts)
-        if probe.canonical_platform != "bilibili":
+        if probe.canonical_platform not in {"bilibili", "youtube"}:
             raise CliUsageError(
-                "production init-run is active only for Bilibili"
+                "production init-run is active only for Bilibili or YouTube"
             )
         platform = BilibiliPlatformCutoverPublisher().require_current(
-            platform="bilibili",
+            platform=probe.canonical_platform,
             control_store_root=args.control_store_root,
         )
         platform_authority = read_json(Path(platform["authority_path"]))
@@ -1657,7 +1700,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             {
                 "run_id": result.run_id,
                 "run_dir": str(result.run_dir),
-                "platform": "bilibili",
+                "platform": probe.canonical_platform,
                 "stage": "generating",
                 "session_id": args.session_id,
             },

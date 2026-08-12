@@ -14,7 +14,7 @@ This table records current executable authority as of 2026-08-09. Bilibili remai
 |---|---|---|---|
 | Bilibili render workflow for new Runs | `active_legacy` | Workflow CLI candidate seam, Bilibili adapter, Kernel Run Record and delivery lifecycle, Bilibili skill semantics | Runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence |
 | Existing Bilibili directories | `active_legacy` | Run-record-free Legacy Acceptance Input Set and explicit Legacy coordination | Explicit historical Run migration |
-| YouTube render workflow | `active_legacy` | `AGENTS.md`, `CLAUDE.md`, current YouTube skill, validators, and guards | YouTube Platform Kernel Cutover |
+| YouTube render workflow | `active_legacy` | `AGENTS.md`, `CLAUDE.md`, current YouTube skill, validators, and guards | YouTube Platform Kernel Cutover (`youtube-platform-kernel-cutover`, Slice 13) |
 | Pyramid validation in current render skills | `active_legacy` | Current Pyramid skill, schemas, and gate reports | Applicable Platform Kernel Cutover for Kernel-issued tasks |
 | Legacy Final Acceptance and Acceptance Report v1 | superseded | Historical evidence only; rejected by the active Guard | Completed Global Gate Cutover |
 | Current Delivery Guard and session-scoped delivery targets | `active_global_gate` | Acceptance Report v2 plus committed execution, Patch, report, gate, and fingerprint authority | Active |
@@ -23,10 +23,12 @@ This table records current executable authority as of 2026-08-09. Bilibili remai
 | Video Workflow Kernel core and Workflow CLI | `target_only`; Bilibili candidate seam available | `scripts/video_workflow.py`, `src/video2pdf_workflow_kernel/`, registered Kernel schemas, ADRs 0008–0027 | Runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence |
 | Kernel Gate Provider adapters | `target_only` | Registered provider executable contracts, including Pyramid bindings and manifest-only diagnostic compile | Owning Global or Platform Cutover |
 | Bilibili Video Platform Adapter | `target_only`; candidate seam available | ADRs 0008, 0011, 0018–0019, and 0040 | Runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence |
-| YouTube Video Platform Adapter | `target_only` | ADRs 0008, 0011, 0018–0019, and 0040 | YouTube Platform Kernel Cutover |
+| YouTube Video Platform Adapter | `target_only` | ADRs 0008, 0011, 0018–0019, and 0040 | YouTube Platform Kernel Cutover (`youtube-platform-kernel-cutover`, Slice 13) |
 | Resource Admission and Batch projection | `target_only` | ADRs 0035–0037 and 0042–0047 | Batch Cutover |
 
-The shared final-quality gate has `active_global_gate` status. No component has `active_kernel` status. Bilibili and YouTube remain `active_legacy`; the Bilibili implementation and its one-candidate seam carry no ordinary runtime authority.
+The shared final-quality gate has `active_global_gate` status. No component has `active_kernel` status. Bilibili and YouTube remain `active_legacy`; the Bilibili implementation and its one-candidate seam carry no ordinary runtime authority. Platform Kernel authority remains unchanged: the Global Gate scope is fixed and platform cutovers add or keep Kernel authority one platform at a time.
+
+YouTube remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence.
 
 Kernel coordination is active only for new Bilibili Runs. Delivery Quality Slices A-D supply the active global quality policy, precompile assurance, final evidence, Acceptance Report v2, and Guard eligibility for Kernel and Legacy inputs. Existing Bilibili directories and YouTube retain Legacy platform coordination.
 
@@ -156,7 +158,7 @@ Build completion and runtime activation are separate. The following activation s
 
 1. Global Gate Cutover — completed by ADR 0064: Acceptance v2 schemas, Legacy Input Set, Acceptance Execution Context, task authority, Patch/report publication, materializer, validator, Delivery Guard, skills, instructions, mirrors, and tests now form the active global gate.
 2. Bilibili Platform Kernel Cutover — implementation complete, runtime activation pending: the Bilibili adapter, scaffold and task ownership, production and compile providers, Bilibili skill/instructions, final evidence, lifecycle integration, policy checks, and tests provide the one-candidate cutover seam. Its eventual activation scope covers new Bilibili Runs only. Cold-start publication passes through one `PREPARED`/`INITIALIZED` candidate, candidate-only `PROVISIONAL` delivery completion, published Exit Evidence, and final `CONFIRMED` authority; only the final state admits ordinary Runs.
-3. YouTube Platform Kernel Cutover: the corresponding YouTube adapter and ownership surfaces after Bilibili evidence passes.
+3. YouTube Platform Kernel Cutover: the YouTube adapter and ownership surfaces activate only after the Bilibili Kernel cutover evidence is current; the YouTube cutover publishes Slice 13 Exit Evidence naming components_activated ["youtube_platform_kernel"], platform "youtube", platform_statuses {"bilibili":"active_kernel","youtube":"active_kernel"}, and keeps the Global Gate and Bilibili Kernel authority unchanged.
 4. Batch Cutover: Batch Supervisor, Batch projections, Batch skill, recovery tests, and removal of global `--concurrency`, free-form child workflows, and PDF-existence success. Resource Admission is already implemented and tested before live single-video providers.
 5. Each cutover requires a schema-valid Exit Evidence Manifest; inactive provider code and schemas cannot claim authority merely because they exist.
 

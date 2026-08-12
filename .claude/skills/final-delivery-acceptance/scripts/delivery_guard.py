@@ -862,8 +862,111 @@ def _ensure_compile_report_producer(report: dict[str, Any], target: DeliveryTarg
         raise GuardError("final compile report argv must include --mode final")
 
 
+def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
+    """Prove the Kernel final-compile-report/1.0.0 contract for kernel targets."""
+
+    report = _require_object(
+        _load_json(target.compile_report_path, "final compile report"),
+        "final compile report",
+    )
+    schema_name = _require_string(
+        report.get("schema_name"), "final compile report.schema_name"
+    )
+    if schema_name != "final-compile-report":
+        raise GuardError(
+            f"final compile report schema_name must be 'final-compile-report', got {schema_name}"
+        )
+    schema_version = _require_string(
+        report.get("schema_version"), "final compile report.schema_version"
+    )
+    if schema_version != "1.0.0":
+        raise GuardError(
+            f"final compile report schema_version must be '1.0.0', got {schema_version}"
+        )
+    mode = _require_string(report.get("mode"), "final compile report.mode")
+    if mode != "final":
+        raise GuardError(f"final compile report mode must be 'final', got {mode}")
+    status = _require_string(report.get("status"), "final compile report.status")
+    if status != "pass":
+        raise GuardError(f"final compile report status must be 'pass', got {status}")
+    if report.get("delivery_authority") is not False:
+        raise GuardError("final compile report delivery_authority must be false")
+    report_sha256 = _require_string(
+        report.get("report_sha256"), "final compile report.report_sha256"
+    )
+    expected_sha256 = hashlib.sha256(
+        canonical_json_bytes(
+            {key: value for key, value in report.items() if key != "report_sha256"}
+        )
+    ).hexdigest()
+    if report_sha256 != expected_sha256:
+        raise GuardError("final compile report report_sha256 is stale")
+
+    provider = _require_object(
+        report.get("compiler_provider"), "final compile report.compiler_provider"
+    )
+    provider_id = _require_string(
+        provider.get("provider_id"),
+        "final compile report.compiler_provider.provider_id",
+    )
+    provider_sha256 = _require_string(
+        provider.get("provider_sha256"),
+        "final compile report.compiler_provider.provider_sha256",
+    )
+    expected_provider_sha256 = _file_sha256(
+        REPO_ROOT / "src" / "video2pdf_workflow_kernel" / "final_compile.py"
+    )
+    if (
+        provider_id != "guarded-final-compile-provider"
+        or provider_sha256 != expected_provider_sha256
+    ):
+        raise GuardError(
+            "final compile report compiler_provider does not match the guarded final compile provider"
+        )
+
+    pdf = _require_object(report.get("pdf"), "final compile report.pdf")
+    pdf_path = Path(_require_string(pdf.get("path"), "final compile report.pdf.path"))
+    resolved_pdf = (
+        pdf_path
+        if pdf_path.is_absolute()
+        else target.compile_report_path.parent / pdf_path
+    ).resolve()
+    if resolved_pdf != target.final_pdf.resolve():
+        raise GuardError("final compile report pdf does not match delivery_target.final_pdf")
+    if _require_string(
+        pdf.get("sha256"), "final compile report.pdf.sha256"
+    ) != _file_sha256(target.final_pdf):
+        raise GuardError("final compile report final_pdf_fingerprint is stale")
+    if not isinstance(pdf.get("size"), int) or pdf["size"] != target.final_pdf.stat().st_size:
+        raise GuardError("final compile report final_pdf size is stale")
+
+    closure = _require_object(
+        report.get("dependency_closure"), "final compile report.dependency_closure"
+    )
+    if closure.get("complete") is not True:
+        raise GuardError("final compile report dependency_closure must be complete")
+    inputs = closure.get("inputs")
+    if not isinstance(inputs, list):
+        raise GuardError("malformed final compile report: dependency_closure.inputs must be a list")
+    main_tex_sha = _file_sha256(target.main_tex)
+    bound_tex = any(
+        isinstance(item, dict)
+        and item.get("logical_id") == "integrated_main"
+        and _require_string(
+            item.get("sha256"), "final compile report dependency input sha256"
+        )
+        == main_tex_sha
+        for item in inputs
+    )
+    if not bound_tex:
+        raise GuardError("final compile report source_tex does not match delivery_target.main_tex")
+
+
 def _ensure_compile_provenance(target: DeliveryTarget) -> None:
     if not target.compile_provenance_required:
+        return
+    if target.kernel_authority:
+        _ensure_kernel_compile_provenance(target)
         return
     if not target.compile_report_path.exists():
         raise GuardError(f"final compile report is missing: {target.compile_report_relative}")

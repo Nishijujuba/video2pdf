@@ -1,6 +1,6 @@
 # Delivery Quality Context
 
-Status: `active_global_gate`. It succeeded the Final Acceptance Context at the Global Gate Cutover. Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`.
+Status: active_global_gate. It succeeded the Final Acceptance Context at the Global Gate Cutover. Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence.
 
 A cold-start cutover candidate consumes a provider-current passing Acceptance Report v2 to reach `PROVISIONAL`; after it reaches `accepted`, it obtains a fresh current Delivery Guard and uses that Guard to reach `delivered`. This bounded use of the `active_global_gate` contracts does not activate the platform or admit ordinary Runs; only final `CONFIRMED` platform authority with published Slice 12 evidence does so.
 

@@ -679,9 +679,9 @@ class VideoWorkflowKernel:
             raise ContractError(
                 "Kernel delivery initialization requires session and Global Gate together"
             )
-        if kernel_delivery and probe.canonical_platform != "bilibili":
+        if kernel_delivery and probe.canonical_platform not in {"bilibili", "youtube"}:
             raise ContractError(
-                "Run Record v4 initialization is active only for Bilibili"
+                "Run Record v4 initialization is active only for Bilibili or YouTube"
             )
         artifact_plan = self._production_artifact_plan(
             probe.run_id,

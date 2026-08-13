@@ -2420,8 +2420,8 @@ class AcceptanceV2Provider:
                 expected_revision_delta or 0
             )
             or successor.get("schema_version") != "4.0.0"
-            or successor.get("canonical_platform") != "bilibili"
-            or successor.get("platform_adapter") != "bilibili"
+            or successor.get("canonical_platform") not in ("bilibili", "youtube")
+            or successor.get("platform_adapter") not in ("bilibili", "youtube")
             or expected_revision_delta is None
             or not isinstance(intent_id, str)
             or not intent_id

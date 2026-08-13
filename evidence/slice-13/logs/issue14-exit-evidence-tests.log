@@ -1,0 +1,2 @@
+EVIDENCE_IMPLEMENTATION_COMMIT: 162e4330c6eded5b73c41f5f35f55d7072a8b739
+{"actual_exit_code":0,"expected_exit_code":0,"qualification_run_id":"ba5c1a28-10f9-4467-9502-7944b1b59543","schema_name":"issue14-qualified-command-summary","schema_version":"1.0.0","test_id":"issue14-exit-evidence-tests"}

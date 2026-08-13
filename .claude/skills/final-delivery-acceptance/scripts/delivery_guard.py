@@ -493,8 +493,8 @@ def _resolve_kernel_delivery_target(
     run_record = _require_object(_load_json(run_path, "Kernel Run Record"), "Kernel Run Record")
     if run_record.get("schema_name") != "run-record" or run_record.get("schema_version") != "4.0.0":
         raise GuardError("Bilibili Kernel delivery requires Run Record v4")
-    if run_record.get("canonical_platform") != "bilibili" or run_record.get("platform_adapter") != "bilibili":
-        raise GuardError("Kernel delivery authority is restricted to Bilibili")
+    if run_record.get("canonical_platform") not in ("bilibili", "youtube") or run_record.get("platform_adapter") not in ("bilibili", "youtube"):
+        raise GuardError("Kernel delivery authority is restricted to Bilibili or YouTube")
 
     run_id = _require_string(current["run_id"], "Kernel run_id")
     intent_id = _require_string(current["lifecycle_intent_id"], "Kernel lifecycle_intent_id")
@@ -1474,7 +1474,7 @@ def prepare_old_pdf(
                 isinstance(run_record, dict)
                 and run_record.get("schema_name") == "run-record"
                 and run_record.get("schema_version") == "4.0.0"
-                and run_record.get("canonical_platform") == "bilibili"
+                and run_record.get("canonical_platform") in ("bilibili", "youtube")
             ):
                 raise GuardError(
                     "Bilibili Kernel Run rejects Legacy old-pdf-prepare mutation; "

@@ -196,8 +196,8 @@ def require_current_kernel_guarded_decision(
     if (
         run.get("schema_name") != "run-record"
         or run.get("schema_version") != "4.0.0"
-        or run.get("canonical_platform") != "bilibili"
-        or run.get("platform_adapter") != "bilibili"
+        or run.get("canonical_platform") not in ("bilibili", "youtube")
+        or run.get("platform_adapter") not in ("bilibili", "youtube")
         or Path(str(run.get("output_path", ""))).resolve() != run_root
         or not isinstance(delivery, dict)
         or delivery.get("stage") != "accepted"

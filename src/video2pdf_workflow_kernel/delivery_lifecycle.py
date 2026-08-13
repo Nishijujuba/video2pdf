@@ -173,7 +173,7 @@ class DeliveryLifecycleProvider:
             )
         self.contracts.validate("run-record", value)
         if (
-            value.get("canonical_platform") != "bilibili"
+            value.get("canonical_platform") not in ("bilibili", "youtube")
             or Path(value.get("output_path", "")).resolve() != root
         ):
             _reject(

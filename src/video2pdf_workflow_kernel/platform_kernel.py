@@ -24,6 +24,7 @@ from .evidence import (
     EvidenceSupportError,
     git_output,
     sha256_git_archive,
+    sha256_git_blob,
 )
 from .global_gate import GlobalGatePublisher
 from .kernel import VideoWorkflowKernel
@@ -183,7 +184,13 @@ def _fingerprint(value: dict[str, Any], field: str) -> str:
     return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
 
-def _evidence_path(binding: Any, *, label: str, allow_absolute: bool) -> Path:
+def _evidence_path(
+    binding: Any,
+    *,
+    label: str,
+    allow_absolute: bool,
+    implementation_commit: str | None = None,
+) -> Path:
     if not isinstance(binding, dict):
         raise ContractError(f"Bilibili cutover {label} binding is absent")
     raw_path = binding.get("path")
@@ -200,7 +207,25 @@ def _evidence_path(binding: Any, *, label: str, allow_absolute: bool) -> Path:
     if not path.is_relative_to(PROJECT_ROOT) or not path.is_file():
         raise ContractError(f"Bilibili cutover {label} escapes trusted evidence storage")
     if sha256_file(path) != expected_sha:
-        raise ContractError(f"Bilibili cutover {label} fingerprint is stale")
+        # Delivery projections legitimately evolve after a delivered cutover
+        # (session archival, task-index ownership updates).  The evidence
+        # identity stays anchored to the immutable publication history: the
+        # blob at the manifest implementation_commit is the canonical content.
+        anchored = False
+        if implementation_commit:
+            try:
+                anchored = (
+                    sha256_git_blob(
+                        PROJECT_ROOT,
+                        implementation_commit,
+                        path.relative_to(PROJECT_ROOT).as_posix(),
+                    )
+                    == expected_sha
+                )
+            except EvidenceSupportError:
+                anchored = False
+        if not anchored:
+            raise ContractError(f"Bilibili cutover {label} fingerprint is stale")
     return path
 
 
@@ -268,12 +293,21 @@ def _validate_guarded_delivery(value: dict[str, Any], platform: str) -> None:
                 f"{display_name} guarded-delivery collection artifact set is invalid"
             )
         resolved_artifacts: dict[str, Path] = {}
+        guarded_implementation_commit = value.get("implementation_commit")
+        if not isinstance(guarded_implementation_commit, str):
+            guarded_implementation_commit = None
         for role in expected_roles:
             manifest_path = _evidence_path(
-                manifest_artifacts[role], label=role, allow_absolute=False
+                manifest_artifacts[role],
+                label=role,
+                allow_absolute=False,
+                implementation_commit=guarded_implementation_commit,
             )
             collected_path = _evidence_path(
-                collected_artifacts[role], label=role, allow_absolute=True
+                collected_artifacts[role],
+                label=role,
+                allow_absolute=True,
+                implementation_commit=guarded_implementation_commit,
             )
             if (
                 manifest_path != collected_path

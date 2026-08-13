@@ -184,12 +184,42 @@ def _fingerprint(value: dict[str, Any], field: str) -> str:
     return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
 
+def _evidence_publication_commit(
+    implementation_commit: str, relative_manifest: str
+) -> str | None:
+    """Locate the evidence publication commit: the direct child of the
+    implementation commit that published the identical manifest blob."""
+    try:
+        head_blob = git_output(
+            PROJECT_ROOT, "rev-parse", f"HEAD:{relative_manifest}"
+        )
+        for candidate in git_output(
+            PROJECT_ROOT, "log", "--format=%H", "HEAD", "--", relative_manifest
+        ).splitlines():
+            parents = git_output(
+                PROJECT_ROOT, "rev-list", "--parents", "-n", "1", candidate
+            ).split()
+            if len(parents) != 2 or parents[1] != implementation_commit:
+                continue
+            try:
+                candidate_blob = git_output(
+                    PROJECT_ROOT, "rev-parse", f"{candidate}:{relative_manifest}"
+                )
+            except EvidenceSupportError:
+                continue
+            if candidate_blob == head_blob:
+                return candidate
+    except EvidenceSupportError:
+        return None
+    return None
+
+
 def _evidence_path(
     binding: Any,
     *,
     label: str,
     allow_absolute: bool,
-    implementation_commit: str | None = None,
+    anchor_commits: tuple[str, ...] = (),
 ) -> Path:
     if not isinstance(binding, dict):
         raise ContractError(f"Bilibili cutover {label} binding is absent")
@@ -210,26 +240,26 @@ def _evidence_path(
         # Delivery projections legitimately evolve after a delivered cutover
         # (session archival, task-index ownership updates).  The evidence
         # identity stays anchored to the immutable publication history: the
-        # blob at the manifest implementation_commit is the canonical content.
+        # blob at the manifest implementation_commit — or, for files first
+        # committed by the publication itself, at the publication commit —
+        # is the canonical content.
         anchored = False
-        if implementation_commit:
+        relative = path.relative_to(PROJECT_ROOT).as_posix()
+        for commit in anchor_commits:
             try:
-                anchored = (
-                    sha256_git_blob(
-                        PROJECT_ROOT,
-                        implementation_commit,
-                        path.relative_to(PROJECT_ROOT).as_posix(),
-                    )
-                    == expected_sha
-                )
+                if sha256_git_blob(PROJECT_ROOT, commit, relative) == expected_sha:
+                    anchored = True
+                    break
             except EvidenceSupportError:
-                anchored = False
+                continue
         if not anchored:
             raise ContractError(f"Bilibili cutover {label} fingerprint is stale")
     return path
 
 
-def _validate_guarded_delivery(value: dict[str, Any], platform: str) -> None:
+def _validate_guarded_delivery(
+    value: dict[str, Any], platform: str, publication_commit: str | None = None
+) -> None:
     spec = _platform_spec(platform)
     prefix = spec["error_prefix"]
     display_name = spec["display_name"]
@@ -294,20 +324,24 @@ def _validate_guarded_delivery(value: dict[str, Any], platform: str) -> None:
             )
         resolved_artifacts: dict[str, Path] = {}
         guarded_implementation_commit = value.get("implementation_commit")
-        if not isinstance(guarded_implementation_commit, str):
-            guarded_implementation_commit = None
+        anchor_commits: tuple[str, ...] = ()
+        if isinstance(guarded_implementation_commit, str):
+            anchors = [guarded_implementation_commit]
+            if publication_commit and publication_commit != guarded_implementation_commit:
+                anchors.append(publication_commit)
+            anchor_commits = tuple(anchors)
         for role in expected_roles:
             manifest_path = _evidence_path(
                 manifest_artifacts[role],
                 label=role,
                 allow_absolute=False,
-                implementation_commit=guarded_implementation_commit,
+                anchor_commits=anchor_commits,
             )
             collected_path = _evidence_path(
                 collected_artifacts[role],
                 label=role,
                 allow_absolute=True,
-                implementation_commit=guarded_implementation_commit,
+                anchor_commits=anchor_commits,
             )
             if (
                 manifest_path != collected_path
@@ -406,7 +440,9 @@ def _validate_guarded_delivery(value: dict[str, Any], platform: str) -> None:
         ) from exc
 
 
-def _validate_evidence(value: Any, platform: str) -> dict[str, Any]:
+def _validate_evidence(
+    value: Any, platform: str, evidence_path: Path | None = None
+) -> dict[str, Any]:
     spec = _platform_spec(platform)
     prefix = spec["error_prefix"]
     display_name = spec["display_name"]
@@ -453,7 +489,20 @@ def _validate_evidence(value: Any, platform: str) -> dict[str, Any]:
                 "error_code": f"{prefix}_cutover_atomic_member_failed",
             },
         )
-    _validate_guarded_delivery(value, platform)
+    publication_commit = None
+    evidence_implementation_commit = value.get("implementation_commit")
+    if isinstance(evidence_implementation_commit, str) and evidence_path is not None:
+        try:
+            relative_manifest = evidence_path.resolve().relative_to(
+                PROJECT_ROOT
+            ).as_posix()
+        except ValueError:
+            relative_manifest = None
+        if relative_manifest:
+            publication_commit = _evidence_publication_commit(
+                evidence_implementation_commit, relative_manifest
+            )
+    _validate_guarded_delivery(value, platform, publication_commit)
     implementation_commit = value.get("implementation_commit")
     fingerprints = value.get("artifact_fingerprints")
     try:
@@ -2804,7 +2853,7 @@ class BilibiliPlatformCutoverPublisher:
         evidence_path = exit_evidence.resolve()
         if not evidence_path.is_file():
             raise ContractError(f"{display_name} cutover Exit Evidence is unavailable")
-        evidence = _validate_evidence(read_json(evidence_path), platform)
+        evidence = _validate_evidence(read_json(evidence_path), platform, evidence_path)
         _require_formal_exit_evidence(evidence_path, platform)
         evidence_sha256 = sha256_file(evidence_path)
         root = control_store_root.resolve()
@@ -2997,7 +3046,7 @@ class BilibiliPlatformCutoverPublisher:
                 raise KernelConflict(
                     f"Interrupted {display_name} Platform Kernel Exit Evidence drifted"
                 )
-            evidence = _validate_evidence(read_json(evidence_path), platform)
+            evidence = _validate_evidence(read_json(evidence_path), platform, evidence_path)
             _require_formal_exit_evidence(evidence_path, platform)
             global_gate_binding = authority.get("global_gate_binding")
             if not isinstance(global_gate_binding, dict):
@@ -3196,7 +3245,7 @@ class BilibiliPlatformCutoverPublisher:
                     "error_code": f"{prefix}_platform_authority_conflict",
                 },
             )
-        evidence = _validate_evidence(read_json(evidence_path), platform)
+        evidence = _validate_evidence(read_json(evidence_path), platform, evidence_path)
         _require_formal_exit_evidence(evidence_path, platform)
         return {
             "platform": platform,

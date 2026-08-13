@@ -439,6 +439,31 @@ def commit_paths(commit: str) -> set[str]:
     )
 
 
+def _publication_commit(
+    manifest: dict[str, Any], manifest_relative: str
+) -> str | None:
+    """Locate the evidence publication commit: the direct child of the
+    implementation commit that published the identical manifest blob."""
+    implementation_commit = manifest["implementation_commit"]
+    try:
+        head_blob = git("rev-parse", f"HEAD:{manifest_relative}")
+    except EvidenceError:
+        return None
+    for candidate in git(
+        "log", "--format=%H", "HEAD", "--", manifest_relative
+    ).splitlines():
+        parents = git("rev-list", "--parents", "-n", "1", candidate).split()
+        if len(parents) != 2 or parents[1] != implementation_commit:
+            continue
+        try:
+            candidate_blob = git("rev-parse", f"{candidate}:{manifest_relative}")
+        except EvidenceError:
+            continue
+        if candidate_blob == head_blob:
+            return candidate
+    return None
+
+
 def validate_lineage(
     manifest: dict[str, Any], manifest_path: Path, *, pre_publication: bool
 ) -> None:
@@ -465,15 +490,7 @@ def validate_lineage(
     worktree_blob = git("hash-object", f"--path={manifest_relative}", "--", manifest_relative)
     if head_blob != worktree_blob:
         raise EvidenceError("current manifest differs from its committed HEAD blob")
-    publication_commit: str | None = None
-    for candidate in git("log", "--format=%H", "HEAD", "--", manifest_relative).splitlines():
-        try:
-            candidate_blob = git("rev-parse", f"{candidate}:{manifest_relative}")
-        except EvidenceError:
-            continue
-        if candidate_blob == head_blob:
-            publication_commit = candidate
-            break
+    publication_commit = _publication_commit(manifest, manifest_relative)
     if publication_commit is None:
         raise EvidenceError("cannot locate evidence publication commit")
     parents = git("rev-list", "--parents", "-n", "1", publication_commit).split()
@@ -1111,11 +1128,39 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             except EvidenceSupportError as exc:
                 raise EvidenceError(str(exc)) from exc
         else:
-            if not path.is_file():
-                raise EvidenceError(
-                    f"fingerprinted path does not exist: {item['path']}"
-                )
-            actual = sha256_file(path)
+            actual = sha256_file(path) if path.is_file() else None
+            if actual != item["sha256"]:
+                # Delivery projections legitimately evolve or are archived
+                # after a delivered cutover (session archival, task-index
+                # ownership updates).  The evidence identity stays anchored
+                # to the immutable publication history: the blob at the
+                # implementation commit — or, for files first committed by
+                # the publication itself, at the publication commit — is the
+                # canonical content.
+                anchored = False
+                anchors = [manifest["implementation_commit"]]
+                publication = _publication_commit(manifest, manifest_relative)
+                if publication and publication not in anchors:
+                    anchors.append(publication)
+                for commit in anchors:
+                    try:
+                        if (
+                            sha256_git_blob(PROJECT_ROOT, commit, item["path"])
+                            == item["sha256"]
+                        ):
+                            anchored = True
+                            break
+                    except EvidenceSupportError:
+                        continue
+                if not anchored:
+                    if actual is None:
+                        raise EvidenceError(
+                            f"fingerprinted path does not exist: {item['path']}"
+                        )
+                    raise EvidenceError(
+                        f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"
+                    )
+            continue
         if actual != item["sha256"]:
             raise EvidenceError(
                 f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"

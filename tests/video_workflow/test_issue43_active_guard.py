@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import types
 import unittest
 import uuid
 from unittest import mock
@@ -16,12 +17,25 @@ import fitz
 
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
+from tests.video_workflow import test_issue13_candidate_confirmation as candidate_test
+from tests.video_workflow import test_issue13_cold_start_cutover as cold_start_test
+from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
 from tests.video_workflow.test_issue43_global_gate import Issue43GlobalGateTests
 
 PROJECT_ROOT = acceptance_v2_tests.PROJECT_ROOT
 file_sha = acceptance_v2_tests.file_sha
 run_cli = acceptance_v2_tests.run_cli
 write_json = acceptance_v2_tests.write_json
+
+PROVIDER_RECORDING = (
+    PROJECT_ROOT
+    / "tests"
+    / "video_workflow"
+    / "fixtures"
+    / "providers"
+    / "bilibili"
+    / "fresh-download"
+)
 
 SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
@@ -313,186 +327,417 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         )
 
     def kernelize_bilibili_target(self) -> tuple[Path, Path]:
-        session_target_path = self.current
-        task_index_path = (
-            self.project_root / ".codex" / "delivery-targets" / "task-index.json"
+        """Commit a real accepted-stage Bilibili Kernel chain through the
+        public Workflow CLI (delivery-acceptance-bind template) and point the
+        harness at its authority paths.  The control store lives under the
+        project root so the active Guard's Kernel authority resolution can
+        reach the committed Global Gate authority."""
+        cold_start = cold_start_test.Issue13ColdStartCutoverTests(
+            "test_prepared_candidate_can_initialize_v4_through_public_cli"
         )
-        run_path = self.video_root / "workflow" / "run.json"
-        intent_id = hashlib.sha256(
-            f"kernel-guard:{self.id()}".encode("utf-8")
-        ).hexdigest()
-        predecessor = json.loads(run_path.read_text(encoding="utf-8"))
-        predecessor_sha = file_sha(run_path)
-        run_id = predecessor["run_id"]
-        predecessor_revision = predecessor["coordination_revision"]
-        successor_revision = predecessor_revision + 1
-        legacy_target = json.loads(self.target.read_text(encoding="utf-8"))
-        gate_path = (
-            self.project_root / legacy_target["global_gate_authority"]["path"]
-        ).resolve()
-        artifact_paths = {
-            "final_pdf": self.final_pdf,
-            "main_tex": self.main_tex,
-            "final_compile_report": self.video_root
-            / legacy_target["compile_report"],
-            "acceptance_report": self.workspace / "acceptance_report.json",
-        }
-        video_target = {
-            "schema_name": "kernel-delivery-target",
-            "schema_version": "1.0.0",
-            "projection_kind": "video_target",
-            "projection_revision": 2,
-            "run_id": run_id,
-            "run_revision": successor_revision,
-            "lifecycle_intent_id": intent_id,
-            "video_output_dir": str(self.video_root.resolve()),
-            "stage": "accepted",
-            "ownership": {"session_id": self.session_id, "generation": 1},
-            "artifacts": {
-                role: {"path": str(path.resolve()), "sha256": file_sha(path)}
-                for role, path in artifact_paths.items()
-            }
-            | {"delivery_guard_report": None},
-            "global_gate_authority": {
-                "path": str(gate_path),
-                "generation": 1,
-                "sha256": file_sha(gate_path),
-            },
-        }
-        write_json(self.target, video_target)
-        session_target = {
-            "schema_name": "kernel-session-delivery-target",
-            "schema_version": "1.0.0",
-            "projection_kind": "session_target",
-            "projection_revision": 2,
-            "projection_path": str(session_target_path.resolve()),
-            "session_id": self.session_id,
-            "run_id": run_id,
-            "run_revision": successor_revision,
-            "lifecycle_intent_id": intent_id,
-            "stage": "accepted",
-            "ownership_generation": 1,
-            "owner_status": "active",
-            "video_output_dir": str(self.video_root.resolve()),
-            "video_target": {
-                "path": str(self.target.resolve()),
-                "projection_revision": 2,
-                "sha256": file_sha(self.target),
-            },
-        }
-        write_json(session_target_path, session_target)
-        task_index = {
-            "schema_name": "kernel-delivery-task-index",
-            "schema_version": "1.0.0",
-            "projection_kind": "task_index",
-            "projection_revision": 2,
-            "entries": [
-                {
-                    "run_id": run_id,
-                    "canonical_platform": "bilibili",
-                    "video_output_dir": str(self.video_root.resolve()),
-                    "run_revision": successor_revision,
-                    "lifecycle_intent_id": intent_id,
-                    "stage": "accepted",
-                    "session_id": self.session_id,
-                    "ownership_generation": 1,
-                    "video_target": {
-                        "path": str(self.target.resolve()),
-                        "projection_revision": 2,
-                        "sha256": file_sha(self.target),
-                    },
-                    "session_target": {
-                        "path": str(session_target_path.resolve()),
-                        "projection_revision": 2,
-                        "sha256": file_sha(session_target_path),
-                    },
-                    "archive": None,
-                }
-            ],
-        }
-        write_json(task_index_path, task_index)
-        run_record = predecessor
-        run_record.update(
+        case_root = new_case_dir(self.id(), label="issue43-kernel-chain")
+        control_root = case_root / "project" / "control"
+        control_root.mkdir(parents=True)
+        platform_cutover_test.Issue13PlatformCutoverTests._write_stub_global_gate(
+            control_root
+        )
+        workspace = case_root / "project" / "workspace"
+        workspace.mkdir(parents=True)
+        probe_path = case_root / "candidate-probe.json"
+        probe_path.write_bytes(
+            (
+                PROJECT_ROOT
+                / "tests"
+                / "video_workflow"
+                / "fixtures"
+                / "contracts"
+                / "bootstrap-record.v2.valid.json"
+            ).read_bytes()
+        )
+        implementation_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        probe = json.loads(probe_path.read_text(encoding="utf-8"))
+        probe.update(
             {
-                "run_id": run_id,
-                "platform_adapter": "bilibili",
-                "canonical_platform": "bilibili",
-                "output_path": str(self.video_root.resolve()),
-                "coordination_revision": successor_revision,
-                "last_mutation_intent_id": intent_id,
-                "delivery": {
-                    "stage": "accepted",
-                    "ownership": {"session_id": self.session_id, "generation": 1},
-                    "projections": {
-                        "video_target": {
-                            "path": "review/acceptance/delivery_target.json",
-                            "projection_revision": 2,
-                            "sha256": file_sha(self.target),
-                        },
-                        "session_target": {
-                            "path": str(session_target_path.resolve()),
-                            "projection_revision": 2,
-                            "sha256": file_sha(session_target_path),
-                        },
-                        "task_index": {
-                            "path": str(task_index_path.resolve()),
-                            "projection_revision": 2,
-                            "sha256": file_sha(task_index_path),
-                        },
-                        "archive": None,
-                    },
+                "canonical_item_id": "BV1TEST00001:p1",
+                "source_identity": (
+                    "51b5b6809799e799b780ea3dcbf50322d5ada3dae052fe50e0da65e98f328129"
+                ),
+                "original_title": "Bilibili Adapter Fixture",
+                "source_request": {
+                    "kind": "fresh_download",
+                    "canonical_locator": (
+                        "https://www.bilibili.com/video/BV1TEST00001/"
+                    ),
                 },
             }
         )
-        run_path.parent.mkdir(parents=True, exist_ok=True)
-        run_path.write_bytes(canonical_json_bytes(run_record))
-        store = ControlStore(
-            Path(self.binding["run"]["control_store_root"]),
-            ContractRegistry(PROJECT_ROOT),
+        probe_path.write_text(
+            json.dumps(probe, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
         )
-        with sqlite3.connect(store.path) as connection:
-            connection.execute(
-                "INSERT INTO delivery_lifecycle_intents("
-                "intent_id,run_id,session_id,expected_run_revision,"
-                "expected_ownership_generation,prior_stage,target_stage,operation,"
-                "prior_run_record_sha256,replacement_run_record_sha256,"
-                "replacement_run_record_json,state,intent_identity) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    intent_id,
-                    run_id,
-                    self.session_id,
-                    predecessor_revision,
-                    1,
-                    "ready_for_delivery",
-                    "accepted",
-                    "transition",
-                    predecessor_sha,
-                    file_sha(run_path),
-                    canonical_json_bytes(run_record).decode("utf-8"),
-                    "COMMITTED",
-                    intent_id,
-                ),
+        cold_start._prepare_candidate(
+            control_store_root=control_root,
+            probe_path=probe_path,
+            implementation_commit=implementation_commit,
+        )
+        initialized = candidate_test._run_public_cli(
+            self.id() + "-kernel-init",
+            "init-cutover-candidate",
+            "--workspace-root",
+            str(workspace),
+            "--control-store-root",
+            str(control_root),
+            "--probe",
+            str(probe_path),
+            "--session-id",
+            candidate_test.CANDIDATE_SESSION_ID,
+        )
+        self.assertEqual(
+            0,
+            initialized.returncode,
+            initialized.stdout + initialized.stderr,
+        )
+        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
+        candidate = candidate_test.Issue13CandidateConfirmationTests(
+            "test_candidate_activation_rejects_generating_candidate"
+        )
+
+        cookie_file = control_root.parent / "credentials" / "bilibili-cookies.txt"
+        cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        cookie_file.write_text(
+            "# Netscape HTTP Cookie File\n"
+            ".example.test\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\trecorded\n",
+            encoding="utf-8",
+        )
+        faulted = candidate_test._run_public_cli(
+            self.id() + "-kernel-source-acquire-faulted",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(PROVIDER_RECORDING),
+            "--fault-point",
+            "after_provider_terminal_proof_persisted",
+        )
+        self.assertNotEqual(0, faulted.returncode)
+        reconciled = candidate_test._run_public_cli(
+            self.id() + "-kernel-source-acquire-reconcile",
+            "source-acquire-reconcile",
+            "--run-dir",
+            str(run_dir),
+        )
+        self.assertEqual(
+            0, reconciled.returncode, reconciled.stdout + reconciled.stderr
+        )
+        acquired = candidate_test._run_public_cli(
+            self.id() + "-kernel-source-acquire",
+            "source-acquire",
+            "--run-dir",
+            str(run_dir),
+            "--cookie-file",
+            str(cookie_file),
+            "--provider-recording",
+            str(PROVIDER_RECORDING),
+        )
+        self.assertEqual(0, acquired.returncode, acquired.stdout + acquired.stderr)
+
+        acceptance = acceptance_v2_tests.AcceptanceV2CliTests(
+            "test_prepare_materializes_exact_read_only_reviewer_task_envelope"
+        )
+
+        def candidate_run_authority(
+            _fixture: acceptance_v2_tests.AcceptanceV2CliTests, root: Path
+        ) -> tuple[dict, Path, Path]:
+            run_path = root / "workflow" / "run.json"
+            return (
+                json.loads(run_path.read_text(encoding="utf-8")),
+                run_path,
+                root.parent,
             )
-            normalized_task_index = normalized_physical_path(task_index_path)
-            slot_id = hashlib.sha256(
-                (intent_id + "\0" + normalized_task_index).encode("utf-8")
-            ).hexdigest()
-            connection.execute(
-                "INSERT INTO projection_publication_slots("
-                "slot_id,intent_id,normalized_path,expected_state,expected_sha256,"
-                "proposed_state,proposed_sha256,state,slot_identity) "
-                "VALUES(?,?,?,'present',?,'present',?,'RELEASED',?)",
-                (
-                    slot_id,
-                    intent_id,
-                    normalized_task_index,
-                    file_sha(task_index_path),
-                    file_sha(task_index_path),
-                    slot_id,
-                ),
+
+        acceptance.ensure_run_authority = types.MethodType(  # type: ignore[method-assign]
+            candidate_run_authority,
+            acceptance,
+        )
+        original_write_bytes = Path.write_bytes
+        pdf_bytes = self._valid_pdf_bytes()
+
+        def write_fixture_bytes(path: Path, data: bytes) -> int:
+            if path.name == "final.pdf" and data == b"pdf":
+                data = pdf_bytes
+            return original_write_bytes(path, data)
+
+        with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
+            draft_binding_path = acceptance.build_binding(
+                run_dir, 1, publish_authority=False
             )
-        return store.path, task_index_path
+        draft_binding = json.loads(draft_binding_path.read_text(encoding="utf-8"))
+        artifacts = {
+            item["logical_id"]: Path(item["path"])
+            for item in draft_binding["artifacts"]
+        }
+        quality = {
+            logical_id: Path(item["path"])
+            for logical_id, item in draft_binding["quality_inputs"].items()
+        }
+        final_compile_report = self._kernel_final_compile_report(
+            run_dir,
+            artifacts["final_pdf"],
+            artifacts["main_tex"],
+        )
+        ready_evidence = candidate._transition_evidence(
+            run_dir,
+            from_stage="generating",
+            to_stage="ready_for_delivery",
+            artifacts={
+                "final_pdf": artifacts["final_pdf"],
+                "main_tex": artifacts["main_tex"],
+                "final_compile_report": final_compile_report,
+                "render_evidence_manifest": quality["render_evidence_manifest"],
+            },
+        )
+        before_ready = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        ready = candidate_test._run_public_cli(
+            self.id() + "-kernel-ready",
+            "delivery-transition",
+            "--run-dir",
+            str(run_dir),
+            "--from-stage",
+            "generating",
+            "--to-stage",
+            "ready_for_delivery",
+            "--session-id",
+            candidate_test.CANDIDATE_SESSION_ID,
+            "--expected-run-revision",
+            str(before_ready["coordination_revision"]),
+            "--expected-ownership-generation",
+            str(before_ready["delivery"]["ownership"]["generation"]),
+            "--evidence",
+            str(ready_evidence),
+            "--transitioned-at",
+            "2026-08-11T02:00:00Z",
+        )
+        self.assertEqual(0, ready.returncode, ready.stdout + ready.stderr)
+
+        with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
+            binding_path = acceptance.build_binding(run_dir, 1)
+        acceptance_root = run_dir / "review" / "acceptance"
+        prepared = candidate_test._run_public_cli(
+            self.id() + "-kernel-acceptance-prepare",
+            "acceptance-prepare",
+            "--workspace-root",
+            str(acceptance_root),
+            "--input-binding",
+            str(binding_path),
+            "--attempt-number",
+            "1",
+            "--prepared-at",
+            "2026-08-11T02:01:00Z",
+            "--coordinator-session",
+            candidate_test.CANDIDATE_SESSION_ID,
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        acceptance.commit_visual(acceptance_root)
+        materialized, materialized_envelope = acceptance.materialize(acceptance_root)
+        self.assertEqual(
+            0, materialized.returncode, materialized.stdout + materialized.stderr
+        )
+
+        report_path = acceptance_root / "acceptance_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        guarded = candidate_test._run_public_cli(
+            self.id() + "-kernel-acceptance-eligible",
+            "acceptance-guard-eligibility",
+            "--workspace-root",
+            str(acceptance_root),
+        )
+        self.assertEqual(0, guarded.returncode, guarded.stdout + guarded.stderr)
+        eligibility = json.loads(guarded.stdout)["data"]
+        self.assertTrue(eligibility["eligible"])
+        self.assertTrue(eligibility["delivery_authority"])
+        self.assertEqual(report["report_sha256"], eligibility["report_sha256"])
+        self.assertEqual(
+            report["report_sha256"],
+            materialized_envelope["data"]["report_sha256"],
+        )
+
+        run = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("4.0.0", run["schema_version"])
+        self.assertEqual("ready_for_delivery", run["delivery"]["stage"])
+        revision = run["coordination_revision"]
+        ownership_generation = run["delivery"]["ownership"]["generation"]
+        self.assertEqual(
+            revision,
+            report["run_binding"]["coordination_revision"],
+        )
+
+        bound = candidate_test._run_public_cli(
+            self.id() + "-kernel-bind",
+            "delivery-acceptance-bind",
+            "--run-dir",
+            str(run_dir),
+            "--session-id",
+            candidate_test.CANDIDATE_SESSION_ID,
+            "--acceptance-report",
+            str(report_path),
+            "--expected-run-revision",
+            str(revision),
+            "--expected-ownership-generation",
+            str(ownership_generation),
+            "--bound-at",
+            "2026-08-11T02:02:00Z",
+        )
+        self.assertEqual(0, bound.returncode, bound.stdout + bound.stderr)
+        envelope = json.loads(bound.stdout)
+        self.assertEqual("delivery_acceptance_bound", envelope["classification"])
+        self.assertFalse(envelope["data"]["idempotent"])
+
+        activated = candidate_test._run_public_cli(
+            self.id() + "-kernel-activate",
+            "platform-kernel-candidate-activate",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control_root),
+            "--candidate-run-dir",
+            str(run_dir),
+            "--activated-at",
+            "2026-08-11T02:03:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
+        self.assertEqual(
+            "PROVISIONAL",
+            json.loads(activated.stdout)["data"]["cutover_state"],
+        )
+
+        accepted_evidence = candidate._transition_evidence(
+            run_dir,
+            from_stage="ready_for_delivery",
+            to_stage="accepted",
+            artifacts={"acceptance_report": report_path},
+        )
+        accepted = candidate_test._run_public_cli(
+            self.id() + "-kernel-accepted",
+            "delivery-transition",
+            "--run-dir",
+            str(run_dir),
+            "--from-stage",
+            "ready_for_delivery",
+            "--to-stage",
+            "accepted",
+            "--session-id",
+            candidate_test.CANDIDATE_SESSION_ID,
+            "--expected-run-revision",
+            str(revision + 1),
+            "--expected-ownership-generation",
+            str(ownership_generation),
+            "--evidence",
+            str(accepted_evidence),
+            "--transitioned-at",
+            "2026-08-11T02:04:00Z",
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
+
+        rendered_dir = acceptance_root / "rendered_pages"
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        for page in sorted((run_dir / "artifacts").glob("page_*.png")):
+            number = int(page.stem.removeprefix("page_"))
+            shutil.copy2(page, rendered_dir / f"page_{number:04d}.png")
+
+        # Re-point the harness attributes at the real committed chain.
+        self.project_root = run_dir.parents[1]
+        self.video_root = run_dir
+        self.workspace = acceptance_root
+        self.session_id = candidate_test.CANDIDATE_SESSION_ID
+        self.current = (
+            self.project_root
+            / ".codex"
+            / "delivery-targets"
+            / "sessions"
+            / self.session_id
+            / "current.json"
+        )
+        self.target = run_dir / "review" / "acceptance" / "delivery_target.json"
+        self.binding = json.loads(
+            (acceptance_root / "input-binding.json").read_text(encoding="utf-8")
+        )
+        self.final_pdf = artifacts["final_pdf"]
+        self.main_tex = artifacts["main_tex"]
+        self.manifest = (
+            run_dir / "review" / "acceptance" / "allowed_artifacts_manifest.json"
+        )
+
+        run_record = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        task_index_path = Path(
+            run_record["delivery"]["projections"]["task_index"]["path"]
+        ).resolve()
+        store_path = run_dir.parent / ".workflow-control" / "control.sqlite3"
+        return store_path, task_index_path
+
+    @staticmethod
+    def _kernel_final_compile_report(
+        video_root: Path, final_pdf: Path, main_tex: Path
+    ) -> Path:
+        """Write the Guard-valid final-compile-report/1.0.0 for the acceptance
+        fixture.  The report binds the exact final PDF and main TeX artifacts
+        the Acceptance provider consumes, so the active Guard's Kernel
+        compile-provenance gate passes without running the full production
+        compile pipeline."""
+        report = {
+            "schema_name": "final-compile-report",
+            "schema_version": "1.0.0",
+            "mode": "final",
+            "status": "pass",
+            "delivery_authority": False,
+            "compiler_provider": {
+                "provider_id": "guarded-final-compile-provider",
+                "provider_sha256": file_sha(
+                    PROJECT_ROOT
+                    / "src"
+                    / "video2pdf_workflow_kernel"
+                    / "final_compile.py"
+                ),
+            },
+            "pdf": {
+                "path": str(final_pdf.resolve()),
+                "sha256": file_sha(final_pdf),
+                "size": final_pdf.stat().st_size,
+            },
+            "dependency_closure": {
+                "complete": True,
+                "inputs": [
+                    {"logical_id": "integrated_main", "sha256": file_sha(main_tex)}
+                ],
+            },
+        }
+        report["report_sha256"] = hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    key: value
+                    for key, value in report.items()
+                    if key != "report_sha256"
+                }
+            )
+        ).hexdigest()
+        return write_json(
+            video_root / "review" / "latex" / "final-compile-report.json",
+            report,
+        )
 
     def publish_other_run_task_index_revision(
         self, store_path: Path, task_index_path: Path
@@ -766,9 +1011,19 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self,
     ) -> None:
         store_path, _ = self.kernelize_bilibili_target()
+        # The committed chain owns multiple lifecycle intents per run
+        # (initialization, acceptance bind, accepted transition).  Flip the
+        # accepted successor intent -- the one the provider's committed
+        # Delivery Lifecycle successor check consumes -- out of COMMITTED.
+        run = json.loads(
+            (self.video_root / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        accepted_intent_id = run["last_mutation_intent_id"]
         with sqlite3.connect(store_path) as connection:
             connection.execute(
-                "UPDATE delivery_lifecycle_intents SET state='FILES_PUBLISHED'"
+                "UPDATE delivery_lifecycle_intents SET state='FILES_PUBLISHED' "
+                "WHERE intent_id=?",
+                (accepted_intent_id,),
             )
         before = self.tree_fingerprints(self.project_root)
 
@@ -974,7 +1229,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
         report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
         self.assertEqual("control_store", report["first_failing_gate"])
-        self.assertEqual("global_gate_control_store_corrupt", report["error_code"])
+        self.assertEqual("global_gate_control_store_unavailable", report["error_code"])
 
     def test_cached_hook_rejects_missing_global_gate_control_store(self) -> None:
         self.assert_cached_hook_passes()
@@ -990,8 +1245,8 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
         self.assertIn("Final Delivery Guard blocked delivery", completed.stderr)
         report = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
-        self.assertEqual("global_gate_authority", report["first_failing_gate"])
-        self.assertEqual("global_gate_authority_stale", report["error_code"])
+        self.assertEqual("control_store", report["first_failing_gate"])
+        self.assertEqual("global_gate_control_store_unavailable", report["error_code"])
 
     def test_active_guard_accepts_run_record_free_legacy_v2_authority(self) -> None:
         project_root = new_case_dir(self.id(), label="issue43-active-guard-legacy")

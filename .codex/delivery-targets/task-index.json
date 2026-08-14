@@ -280,6 +280,42 @@
       "last_session_id": "019fa7c3-ded8-79d3-b8e5-9a70813488af",
       "stage": "delivered",
       "updated_at": "2026-07-28T20:05:45+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Rethinking Environments for Long_Horizon Work _ Rayan Garg_ Theta Software_20260804_231459",
+      "target_file": "workspace/Rethinking Environments for Long_Horizon Work _ Rayan Garg_ Theta Software_20260804_231459/review/acceptance/delivery_target.json",
+      "owner_session_id": "019fcd56-967c-7701-a437-17682a7661c3",
+      "owner_status": "active",
+      "last_session_id": "019fcd56-967c-7701-a437-17682a7661c3",
+      "stage": "generating",
+      "updated_at": "2026-08-04T23:26:51+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Andrej Karpathy _ We_re summoning ghosts_ not building animals_20260804_232217",
+      "target_file": "workspace/Andrej Karpathy _ We_re summoning ghosts_ not building animals_20260804_232217/review/acceptance/delivery_target.json",
+      "owner_session_id": "019fcd58-2d69-79a2-9f85-4f7888a701ee",
+      "owner_status": "active",
+      "last_session_id": "019fcd58-2d69-79a2-9f85-4f7888a701ee",
+      "stage": "generating",
+      "updated_at": "2026-08-05T03:11:48+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Black Hat USA 2026_ The _Breaking_ News_ The OpenAI_Hugging Face Incident_20260807_090047",
+      "target_file": "workspace/Black Hat USA 2026_ The _Breaking_ News_ The OpenAI_Hugging Face Incident_20260807_090047/review/acceptance/delivery_target.json",
+      "owner_session_id": "11503e47-725d-4358-91bf-368de88d14e5",
+      "owner_status": "active",
+      "last_session_id": "11503e47-725d-4358-91bf-368de88d14e5",
+      "stage": "generating",
+      "updated_at": "2026-08-07T09:53:31+08:00"
+    },
+    {
+      "video_output_dir": "workspace/Black_Hat_USA_2026_Keynote_The_End_of_Rare_Defending_When_Offense_Is_Cheap_20260808_203203",
+      "target_file": "workspace/Black_Hat_USA_2026_Keynote_The_End_of_Rare_Defending_When_Offense_Is_Cheap_20260808_203203/review/acceptance/delivery_target.json",
+      "owner_session_id": "session-20260808-150000",
+      "owner_status": "delivered",
+      "last_session_id": "session-20260808-150000",
+      "stage": "delivered",
+      "updated_at": "2026-08-08T21:26:01+08:00"
     }
   ]
 }

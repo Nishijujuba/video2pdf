@@ -219,3 +219,63 @@ reviewed commit.
   re-reviews of the full uncommitted diff.
 - `handoff`: refresh this document only if another session boundary occurs
   before completion.
+
+## Addendum 2026-08-09: A′ publication-gate contract change (`b1e926e`)
+
+Committed `b1e926e` ("fix: bind evidence republication to subset
+publication and blob bytes (#43)") repairs the contract deadlock found by
+the Phase 7 validator: with the 21-path evidence generation already in the
+parent tree and the five exit-code blobs immutable, no direct-child
+republication could ever satisfy the old `diff-tree == evidence_paths`
+equality gate. The `historical_evidence` publication gate in
+`src/video2pdf_workflow_kernel/global_gate_exit_evidence.py` now requires:
+
+1. the publication `diff-tree` paths to stay WITHIN the declared
+   `evidence_paths` (subset, not equality; exactly-one-parent enforcement
+   retained via `_commit_paths`);
+2. every declared path to resolve as a REGULAR blob (modes 100644/100755;
+   symlink 120000 and gitlink 160000 rejected) in the publication tree via
+   one `git ls-tree -r <publication> -- <paths>` call, relying on the
+   canonical-set gate running first so declared paths are safe pathspecs;
+3. every non-manifest publication blob to sha256-match the
+   manifest-declared fingerprint via `sha256_git_blob` (byte binding,
+   closing the dirty-worktree stale-bytes window).
+
+Error codes: a declared path that does not resolve to a regular blob and
+is not in the publication diff fails with the NEW
+`historical_evidence_path_unpublished`; smuggled undeclared paths, paths
+deleted or non-regular in the diff, and byte-binding mismatches reuse
+`historical_evidence_paths_stale`; git transport failures during byte
+binding map to `historical_evidence_lineage_invalid`.
+
+Deliberate semantic relaxation (recorded per maintainer decision A′): the
+historical invariant "the publication publishes all evidence" becomes "the
+publication tree contains all declared evidence at declared bytes". The
+canonical-set gate (`evidence_paths` == manifest + per-command logs +
+persisted artifacts, derived from the manifest itself) is unchanged and
+still runs first, and `implementation_commit_evidence_only` still floors
+the implementation commit. `scripts/validate_slice_exit_evidence.py`
+`validate_lineage` intentionally retains exact equality for slices 1-10;
+only slice 11 uses the new semantics.
+
+Companion changes in the same commit:
+`tests/video_workflow/_issue43_git_authority.py::_authority_is_reusable`
+mirrors the subset+existence rule (F1); the collector reverts its
+uncommitted incremental-`evidence_paths` experiment so its diff vs
+`f2004e4` is exactly the `sha256_git_blob` fixture-fingerprint fix (F5);
+fixture evidence writes are LF-only bytes and fixture repos set
+`core.autocrlf=false`, so fixture disk bytes equal blob bytes under the
+tree's `evidence/global-gate/** text eol=lf` attribute (production
+evidence is LF on disk: the persisted runner writes with `newline="\n"`
+and the collector LF-normalizes logs).
+
+Review and evidence: dual-axis review (spec axis against Issues #43/#41;
+standards/release/security/evidence axis) returned PASS after one
+condition round (unpublished-branch diagnostic message accuracy,
+byte-binding transport-error classification, and two added negative tests
+covering the byte-binding failure and symlink rejection). Persisted test
+evidence: 37/37 `tests.video_workflow.test_issue43_exit_evidence`, 4/4
+global-gate suites (`test_issue43_activation_fencing` +
+`test_issue43_spec_gap_contracts`), runs
+`待删除/long-running/issue43_a_prime_review_fix_*`; earlier TDD red/green
+runs `issue43_a_prime_red_*` and `issue43_a_prime_green3_*`.

@@ -10,6 +10,7 @@ work/
 .codex/last_youtube_output.txt
 /magick_test.jpg
 /.claude/settings.json
+/.claude/2
 
 # LaTeX build junk
 *.aux
@@ -40,3 +41,4 @@ workspace/**
 !workspace/*.pdf
 !workspace/**/*.pdf
 workspace/**/待删除/
+

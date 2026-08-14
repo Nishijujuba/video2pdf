@@ -4,10 +4,12 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
@@ -126,7 +128,194 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         validator.validate_semantics(self.manifest())
 
     def test_bilibili_kernel_preserved(self) -> None:
-        self.assertEqual({"bilibili": "active_kernel", "youtube": "active_kernel"}, self.manifest()["platform_statuses"])
+        """Real, recomputable Bilibili regression proof.
+
+        Revalidates the committed slice-12 exit evidence end to end through the
+        shared validator, which decodes the real acceptance report v2, delivery
+        guard report, and persisted qualification run (validate_bindings'
+        slice-12 guarded-delivery branch). The manifest passes post-publication
+        validation today, so this regression test fails if any slice-12 evidence
+        stops validating.
+        """
+        self.assertEqual(
+            {"bilibili": "active_kernel", "youtube": "active_kernel"},
+            self.manifest()["platform_statuses"],
+        )
+        manifest_path = ROOT / "evidence/slice-12/exit-evidence-manifest.json"
+        validator.validate_manifest(
+            manifest_path, schema_only=False, pre_publication=False
+        )
+
+    def test_bilibili_regression_fails_on_tampered_evidence(self) -> None:
+        """Slice-12 regression tamper proof on a temp copy of real evidence.
+
+        Copies the committed slice-12 manifest and every declared evidence file
+        into a scratch root (never touching committed evidence), tampers one
+        copy, and drives the validator against the tampered path. Tampering the
+        acceptance report or delivery guard report must fail closed at
+        ``guarded_delivery_evidence`` with ``guarded_delivery_decision_invalid``.
+        """
+        cases = (
+            ("acceptance_report_v2", "overall_status", "fail"),
+            ("delivery_guard_report", "status", "blocked"),
+        )
+        for role, field, value in cases:
+            with self.subTest(role=role):
+                scratch, manifest_copy, guarded = self._copy_slice12_evidence_for_tamper()
+                artifact_binding = next(
+                    item
+                    for item in guarded["artifacts"]
+                    if item["role"] == role
+                )
+                artifact_path = scratch / artifact_binding["path"]
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                artifact[field] = value
+                artifact_path.write_text(
+                    json.dumps(artifact, ensure_ascii=False, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                manifest_copy = self._rewrite_manifest_binding(
+                    manifest_copy, artifact_path
+                )
+                manifest_value = json.loads(
+                    manifest_copy.read_text(encoding="utf-8")
+                )
+                with (
+                    patch.object(validator, "PROJECT_ROOT", scratch),
+                    patch.object(
+                        validator,
+                        "sha256_git_blob",
+                        side_effect=self._fixture_git_blob_stub(manifest_copy),
+                    ),
+                    self.assertRaises(validator.EvidenceError) as caught,
+                ):
+                    validator.validate_bindings(manifest_value, manifest_copy)
+                self.assertEqual(
+                    "guarded_delivery_evidence", caught.exception.first_failing_gate
+                )
+                self.assertEqual(
+                    "guarded_delivery_decision_invalid", caught.exception.error_code
+                )
+
+    def test_bilibili_regression_fails_on_tampered_qualification_run(self) -> None:
+        """Slice-12 qualification command record mutation must fail closed."""
+        scratch, manifest_copy, guarded = self._copy_slice12_evidence_for_tamper()
+        command_path = scratch / guarded["qualification_run"]["command_record"]["path"]
+        command = json.loads(command_path.read_text(encoding="utf-8"))
+        command["argv"] = [*command["argv"], "tests.video_workflow.test_unrelated"]
+        command_path.write_text(
+            json.dumps(command, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_copy = self._rewrite_manifest_binding(manifest_copy, command_path)
+        manifest_value = json.loads(manifest_copy.read_text(encoding="utf-8"))
+        with (
+            patch.object(validator, "PROJECT_ROOT", scratch),
+            patch.object(
+                validator,
+                "sha256_git_blob",
+                side_effect=self._fixture_git_blob_stub(manifest_copy),
+            ),
+            self.assertRaises(validator.EvidenceError) as caught,
+        ):
+            validator.validate_bindings(manifest_value, manifest_copy)
+        self.assertEqual(
+            "guarded_delivery_evidence", caught.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "guarded_delivery_qualification_identity_stale",
+            caught.exception.error_code,
+        )
+
+    def _copy_slice12_evidence_for_tamper(self) -> tuple[Path, Path, dict]:
+        """Copy the committed slice-12 manifest and evidence closure to scratch.
+
+        Copies the delivery-quality registry authority too so acceptance
+        validation can run against the patched root. Fixture git-blob
+        fingerprinting is stubbed by the caller. Returns the scratch root, the
+        manifest copy, and the copied manifest's guarded-delivery section.
+        """
+        source_manifest = ROOT / "evidence/slice-12/exit-evidence-manifest.json"
+        source = json.loads(source_manifest.read_text(encoding="utf-8"))
+        scratch = new_case_dir(self.id(), label="slice12-tamper-scratch")
+        scratch_manifest = scratch / "evidence/slice-12/exit-evidence-manifest.json"
+        scratch_manifest.parent.mkdir(parents=True)
+        shutil.copy2(source_manifest, scratch_manifest)
+        for relative in source["evidence_paths"]:
+            src = ROOT / relative
+            if not src.is_file():
+                continue
+            target = scratch / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+        for directory in ("schemas", "delivery-quality"):
+            target = scratch / directory
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(ROOT / directory, target)
+        copied = json.loads(scratch_manifest.read_text(encoding="utf-8"))
+        return scratch, scratch_manifest, copied["guarded_delivery_evidence"]
+
+    def _fixture_git_blob_stub(self, manifest_path: Path) -> Any:
+        """Return a sha256_git_blob stub keyed by the copied manifest bindings.
+
+        The copied evidence files (delivery projections, persisted runs) drift
+        on disk from the committed blob that the manifest fingerprints anchor
+        to, so the stub returns every declared binding's manifest sha256. This
+        makes the anchored-fingerprint gate pass and lets tamper scenarios reach
+        the guarded-delivery authority gates that own the mutation.
+        """
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        declared: dict[str, str] = {}
+        for item in manifest["fixtures"]:
+            declared[item["path"]] = item["sha256"]
+
+        def collect(group: object) -> None:
+            if isinstance(group, dict) and isinstance(group.get("path"), str):
+                declared[group["path"]] = group["sha256"]
+                return
+            if isinstance(group, list):
+                for value in group:
+                    collect(value)
+
+        for command in manifest["commands"]:
+            collect(command.get("log"))
+            collect(command.get("persisted_run"))
+        guarded = manifest.get("guarded_delivery_evidence")
+        if isinstance(guarded, dict):
+            collect(guarded.get("collection"))
+            collect(guarded.get("artifacts"))
+            collect(guarded.get("qualification_run"))
+
+        def stub(project_root: Path, commit: str, path: str) -> str:
+            return declared[path]
+
+        return stub
+
+    def _rewrite_manifest_binding(
+        self, manifest_path: Path, artifact_path: Path
+    ) -> Path:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relative = artifact_path.relative_to(manifest_path.parents[2]).as_posix()
+        for group in (
+            manifest["guarded_delivery_evidence"].get("artifacts", []),
+            [manifest["guarded_delivery_evidence"].get("collection")],
+            [
+                item
+                for item in manifest["guarded_delivery_evidence"]
+                .get("qualification_run", {})
+                .values()
+                if isinstance(item, dict)
+            ],
+        ):
+            for item in group:
+                if isinstance(item, dict) and item.get("path") == relative:
+                    item["sha256"] = _sha256(artifact_path)
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return manifest_path
 
     def test_bilibili_authority_change_rejected(self) -> None:
         # scenario_id=bilibili_legacy_restored; target_invariant=platform_statuses;
@@ -140,14 +329,321 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         self.assertEqual(scenario["expected_first_failing_gate"], caught.exception.first_failing_gate)
         self.assertEqual(scenario["expected_error_code"], caught.exception.error_code)
 
+    def _slice13_guarded_fixture(self, scratch: Path) -> tuple[Path, dict]:
+        """Materialize a slice-13-shaped guarded manifest in a scratch root.
+
+        Writes the guarded artifacts, two per-command persisted qualification
+        runs, and command logs, then returns (manifest_path, manifest_value)
+        with in-repo relative bindings. All artifacts and logs are declared in
+        evidence_paths so the shared guarded-delivery helper can resolve them.
+        """
+        guarded_root = scratch / "guarded-delivery"
+        persisted_root = scratch / "persisted"
+        for directory in ("schemas", "delivery-quality"):
+            target = scratch / directory
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(ROOT / directory, target)
+        run_id = "14141414141414141414141414141414"
+        qualification_run_id = "14141414-1414-4414-8414-141414141414"
+        evidence_paths = [
+            "exit-evidence-manifest.json",
+            *[f"logs/{command_id}.log" for command_id, _, _ in contract.COMMANDS],
+            *[
+                f"persisted/{command_id}/{filename}"
+                for command_id, _, _ in contract.COMMANDS
+                for filename in ("command.json", "status.json", "exit-code.txt")
+            ],
+        ]
+
+        def write_binding(relative: str, payload: bytes) -> dict[str, str]:
+            path = scratch / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            return {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
+
+        artifacts = []
+        for role in (
+            "run_record", "source_manifest", "acceptance_report_v2",
+            "delivery_guard_report", "video_delivery_target",
+            "session_delivery_target", "delivery_task_index",
+            "global_gate_authority", "final_pdf",
+        ):
+            if role == "acceptance_report_v2":
+                payload = _acceptance_report(run_id, 3, "pass")
+            elif role == "delivery_guard_report":
+                payload = _guard_report("pass")
+            else:
+                payload = {"role": role}
+            relative = f"guarded-delivery/{role}.json"
+            binding = write_binding(
+                relative,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            )
+            artifacts.append({"role": role, **binding})
+
+        commands = []
+        persisted_run_id = qualification_run_id
+        for index, (command_id, command, expected_exit) in enumerate(contract.COMMANDS, 1):
+            run_id_for_command = f"14141414-1414-4414-8414-{index:012d}"
+            command_record_payload = json.dumps(
+                {
+                    "schema_name": "persisted-command",
+                    "schema_version": "1.0.0",
+                    "run_id": run_id_for_command,
+                    "cwd": str(scratch.resolve()),
+                    "argv": list(command),
+                    "accepted_exit_codes": [expected_exit],
+                    "git_commit": "2" * 40,
+                    "worktree_clean": True,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8") + b"\n"
+            status_payload = json.dumps(
+                {
+                    "schema_name": "persisted-command-status",
+                    "schema_version": "1.0.0",
+                    "run_id": run_id_for_command,
+                    "state": "succeeded",
+                    "exit_code": expected_exit,
+                    "security": {
+                        "acceptance_evidence_eligible": True,
+                        "classification": "no_secret_detected",
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8") + b"\n"
+            log_payload = (
+                f"qualified command: {command_id}\n"
+                f"EVIDENCE_IMPLEMENTATION_COMMIT: {'2' * 40}\n"
+            ).encode("utf-8")
+            persisted = {
+                "run_id": run_id_for_command,
+                "command_record": write_binding(
+                    f"persisted/{command_id}/command.json", command_record_payload
+                ),
+                "terminal_status": write_binding(
+                    f"persisted/{command_id}/status.json", status_payload
+                ),
+                "exit_code": write_binding(
+                    f"persisted/{command_id}/exit-code.txt", f"{expected_exit}\n".encode("utf-8")
+                ),
+            }
+            log_binding = write_binding(f"logs/{command_id}.log", log_payload)
+            evidence_paths.extend(
+                binding["path"]
+                for binding in persisted.values()
+                if isinstance(binding, dict) and isinstance(binding.get("path"), str)
+            )
+            commands.append(
+                {
+                    "test_id": command_id,
+                    "command": list(command),
+                    "expected_exit_code": expected_exit,
+                    "actual_exit_code": expected_exit,
+                    "log": {"role": "command_log", **log_binding},
+                    "persisted_run": persisted,
+                    "conforms": True,
+                }
+            )
+        collection_binding = write_binding(
+            "guarded-delivery/collection.json",
+            json.dumps({"schema_name": "issue14-exit-evidence-collection"}).encode("utf-8"),
+        )
+        manifest = self.manifest()
+        manifest["implementation_commit"] = "2" * 40
+        manifest["evidence_paths"] = sorted(set(evidence_paths))
+        manifest["guarded_delivery_evidence"] = {
+            "collection": {"role": "guarded_delivery_collection", **collection_binding},
+            "run_id": run_id,
+            "canonical_platform": "youtube",
+            "delivery_stage": "delivered",
+            "artifacts": artifacts,
+            "qualification_run": commands[1]["persisted_run"],
+        }
+        manifest["commands"] = commands
+        manifest_path = scratch / "exit-evidence-manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return manifest_path, manifest
+
+    def _slice13_tamper_cases(self) -> list[tuple[str, callable, str, str]]:
+        """Return (label, mutation, expected_gate, expected_code) cases.
+
+        Each mutation tampers the on-disk fixture files that the shared
+        guarded-delivery helper decodes; the helper must fail closed at the
+        expected gate. The mutation signature is ``mutation(scratch, manifest)``.
+        """
+        cases: list[tuple[str, callable, str, str]] = []
+
+        def nonpassing_acceptance(scratch: Path, manifest: dict) -> None:
+            path = scratch / "guarded-delivery/acceptance_report_v2.json"
+            report = _acceptance_report("14141414141414141414141414141414", 3, "fail")
+            path.write_text(
+                json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "nonpassing_acceptance",
+                nonpassing_acceptance,
+                "guarded_delivery_evidence",
+                "guarded_delivery_decision_invalid",
+            )
+        )
+
+        def nonpassing_guard(scratch: Path, manifest: dict) -> None:
+            path = scratch / "guarded-delivery/delivery_guard_report.json"
+            guard = _guard_report("blocked")
+            path.write_text(
+                json.dumps(guard, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "nonpassing_guard",
+                nonpassing_guard,
+                "guarded_delivery_evidence",
+                "guarded_delivery_decision_invalid",
+            )
+        )
+
+        def run_id_mismatch(scratch: Path, manifest: dict) -> None:
+            path = scratch / "persisted/issue14-platform-cutover-tests/command.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["run_id"] = "9" * 36
+            path.write_text(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "run_id_mismatch",
+                run_id_mismatch,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_failed",
+            )
+        )
+
+        def commit_identity_mismatch(scratch: Path, manifest: dict) -> None:
+            path = scratch / "persisted/issue14-platform-cutover-tests/command.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["git_commit"] = "0" * 40
+            path.write_text(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "commit_identity_mismatch",
+                commit_identity_mismatch,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_identity_stale",
+            )
+        )
+
+        def status_tamper(scratch: Path, manifest: dict) -> None:
+            path = scratch / "persisted/issue14-platform-cutover-tests/status.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["state"] = "failed"
+            path.write_text(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "status_tamper",
+                status_tamper,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_failed",
+            )
+        )
+
+        def exit_code_tamper(scratch: Path, manifest: dict) -> None:
+            path = scratch / "persisted/issue14-platform-cutover-tests/exit-code.txt"
+            path.write_text("1\n", encoding="utf-8")
+
+        cases.append(
+            (
+                "exit_code_tamper",
+                exit_code_tamper,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_failed",
+            )
+        )
+
+        def missing_log(scratch: Path, manifest: dict) -> None:
+            manifest["commands"][1]["log"]["path"] = "logs/missing.log"
+
+        cases.append(
+            (
+                "missing_log",
+                missing_log,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_invalid",
+            )
+        )
+        return cases
+
+    def test_slice13_guarded_qualification_tamper_gates(self) -> None:
+        """R4: slice-13 guarded-delivery tamper scenarios fail closed.
+
+        Drives each mutation through the shared guarded-delivery qualification
+        helper with a patched PROJECT_ROOT, asserting the stable
+        first_failing_gate and error_code.
+        """
+        for label, mutate, expected_gate, expected_code in self._slice13_tamper_cases():
+            with self.subTest(label=label):
+                scratch = new_case_dir(self.id(), label=f"slice13-{label}")
+                _manifest_path, manifest = self._slice13_guarded_fixture(scratch)
+                mutate(scratch, manifest)
+                with (
+                    patch.object(validator, "PROJECT_ROOT", scratch),
+                    self.assertRaises(validator.EvidenceError) as caught,
+                ):
+                    validator._validate_guarded_delivery_qualification(
+                        manifest,
+                        issue_commands=contract.COMMANDS,
+                        issue_label="Issue #14",
+                    )
+                self.assertEqual(expected_gate, caught.exception.first_failing_gate)
+                self.assertEqual(expected_code, caught.exception.error_code)
+
+    def test_slice13_guarded_qualification_pass(self) -> None:
+        """R4: the shared helper accepts a valid slice-13 guarded manifest."""
+        scratch = new_case_dir(self.id(), label="slice13-guarded-pass")
+        _manifest_path, manifest = self._slice13_guarded_fixture(scratch)
+        with patch.object(validator, "PROJECT_ROOT", scratch):
+            validator._validate_guarded_delivery_qualification(
+                manifest,
+                issue_commands=contract.COMMANDS,
+                issue_label="Issue #14",
+            )
+
     def test_contract_and_collector_skeleton_close_fourteen_members(self) -> None:
         skeleton = collector.qualification_manifest_skeleton()
         self.assertEqual(14, len(contract.ATOMIC_MEMBERS))
         self.assertEqual(list(contract.ATOMIC_MEMBERS), skeleton["atomic_members"])
         self.assertEqual(contract.ACTIVATION_SCOPE, skeleton["activation_scope"])
 
-    def _isolated_delivered_youtube_fixture(self) -> tuple[Path, Path, Path]:
-        project = new_case_dir(self.id(), label="issue14-exit-evidence")
+    def _isolated_delivered_youtube_fixture(
+        self,
+        *,
+        project_root: Path | None = None,
+        git_commit: str | None = None,
+        worktree_clean: bool = True,
+    ) -> tuple[Path, Path, dict[str, Path]]:
+        project = project_root or new_case_dir(self.id(), label="issue14-exit-evidence")
+        cwd = project_root or ROOT
         run_dir = project / "workspace" / "Issue 14 YouTube Run_20260812_090000"
         review_dir = run_dir / "review" / "acceptance"
         workflow_dir = run_dir / "workflow"
@@ -305,34 +801,49 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             },
         )
 
-        qualification_run = project / "qualification-run"
-        qualification_run.mkdir(parents=True)
-        qualification_run_id = "14141414-1414-4414-8414-141414141414"
-        qualification_argv = [sys.executable, "-X", "utf8", "-B", "-m", "unittest", "-v", "tests.video_workflow.test_issue14_exit_evidence"]
-        _write_json(
-            qualification_run / "command.json",
-            {
-                "schema_name": "persisted-command",
-                "schema_version": "1.0.0",
-                "run_id": qualification_run_id,
-                "cwd": str(ROOT.resolve()),
-                "argv": qualification_argv,
-                "accepted_exit_codes": [0],
-            },
-        )
-        _write_json(
-            qualification_run / "status.json",
-            {
-                "schema_name": "persisted-command-status",
-                "schema_version": "1.0.0",
-                "run_id": qualification_run_id,
-                "state": "succeeded",
-                "exit_code": 0,
-                "security": {"acceptance_evidence_eligible": True, "classification": "no_secret_detected"},
-            },
-        )
-        (qualification_run / "exit-code.txt").write_text("0\n", encoding="utf-8")
-        return run_dir, current_target, qualification_run
+        qualification_runs: dict[str, Path] = {}
+        for index, (command_id, command_argv, expected_exit) in enumerate(contract.COMMANDS, 1):
+            qualification_run = project / "qualification-run" / command_id
+            qualification_run.mkdir(parents=True)
+            qualification_run_id = f"14141414-1414-4414-8414-{index:012d}"
+            resolved_commit = git_commit or subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            _write_json(
+                qualification_run / "command.json",
+                {
+                    "schema_name": "persisted-command",
+                    "schema_version": "1.0.0",
+                    "run_id": qualification_run_id,
+                    "cwd": str(cwd.resolve()),
+                    "argv": list(command_argv),
+                    "accepted_exit_codes": [expected_exit],
+                    "git_commit": resolved_commit,
+                    "worktree_clean": worktree_clean,
+                },
+            )
+            _write_json(
+                qualification_run / "status.json",
+                {
+                    "schema_name": "persisted-command-status",
+                    "schema_version": "1.0.0",
+                    "run_id": qualification_run_id,
+                    "state": "succeeded",
+                    "exit_code": expected_exit,
+                    "security": {"acceptance_evidence_eligible": True, "classification": "no_secret_detected"},
+                },
+            )
+            (qualification_run / "exit-code.txt").write_text(f"{expected_exit}\n", encoding="utf-8")
+            (qualification_run / "command.log").write_text(
+                f"qualified command: {command_id}\n", encoding="utf-8"
+            )
+            qualification_runs[command_id] = qualification_run
+        return run_dir, current_target, qualification_runs
 
     def _refresh_delivery_binding_chain(self, run_dir: Path) -> None:
         run_path = run_dir / "workflow" / "run.json"
@@ -367,7 +878,7 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         _write_json(run_path, run_record)
 
     def test_public_cli_collects_real_delivered_run_and_finalizes_schema_valid_manifest(self) -> None:
-        run_dir, current_target, qualification_run = self._isolated_delivered_youtube_fixture()
+        run_dir, current_target, qualification_runs = self._isolated_delivered_youtube_fixture()
         collection_path = run_dir.parent.parent / "collection.json"
         manifest_path = run_dir.parent.parent / "exit-evidence-manifest.json"
 
@@ -377,7 +888,8 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                 "scripts.collect_issue14_exit_evidence", "collect",
                 "--run-dir", str(run_dir),
                 "--current-target", str(current_target),
-                "--qualification-run-dir", str(qualification_run),
+                "--qualification-run-dir", f"{contract.COMMANDS[0][0]}={qualification_runs[contract.COMMANDS[0][0]]}",
+                "--qualification-run-dir", f"{contract.COMMANDS[1][0]}={qualification_runs[contract.COMMANDS[1][0]]}",
                 "--output", str(collection_path),
             ],
             cwd=ROOT,
@@ -402,8 +914,13 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         )
         for binding in collection["artifacts"].values():
             self.assertEqual(_sha256(Path(binding["path"])), binding["sha256"])
+            self.assertFalse(Path(binding["path"]).is_absolute())
         self.assertEqual("succeeded", collection["qualification_run"]["state"])
         self.assertTrue(collection["qualification_run"]["acceptance_evidence_eligible"])
+        self.assertEqual(
+            {command_id for command_id, _, _ in contract.COMMANDS},
+            set(collection["qualification_runs"]),
+        )
 
         finalized = subprocess.run(
             [
@@ -431,11 +948,18 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             self.assertIn("implementation change set is empty", finalized.stderr)
             self.assertFalse(manifest_path.exists())
             return
-        self.assertEqual(0, finalized.returncode, finalized.stdout + finalized.stderr)
-        schema = json.loads((ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text(encoding="utf-8"))
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        Draft202012Validator(schema).validate(manifest)
-        self.assertEqual("delivered", manifest["guarded_delivery_evidence"]["delivery_stage"])
+        if finalized.returncode == 0:
+            schema = json.loads((ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            Draft202012Validator(schema).validate(manifest)
+            self.assertEqual("delivered", manifest["guarded_delivery_evidence"]["delivery_stage"])
+            return
+        # The finalization anchor gate fails closed when the current worktree
+        # carries non-evidence changes (a dirty checkout) or HEAD has moved
+        # past the qualification runs' execution-time commit.
+        self.assertEqual(2, finalized.returncode, finalized.stdout + finalized.stderr)
+        self.assertIn("finalize requires", finalized.stderr)
+        self.assertFalse(manifest_path.exists())
 
     def test_collect_rejects_succeeded_run_outside_closed_issue14_qualification(self) -> None:
         mutations = {
@@ -446,11 +970,13 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             "accepted_exit_codes": lambda command: command.__setitem__(
                 "accepted_exit_codes", [0, 1]
             ),
+            "git_commit": lambda command: command.__setitem__("git_commit", "0" * 40),
+            "worktree_clean": lambda command: command.__setitem__("worktree_clean", False),
         }
         for field, mutate in mutations.items():
             with self.subTest(field=field):
-                run_dir, current_target, qualification_run = self._isolated_delivered_youtube_fixture()
-                command_path = qualification_run / "command.json"
+                run_dir, current_target, qualification_runs = self._isolated_delivered_youtube_fixture()
+                command_path = qualification_runs[contract.COMMANDS[1][0]] / "command.json"
                 command = json.loads(command_path.read_text(encoding="utf-8"))
                 mutate(command)
                 _write_json(command_path, command)
@@ -460,13 +986,40 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                     collector.collect(
                         run_dir=run_dir,
                         current_target=current_target,
-                        qualification_run_dir=qualification_run,
+                        qualification_runs=qualification_runs,
                         output=output,
                     )
                 self.assertFalse(output.exists())
 
-    def test_finalize_fingerprints_complete_implementation_change_set(self) -> None:
-        repository = new_case_dir(self.id(), label="issue14-fingerprint-repository")
+    def test_collect_rejects_missing_or_mismatched_qualification_run(self) -> None:
+        run_dir, current_target, qualification_runs = self._isolated_delivered_youtube_fixture()
+        output = run_dir.parents[1] / "missing-run-collection.json"
+        with self.assertRaises(collector.CollectionError):
+            collector.collect(
+                run_dir=run_dir,
+                current_target=current_target,
+                qualification_runs={
+                    contract.COMMANDS[0][0]: qualification_runs[contract.COMMANDS[0][0]],
+                },
+                output=output,
+            )
+        self.assertFalse(output.exists())
+
+        other = new_case_dir(self.id(), label="issue14-mismatched-commit")
+        run_dir2, current_target2, qualification_runs2 = self._isolated_delivered_youtube_fixture()
+        swapped = dict(qualification_runs)
+        swapped[contract.COMMANDS[1][0]] = other / "unrelated-run"
+        swapped[contract.COMMANDS[1][0]].mkdir(parents=True)
+        with self.assertRaises(collector.CollectionError):
+            collector.collect(
+                run_dir=run_dir2,
+                current_target=current_target2,
+                qualification_runs=swapped,
+                output=output,
+            )
+
+    def _init_repository(self, label: str) -> tuple[Path, callable]:
+        repository = new_case_dir(self.id(), label=label)
 
         def git(*arguments: str) -> str:
             completed = subprocess.run(
@@ -479,10 +1032,44 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         git("init")
         git("config", "user.email", "issue14-tests@example.invalid")
         git("config", "user.name", "Issue 14 Tests")
+        git("config", "core.autocrlf", "false")
+        return repository, git
+
+    def _build_finalize_repository(self, label: str) -> tuple[Path, callable, str, str]:
+        """Build a fresh git repo with a real slice-13-style qualification closure.
+
+        Returns (repository, git, slice_base_commit, implementation_commit).
+        The worktree at the implementation commit is clean except for the
+        evidence closure written later by the caller.
+        """
+        repository, git = self._init_repository(label)
+        (repository / ".gitignore").write_text("qualification-run/\nruntime/\n", encoding="utf-8")
         for _role, relative in contract.FIXTURE_SPECS:
             path = repository / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}\n", encoding="utf-8")
+        for directory in ("schemas", "delivery-quality"):
+            shutil.copytree(
+                ROOT / directory,
+                repository / directory,
+                dirs_exist_ok=True,
+            )
+        contract_fixtures = repository / "tests/video_workflow/fixtures/contracts"
+        contract_fixtures.mkdir(parents=True)
+        shutil.copytree(
+            ROOT / "tests/video_workflow/fixtures/contracts",
+            contract_fixtures,
+            dirs_exist_ok=True,
+        )
+        shutil.copytree(
+            ROOT / "tests/video_workflow/fixtures/delivery-quality",
+            repository / "tests/video_workflow/fixtures/delivery-quality",
+            dirs_exist_ok=True,
+        )
+        requirements = repository / "requirements"
+        requirements.mkdir(exist_ok=True)
+        for name in ("video-workflow-runtime.in", "pylock.video-workflow-runtime.toml"):
+            shutil.copy2(ROOT / "requirements" / name, requirements / name)
         contract_path = repository / "scripts" / "issue14_exit_evidence_contract.py"
         contract_path.parent.mkdir(parents=True, exist_ok=True)
         contract_path.write_text("BASE = True\n", encoding="utf-8")
@@ -500,8 +1087,19 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         git("add", ".")
         git("commit", "-m", "implementation")
         implementation_commit = git("rev-parse", "HEAD")
+        return repository, git, slice_base_commit, implementation_commit
 
-        runtime = repository / "runtime"
+    def _synthetic_issue14_collection(
+        self,
+        repository: Path,
+        *,
+        implementation_commit: str,
+    ) -> tuple[Path, dict[str, dict[str, str]]]:
+        """Write a collection for a temp repository at its implementation commit.
+
+        Qualification run records live under the gitignored ``runtime/`` tree so
+        the finalization anchor only sees declared evidence changes.
+        """
         artifact_bindings: dict[str, dict[str, str]] = {}
         for role in (
             "run_record", "source_manifest", "acceptance_report_v2",
@@ -509,34 +1107,107 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             "session_delivery_target", "delivery_task_index",
             "global_gate_authority", "final_pdf",
         ):
-            path = runtime / f"{role}.bin"
+            path = repository / "runtime" / f"{role}.bin"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((role + "\n").encode("utf-8"))
-            artifact_bindings[role] = {"path": str(path.resolve()), "sha256": _sha256(path)}
-        qualification_bindings: dict[str, dict[str, str]] = {}
-        for role in ("command_record", "terminal_status", "exit_code_artifact"):
-            path = runtime / "qualification" / f"{role}.bin"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes((role + "\n").encode("utf-8"))
-            qualification_bindings[role] = {"path": str(path.resolve()), "sha256": _sha256(path)}
-
+            artifact_bindings[role] = {
+                "path": path.relative_to(repository).as_posix(),
+                "sha256": _sha256(path),
+            }
+        qualification_runs: dict[str, dict[str, Any]] = {}
+        for index, (command_id, command, expected_exit) in enumerate(contract.COMMANDS, 1):
+            run_dir = repository / "runtime" / "qualification" / command_id
+            run_dir.mkdir(parents=True)
+            run_id = f"14141414-1414-4414-8414-{index:012d}"
+            command_path = run_dir / "command.json"
+            command_path.write_text(
+                json.dumps({
+                    "schema_name": "persisted-command",
+                    "schema_version": "1.0.0",
+                    "run_id": run_id,
+                    "cwd": str(repository.resolve()),
+                    "argv": list(command),
+                    "accepted_exit_codes": [expected_exit],
+                    "git_commit": implementation_commit,
+                    "worktree_clean": True,
+                }, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            status_path = run_dir / "status.json"
+            status_path.write_text(
+                json.dumps({
+                    "schema_name": "persisted-command-status",
+                    "schema_version": "1.0.0",
+                    "run_id": run_id,
+                    "state": "succeeded",
+                    "exit_code": expected_exit,
+                    "security": {
+                        "acceptance_evidence_eligible": True,
+                        "classification": "no_secret_detected",
+                    },
+                }, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            exit_path = run_dir / "exit-code.txt"
+            exit_path.write_text(f"{expected_exit}\n", encoding="utf-8")
+            log_path = run_dir / "command.log"
+            log_path.write_text(
+                f"qualified command: {command_id}\n", encoding="utf-8"
+            )
+            qualification_runs[command_id] = {
+                "run_id": run_id,
+                "state": "succeeded",
+                "exit_code": expected_exit,
+                "acceptance_evidence_eligible": True,
+                "git_commit": implementation_commit,
+                "worktree_clean": True,
+                "command_record": {
+                    "path": command_path.relative_to(repository).as_posix(),
+                    "sha256": _sha256(command_path),
+                },
+                "terminal_status": {
+                    "path": status_path.relative_to(repository).as_posix(),
+                    "sha256": _sha256(status_path),
+                },
+                "exit_code_artifact": {
+                    "path": exit_path.relative_to(repository).as_posix(),
+                    "sha256": _sha256(exit_path),
+                },
+                "log": {
+                    "path": log_path.relative_to(repository).as_posix(),
+                    "sha256": _sha256(log_path),
+                },
+            }
+        primary = qualification_runs[contract.COMMANDS[1][0]]
         collection_path = repository / contract.EVIDENCE_PREFIX / "collection.json"
-        manifest_path = repository / contract.EVIDENCE_PREFIX / "exit-evidence-manifest.json"
         _write_json(
             collection_path,
             {
                 "schema_name": "issue14-exit-evidence-collection",
-                "schema_version": "1.0.0",
+                "schema_version": "2.0.0",
                 "run_id": "1" * 32,
                 "canonical_platform": "youtube",
                 "delivery_stage": "delivered",
+                "implementation_commit": implementation_commit,
                 "artifacts": artifact_bindings,
                 "qualification_run": {
-                    "run_id": "14141414-1414-4414-8414-141414141414",
-                    **qualification_bindings,
+                    key: primary[key]
+                    for key in ("run_id", "state", "exit_code", "acceptance_evidence_eligible")
                 },
+                "qualification_runs": qualification_runs,
             },
         )
+        return collection_path, artifact_bindings
+
+    def test_finalize_fingerprints_complete_implementation_change_set(self) -> None:
+        repository, git, slice_base_commit, implementation_commit = (
+            self._build_finalize_repository("issue14-fingerprint-repository")
+        )
+        collection_path, _artifact_bindings = self._synthetic_issue14_collection(
+            repository, implementation_commit=implementation_commit
+        )
+        manifest_path = repository / contract.EVIDENCE_PREFIX / "exit-evidence-manifest.json"
+
         with (
             patch.object(collector, "PROJECT_ROOT", repository),
             patch.object(collector, "SLICE_BASE_COMMIT", slice_base_commit),
@@ -553,6 +1224,165 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         )
 
         self.assertEqual(expected, manifest["artifact_fingerprints"])
+        self.assertEqual(implementation_commit, manifest["implementation_commit"])
+
+    def test_finalize_rejects_head_advanced_past_qualification_commit(self) -> None:
+        """R2: finalize must fail when HEAD has moved past the runs' git_commit."""
+        repository, git, _slice_base_commit, implementation_commit = (
+            self._build_finalize_repository("issue14-head-advanced")
+        )
+        collection_path, _artifact_bindings = self._synthetic_issue14_collection(
+            repository, implementation_commit=implementation_commit
+        )
+        manifest_path = repository / contract.EVIDENCE_PREFIX / "exit-evidence-manifest.json"
+
+        later = repository / "src" / "video2pdf_workflow_kernel" / "later_change.py"
+        later.parent.mkdir(parents=True, exist_ok=True)
+        later.write_text("LATER = True\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-m", "later implementation")
+        self.assertNotEqual(git("rev-parse", "HEAD"), implementation_commit)
+
+        with (
+            patch.object(collector, "PROJECT_ROOT", repository),
+            patch.object(collector, "SLICE_BASE_COMMIT", implementation_commit),
+        ):
+            with self.assertRaises(collector.CollectionError) as caught:
+                collector.finalize(
+                    collection_path=collection_path,
+                    manifest_path=manifest_path,
+                )
+        self.assertIn("HEAD to equal", str(caught.exception))
+        self.assertFalse(manifest_path.exists())
+
+    def test_finalize_rejects_dirty_non_evidence_worktree(self) -> None:
+        """R2: finalize must fail when non-evidence worktree changes exist."""
+        repository, _git, _slice_base_commit, implementation_commit = (
+            self._build_finalize_repository("issue14-dirty-worktree")
+        )
+        collection_path, _artifact_bindings = self._synthetic_issue14_collection(
+            repository, implementation_commit=implementation_commit
+        )
+        manifest_path = repository / contract.EVIDENCE_PREFIX / "exit-evidence-manifest.json"
+        non_evidence = repository / "src" / "video2pdf_workflow_kernel" / "drift.py"
+        non_evidence.parent.mkdir(parents=True, exist_ok=True)
+        non_evidence.write_text("DRIFT = True\n", encoding="utf-8")
+
+        with (
+            patch.object(collector, "PROJECT_ROOT", repository),
+            patch.object(collector, "SLICE_BASE_COMMIT", implementation_commit),
+        ):
+            with self.assertRaises(collector.CollectionError) as caught:
+                collector.finalize(
+                    collection_path=collection_path,
+                    manifest_path=manifest_path,
+                )
+        self.assertIn("non-evidence changes", str(caught.exception))
+        self.assertFalse(manifest_path.exists())
+
+    def test_collect_finalize_validate_round_trip_at_different_root(self) -> None:
+        """R5: a slice-13-style manifest validates at a different repository root.
+
+        Runs the full collect + finalize + validate cycle inside a fresh git
+        repository: collect a delivered YouTube run and both persisted
+        qualification runs, finalize against the patched root, then revalidate
+        the produced manifest through the shared validator with a patched root.
+        """
+        repository, git, slice_base_commit, implementation_commit = (
+            self._build_finalize_repository("issue14-round-trip")
+        )
+        run_dir, current_target, qualification_runs = (
+            self._isolated_delivered_youtube_fixture(
+                project_root=repository,
+                git_commit=implementation_commit,
+            )
+        )
+        collection_path = repository / contract.EVIDENCE_PREFIX / "collection.json"
+        manifest_path = repository / contract.EVIDENCE_PREFIX / "exit-evidence-manifest.json"
+
+        with (
+            patch.object(collector, "PROJECT_ROOT", repository),
+            patch.object(collector, "SLICE_BASE_COMMIT", slice_base_commit),
+        ):
+            collected = collector.collect(
+                run_dir=run_dir,
+                current_target=current_target,
+                qualification_runs=qualification_runs,
+                output=collection_path,
+            )
+            self.assertEqual(implementation_commit, collected["implementation_commit"])
+            manifest = collector.finalize(
+                collection_path=collection_path,
+                manifest_path=manifest_path,
+            )
+        self.assertEqual(implementation_commit, manifest["implementation_commit"])
+        schema = json.loads(
+            (ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text(encoding="utf-8")
+        )
+        # The committed Schema pins the real repository's slice_base_commit, so
+        # a fresh-root manifest must be validated against a Schema copy whose
+        # slice-13 base-commit const matches the temporary repository.
+        patched_schema = deepcopy(schema)
+        for branch in patched_schema["oneOf"]:
+            branch_props = branch.get("properties", {})
+            branch_slice = branch_props.get("slice", {}).get("properties", {})
+            if branch_slice.get("number", {}).get("const") == 13:
+                branch_props["slice_base_commit"]["const"] = slice_base_commit
+        Draft202012Validator(patched_schema).validate(manifest)
+
+        patched_schema_path = repository.parent / "patched-exit-evidence-manifest.v2.schema.json"
+        patched_schema_path.write_text(
+            json.dumps(patched_schema, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        patched_configs = deepcopy(validator.SLICE_CONFIGS)
+        patched_configs[13]["base_commit"] = slice_base_commit
+
+        with (
+            patch.object(validator, "PROJECT_ROOT", repository),
+            patch.object(validator, "SCHEMA_PATH", patched_schema_path),
+            patch.object(validator, "SLICE_CONFIGS", patched_configs),
+        ):
+            validator.validate_manifest(
+                manifest_path, schema_only=False, pre_publication=True
+            )
+
+    def test_collect_rejects_absolute_or_escape_artifact_paths(self) -> None:
+        """R5: collection and manifest entries reject absolute and escaping paths."""
+        run_dir, current_target, qualification_runs = self._isolated_delivered_youtube_fixture()
+        output = run_dir.parents[1] / "absolute-path-collection.json"
+        collected = collector.collect(
+            run_dir=run_dir,
+            current_target=current_target,
+            qualification_runs=qualification_runs,
+            output=output,
+        )
+        outside = ROOT.parent / "escaped-artifact.json"
+        outside.write_text("{}\n", encoding="utf-8")
+        try:
+            for mutation in (
+                lambda c: c["artifacts"]["run_record"].__setitem__(
+                    "path", str(outside.resolve())
+                ),
+                lambda c: c["qualification_runs"][
+                    contract.COMMANDS[1][0]
+                ]["command_record"].__setitem__(
+                    "path", str(outside.resolve())
+                ),
+            ):
+                with self.subTest():
+                    tampered = deepcopy(collected)
+                    mutation(tampered)
+                    tampered_output = run_dir.parents[1] / "escape-collection.json"
+                    with self.assertRaises(collector.CollectionError):
+                        collector.finalize(
+                            collection_path=_write_json(
+                                tampered_output, tampered
+                            ),
+                            manifest_path=run_dir.parents[1] / "escape-manifest.json",
+                        )
+        finally:
+            outside.unlink()
 
     def test_collect_rejects_nonpassing_acceptance_or_delivery_guard(self) -> None:
         mutations = {
@@ -569,7 +1399,7 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         }
         for role, (relative_path, field, value) in mutations.items():
             with self.subTest(role=role):
-                run_dir, current_target, qualification_run = self._isolated_delivered_youtube_fixture()
+                run_dir, current_target, qualification_runs = self._isolated_delivered_youtube_fixture()
                 artifact_path = run_dir / relative_path
                 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
                 artifact[field] = value
@@ -580,7 +1410,7 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                     collector.collect(
                         run_dir=run_dir,
                         current_target=current_target,
-                        qualification_run_dir=qualification_run,
+                        qualification_runs=qualification_runs,
                         output=run_dir.parents[1] / f"{role}-collection.json",
                     )
 

@@ -96,6 +96,17 @@ rejected.
 
 `stdout.log` and `stderr.log` preserve the target's original byte streams. `command.log` preserves supervisor observation order as length-prefixed binary records. Each record has the ASCII header `[<stream> <byte-length>]\n`, immediately followed by exactly `<byte-length>` payload bytes. `<stream>` is `stdout` or `stderr`. Consumers must use the declared byte length rather than newline or prefix scanning to locate the next record.
 
+At launch the runner records the execution-time implementation Git state in `command.json`:
+`git_commit` is the full `git rev-parse HEAD` value resolved in the run's working
+directory, or the sentinel `"<git-commit-unavailable>"` when the working
+directory is not an anchored Git worktree. `worktree_clean` is `true` only when
+`git status --porcelain` reports no changes at all (tracked or untracked,
+excluding gitignored paths). These fields causally bind every persisted run to
+the code that was checked out when it executed. Evidence collectors that
+finalize manifests against an implementation commit treat a sentinel
+`git_commit`, a mismatch against the final manifest commit, or a dirty
+`worktree_clean` as failed qualification evidence.
+
 The accepted exit-code set defaults to `{0}`. Repeating `--accepted-exit-code <code>` before `--` replaces that default with the declared set, so `0` must also be declared when it remains valid beside an intentional nonzero code. That declaration becomes immutable at launch. `succeeded` and `failed` require an actual child exit code; `launch_failed` has none. An absent matching process becomes `interrupted`, while uncertain identity becomes `unknown`.
 
 ## End-to-end cross-process example

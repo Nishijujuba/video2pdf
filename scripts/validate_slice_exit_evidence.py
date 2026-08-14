@@ -414,6 +414,35 @@ def resolve_project_path(value: str) -> Path:
     return path
 
 
+def resolve_slice13_project_path(value: str) -> Path:
+    """Resolve a Slice 13 evidence path under the closed repo-relative contract.
+
+    Slice 13 mandates project-relative evidence paths: absolute paths are
+    rejected outright (error ``evidence_path_absolute``), ``..`` escapes are
+    rejected (error ``evidence_path_escape``), and the resolved file must
+    exist. Older slices keep the tolerant resolver so their committed evidence
+    stays valid.
+    """
+    candidate = Path(value)
+    if candidate.is_absolute() or "\\" in value:
+        raise EvidenceError(
+            f"Slice 13 evidence path must be project-relative: {value}",
+            first_failing_gate="evidence_paths",
+            error_code="evidence_path_absolute",
+        )
+    root = PROJECT_ROOT.resolve()
+    path = (root / candidate).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise EvidenceError(
+            f"Slice 13 evidence path escapes project root: {value}",
+            first_failing_gate="evidence_paths",
+            error_code="evidence_path_escape",
+        ) from exc
+    return path
+
+
 def changed_worktree_paths() -> set[str]:
     changed: set[str] = set()
     for arguments in (
@@ -1059,6 +1088,276 @@ def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
             )
 
 
+def _decode_persisted_run_evidence(
+    qualification: dict[str, Any],
+    *,
+    issue_label: str,
+) -> tuple[dict[str, Any], dict[str, Any], int]:
+    try:
+        command_record = json.loads(
+            resolve_project_path(qualification["command_record"]["path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        terminal_status = json.loads(
+            resolve_project_path(qualification["terminal_status"]["path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        exit_code = int(
+            resolve_project_path(qualification["exit_code"]["path"])
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise EvidenceError(
+            f"{issue_label} persisted qualification evidence cannot be decoded",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_qualification_invalid",
+        ) from exc
+    return command_record, terminal_status, exit_code
+
+
+def _validate_slice12_guarded_qualification(
+    manifest: dict[str, Any],
+    *,
+    issue_commands: tuple,
+    issue_label: str,
+) -> None:
+    guarded = manifest["guarded_delivery_evidence"]
+    qualification = guarded["qualification_run"]
+    command_record, terminal_status, exit_code = _decode_persisted_run_evidence(
+        qualification, issue_label=issue_label
+    )
+    expected_argv = list(issue_commands[1][1])
+    if (
+        command_record.get("argv") != expected_argv
+        or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+        or command_record.get("accepted_exit_codes") != [0]
+    ):
+        raise EvidenceError(
+            f"{issue_label} persisted qualification command differs from its closed contract",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_qualification_identity_stale",
+        )
+    if (
+        command_record.get("run_id") != qualification["run_id"]
+        or terminal_status.get("run_id") != qualification["run_id"]
+        or terminal_status.get("state") != "succeeded"
+        or terminal_status.get("exit_code") != 0
+        or exit_code != 0
+        or terminal_status.get("security", {}).get(
+            "acceptance_evidence_eligible"
+        )
+        is not True
+    ):
+        raise EvidenceError(
+            f"{issue_label} qualification Run is not succeeded eligible evidence",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_qualification_failed",
+        )
+
+
+def _validate_slice13_guarded_qualification(
+    manifest: dict[str, Any],
+    *,
+    issue_commands: tuple,
+    issue_label: str,
+) -> None:
+    """Validate every closed command's persisted qualification run.
+
+    Slice 13 strengthens the Slice 12 single-run decode to a per-command,
+    one-to-one run binding. Each manifest command must carry its own
+    ``persisted_run`` whose command record matches the contract argv, is a
+    succeeded eligible terminal run, and was executed at the manifest's
+    ``implementation_commit`` on a clean worktree (the R1 causal commit
+    binding). Each command log must carry exactly one matching
+    ``EVIDENCE_IMPLEMENTATION_COMMIT`` marker; log content is additionally
+    pinned to committed blobs by ``validate_bindings``.
+    """
+    guarded = manifest["guarded_delivery_evidence"]
+    implementation_commit = manifest["implementation_commit"]
+    command_by_id = {
+        command["test_id"]: command for command in manifest["commands"]
+    }
+    for command_id, contract_command, expected_exit in issue_commands:
+        entry = command_by_id.get(command_id)
+        if entry is None:
+            raise EvidenceError(
+                f"{issue_label} qualification command is absent from the manifest: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_invalid",
+            )
+        persisted = entry.get("persisted_run")
+        if not isinstance(persisted, dict):
+            raise EvidenceError(
+                f"{issue_label} qualification command lacks a persisted run: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_invalid",
+            )
+        command_record, terminal_status, exit_code = _decode_persisted_run_evidence(
+            persisted, issue_label=issue_label
+        )
+        if (
+            command_record.get("argv") != list(contract_command)
+            or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+            or command_record.get("accepted_exit_codes") != [expected_exit]
+        ):
+            raise EvidenceError(
+                f"{issue_label} persisted qualification command differs from its closed contract: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_identity_stale",
+            )
+        if (
+            command_record.get("run_id") != persisted["run_id"]
+            or terminal_status.get("run_id") != persisted["run_id"]
+            or terminal_status.get("state") != "succeeded"
+            or terminal_status.get("exit_code") != expected_exit
+            or exit_code != expected_exit
+            or terminal_status.get("security", {}).get(
+                "acceptance_evidence_eligible"
+            )
+            is not True
+        ):
+            raise EvidenceError(
+                f"{issue_label} qualification Run is not succeeded eligible evidence: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_failed",
+            )
+        if command_record.get("worktree_clean") is not True:
+            raise EvidenceError(
+                f"{issue_label} qualification Run executed against a dirty worktree: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_failed",
+            )
+        if command_record.get("git_commit") != implementation_commit:
+            raise EvidenceError(
+                f"{issue_label} qualification Run commit differs from the manifest implementation commit: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_identity_stale",
+            )
+        log_path = resolve_slice13_project_path(entry["log"]["path"])
+        if not log_path.is_file():
+            raise EvidenceError(
+                f"{issue_label} qualification command log is missing: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_invalid",
+            )
+        marker = (
+            f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}".encode(
+                "ascii"
+            )
+        )
+        log_lines = log_path.read_bytes().splitlines()
+        if sum(1 for line in log_lines if line == marker) != 1:
+            raise EvidenceError(
+                f"{issue_label} qualification command log marker is missing, duplicated, or stale: {command_id}",
+                first_failing_gate="guarded_delivery_evidence",
+                error_code="guarded_delivery_qualification_invalid",
+            )
+
+
+def _validate_guarded_delivery_qualification(
+    manifest: dict[str, Any],
+    *,
+    issue_commands: tuple,
+    issue_label: str,
+) -> None:
+    """Shared guarded-delivery decision and qualification authority for
+    platform cutover slices (12 Bilibili, 13 YouTube)."""
+    guarded = manifest["guarded_delivery_evidence"]
+    artifact_paths = {
+        item["role"]: resolve_project_path(item["path"])
+        for item in guarded["artifacts"]
+    }
+    try:
+        validate_acceptance_report(
+            project_root=PROJECT_ROOT,
+            report_path=artifact_paths["acceptance_report_v2"],
+            run_id=guarded["run_id"],
+        )
+        validate_delivery_guard_report(
+            report_path=artifact_paths["delivery_guard_report"]
+        )
+    except (ContractError, KeyError) as exc:
+        raise EvidenceError(
+            f"{issue_label} guarded-delivery decisions are not authoritative passes",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="guarded_delivery_decision_invalid",
+        ) from exc
+    if manifest.get("slice", {}).get("number") == 12:
+        _validate_slice12_guarded_qualification(
+            manifest, issue_commands=issue_commands, issue_label=issue_label
+        )
+        return
+    _validate_slice13_guarded_qualification(
+        manifest, issue_commands=issue_commands, issue_label=issue_label
+    )
+
+
+def _validate_slice13_evidence_paths(manifest: dict[str, Any]) -> None:
+    """Enforce the repo-relative Slice 13 evidence path contract.
+
+    Every declared evidence path, guarded artifact binding, and persisted-run
+    artifact must be project-relative, stay inside the repository, and exist.
+    """
+    guarded = manifest.get("guarded_delivery_evidence")
+    bound_paths: list[tuple[str, str]] = []
+    if isinstance(guarded, dict):
+        for role, item in (
+            ("collection", guarded.get("collection")),
+        ):
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                bound_paths.append((role, item["path"]))
+        artifacts = guarded.get("artifacts")
+        if isinstance(artifacts, list):
+            for item in artifacts:
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    bound_paths.append((str(item.get("role")), item["path"]))
+        qualification = guarded.get("qualification_run")
+        if isinstance(qualification, dict):
+            for role in ("command_record", "terminal_status", "exit_code"):
+                item = qualification.get(role)
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    bound_paths.append((role, item["path"]))
+    for command in manifest.get("commands", []):
+        persisted = command.get("persisted_run")
+        if isinstance(persisted, dict):
+            for role in ("command_record", "terminal_status", "exit_code"):
+                item = persisted.get(role)
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    bound_paths.append((role, item["path"]))
+    for path in manifest.get("evidence_paths", []):
+        if isinstance(path, str):
+            bound_paths.append(("evidence_path", path))
+    for role, path in bound_paths:
+        resolved = resolve_slice13_project_path(path)
+        if not resolved.is_file():
+            raise EvidenceError(
+                f"Slice 13 evidence path does not exist: {path}",
+                first_failing_gate="evidence_paths",
+                error_code="evidence_path_missing",
+            )
+
+
+def _persisted_artifact_repeated(
+    manifest: dict[str, Any], artifact: dict[str, Any]
+) -> bool:
+    """True when a guarded qualification artifact is already bound through a
+    command's persisted_run (the Slice 13 per-command one-to-one binding)."""
+    if not isinstance(artifact, dict) or not isinstance(artifact.get("path"), str):
+        return False
+    return any(
+        isinstance(command.get("persisted_run"), dict)
+        and any(
+            isinstance(item, dict) and item.get("path") == artifact["path"]
+            for role in ("command_record", "terminal_status", "exit_code")
+            for item in (command["persisted_run"].get(role),)
+        )
+        for command in manifest.get("commands", [])
+    )
+
+
 def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_paths = {command["log"]["path"] for command in manifest["commands"]}
@@ -1086,11 +1385,22 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
         )
         qualification = guarded.get("qualification_run")
         if isinstance(qualification, dict):
-            guarded_artifacts.extend(
-                artifact
-                for key, artifact in qualification.items()
-                if key != "run_id" and isinstance(artifact, dict)
-            )
+            # Slice 13 binds every closed command through commands[].persisted_run;
+            # the guarded qualification_run slot mirrors the primary command's
+            # run and must not be fingerprinted a second time as a duplicate.
+            if manifest.get("slice", {}).get("number") == 13:
+                guarded_artifacts.extend(
+                    artifact
+                    for key, artifact in qualification.items()
+                    if key != "run_id" and isinstance(artifact, dict)
+                    and not _persisted_artifact_repeated(manifest, artifact)
+                )
+            else:
+                guarded_artifacts.extend(
+                    artifact
+                    for key, artifact in qualification.items()
+                    if key != "run_id" and isinstance(artifact, dict)
+                )
     guarded_paths = {artifact["path"] for artifact in guarded_artifacts}
     expected_evidence_paths = {
         manifest_relative,
@@ -1226,76 +1536,18 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                     error_code="persisted_command_security_failure",
                 )
     if manifest.get("slice", {}).get("number") == 12:
-        guarded = manifest["guarded_delivery_evidence"]
-        artifact_paths = {
-            item["role"]: resolve_project_path(item["path"])
-            for item in guarded["artifacts"]
-        }
-        try:
-            validate_acceptance_report(
-                project_root=PROJECT_ROOT,
-                report_path=artifact_paths["acceptance_report_v2"],
-                run_id=guarded["run_id"],
-            )
-            validate_delivery_guard_report(
-                report_path=artifact_paths["delivery_guard_report"]
-            )
-        except (ContractError, KeyError) as exc:
-            raise EvidenceError(
-                "Issue #13 guarded-delivery decisions are not authoritative passes",
-                first_failing_gate="guarded_delivery_evidence",
-                error_code="guarded_delivery_decision_invalid",
-            ) from exc
-        qualification = guarded["qualification_run"]
-        try:
-            command_record = json.loads(
-                resolve_project_path(qualification["command_record"]["path"]).read_text(
-                    encoding="utf-8"
-                )
-            )
-            terminal_status = json.loads(
-                resolve_project_path(qualification["terminal_status"]["path"]).read_text(
-                    encoding="utf-8"
-                )
-            )
-            exit_code = int(
-                resolve_project_path(qualification["exit_code"]["path"])
-                .read_text(encoding="utf-8")
-                .strip()
-            )
-        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-            raise EvidenceError(
-                "Issue #13 persisted qualification evidence cannot be decoded",
-                first_failing_gate="guarded_delivery_evidence",
-                error_code="guarded_delivery_qualification_invalid",
-            ) from exc
-        expected_argv = list(ISSUE13_COMMANDS[1][1])
-        if (
-            command_record.get("argv") != expected_argv
-            or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
-            or command_record.get("accepted_exit_codes") != [0]
-        ):
-            raise EvidenceError(
-                "Issue #13 persisted qualification command differs from its closed contract",
-                first_failing_gate="guarded_delivery_evidence",
-                error_code="guarded_delivery_qualification_identity_stale",
-            )
-        if (
-            command_record.get("run_id") != qualification["run_id"]
-            or terminal_status.get("run_id") != qualification["run_id"]
-            or terminal_status.get("state") != "succeeded"
-            or terminal_status.get("exit_code") != 0
-            or exit_code != 0
-            or terminal_status.get("security", {}).get(
-                "acceptance_evidence_eligible"
-            )
-            is not True
-        ):
-            raise EvidenceError(
-                "Issue #13 qualification Run is not succeeded eligible evidence",
-                first_failing_gate="guarded_delivery_evidence",
-                error_code="guarded_delivery_qualification_failed",
-            )
+        _validate_guarded_delivery_qualification(
+            manifest,
+            issue_commands=ISSUE13_COMMANDS,
+            issue_label="Issue #13",
+        )
+    if manifest.get("slice", {}).get("number") == 13:
+        _validate_guarded_delivery_qualification(
+            manifest,
+            issue_commands=ISSUE14_COMMANDS,
+            issue_label="Issue #14",
+        )
+        _validate_slice13_evidence_paths(manifest)
 
 
 def validate_command_log_provenance(manifest: dict[str, Any]) -> None:

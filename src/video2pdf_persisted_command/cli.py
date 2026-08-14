@@ -484,6 +484,47 @@ def _timestamp() -> str:
     return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
 
 
+# Sentinel recorded when the implementation Git worktree cannot be inspected at
+# launch. Qualification evidence collectors treat any non-commit value as a
+# failed causal binding, so a launch outside a Git worktree fails closed.
+GIT_COMMIT_UNAVAILABLE = "<git-commit-unavailable>"
+
+
+def _capture_git_state(working_directory: Path) -> tuple[str, bool]:
+    """Record the execution-time Git commit and worktree cleanliness.
+
+    ``git_commit`` is the full ``rev-parse HEAD`` value resolved in the run's
+    working directory, or ``GIT_COMMIT_UNAVAILABLE`` when the directory is not
+    an anchored Git worktree. ``worktree_clean`` is True only when
+    ``git status --porcelain`` reports no changes at all (tracked or
+    untracked, excluding gitignored paths).
+    """
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=working_directory,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        head = GIT_COMMIT_UNAVAILABLE
+    try:
+        porcelain = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=working_directory,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        worktree_clean = not porcelain
+    except (OSError, subprocess.CalledProcessError):
+        worktree_clean = False
+    return head, worktree_clean
+
+
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
@@ -1001,6 +1042,7 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
     run_id, run_dir = _create_run_directory(project_root, safe_task_name)
     run_nonce = secrets.token_hex(32)
     created_at = _now()
+    git_commit, worktree_clean = _capture_git_state(working_directory)
     command_record = {
         "schema_name": "persisted-command",
         "schema_version": COMMAND_SCHEMA_VERSION,
@@ -1012,6 +1054,8 @@ def _start(args: argparse.Namespace, project_root: Path) -> dict[str, Any]:
         "cwd": safe_working_directory,
         "argv": redacted_argv,
         "accepted_exit_codes": sorted(set(args.accepted_exit_code or [0])),
+        "git_commit": git_commit,
+        "worktree_clean": worktree_clean,
     }
     _write_json_atomic(run_dir / "command.json", command_record)
     for filename in ("stdout.log", "stderr.log", "command.log"):

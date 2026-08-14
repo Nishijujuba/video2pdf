@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -42,6 +43,9 @@ from video2pdf_workflow_kernel.guarded_delivery import (
 )
 
 
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
 class CollectionError(RuntimeError):
     pass
 
@@ -60,14 +64,29 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _binding(path: Path, *, label: str) -> dict[str, str]:
+def _repo_resolved(path: Path, *, label: str) -> Path:
+    """Resolve a path and require it to stay inside the repository root."""
     resolved = path.resolve()
+    try:
+        resolved.relative_to(PROJECT_ROOT.resolve())
+    except ValueError as exc:
+        raise CollectionError(
+            f"{label} must be inside the repository"
+        ) from exc
+    return resolved
+
+
+def _binding(path: Path, *, label: str) -> dict[str, str]:
+    """Record a repo-relative binding for a file inside the repository."""
+    resolved = _repo_resolved(path, label=label)
     if not resolved.is_file():
         raise CollectionError(f"{label} is unavailable")
-    return {"path": str(resolved), "sha256": _sha256(resolved)}
+    relative = resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    return {"path": relative, "sha256": _sha256(resolved)}
 
 
 def _bound_path(binding: Any, *, base: Path, label: str) -> Path:
+    """Resolve a binding path that may be relative or absolute-in-repo."""
     if not isinstance(binding, dict):
         raise CollectionError(f"{label} binding is absent")
     raw = binding.get("path")
@@ -75,10 +94,18 @@ def _bound_path(binding: Any, *, base: Path, label: str) -> Path:
     if not isinstance(raw, str) or not isinstance(expected, str):
         raise CollectionError(f"{label} binding is invalid")
     candidate = Path(raw)
-    path = (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
-    if not path.is_file() or _sha256(path) != expected:
+    resolved = (
+        _repo_resolved(candidate, label=label)
+        if candidate.is_absolute()
+        else (base / candidate).resolve()
+    )
+    try:
+        resolved.relative_to(PROJECT_ROOT.resolve())
+    except ValueError as exc:
+        raise CollectionError(f"{label} binding escapes the repository") from exc
+    if not resolved.is_file() or _sha256(resolved) != expected:
         raise CollectionError(f"{label} binding is stale")
-    return path
+    return resolved
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -106,11 +133,69 @@ def qualification_manifest_skeleton() -> dict:
     }
 
 
+def _decode_qualification_run(
+    qualification_run_dir: Path,
+    *,
+    command_id: str,
+    expected_argv: list[str],
+    expected_exit: int,
+) -> dict[str, Any]:
+    """Validate one persisted qualification run against its closed contract.
+
+    Every identity field (run_id, argv, cwd, accepted exit codes, terminal
+    state, real exit code, eligibility) plus the execution-time Git binding
+    (git_commit, worktree_clean) must match. Any mismatch fails closed.
+    """
+    qualification_root = qualification_run_dir.resolve()
+    command_path = qualification_root / "command.json"
+    status_path = qualification_root / "status.json"
+    exit_code_path = qualification_root / "exit-code.txt"
+    command = _read_json(command_path, label="persisted command record")
+    status = _read_json(status_path, label="persisted terminal status")
+    try:
+        exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CollectionError("persisted exit code is unavailable or invalid") from exc
+    eligible = status.get("security", {}).get("acceptance_evidence_eligible")
+    git_commit = command.get("git_commit")
+    worktree_clean = command.get("worktree_clean")
+    if (
+        command.get("run_id") != status.get("run_id")
+        or command.get("argv") != expected_argv
+        or Path(str(command.get("cwd", ""))).resolve() != PROJECT_ROOT.resolve()
+        or command.get("accepted_exit_codes") != [expected_exit]
+        or status.get("state") != "succeeded"
+        or status.get("exit_code") != expected_exit
+        or exit_code != expected_exit
+        or eligible is not True
+        or not isinstance(git_commit, str)
+        or COMMIT_RE.fullmatch(git_commit) is None
+        or worktree_clean is not True
+    ):
+        raise CollectionError(
+            f"qualification run is not succeeded evidence: {command_id}"
+        )
+    return {
+        "run_id": command["run_id"],
+        "state": "succeeded",
+        "exit_code": expected_exit,
+        "acceptance_evidence_eligible": True,
+        "git_commit": git_commit,
+        "worktree_clean": True,
+        "command_record": _binding(command_path, label=f"{command_id} command record"),
+        "terminal_status": _binding(status_path, label=f"{command_id} terminal status"),
+        "exit_code_artifact": _binding(exit_code_path, label=f"{command_id} exit code"),
+        "log": _binding(
+            qualification_root / "command.log", label=f"{command_id} command log"
+        ),
+    }
+
+
 def collect(
     *,
     run_dir: Path,
     current_target: Path,
-    qualification_run_dir: Path,
+    qualification_runs: dict[str, Path],
     output: Path,
 ) -> dict[str, Any]:
     run_root = run_dir.resolve()
@@ -185,36 +270,33 @@ def collect(
     except ContractError as exc:
         raise CollectionError("Delivery Guard Report is not a passing Run decision")
 
-    qualification_root = qualification_run_dir.resolve()
-    command_path = qualification_root / "command.json"
-    status_path = qualification_root / "status.json"
-    exit_code_path = qualification_root / "exit-code.txt"
-    command = _read_json(command_path, label="persisted command record")
-    status = _read_json(status_path, label="persisted terminal status")
-    try:
-        exit_code = int(exit_code_path.read_text(encoding="utf-8").strip())
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise CollectionError("persisted exit code is unavailable or invalid") from exc
-    eligible = status.get("security", {}).get("acceptance_evidence_eligible")
-    expected_argv = list(COMMANDS[1][1])
-    if (
-        command.get("run_id") != status.get("run_id")
-        or command.get("argv") != expected_argv
-        or Path(str(command.get("cwd", ""))).resolve() != PROJECT_ROOT.resolve()
-        or command.get("accepted_exit_codes") != [0]
-        or status.get("state") != "succeeded"
-        or status.get("exit_code") != 0
-        or exit_code != 0
-        or eligible is not True
-    ):
-        raise CollectionError("qualification run is not succeeded evidence")
+    decoded_runs: dict[str, dict[str, Any]] = {}
+    for command_id, command_argv, expected_exit in COMMANDS:
+        run_dir_for_command = qualification_runs.get(command_id)
+        if run_dir_for_command is None:
+            raise CollectionError(
+                f"qualification run is missing for closed command: {command_id}"
+            )
+        decoded_runs[command_id] = _decode_qualification_run(
+            run_dir_for_command,
+            command_id=command_id,
+            expected_argv=list(command_argv),
+            expected_exit=expected_exit,
+        )
+    commits = {decoded["git_commit"] for decoded in decoded_runs.values()}
+    if len(commits) != 1:
+        raise CollectionError(
+            "qualification runs do not share one execution-time Git commit"
+        )
+    implementation_commit = next(iter(commits))
 
     value = {
         "schema_name": "issue14-exit-evidence-collection",
-        "schema_version": "1.0.0",
+        "schema_version": "2.0.0",
         "run_id": run_id,
         "canonical_platform": "youtube",
         "delivery_stage": "delivered",
+        "implementation_commit": implementation_commit,
         "artifacts": {
             "run_record": _binding(run_path, label="Run Record"),
             "source_manifest": _binding(source_path, label="source manifest"),
@@ -227,28 +309,85 @@ def collect(
             "final_pdf": _binding(final_pdf_path, label="final PDF"),
         },
         "qualification_run": {
-            "run_id": command["run_id"],
-            "state": "succeeded",
-            "exit_code": 0,
-            "acceptance_evidence_eligible": True,
-            "command_record": _binding(command_path, label="persisted command record"),
-            "terminal_status": _binding(status_path, label="persisted terminal status"),
-            "exit_code_artifact": _binding(exit_code_path, label="persisted exit code"),
+            key: value
+            for key, value in decoded_runs[COMMANDS[1][0]].items()
+            if key != "log" and key != "git_commit" and key != "worktree_clean"
         },
+        "qualification_runs": decoded_runs,
     }
     _write_json(output.resolve(), value)
     return value
 
 
 def _project_binding(binding: dict[str, str], *, role: str) -> dict[str, str]:
-    path = Path(binding["path"]).resolve()
-    try:
-        relative = path.relative_to(PROJECT_ROOT.resolve()).as_posix()
-    except ValueError as exc:
-        raise CollectionError("Exit Evidence artifacts must be inside the repository") from exc
+    candidate = Path(binding["path"])
+    path = (
+        _repo_resolved(candidate, label=role)
+        if candidate.is_absolute()
+        else _repo_resolved(PROJECT_ROOT / candidate, label=role)
+    )
     if not path.is_file() or _sha256(path) != binding["sha256"]:
         raise CollectionError(f"collected artifact is stale: {role}")
+    relative = path.relative_to(PROJECT_ROOT.resolve()).as_posix()
     return {"role": role, "path": relative, "sha256": binding["sha256"]}
+
+
+def _git(*arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", *arguments],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CollectionError(
+            f"git {' '.join(arguments)} failed"
+        ) from exc
+    return completed.stdout.strip()
+
+
+def _worktree_changed_paths() -> set[str]:
+    changed: set[str] = set()
+    for arguments in (
+        ("diff", "--name-only", "-z", "--no-renames", "HEAD"),
+        ("diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        raw = _git(*arguments)
+        changed.update(item for item in raw.split("\0") if item)
+    return changed
+
+
+def _enforce_finalization_anchor(
+    implementation_commit: str, *, declared_evidence_paths: set[str]
+) -> None:
+    """Bind the manifest to the persisted runs' execution-time Git commit.
+
+    Mirrors the legacy_baseline_contracts pre-publication pattern: current
+    HEAD must equal the runs' recorded git_commit, and the worktree may only
+    differ from HEAD at declared evidence paths.
+    """
+    if not COMMIT_RE.fullmatch(implementation_commit):
+        raise CollectionError(
+            "implementation commit must be a full lowercase Git commit SHA"
+        )
+    current_head = _git("rev-parse", "HEAD")
+    if current_head != implementation_commit:
+        raise CollectionError(
+            "finalize requires HEAD to equal the qualification runs' "
+            f"execution-time commit ({implementation_commit}); current HEAD "
+            f"is {current_head}"
+        )
+    changed = _worktree_changed_paths()
+    forbidden = sorted(changed - declared_evidence_paths)
+    if forbidden:
+        raise CollectionError(
+            "finalize requires a clean worktree except declared evidence "
+            f"paths; non-evidence changes: {forbidden}"
+        )
 
 
 def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
@@ -256,8 +395,8 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
     if collection.get("schema_name") != "issue14-exit-evidence-collection":
         raise CollectionError("Issue 14 collection identity is invalid")
     artifacts = collection.get("artifacts")
-    qualification = collection.get("qualification_run")
-    if not isinstance(artifacts, dict) or not isinstance(qualification, dict):
+    qualification_runs = collection.get("qualification_runs")
+    if not isinstance(artifacts, dict) or not isinstance(qualification_runs, dict):
         raise CollectionError("Issue 14 collection is incomplete")
 
     guarded_artifacts = [
@@ -274,19 +413,48 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
             "final_pdf",
         )
     ]
-    persisted = {
-        "run_id": qualification["run_id"],
-        "command_record": _project_binding(
-            qualification["command_record"], role="persisted_command_record"
-        ),
-        "terminal_status": _project_binding(
-            qualification["terminal_status"], role="persisted_terminal_status"
-        ),
-        "exit_code": _project_binding(
-            qualification["exit_code_artifact"], role="persisted_exit_code"
-        ),
-    }
+    persisted_by_command: dict[str, dict[str, Any]] = {}
+    commits: set[str] = set()
+    for command_id, _command, _expected_exit in COMMANDS:
+        run = qualification_runs.get(command_id)
+        if not isinstance(run, dict):
+            raise CollectionError(
+                f"Issue 14 collection lacks qualification run: {command_id}"
+            )
+        command_record_path = _project_binding(
+            run["command_record"], role="persisted_command_record"
+        )
+        command_record = _read_json(
+            _repo_resolved(
+                PROJECT_ROOT / command_record_path["path"],
+                label=f"{command_id} command record",
+            ),
+            label=f"{command_id} persisted command record",
+        )
+        git_commit = command_record.get("git_commit")
+        if not isinstance(git_commit, str) or COMMIT_RE.fullmatch(git_commit) is None:
+            raise CollectionError(
+                f"qualification run lacks an execution-time Git commit: {command_id}"
+            )
+        commits.add(git_commit)
+        persisted_by_command[command_id] = {
+            "run_id": run["run_id"],
+            "command_record": command_record_path,
+            "terminal_status": _project_binding(
+                run["terminal_status"], role="persisted_terminal_status"
+            ),
+            "exit_code": _project_binding(
+                run["exit_code_artifact"], role="persisted_exit_code"
+            ),
+        }
+    if len(commits) != 1:
+        raise CollectionError(
+            "qualification runs do not share one execution-time Git commit"
+        )
+    implementation_commit = next(iter(commits))
+
     collection_binding = _binding(collection_path.resolve(), label="Issue 14 collection")
+    persisted_primary = persisted_by_command[COMMANDS[1][0]]
     guarded = {
         "collection": _project_binding(
             collection_binding, role="guarded_delivery_collection"
@@ -295,64 +463,58 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         "canonical_platform": collection["canonical_platform"],
         "delivery_stage": collection["delivery_stage"],
         "artifacts": guarded_artifacts,
-        "qualification_run": persisted,
+        "qualification_run": persisted_primary,
     }
-    try:
-        implementation_commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise CollectionError("implementation commit is unavailable") from exc
 
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    log_dir = manifest_path.resolve().parent / "logs"
     commands = []
     for command_id, command, expected_exit in COMMANDS:
-        log_path = manifest_path.resolve().parent / "logs" / f"{command_id}.log"
+        run = qualification_runs[command_id]
+        real_exit_code = run["exit_code"]
+        log_path = log_dir / f"{command_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_bytes(
-            (
-                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
-                + json.dumps(
-                    {
-                        "schema_name": "issue14-qualified-command-summary",
-                        "schema_version": "1.0.0",
-                        "test_id": command_id,
-                        "qualification_run_id": persisted["run_id"],
-                        "expected_exit_code": expected_exit,
-                        "actual_exit_code": 0,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            ).encode("utf-8")
-        )
+        real_output = _repo_resolved(
+            PROJECT_ROOT / run["log"]["path"], label=f"{command_id} command log"
+        ).read_bytes()
+        marker = (
+            f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+        ).encode("utf-8")
+        log_path.write_bytes(real_output + marker)
         commands.append(
             {
                 "test_id": command_id,
                 "command": list(command),
                 "expected_exit_code": expected_exit,
-                "actual_exit_code": 0,
+                "actual_exit_code": real_exit_code,
                 "log": _project_binding(
                     _binding(log_path, label=f"{command_id} log"),
                     role="command_log",
                 ),
-                "conforms": expected_exit == 0,
+                "persisted_run": persisted_by_command[command_id],
+                "conforms": real_exit_code == expected_exit,
             }
         )
     guarded_bindings = [
         guarded["collection"],
         *guarded["artifacts"],
-        persisted["command_record"],
-        persisted["terminal_status"],
-        persisted["exit_code"],
+        *[
+            binding
+            for persisted in persisted_by_command.values()
+            for binding in (
+                persisted["command_record"],
+                persisted["terminal_status"],
+                persisted["exit_code"],
+            )
+        ],
     ]
+    evidence_paths = {
+        manifest_relative,
+        *[command["log"]["path"] for command in commands],
+        *[binding["path"] for binding in guarded_bindings],
+    }
+    _enforce_finalization_anchor(implementation_commit, declared_evidence_paths=evidence_paths)
+
     manifest = {
         "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
         "schema_version": 2,
@@ -360,11 +522,7 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         "fingerprint_algorithm": "sha256-raw-v1",
         **qualification_manifest_skeleton(),
         "implementation_commit": implementation_commit,
-        "evidence_paths": [
-            manifest_relative,
-            *[command["log"]["path"] for command in commands],
-            *[binding["path"] for binding in guarded_bindings],
-        ],
+        "evidence_paths": sorted(evidence_paths),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "guarded_delivery_evidence": guarded,
         "commands": commands,
@@ -396,12 +554,46 @@ def _parser() -> argparse.ArgumentParser:
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--run-dir", type=Path, required=True)
     collect_parser.add_argument("--current-target", type=Path, required=True)
-    collect_parser.add_argument("--qualification-run-dir", type=Path, required=True)
+    collect_parser.add_argument(
+        "--qualification-run-dir",
+        action="append",
+        metavar="[command_id=]PATH",
+        help=(
+            "Persisted qualification run directory. May be repeated as "
+            "command_id=PATH for every closed command; a bare PATH binds the "
+            "issue14-exit-evidence-tests command for backward compatibility."
+        ),
+    )
     collect_parser.add_argument("--output", type=Path, required=True)
     finalize_parser = subparsers.add_parser("finalize")
     finalize_parser.add_argument("--collection", type=Path, required=True)
     finalize_parser.add_argument("--manifest", type=Path, required=True)
     return parser
+
+
+def _parse_qualification_run_dirs(
+    values: list[str] | None,
+) -> dict[str, Path]:
+    """Map repeatable --qualification-run-dir values to closed command ids."""
+    known = {command_id for command_id, _argv, _exit in COMMANDS}
+    result: dict[str, Path] = {}
+    for value in values or []:
+        if "=" in value:
+            command_id, _, raw_path = value.partition("=")
+            if command_id not in known:
+                raise CollectionError(f"unknown qualification command: {command_id}")
+            if command_id in result:
+                raise CollectionError(
+                    f"qualification run is repeated for command: {command_id}"
+                )
+            result[command_id] = Path(raw_path)
+        else:
+            if COMMANDS[1][0] in result:
+                raise CollectionError(
+                    f"qualification run is repeated for command: {COMMANDS[1][0]}"
+                )
+            result[COMMANDS[1][0]] = Path(value)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -411,7 +603,9 @@ def main(argv: list[str] | None = None) -> int:
             result = collect(
                 run_dir=args.run_dir,
                 current_target=args.current_target,
-                qualification_run_dir=args.qualification_run_dir,
+                qualification_runs=_parse_qualification_run_dirs(
+                    args.qualification_run_dir
+                ),
                 output=args.output,
             )
         else:

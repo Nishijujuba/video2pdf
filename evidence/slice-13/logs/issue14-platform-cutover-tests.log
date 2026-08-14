@@ -1,2 +1,22 @@
-EVIDENCE_IMPLEMENTATION_COMMIT: 162e4330c6eded5b73c41f5f35f55d7072a8b739
-{"actual_exit_code":0,"expected_exit_code":0,"qualification_run_id":"ba5c1a28-10f9-4467-9502-7944b1b59543","schema_name":"issue14-qualified-command-summary","schema_version":"1.0.0","test_id":"issue14-platform-cutover-tests"}
+[stderr 145]
+test_youtube_kernel_cutover_pass (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_youtube_kernel_cutover_pass) ... [stderr 4]
+ok
+[stderr 183]
+test_bilibili_kernel_preserved (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_kernel_preserved)
+Real, recomputable Bilibili regression proof.[stderr 5]
+ ... [stderr 4]
+ok
+[stderr 159]
+test_bilibili_authority_change_rejected (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_authority_change_rejected) ... [stderr 4]
+ok
+[stderr 2]
+
+[stderr 72]
+----------------------------------------------------------------------
+[stderr 24]
+Ran 3 tests in 15.363s
+[stderr 2]
+
+[stderr 4]
+OK
+EVIDENCE_IMPLEMENTATION_COMMIT: 334bdca46939bb9879ca5ee0502d938ce93e7995

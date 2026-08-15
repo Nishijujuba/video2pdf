@@ -227,6 +227,73 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             caught.exception.error_code,
         )
 
+    def test_bilibili_guarded_qualification_accepts_missing_absolute_cwd(self) -> None:
+        """Blocker 2: slice-12 published evidence qualifies when its cwd
+        directory no longer exists.
+
+        The qualification command was recorded on the producing machine; after
+        cross-machine relocation, or after the origin worktree is deleted, the
+        recorded cwd directory is absent. The qualification check must treat
+        cwd as syntactic identity (a non-empty absolute path) and must not
+        require the directory to exist.
+        """
+        scratch, manifest_copy, guarded = self._copy_slice12_evidence_for_tamper()
+        command_path = scratch / guarded["qualification_run"]["command_record"]["path"]
+        command = json.loads(command_path.read_text(encoding="utf-8"))
+        missing_cwd = str(scratch / "deleted-origin-worktree")
+        self.assertFalse(Path(missing_cwd).exists())
+        command["cwd"] = missing_cwd
+        command_path.write_text(
+            json.dumps(command, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_copy = self._rewrite_manifest_binding(manifest_copy, command_path)
+        manifest_value = json.loads(manifest_copy.read_text(encoding="utf-8"))
+        with (
+            patch.object(validator, "PROJECT_ROOT", scratch),
+            patch.object(
+                validator,
+                "sha256_git_blob",
+                side_effect=self._fixture_git_blob_stub(manifest_copy),
+            ),
+        ):
+            validator.validate_bindings(manifest_value, manifest_copy)
+
+    def test_bilibili_guarded_qualification_rejects_syntactically_invalid_cwd(self) -> None:
+        """Slice-12 qualification cwd must be a non-empty absolute path.
+
+        The directory-existence check was replaced by a syntactic check; a
+        relative recorded cwd is not a valid execution-environment identity and
+        must still fail closed.
+        """
+        scratch, manifest_copy, guarded = self._copy_slice12_evidence_for_tamper()
+        command_path = scratch / guarded["qualification_run"]["command_record"]["path"]
+        command = json.loads(command_path.read_text(encoding="utf-8"))
+        command["cwd"] = "relative/path"
+        command_path.write_text(
+            json.dumps(command, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_copy = self._rewrite_manifest_binding(manifest_copy, command_path)
+        manifest_value = json.loads(manifest_copy.read_text(encoding="utf-8"))
+        with (
+            patch.object(validator, "PROJECT_ROOT", scratch),
+            patch.object(
+                validator,
+                "sha256_git_blob",
+                side_effect=self._fixture_git_blob_stub(manifest_copy),
+            ),
+            self.assertRaises(validator.EvidenceError) as caught,
+        ):
+            validator.validate_bindings(manifest_value, manifest_copy)
+        self.assertEqual(
+            "guarded_delivery_evidence", caught.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "guarded_delivery_qualification_identity_stale",
+            caught.exception.error_code,
+        )
+
     def _copy_slice12_evidence_for_tamper(self) -> tuple[Path, Path, dict]:
         """Copy the committed slice-12 manifest and evidence closure to scratch.
 
@@ -595,6 +662,24 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                 "guarded_delivery_qualification_invalid",
             )
         )
+
+        def cwd_relative(scratch: Path, manifest: dict) -> None:
+            path = scratch / "persisted/issue14-platform-cutover-tests/command.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["cwd"] = "relative/path"
+            path.write_text(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        cases.append(
+            (
+                "cwd_relative",
+                cwd_relative,
+                "guarded_delivery_evidence",
+                "guarded_delivery_qualification_identity_stale",
+            )
+        )
         return cases
 
     def test_slice13_guarded_qualification_tamper_gates(self) -> None:
@@ -620,6 +705,34 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                     )
                 self.assertEqual(expected_gate, caught.exception.first_failing_gate)
                 self.assertEqual(expected_code, caught.exception.error_code)
+
+    def test_slice13_guarded_qualification_accepts_missing_absolute_cwd(self) -> None:
+        """Blocker 2: a deleted-origin cwd still qualifies when absolute.
+
+        The persisted qualification runs were recorded on the machine where
+        the evidence was produced. After cross-machine relocation, or after the
+        origin worktree is deleted, the recorded cwd directory no longer
+        exists. Qualification must treat cwd as syntactic identity (a non-empty
+        absolute path) and must not require the directory to exist.
+        """
+        scratch = new_case_dir(self.id(), label="slice13-missing-cwd")
+        _manifest_path, manifest = self._slice13_guarded_fixture(scratch)
+        missing_cwd = str(scratch / "deleted-origin-worktree")
+        self.assertFalse(Path(missing_cwd).exists())
+        for command_id, _, _ in contract.COMMANDS:
+            path = scratch / f"persisted/{command_id}/command.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["cwd"] = missing_cwd
+            path.write_text(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        with patch.object(validator, "PROJECT_ROOT", scratch):
+            validator._validate_guarded_delivery_qualification(
+                manifest,
+                issue_commands=contract.COMMANDS,
+                issue_label="Issue #14",
+            )
 
     def test_slice13_guarded_qualification_pass(self) -> None:
         """R4: the shared helper accepts a valid slice-13 guarded manifest."""
@@ -1539,9 +1652,10 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         a fresh repository root, WITHOUT regenerating any manifest, command
         record, or log. The validator's slice-13 guarded-qualification semantic
         comparison must pass against the relocated root: command identity is
-        semantic (argv[1:] plus interpreter role; cwd merely an existing
-        directory), so a published command whose argv[0] and cwd point at the
-        original machine and directory must not fail on relocation.
+        semantic (argv[1:] plus interpreter role; cwd merely a syntactically
+        valid absolute path), so a published command whose argv[0] and cwd
+        point at the original machine and directory must not fail on
+        relocation.
         """
         source_manifest = ROOT / "evidence/slice-13/exit-evidence-manifest.json"
         source = json.loads(source_manifest.read_text(encoding="utf-8"))

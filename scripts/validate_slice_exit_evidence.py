@@ -1161,10 +1161,10 @@ def _validate_slice12_guarded_qualification(
         else None
     )
     recorded_cwd = command_record.get("cwd")
-    cwd_exists = (
+    cwd_syntactically_valid = (
         isinstance(recorded_cwd, str)
         and bool(recorded_cwd)
-        and Path(recorded_cwd).resolve().is_dir()
+        and Path(recorded_cwd).is_absolute()
     )
     if (
         not isinstance(recorded_argv, list)
@@ -1172,7 +1172,7 @@ def _validate_slice12_guarded_qualification(
         or not isinstance(interpreter_path, str)
         or not Path(interpreter_path).name.lower().startswith("python")
         or recorded_argv[1:] != expected_argv[1:]
-        or not cwd_exists
+        or not cwd_syntactically_valid
         or command_record.get("accepted_exit_codes") != [0]
     ):
         raise EvidenceError(
@@ -1215,7 +1215,10 @@ def _validate_slice13_guarded_qualification(
     ``argv[1:]`` must equal the closed contract arguments (Python flags,
     module, verbosity, test targets) and ``argv[0]`` must be a Python
     interpreter path; the recorded cwd is execution-environment evidence and
-    only has to exist. Each command log must carry exactly one matching
+    only has to be a syntactically valid absolute path — it does not have to
+    exist on the validating machine, because published evidence produced on
+    another machine may reference a worktree path that is absent here.
+    Each command log must carry exactly one matching
     ``EVIDENCE_IMPLEMENTATION_COMMIT`` marker; log content is additionally
     pinned to committed blobs by ``validate_bindings``.
     """
@@ -1249,10 +1252,10 @@ def _validate_slice13_guarded_qualification(
             else None
         )
         recorded_cwd = command_record.get("cwd")
-        cwd_exists = (
+        cwd_syntactically_valid = (
             isinstance(recorded_cwd, str)
             and bool(recorded_cwd)
-            and Path(recorded_cwd).resolve().is_dir()
+            and Path(recorded_cwd).is_absolute()
         )
         if (
             not isinstance(recorded_argv, list)
@@ -1260,7 +1263,7 @@ def _validate_slice13_guarded_qualification(
             or not isinstance(interpreter_path, str)
             or not Path(interpreter_path).name.lower().startswith("python")
             or recorded_argv[1:] != list(contract_command)[1:]
-            or not cwd_exists
+            or not cwd_syntactically_valid
             or command_record.get("accepted_exit_codes") != [expected_exit]
         ):
             raise EvidenceError(

@@ -1,22 +1,19 @@
 [stderr 145]
 test_youtube_kernel_cutover_pass (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_youtube_kernel_cutover_pass) ... [stderr 4]
 ok
-[stderr 183]
+[stderr 188]
 test_bilibili_kernel_preserved (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_kernel_preserved)
-Real, recomputable Bilibili regression proof.[stderr 5]
- ... [stderr 4]
+Real, recomputable Bilibili regression proof. ... [stderr 4]
 ok
 [stderr 159]
 test_bilibili_authority_change_rejected (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_authority_change_rejected) ... [stderr 4]
 ok
 [stderr 2]
 
-[stderr 72]
+[stderr 98]
 ----------------------------------------------------------------------
-[stderr 24]
-Ran 3 tests in 15.363s
-[stderr 2]
+Ran 3 tests in 67.753s
 
 [stderr 4]
 OK
-EVIDENCE_IMPLEMENTATION_COMMIT: 334bdca46939bb9879ca5ee0502d938ce93e7995
+EVIDENCE_IMPLEMENTATION_COMMIT: 4e43027e2d9c7936b412664c50b8e236e72f18c4

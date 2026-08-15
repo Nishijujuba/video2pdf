@@ -1444,6 +1444,8 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
         for command in manifest["commands"]
         for key, artifact in command.get("persisted_run", {}).items()
         if key != "run_id"
+        and isinstance(artifact, dict)
+        and isinstance(artifact.get("path"), str)
     ]
     persisted_paths = {artifact["path"] for artifact in persisted_artifacts}
     smoke_manifest_paths = {

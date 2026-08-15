@@ -632,6 +632,43 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                 issue_label="Issue #14",
             )
 
+    def test_validate_bindings_ignores_persisted_run_metadata_string_fields(self) -> None:
+        """validate_bindings must not crash on real collector output.
+
+        The collector (1f3357bd) adds optional ``executable_sha256`` and
+        ``python_version`` metadata string fields to every command's
+        ``persisted_run``. validate_bindings collects persisted terminal
+        artifacts by iterating persisted_run values; it must skip the string
+        metadata fields (and any non-dict value) instead of indexing into them.
+        """
+        scratch = new_case_dir(self.id(), label="slice13-metadata-fields")
+        manifest_path, manifest = self._slice13_guarded_fixture(scratch)
+        for command in manifest["commands"]:
+            command["persisted_run"]["executable_sha256"] = "0" * 64
+            command["persisted_run"]["python_version"] = "3.12.4"
+        guarded = manifest["guarded_delivery_evidence"]
+        manifest["evidence_paths"] = sorted(
+            set(manifest["evidence_paths"])
+            | {guarded["collection"]["path"]}
+            | {artifact["path"] for artifact in guarded["artifacts"]}
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        with (
+            patch.object(validator, "PROJECT_ROOT", scratch),
+            patch.object(
+                validator,
+                "sha256_git_blob",
+                side_effect=self._fixture_git_blob_stub(manifest_path),
+            ),
+        ):
+            validator.validate_bindings(
+                json.loads(manifest_path.read_text(encoding="utf-8")),
+                manifest_path,
+            )
+
     def test_contract_and_collector_skeleton_close_fourteen_members(self) -> None:
         skeleton = collector.qualification_manifest_skeleton()
         self.assertEqual(14, len(contract.ATOMIC_MEMBERS))

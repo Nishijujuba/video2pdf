@@ -56,6 +56,18 @@ COMMANDS = (
         0,
     ),
 )
+
+# Semantic command identity: the interpreter (argv[0]) is machine-local
+# execution-environment evidence, not semantic identity. The semantic identity
+# of a closed qualification command is argv[1:] -- the Python flags, module,
+# verbosity, and test targets. Validation of persisted command records matches
+# these roles so a repository can be relocated or re-interpreted without the
+# interpreter's absolute path becoming part of the identity contract.
+QUALIFICATION_INTERPRETER_ROLE = "qualification_python"
+QUALIFICATION_CWD_ROLE = "project_root"
+SEMANTIC_ARGUMENTS = tuple(
+    tuple(command_argv[1:]) for _command_id, command_argv, _exit in COMMANDS
+)
 RESULT_BINDINGS = [
     {
         "result_id": result_id,

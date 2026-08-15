@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -1130,9 +1132,25 @@ def _validate_slice12_guarded_qualification(
         qualification, issue_label=issue_label
     )
     expected_argv = list(issue_commands[1][1])
+    recorded_argv = command_record.get("argv")
+    interpreter_path = (
+        recorded_argv[0]
+        if isinstance(recorded_argv, list) and recorded_argv
+        else None
+    )
+    recorded_cwd = command_record.get("cwd")
+    cwd_exists = (
+        isinstance(recorded_cwd, str)
+        and bool(recorded_cwd)
+        and Path(recorded_cwd).resolve().is_dir()
+    )
     if (
-        command_record.get("argv") != expected_argv
-        or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+        not isinstance(recorded_argv, list)
+        or len(recorded_argv) < 1
+        or not isinstance(interpreter_path, str)
+        or not Path(interpreter_path).name.lower().startswith("python")
+        or recorded_argv[1:] != expected_argv[1:]
+        or not cwd_exists
         or command_record.get("accepted_exit_codes") != [0]
     ):
         raise EvidenceError(
@@ -1168,10 +1186,14 @@ def _validate_slice13_guarded_qualification(
 
     Slice 13 strengthens the Slice 12 single-run decode to a per-command,
     one-to-one run binding. Each manifest command must carry its own
-    ``persisted_run`` whose command record matches the contract argv, is a
-    succeeded eligible terminal run, and was executed at the manifest's
-    ``implementation_commit`` on a clean worktree (the R1 causal commit
-    binding). Each command log must carry exactly one matching
+    ``persisted_run`` whose command record matches the contract's semantic
+    command identity, is a succeeded eligible terminal run, and was executed
+    at the manifest's ``implementation_commit`` on a clean worktree (the R1
+    causal commit binding). Command identity is semantic, not machine-bound:
+    ``argv[1:]`` must equal the closed contract arguments (Python flags,
+    module, verbosity, test targets) and ``argv[0]`` must be a Python
+    interpreter path; the recorded cwd is execution-environment evidence and
+    only has to exist. Each command log must carry exactly one matching
     ``EVIDENCE_IMPLEMENTATION_COMMIT`` marker; log content is additionally
     pinned to committed blobs by ``validate_bindings``.
     """
@@ -1198,9 +1220,25 @@ def _validate_slice13_guarded_qualification(
         command_record, terminal_status, exit_code = _decode_persisted_run_evidence(
             persisted, issue_label=issue_label
         )
+        recorded_argv = command_record.get("argv")
+        interpreter_path = (
+            recorded_argv[0]
+            if isinstance(recorded_argv, list) and recorded_argv
+            else None
+        )
+        recorded_cwd = command_record.get("cwd")
+        cwd_exists = (
+            isinstance(recorded_cwd, str)
+            and bool(recorded_cwd)
+            and Path(recorded_cwd).resolve().is_dir()
+        )
         if (
-            command_record.get("argv") != list(contract_command)
-            or command_record.get("cwd") != str(PROJECT_ROOT.resolve())
+            not isinstance(recorded_argv, list)
+            or len(recorded_argv) < 1
+            or not isinstance(interpreter_path, str)
+            or not Path(interpreter_path).name.lower().startswith("python")
+            or recorded_argv[1:] != list(contract_command)[1:]
+            or not cwd_exists
             or command_record.get("accepted_exit_codes") != [expected_exit]
         ):
             raise EvidenceError(
@@ -1208,6 +1246,17 @@ def _validate_slice13_guarded_qualification(
                 first_failing_gate="guarded_delivery_evidence",
                 error_code="guarded_delivery_qualification_identity_stale",
             )
+        for field, pattern in (
+            ("executable_sha256", re.compile(r"^[0-9a-f]{64}$")),
+            ("python_version", re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9._+-]*$")),
+        ):
+            value = persisted.get(field)
+            if isinstance(value, str) and value and pattern.fullmatch(value) is None:
+                raise EvidenceError(
+                    f"{issue_label} qualification run execution environment evidence is invalid: {command_id}",
+                    first_failing_gate="guarded_delivery_evidence",
+                    error_code="guarded_delivery_qualification_identity_stale",
+                )
         if (
             command_record.get("run_id") != persisted["run_id"]
             or terminal_status.get("run_id") != persisted["run_id"]
@@ -1254,6 +1303,13 @@ def _validate_slice13_guarded_qualification(
                 f"{issue_label} qualification command log marker is missing, duplicated, or stale: {command_id}",
                 first_failing_gate="guarded_delivery_evidence",
                 error_code="guarded_delivery_qualification_invalid",
+            )
+        if (
+            isinstance(entry.get("source_log_sha256"), str)
+            or isinstance(entry.get("published_log_sha256"), str)
+        ):
+            _validate_command_log_source_chain(
+                entry, implementation_commit=implementation_commit
             )
 
 
@@ -1550,6 +1606,65 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
         _validate_slice13_evidence_paths(manifest)
 
 
+def _strip_log_marker_suffix(
+    log_bytes: bytes, *, implementation_commit: str
+) -> bytes:
+    marker = (
+        f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n".encode(
+            "ascii"
+        )
+    )
+    if not log_bytes.endswith(marker):
+        raise EvidenceError(
+            "command log is missing the implementation-commit marker suffix",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="command_log_source_chain_broken",
+        )
+    return log_bytes[: -len(marker)]
+
+
+def _validate_command_log_source_chain(
+    command: dict[str, Any],
+    *,
+    implementation_commit: str,
+) -> None:
+    """Validate one command's collect -> finalize log hash chain.
+
+    The finalizer binds ``source_log_sha256`` to the LF-normalized bytes of the
+    persisted command log and ``published_log_sha256`` to the exact published
+    log bytes (normalized log plus implementation-commit marker). Validation
+    therefore asserts both directions: hashing the entire published log equals
+    ``published_log_sha256``, and stripping the trailing marker suffix and
+    hashing the remainder equals ``source_log_sha256``. Both fields are
+    optional for backward compatibility with already-published evidence; when
+    only one is present the pair is incomplete and the chain check is skipped,
+    while the schema keeps either-or consistency (both must be present or both
+    absent for a fresh manifest).
+    """
+    source_log_sha256 = command.get("source_log_sha256")
+    published_log_sha256 = command.get("published_log_sha256")
+    if not isinstance(source_log_sha256, str) or not isinstance(
+        published_log_sha256, str
+    ):
+        return
+    log_bytes = resolve_project_path(command["log"]["path"]).read_bytes()
+    if hashlib.sha256(log_bytes).hexdigest() != published_log_sha256:
+        raise EvidenceError(
+            f"command log source chain is broken: {command['test_id']}",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="command_log_source_chain_broken",
+        )
+    published_without_marker = _strip_log_marker_suffix(
+        log_bytes, implementation_commit=implementation_commit
+    )
+    if hashlib.sha256(published_without_marker).hexdigest() != source_log_sha256:
+        raise EvidenceError(
+            f"command log source chain is broken: {command['test_id']}",
+            first_failing_gate="guarded_delivery_evidence",
+            error_code="command_log_source_chain_broken",
+        )
+
+
 def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
     marker = (
         f"EVIDENCE_IMPLEMENTATION_COMMIT: {manifest['implementation_commit']}".encode(
@@ -1563,6 +1678,13 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
             raise EvidenceError(
                 "command log implementation commit marker is missing, duplicated, or stale: "
                 f"{command['test_id']}"
+            )
+        if (
+            isinstance(command.get("source_log_sha256"), str)
+            or isinstance(command.get("published_log_sha256"), str)
+        ):
+            _validate_command_log_source_chain(
+                command, implementation_commit=manifest["implementation_commit"]
             )
     fault_points = manifest.get("fault_points")
     if fault_points is not None:

@@ -26,6 +26,8 @@ from scripts.issue14_exit_evidence_contract import (
     EVIDENCE_PREFIX,
     FIXTURE_SPECS,
     PLATFORM_STATUSES,
+    QUALIFICATION_CWD_ROLE,
+    QUALIFICATION_INTERPRETER_ROLE,
     RESULT_BINDINGS,
     RESULTS,
     SLICE_BASE_COMMIT,
@@ -142,9 +144,15 @@ def _decode_qualification_run(
 ) -> dict[str, Any]:
     """Validate one persisted qualification run against its closed contract.
 
-    Every identity field (run_id, argv, cwd, accepted exit codes, terminal
-    state, real exit code, eligibility) plus the execution-time Git binding
-    (git_commit, worktree_clean) must match. Any mismatch fails closed.
+    Command identity is semantic, not machine-bound: argv[1:] must equal the
+    closed contract's semantic arguments (flags, module, verbosity, test
+    targets), and argv[0] must be a Python interpreter path (the interpreter
+    role). The recorded cwd is execution-environment evidence, not semantic
+    identity, so it is recorded as a cwd_role rather than compared to the
+    current project root. Every remaining identity field (run_id, accepted
+    exit codes, terminal state, real exit code, eligibility) plus the
+    execution-time Git binding (git_commit, worktree_clean) must match. Any
+    mismatch fails closed.
     """
     qualification_root = qualification_run_dir.resolve()
     command_path = qualification_root / "command.json"
@@ -159,10 +167,15 @@ def _decode_qualification_run(
     eligible = status.get("security", {}).get("acceptance_evidence_eligible")
     git_commit = command.get("git_commit")
     worktree_clean = command.get("worktree_clean")
+    recorded_argv = command.get("argv")
+    interpreter_path = recorded_argv[0] if isinstance(recorded_argv, list) and recorded_argv else None
     if (
         command.get("run_id") != status.get("run_id")
-        or command.get("argv") != expected_argv
-        or Path(str(command.get("cwd", ""))).resolve() != PROJECT_ROOT.resolve()
+        or not isinstance(recorded_argv, list)
+        or len(recorded_argv) < 1
+        or not isinstance(interpreter_path, str)
+        or not Path(interpreter_path).name.lower().startswith("python")
+        or recorded_argv[1:] != list(expected_argv)[1:]
         or command.get("accepted_exit_codes") != [expected_exit]
         or status.get("state") != "succeeded"
         or status.get("exit_code") != expected_exit
@@ -175,6 +188,19 @@ def _decode_qualification_run(
         raise CollectionError(
             f"qualification run is not succeeded evidence: {command_id}"
         )
+    target_identity = status.get("target_identity")
+    executable_sha256 = (
+        target_identity.get("observation_sha256")
+        if isinstance(target_identity, dict)
+        else None
+    )
+    python_version = command.get("python_version")
+    if not isinstance(python_version, str) or not python_version:
+        python_version = (
+            status.get("python_version")
+            if isinstance(status.get("python_version"), str)
+            else None
+        )
     return {
         "run_id": command["run_id"],
         "state": "succeeded",
@@ -182,6 +208,10 @@ def _decode_qualification_run(
         "acceptance_evidence_eligible": True,
         "git_commit": git_commit,
         "worktree_clean": True,
+        "executable_role": QUALIFICATION_INTERPRETER_ROLE,
+        "cwd_role": QUALIFICATION_CWD_ROLE,
+        "executable_sha256": executable_sha256,
+        "python_version": python_version,
         "command_record": _binding(command_path, label=f"{command_id} command record"),
         "terminal_status": _binding(status_path, label=f"{command_id} terminal status"),
         "exit_code_artifact": _binding(exit_code_path, label=f"{command_id} exit code"),
@@ -437,7 +467,7 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
                 f"qualification run lacks an execution-time Git commit: {command_id}"
             )
         commits.add(git_commit)
-        persisted_by_command[command_id] = {
+        persisted = {
             "run_id": run["run_id"],
             "command_record": command_record_path,
             "terminal_status": _project_binding(
@@ -447,6 +477,10 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
                 run["exit_code_artifact"], role="persisted_exit_code"
             ),
         }
+        for optional_field in ("executable_sha256", "python_version"):
+            if isinstance(run.get(optional_field), str) and run[optional_field]:
+                persisted[optional_field] = run[optional_field]
+        persisted_by_command[command_id] = persisted
     if len(commits) != 1:
         raise CollectionError(
             "qualification runs do not share one execution-time Git commit"
@@ -474,19 +508,36 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         real_exit_code = run["exit_code"]
         log_path = log_dir / f"{command_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Re-verify the collect-time binding of the original persisted log
+        # before copying it. The persisted log lives under 待删除/ (gitignored),
+        # so the finalization-anchor worktree check cannot detect a drift
+        # between collect and finalize; the hash re-check closes that
+        # check-then-use gap (Blocker 3).
+        source_log = _project_binding(
+            run["log"],
+            role="persisted_command_log",
+        )
         real_output = _repo_resolved(
-            PROJECT_ROOT / run["log"]["path"], label=f"{command_id} command log"
+            PROJECT_ROOT / source_log["path"],
+            label=f"{command_id} command log",
         ).read_bytes()
+        # LF-normalize the source log exactly like the Issue #43 collector so
+        # the published log's bytes survive Git's core.autocrlf normalization
+        # and its sha256 matches the committed blob in any checkout.
+        normalized = real_output.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         marker = (
             f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
         ).encode("utf-8")
-        log_path.write_bytes(real_output + marker)
+        published_output = normalized + marker
+        log_path.write_bytes(published_output)
         commands.append(
             {
                 "test_id": command_id,
                 "command": list(command),
                 "expected_exit_code": expected_exit,
                 "actual_exit_code": real_exit_code,
+                "source_log_sha256": hashlib.sha256(normalized).hexdigest(),
+                "published_log_sha256": hashlib.sha256(published_output).hexdigest(),
                 "log": _project_binding(
                     _binding(log_path, label=f"{command_id} log"),
                     role="command_log",

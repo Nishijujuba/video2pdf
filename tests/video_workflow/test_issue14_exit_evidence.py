@@ -419,6 +419,7 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                 f"qualified command: {command_id}\n"
                 f"EVIDENCE_IMPLEMENTATION_COMMIT: {'2' * 40}\n"
             ).encode("utf-8")
+            source_log_payload = log_payload[: -(len("EVIDENCE_IMPLEMENTATION_COMMIT: " + "2" * 40 + "\n"))]
             persisted = {
                 "run_id": run_id_for_command,
                 "command_record": write_binding(
@@ -443,6 +444,8 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                     "command": list(command),
                     "expected_exit_code": expected_exit,
                     "actual_exit_code": expected_exit,
+                    "source_log_sha256": hashlib.sha256(source_log_payload).hexdigest(),
+                    "published_log_sha256": hashlib.sha256(log_payload).hexdigest(),
                     "log": {"role": "command_log", **log_binding},
                     "persisted_run": persisted,
                     "conforms": True,
@@ -966,7 +969,9 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             "argv": lambda command: command.__setitem__(
                 "argv", [*command["argv"], "tests.video_workflow.test_unrelated"]
             ),
-            "cwd": lambda command: command.__setitem__("cwd", str(ROOT.parent.resolve())),
+            "interpreter_role": lambda command: command.__setitem__(
+                "argv", ["C:\\tools\\ruby.exe", *command["argv"][1:]]
+            ),
             "accepted_exit_codes": lambda command: command.__setitem__(
                 "accepted_exit_codes", [0, 1]
             ),
@@ -1316,6 +1321,27 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
                 manifest_path=manifest_path,
             )
         self.assertEqual(implementation_commit, manifest["implementation_commit"])
+        # Blocker 3: the finalizer must LF-normalize the persisted (CRLF on
+        # Windows) log before publishing, and bind both the normalized source
+        # bytes and the published bytes. The published log must contain no
+        # CRLF so its sha256 matches the committed blob in any checkout.
+        for command in manifest["commands"]:
+            self.assertIn("source_log_sha256", command)
+            self.assertIn("published_log_sha256", command)
+            published_bytes = (repository / command["log"]["path"]).read_bytes()
+            self.assertNotIn(b"\r\n", published_bytes)
+            self.assertEqual(
+                hashlib.sha256(published_bytes).hexdigest(),
+                command["published_log_sha256"],
+            )
+            marker_suffix = (
+                f"EVIDENCE_IMPLEMENTATION_COMMIT: {implementation_commit}\n"
+            ).encode("ascii")
+            self.assertTrue(published_bytes.endswith(marker_suffix))
+            self.assertEqual(
+                hashlib.sha256(published_bytes[: -len(marker_suffix)]).hexdigest(),
+                command["source_log_sha256"],
+            )
         schema = json.loads(
             (ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text(encoding="utf-8")
         )
@@ -1466,6 +1492,137 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
             validator.validate_issue14_cutover(invalid)
         self.assertEqual(scenario["expected_first_failing_gate"], caught.exception.first_failing_gate)
         self.assertEqual(scenario["expected_error_code"], caught.exception.error_code)
+
+    def test_published_slice13_evidence_validates_at_relocated_root_without_rebuild(self) -> None:
+        """Blocker 2: published slice-13 evidence validates at a relocated root.
+
+        Copies the committed ``evidence/slice-13/`` manifest and every declared
+        evidence file (manifest, logs, persisted qualification records,
+        guarded-delivery artifacts, schemas, delivery-quality authorities) into
+        a fresh repository root, WITHOUT regenerating any manifest, command
+        record, or log. The validator's slice-13 guarded-qualification semantic
+        comparison must pass against the relocated root: command identity is
+        semantic (argv[1:] plus interpreter role; cwd merely an existing
+        directory), so a published command whose argv[0] and cwd point at the
+        original machine and directory must not fail on relocation.
+        """
+        source_manifest = ROOT / "evidence/slice-13/exit-evidence-manifest.json"
+        source = json.loads(source_manifest.read_text(encoding="utf-8"))
+        scratch = new_case_dir(self.id(), label="slice13-relocated-root")
+        scratch_manifest = scratch / "evidence/slice-13/exit-evidence-manifest.json"
+        scratch_manifest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_manifest, scratch_manifest)
+        for relative in source["evidence_paths"]:
+            src = ROOT / relative
+            if not src.is_file():
+                continue
+            target = scratch / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+        for directory in ("schemas", "delivery-quality"):
+            target = scratch / directory
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(ROOT / directory, target)
+        contracts = scratch / "tests/video_workflow/fixtures/contracts"
+        if contracts.exists():
+            shutil.rmtree(contracts)
+        shutil.copytree(
+            ROOT / "tests/video_workflow/fixtures/contracts", contracts
+        )
+
+        value = json.loads(scratch_manifest.read_text(encoding="utf-8"))
+        patched_configs = deepcopy(validator.SLICE_CONFIGS)
+        with (
+            patch.object(validator, "PROJECT_ROOT", scratch),
+            patch.object(
+                validator,
+                "SCHEMA_PATH",
+                scratch / "schemas/exit-evidence-manifest.v2.schema.json",
+            ),
+            patch.object(validator, "SLICE_CONFIGS", patched_configs),
+        ):
+            # The semantic comparison that previously bound the published
+            # evidence to the original machine and directory must pass.
+            validator.validate_semantics(value)
+            validator._validate_guarded_delivery_qualification(
+                value,
+                issue_commands=contract.COMMANDS,
+                issue_label="Issue #14",
+            )
+            validator._validate_slice13_evidence_paths(value)
+
+    def test_finalize_rejects_collect_time_log_drift(self) -> None:
+        """Blocker 3: finalize must reject a persisted log that drifted.
+
+        ``collect`` hashes the original persisted ``command.log``; if that file
+        changes between collect and finalize (the persisted log lives under
+        待删除/ and is gitignored, so the worktree anchor cannot detect it),
+        ``finalize`` must fail closed at the collect-time binding instead of
+        publishing the drifted bytes.
+        """
+        run_dir, current_target, qualification_runs = (
+            self._isolated_delivered_youtube_fixture()
+        )
+        collection_path = run_dir.parents[1] / "drift-collection.json"
+        collector.collect(
+            run_dir=run_dir,
+            current_target=current_target,
+            qualification_runs=qualification_runs,
+            output=collection_path,
+        )
+        drifted = qualification_runs[contract.COMMANDS[1][0]] / "command.log"
+        drifted.write_bytes(drifted.read_bytes() + b"drifted after collect\n")
+        with self.assertRaises(collector.CollectionError) as caught:
+            collector.finalize(
+                collection_path=collection_path,
+                manifest_path=run_dir.parents[1] / "drift-manifest.json",
+            )
+        self.assertIn("persisted_command_log", str(caught.exception))
+
+    def test_validator_rejects_broken_log_source_chain(self) -> None:
+        """Blocker 3: the validator rejects a broken collect->finalize chain.
+
+        # scenario_id=broken_log_source_chain; target_invariant=published log source chain;
+        # mutation_seam=published log bytes (line inserted before marker);
+        # rematerialized_nodes=none; intentionally_stale_nodes=published_log_sha256;
+        # expected_first_gate=guarded_delivery_evidence;
+        # expected_error_code=command_log_source_chain_broken; scenario_class=single_contradiction.
+        """
+        for seam in ("source_log_sha256", "published_log_bytes"):
+            with self.subTest(seam=seam):
+                scratch = new_case_dir(self.id(), label=f"slice13-broken-chain-{seam}")
+                manifest_path, manifest = self._slice13_guarded_fixture(scratch)
+                target = manifest["commands"][0]
+                if seam == "source_log_sha256":
+                    target["source_log_sha256"] = "0" * 64
+                else:
+                    log_path = scratch / target["log"]["path"]
+                    marker = (
+                        f"EVIDENCE_IMPLEMENTATION_COMMIT: {'2' * 40}\n"
+                    ).encode("ascii")
+                    log_bytes = log_path.read_bytes()
+                    log_path.write_bytes(
+                        log_bytes[: -len(marker)]
+                        + b"injected before marker\n"
+                        + marker
+                    )
+                with (
+                    patch.object(validator, "PROJECT_ROOT", scratch),
+                    self.assertRaises(validator.EvidenceError) as caught,
+                ):
+                    validator._validate_guarded_delivery_qualification(
+                        manifest,
+                        issue_commands=contract.COMMANDS,
+                        issue_label="Issue #14",
+                    )
+                self.assertEqual(
+                    "guarded_delivery_evidence", caught.exception.first_failing_gate
+                )
+                self.assertEqual(
+                    "command_log_source_chain_broken",
+                    caught.exception.error_code,
+                )
 
 
 if __name__ == "__main__":

@@ -1532,7 +1532,16 @@ class Issue14ExitEvidenceTests(unittest.TestCase):
         )
 
         value = json.loads(scratch_manifest.read_text(encoding="utf-8"))
+        # Cross-machine relocation of the *interpreter* too: the published
+        # manifest recorded the publishing machine's argv[0], and this
+        # validator runs against a different interpreter. Patch only
+        # SLICE_CONFIGS[13] (never regenerating the evidence) so every closed
+        # command's registered argv[0] points at another machine's python.
+        # The semantic comparison must still pass: command[1:] matches the
+        # contract exactly and the interpreter role is not machine-bound.
         patched_configs = deepcopy(validator.SLICE_CONFIGS)
+        for expected_command in patched_configs[13]["commands"]:
+            expected_command["command"][0] = "C:/other/machine/python.exe"
         with (
             patch.object(validator, "PROJECT_ROOT", scratch),
             patch.object(

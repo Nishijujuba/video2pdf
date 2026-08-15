@@ -863,10 +863,32 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
             raise EvidenceError(
                 "Slice Exit Evidence expected exit code must be zero for every closed command"
             )
-        if provided_commands != expected_commands:
-            raise EvidenceError(
-                "Slice Exit Evidence closed command vector differs from its registered authority"
-            )
+        # Command identity is semantic, not machine-bound. The registered
+        # command vectors and the provided manifest commands share test_id
+        # order (identities equality above), so the comparison aligns by
+        # position. argv[1:] must match the contract exactly; argv[0] is the
+        # executor: an interpreter role (basename starts with "python") is a
+        # machine-local path that legitimately differs after relocation, while
+        # a fixed tool (for example git) must match the contract exactly.
+        for provided, expected in zip(provided_commands, expected_commands):
+            if (
+                provided["test_id"] != expected["test_id"]
+                or provided["expected_exit_code"] != expected["expected_exit_code"]
+                or provided["command"][1:] != expected["command"][1:]
+            ):
+                raise EvidenceError(
+                    "Slice Exit Evidence closed command vector differs from its registered authority"
+                )
+            provided_executor = provided["command"][0]
+            expected_executor = expected["command"][0]
+            executor_basename = provided_executor.replace(
+                "\\", "/"
+            ).rsplit("/", 1)[-1]
+            if not executor_basename.startswith("python"):
+                if provided_executor != expected_executor:
+                    raise EvidenceError(
+                        "Slice Exit Evidence closed command vector differs from its registered authority"
+                    )
         if any(command["actual_exit_code"] != 0 for command in commands):
             raise EvidenceError(
                 "Slice Exit Evidence closed command did not exit successfully"

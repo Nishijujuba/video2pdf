@@ -8,7 +8,7 @@ Deterministic workflow mechanics belong to one script-owned Video Workflow Kerne
 
 ## Component activation status
 
-This table records current executable authority as of 2026-08-09. Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. The cutover will transfer new Bilibili Run ownership while preserving existing Bilibili directories, YouTube Legacy authority, and the Global Gate.
+This table records current executable authority as of 2026-08-09. Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. The cutover will transfer new Bilibili Run ownership while preserving existing Bilibili directories, YouTube Legacy authority, and the Global Gate. Bilibili platform status is resolved at runtime: run `workflow-policy-check` and read the formal Platform Kernel authority before choosing a track; the repository baseline is `active_legacy` until a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence makes it `active_kernel`.
 
 | Component or contract | Status | Current authority | Activation event |
 |---|---|---|---|

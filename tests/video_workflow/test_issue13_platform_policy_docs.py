@@ -73,6 +73,16 @@ CONFIRMED_BILIBILI_STATUS = (
     "`active_kernel` begins only after runtime `CONFIRMED` platform authority "
     "and published Slice 12 Exit Evidence."
 )
+BILIBILI_STATUS_IS_RUNTIME_RESOLVED = (
+    "Bilibili platform status is resolved at runtime: run `workflow-policy-check` "
+    "and read the formal Platform Kernel authority before choosing a track; the "
+    "repository baseline is `active_legacy` until a runtime `CONFIRMED` authority "
+    "plus published Slice 12 Exit Evidence makes it `active_kernel`."
+)
+BILIBILI_BOOTSTRAP_ROUTES_ON_RUNTIME_STATE = (
+    "Start by reading the actual runtime state: run `workflow-policy-check` and "
+    "inspect the formal Platform Kernel authority before selecting a track."
+)
 
 
 class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
@@ -92,6 +102,20 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertIn(CURRENT_BILIBILI_STATUS, text)
                 self.assertIn(CONFIRMED_BILIBILI_STATUS, text)
+                self.assertIn(BILIBILI_STATUS_IS_RUNTIME_RESOLVED, text)
+
+    def test_bilibili_skill_bootstrap_routes_on_runtime_state(self) -> None:
+        for relative in (
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".claude/skills/bilibili-render-pdf/SKILL.md",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIn(BILIBILI_BOOTSTRAP_ROUTES_ON_RUNTIME_STATE, text)
+                self.assertNotIn(
+                    "The current repository has no confirmed Bilibili platform authority",
+                    text,
+                )
 
     def test_cold_start_cutover_order_is_consistent_across_authority_docs(self) -> None:
         paths = (

@@ -35,7 +35,7 @@ The output must:
 
 ## Active Authority Boundary
 
-Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless a separate explicit migration authority is activated. YouTube remains `active_legacy`. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both tracks.
+Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless a separate explicit migration authority is activated. Bilibili platform status is resolved at runtime: run `workflow-policy-check` and read the formal Platform Kernel authority before choosing a track; the repository baseline is `active_legacy` until a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence makes it `active_kernel`. YouTube remains `active_legacy`. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both tracks.
 
 The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
 
@@ -43,7 +43,7 @@ Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_w
 
 ### Cold-start cutover bootstrap
 
-The current repository has no confirmed Bilibili platform authority and must use the one-candidate public bootstrap seam below. The provisional candidate is bounded evidence-generation authority for one exact Run; it is not `active_kernel` and cannot admit an ordinary `init-run`.
+Start by reading the actual runtime state: run `workflow-policy-check` and inspect the formal Platform Kernel authority before selecting a track. When the platform has no runtime `CONFIRMED` authority (the repository baseline `active_legacy`), use the one-candidate public bootstrap seam below; when a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence exists, ordinary `init-run` is open and the seam is closed. The provisional candidate is bounded evidence-generation authority for one exact Run; it is not `active_kernel` and cannot admit an ordinary `init-run`.
 
 1. Run `bootstrap-probe` for the selected Bilibili source and retain the exact probe, Run identity, source identity, and candidate session identity.
 2. Run `platform-kernel-prepare` with the current implementation commit, the exact probe, and the candidate session. This creates one durable `PREPARED` candidate binding without publishing platform authority.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import unittest
@@ -29,6 +29,17 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _real_figure_png() -> bytes:
+    # A valid 1x1 PNG so the final compile adapter can rasterize the declared
+    # figure source; the fixture's b"fixture-png" is not a readable image.
+    import base64
+
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+        "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    )
+
+
 def _canonical_sha(value: object) -> str:
     return hashlib.sha256(
         (
@@ -46,6 +57,12 @@ def _write_json(path: Path, value: object) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _compile_runtime_policy_fixture(run_dir: Path) -> Path:
+    # production-advance persists the validated policy at the canonical
+    # workflow/compile-runtime-policy.json path; final compile binds to it.
+    return run_dir / "workflow" / "compile-runtime-policy.json"
 
 
 def _current_implementation_commit() -> str:
@@ -298,7 +315,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
                 "slot_id": "figure_01",
                 "section_id": "section_01",
                 "asset_path": "figures/figure_01.png",
-                "asset_sha256": hashlib.sha256(b"fixture-png").hexdigest(),
+                "asset_sha256": hashlib.sha256(_real_figure_png()).hexdigest(),
                 "caption": "Bound evidence.",
                 "source": {"kind": "source_timestamp", "value": "00:00:01"},
                 "slot_contribution_path": "work/figures/figure_01.tex",
@@ -310,7 +327,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             run_dir,
             figure,
             {
-                "figure_01.png": b"fixture-png",
+                "figure_01.png": _real_figure_png(),
                 "figure-manifest.json": figure_manifest,
                 "figure_01.tex": contribution,
             },
@@ -367,18 +384,53 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
         )
         main_generation = state["artifacts"]["integrated_main"]
         main_tex = run_dir / main_generation["path"]
+        support_specs = (
+            ("local_class", "work/integration/course.cls", "local_class"),
+            ("local_style", "work/integration/local.sty", "local_style"),
+            ("bibliography", "work/integration/refs.bib", "bibliography"),
+        )
+        generation_artifacts = [
+            {
+                "logical_id": "integrated_main_tex",
+                "generation": main_generation["generation"],
+                "sha256": main_generation["sha256"],
+            }
+        ]
+        for logical_id, _relative, _role in support_specs:
+            artifact = state["artifacts"].get(logical_id)
+            if artifact is None:
+                continue
+            generation_artifacts.append(
+                {
+                    "logical_id": logical_id,
+                    "generation": artifact["generation"],
+                    "sha256": artifact["sha256"],
+                }
+            )
+        figure_asset = state["artifacts"].get("figure_asset_figure_01")
+        if figure_asset is not None:
+            generation_artifacts.append(
+                {
+                    "logical_id": "figure_asset_figure_01",
+                    "generation": figure_asset["generation"],
+                    "sha256": figure_asset["sha256"],
+                }
+            )
+        section_artifact = state["artifacts"].get("integrated_section_01")
+        if section_artifact is not None:
+            generation_artifacts.append(
+                {
+                    "logical_id": "integrated_section_01",
+                    "generation": section_artifact["generation"],
+                    "sha256": section_artifact["sha256"],
+                }
+            )
         generations = {
             "schema_name": "precompile-artifact-generation-set",
             "schema_version": "1.0.0",
             "generation_set_id": "issue13-production-complete",
             "producer_ids": [main_generation["producer"]],
-            "artifacts": [
-                {
-                    "logical_id": "integrated_main_tex",
-                    "generation": main_generation["generation"],
-                    "sha256": main_generation["sha256"],
-                }
-            ],
+            "artifacts": generation_artifacts,
         }
         generations["generation_set_sha256"] = _canonical_sha(generations)
         item = {
@@ -487,42 +539,90 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "--sealed-at", "2026-08-11T01:53:00Z",
         )
         seal = json.loads((quality / "precompile-text-seal.json").read_text(encoding="utf-8"))
+        runtime_policy_path = _compile_runtime_policy_fixture(run_dir)
+        entries = [
+            {
+                "logical_id": "integrated_main_tex",
+                "generation": main_generation["generation"],
+                "sha256": main_generation["sha256"],
+                "source_path": str(main_tex),
+                "staging_path": "main.tex",
+            }
+        ]
+        for logical_id, relative, _role in support_specs:
+            artifact = state["artifacts"].get(logical_id)
+            if artifact is None:
+                continue
+            entries.append(
+                {
+                    "logical_id": logical_id,
+                    "generation": artifact["generation"],
+                    "sha256": artifact["sha256"],
+                    "source_path": str(run_dir / artifact["path"]),
+                    "staging_path": PurePosixPath(relative).name,
+                }
+            )
+        figure_asset = state["artifacts"].get("figure_asset_figure_01")
+        if figure_asset is not None:
+            figure_path = run_dir / figure_asset["path"]
+            entries.append(
+                {
+                    "logical_id": "figure_asset_figure_01",
+                    "generation": figure_asset["generation"],
+                    "sha256": figure_asset["sha256"],
+                    "source_path": str(figure_path),
+                    "staging_path": "figures/figure_01.png",
+                }
+            )
+        section_artifact = state["artifacts"].get("integrated_section_01")
+        if section_artifact is not None:
+            entries.append(
+                {
+                    "logical_id": "integrated_section_01",
+                    "generation": section_artifact["generation"],
+                    "sha256": section_artifact["sha256"],
+                    "source_path": str(run_dir / section_artifact["path"]),
+                    "staging_path": "section_01.tex",
+                }
+            )
         compile_manifest = {
             "schema_name": "final-compile-manifest",
             "schema_version": "1.0.0",
             "activation_status": "target_only",
             "mode": "final",
             "precompile_text_seal_sha256": seal["seal_sha256"],
-            "entries": [
+            "entries": entries,
+            "approved_runtime_inputs": [
                 {
-                    "logical_id": "integrated_main_tex",
-                    "generation": main_generation["generation"],
-                    "sha256": main_generation["sha256"],
-                    "source_path": str(main_tex),
-                    "staging_path": "main.tex",
+                    "path": "C:/Windows/Fonts/arial.ttf",
+                    "sha256": _sha256(Path("C:/Windows/Fonts/arial.ttf")),
+                    "classification": "registered_system_font",
                 }
             ],
-            "approved_runtime_inputs": [],
+            "runtime_policy": {
+                "path": str(runtime_policy_path.resolve()),
+                "sha256": _sha256(runtime_policy_path),
+            },
         }
         compile_manifest["manifest_sha256"] = _canonical_sha(compile_manifest)
         compile_manifest_path = _write_json(
             quality / "inputs" / "final-compile-manifest.json", compile_manifest
         )
         rendered_object = {
-            "object_id": "p1.body.1",
+            "object_id": "page-1-text-1",
             "page": 1,
             "object_kind": "pdf_text_run",
-            "bbox": [10, 10, 100, 30],
+            "bbox": [72.0, 60.17499923706055, 124.55799865722656, 75.28900146484375],
             "exact_utf8_text": "Core claim",
             "extractor_id": "pdf-text-v1",
-            "evidence_locator": "page:1/object:p1.body.1",
+            "evidence_locator": "page:1/block:1/line:1/span:1",
         }
         origin_edge = {
             "edge_id": "origin.main.body",
             "disposition": "sealed_origin",
             "sealed_item_id": "main.body",
             "sealed_text_utf8": "Core claim",
-            "rendered_object_ids": ["p1.body.1"],
+            "rendered_object_ids": ["page-1-text-1"],
             "recipe": "exact_utf8",
         }
         origin_plan = {
@@ -543,7 +643,8 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "--precompile-workspace-root", str(quality),
             "--compile-manifest", str(compile_manifest_path),
             "--text-origin-plan", str(origin_plan_path),
-            "--compiler-adapter", str(PROJECT_ROOT / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"),
+            "--compiler-adapter", str(PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"),
+            "--runtime-policy", str(runtime_policy_path),
             "--workspace-root", str(final_workspace),
             "--compiled-at", "2026-08-11T01:54:00Z",
         )

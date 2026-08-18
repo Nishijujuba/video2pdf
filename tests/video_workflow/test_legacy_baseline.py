@@ -1235,7 +1235,10 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
         decision_map = (PROJECT_ROOT / "docs" / "adr" / "video-workflow-kernel-2.0-decision-map.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("No component currently has `active_global_gate` or `active_kernel` status.", decision_map)
+        self.assertIn(
+            "The shared final-quality gate has `active_global_gate` status. No component has `active_kernel` status.",
+            decision_map,
+        )
 
 
 if __name__ == "__main__":

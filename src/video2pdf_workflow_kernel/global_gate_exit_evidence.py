@@ -12,6 +12,7 @@ from jsonschema.exceptions import SchemaError
 from .evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
     git_output,
     sha256_file,
     sha256_git_blob,
@@ -177,10 +178,16 @@ def _validate_implementation(project_root: Path, value: dict[str, Any]) -> None:
             project_root, SLICE_BASE_COMMIT, implementation,
             excluded_prefixes=(EVIDENCE_PREFIX,),
         )
+        expected_tombstones = implementation_change_tombstones(
+            project_root, SLICE_BASE_COMMIT, implementation,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
     except EvidenceSupportError as exc:
         raise ExitEvidenceValidationError(str(exc), first_failing_gate="artifact_fingerprints", error_code="artifact_fingerprints_stale") from exc
     if value["artifact_fingerprints"] != expected:
         _fail("artifact_fingerprints do not equal the implementation commit diff", "artifact_fingerprints", "artifact_fingerprints_stale")
+    if value.get("implementation_tombstones", []) != expected_tombstones:
+        _fail("implementation_tombstones do not equal the removed implementation paths", "implementation_tombstones", "implementation_tombstones_stale")
 
 
 def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path: Path) -> None:

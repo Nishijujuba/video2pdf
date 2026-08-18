@@ -36,6 +36,7 @@ from slice4_exit_evidence_contract import (
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
     git_output,
     sha256_file,
 )
@@ -331,6 +332,12 @@ def main() -> int:
             "platform_smokes": platform_smokes,
             "artifact_fingerprints": implementation_artifacts(
                 SLICE_BASE_COMMIT, implementation_commit
+            ),
+            "implementation_tombstones": implementation_change_tombstones(
+                PROJECT_ROOT,
+                SLICE_BASE_COMMIT,
+                implementation_commit,
+                excluded_prefixes=(EVIDENCE_PREFIX,),
             ),
             "unresolved_exceptions": [],
             "overall_decision": decision,

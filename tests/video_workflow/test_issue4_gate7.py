@@ -176,6 +176,14 @@ class SharedExitEvidenceTests(unittest.TestCase):
                 (4, "654362017fa974946fb252af5311868bb47efcf0"),
                 (5, "7b33a2dcf8b19608943f12efd814907a69c35e8f"),
                 (6, "6f8241ddb4bd725d3b584dd1c403ed59dda32219"),
+                (7, "68189e7744e22c9ce78b3ee1a58def69d09e711a"),
+                (8, "bb18eb2112bd4d9f3403d46230dbee8131389eaf"),
+                (9, "abcf95744110070a435baebb7900393f6ffb75fd"),
+                (10, "3fa54d09ab39349dd05bf225fefbc408046d4015"),
+                (11, "64f3fb1638f601b533cb0ee4dec908203c1bef71"),
+                (12, "2e80c5d1d83bb40cf7ef47a9cc01685728cd615c"),
+                (13, "f20b9caff0aa0af1a83f89877ab0c7c0292308d6"),
+                (14, "bb50b1ce8a0f91961d9c7077e8e130ac8eaa955f"),
             },
         )
 

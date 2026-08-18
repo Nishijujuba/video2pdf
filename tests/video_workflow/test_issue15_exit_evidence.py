@@ -175,6 +175,23 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
             },
             "fairness_group_id": batch_record["batch_id"],
         }
+        collection_batch_evidence = deepcopy(value["batch_evidence"])
+        collection_batch_evidence["batch_record"].pop("role")
+        collection_path = _write_json(
+            scratch / "collection.json",
+            {
+                "schema_name": "issue15-exit-evidence-collection",
+                "schema_version": "2.0.0",
+                "implementation_commit": implementation_commit,
+                "batch_evidence": collection_batch_evidence,
+                "qualification_runs": {},
+            },
+        )
+        value["batch_evidence"]["collection"] = {
+            "role": "batch_evidence_collection",
+            "path": collection_path.relative_to(PROJECT_ROOT).as_posix(),
+            "sha256": _sha256(collection_path),
+        }
         evidence_paths: set[str] = set()
         for index, command in enumerate(value["commands"], 1):
             command_id = command["test_id"]
@@ -231,6 +248,7 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         batch = value["batch_evidence"]
         value["evidence_paths"] = sorted({
             *value["evidence_paths"],
+            batch["collection"]["path"],
             batch["batch_record"]["path"],
             batch["negative_evidence"]["artifact"]["path"],
             *[entry["artifact"]["path"] for entry in batch["projections"]],
@@ -240,13 +258,54 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.EvidenceError, "fingerprint mismatch"):
             validator.validate_bindings(value, manifest_path)
 
+    def test_batch_collection_tampering_breaks_bound_sha(self) -> None:
+        # scenario_id=collection_bytes_tampered; target_invariant=collection SHA binding;
+        # mutation_seam=collection file after manifest binding; rematerialized_nodes=none;
+        # intentionally_stale_nodes=collection artifact SHA; expected_first_gate=bindings;
+        # expected_error_code=artifact_sha_mismatch; scenario_class=single_contradiction.
+        manifest_path, value, _projection_path = self._materialized_binding_manifest()
+        batch = value["batch_evidence"]
+        value["evidence_paths"] = sorted({
+            *value["evidence_paths"],
+            batch["collection"]["path"],
+            batch["batch_record"]["path"],
+            batch["negative_evidence"]["artifact"]["path"],
+            *[entry["artifact"]["path"] for entry in batch["projections"]],
+        })
+        _write_json(manifest_path, value)
+        collection_path = PROJECT_ROOT / batch["collection"]["path"]
+        collection_path.write_bytes(collection_path.read_bytes() + b"\n")
+        with self.assertRaisesRegex(validator.EvidenceError, "fingerprint mismatch"):
+            validator.validate_bindings(value, manifest_path)
+
+    def test_batch_validator_rejects_collection_from_another_batch(self) -> None:
+        # scenario_id=collection_batch_mismatch; target_invariant=collection ownership;
+        # mutation_seam=bound collection content; rematerialized_nodes=collection binding;
+        # intentionally_stale_nodes=none; expected_first_gate=batch_evidence;
+        # expected_error_code=batch_collection_mismatch; scenario_class=single_contradiction.
+        _manifest_path, value, _projection_path = self._materialized_binding_manifest()
+        binding = value["batch_evidence"]["collection"]
+        collection_path = PROJECT_ROOT / binding["path"]
+        collection = json.loads(collection_path.read_text(encoding="utf-8"))
+        collection["batch_evidence"]["fairness_group_id"] = "f" * 32
+        _write_json(collection_path, collection)
+        binding["sha256"] = _sha256(collection_path)
+        with self.assertRaisesRegex(validator.EvidenceError, "collection"):
+            validator.validate_batch_exit_evidence(value, project_root=PROJECT_ROOT)
+
     def test_batch_validator_rejects_projection_summary_outside_batch_mapping(self) -> None:
         # scenario_id=projection_summary_foreign_run; target_invariant=Batch run mapping;
-        # mutation_seam=manifest projection.run_id; rematerialized_nodes=manifest;
+        # mutation_seam=manifest projection.run_id; rematerialized_nodes=manifest,collection;
         # intentionally_stale_nodes=none; expected_first_gate=batch_evidence;
         # expected_error_code=projection_batch_mismatch; scenario_class=single_contradiction.
         _manifest_path, value, _projection_path = self._materialized_binding_manifest()
         value["batch_evidence"]["projections"][0]["run_id"] = "f" * 32
+        collection_binding = value["batch_evidence"]["collection"]
+        collection_path = PROJECT_ROOT / collection_binding["path"]
+        collection = json.loads(collection_path.read_text(encoding="utf-8"))
+        collection["batch_evidence"]["projections"][0]["run_id"] = "f" * 32
+        _write_json(collection_path, collection)
+        collection_binding["sha256"] = _sha256(collection_path)
         with self.assertRaisesRegex(validator.EvidenceError, "does not belong"):
             validator.validate_batch_exit_evidence(value, project_root=PROJECT_ROOT)
 
@@ -369,6 +428,42 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         self.assertTrue(authority["fairness_group_is_batch_id"])
         self.assertTrue(authority["auth_breaker_delegated_to_resource_admission"])
 
+    def test_finalize_binds_collection_and_closes_evidence_paths(self) -> None:
+        batch_path, projections_dir, authority_path, qualification_runs = self._collection_inputs()
+        collection_path = batch_path.parent / "collection.json"
+        collector.collect(
+            batch_record_path=batch_path,
+            projections_dir=projections_dir,
+            negative_evidence_path=authority_path,
+            fairness_group_id="0123456789abcdef0123456789abcdef",
+            qualification_runs=qualification_runs,
+            output=collection_path,
+        )
+        manifest_path = batch_path.parent / "exit-evidence-manifest.json"
+        with (
+            patch.object(collector, "_enforce_finalization_anchor"),
+            patch.object(collector, "fingerprint_implementation_changes", return_value=[]),
+            patch.object(collector, "implementation_change_tombstones", return_value=[]),
+        ):
+            manifest = collector.finalize(
+                collection_path=collection_path,
+                manifest_path=manifest_path,
+            )
+        binding = manifest["batch_evidence"]["collection"]
+        self.assertEqual(binding["role"], "batch_evidence_collection")
+        self.assertEqual(binding["path"], collection_path.relative_to(PROJECT_ROOT).as_posix())
+        self.assertEqual(binding["sha256"], _sha256(collection_path))
+        self.assertIn(binding["path"], manifest["evidence_paths"])
+        Draft202012Validator(
+            json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        ).validate(manifest)
+        with patch.object(
+            validator,
+            "sha256_git_blob",
+            side_effect=lambda root, _commit, relative: _sha256(root / relative),
+        ):
+            validator.validate_bindings(manifest, manifest_path)
+
     def test_collect_rejects_projection_from_another_batch(self) -> None:
         # scenario_id=foreign_projection; target_invariant=projection Batch ownership;
         # mutation_seam=projection.batch_id; rematerialized_nodes=projection file;
@@ -458,6 +553,17 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         fixture.pop("batch_evidence")
         errors = list(Draft202012Validator(schema).iter_errors(fixture))
         self.assertTrue(errors)
+
+    def test_slice14_schema_requires_fingerprinted_collection_binding(self) -> None:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        fixture = json.loads(
+            (PROJECT_ROOT / "tests/video_workflow/fixtures/exit_evidence/slice14.valid.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("collection", fixture["batch_evidence"])
+        fixture["batch_evidence"].pop("collection")
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(fixture)))
 
     def test_slice14_invalid_fixture_rejected_by_schema(self) -> None:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))

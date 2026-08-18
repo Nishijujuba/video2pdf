@@ -474,6 +474,28 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         )
 
+    def test_removed_implementation_path_requires_tombstone_authority(self) -> None:
+        root = new_case_dir(self.id(), label="issue43-missing-tombstone")
+        repository, manifest_path = build_current_global_gate_authority(root)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertTrue(manifest["implementation_tombstones"])
+        manifest.pop("implementation_tombstones")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(ExitEvidenceValidationError) as raised:
+            validate_global_gate_exit_evidence(
+                manifest_path, project_root=repository
+            )
+        self.assertEqual(
+            "implementation_tombstones", raised.exception.first_failing_gate
+        )
+        self.assertEqual(
+            "implementation_tombstones_stale", raised.exception.error_code
+        )
+
     def test_authority_fixture_rebuilds_a_polluted_cache_before_qualification_reuse(self) -> None:
         # scenario_id: authority_cache_pollution_rebuild
         # authority input: source checkout and control-store identity

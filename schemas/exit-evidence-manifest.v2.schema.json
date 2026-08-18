@@ -176,8 +176,12 @@
     },
     "artifact_fingerprints": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+    },
+    "implementation_tombstones": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/implementationTombstone"}
     },
     "unresolved_exceptions": {
       "type": "array",
@@ -391,6 +395,7 @@
       "required": ["result_bindings", "atomic_members", "atomic_member_status", "mirror_checks", "policy_status", "batch_evidence"],
       "properties": {
         "slice": {"properties": {"number": {"const": 14}, "name": {"const": "batch-projection-cutover"}}},
+        "slice_base_commit": {"const": "bb50b1ce8a0f91961d9c7077e8e130ac8eaa955f"},
         "activation_scope": {"$ref": "#/$defs/batchActivationScope"},
         "atomic_members": {"minItems": 14, "maxItems": 14},
         "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
@@ -522,6 +527,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "collection",
         "batch_record_contract_sha256",
         "batch_item_projection_contract_sha256",
         "batch_record",
@@ -531,6 +537,7 @@
         "fairness_group_id"
       ],
       "properties": {
+        "collection": {"$ref": "#/$defs/fingerprintedArtifact"},
         "batch_record_contract_sha256": {"$ref": "#/$defs/sha256"},
         "batch_item_projection_contract_sha256": {"$ref": "#/$defs/sha256"},
         "batch_record": {"$ref": "#/$defs/fingerprintedArtifact"},
@@ -576,6 +583,33 @@
         "path": {"$ref": "#/$defs/projectPath"},
         "sha256": {"$ref": "#/$defs/sha256"}
       }
+    },
+    "implementationTombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "base_sha256", "change", "target_path"],
+      "properties": {
+        "role": {"const": "implementation_tombstone"},
+        "path": {"$ref": "#/$defs/projectPath"},
+        "base_sha256": {"$ref": "#/$defs/sha256"},
+        "change": {"enum": ["deleted", "renamed"]},
+        "target_path": {
+          "oneOf": [
+            {"$ref": "#/$defs/projectPath"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"change": {"const": "deleted"}}},
+          "then": {"properties": {"target_path": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"change": {"const": "renamed"}}},
+          "then": {"properties": {"target_path": {"$ref": "#/$defs/projectPath"}}}
+        }
+      ]
     },
     "commandEvidence": {
       "type": "object",

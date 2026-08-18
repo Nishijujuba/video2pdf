@@ -13,6 +13,7 @@ from scripts import issue43_exit_evidence_contract as contract
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
     sha256_git_blob,
 )
 from video2pdf_workflow_kernel.global_gate_exit_evidence import (
@@ -392,6 +393,12 @@ def _build_current_global_gate_authority(
         implementation,
         excluded_prefixes=(EVIDENCE_PREFIX,),
     )
+    implementation_tombstones = implementation_change_tombstones(
+        repository,
+        SLICE_BASE_COMMIT,
+        implementation,
+        excluded_prefixes=(EVIDENCE_PREFIX,),
+    )
     mirror_checks = []
     for source_relative, mirror_relative in contract.MIRROR_SPECS:
         source = repository / source_relative
@@ -443,6 +450,7 @@ def _build_current_global_gate_authority(
         "results": deepcopy(contract.RESULTS),
         "result_bindings": deepcopy(contract.RESULT_BINDINGS),
         "artifact_fingerprints": artifact_fingerprints,
+        "implementation_tombstones": implementation_tombstones,
         "unresolved_exceptions": [],
         "overall_decision": "pass",
     }
@@ -510,7 +518,16 @@ def _authority_is_reusable(repository: Path, manifest: Path) -> bool:
             implementation,
             excluded_prefixes=(EVIDENCE_PREFIX,),
         )
-        return value["artifact_fingerprints"] == expected_fingerprints
+        expected_tombstones = implementation_change_tombstones(
+            repository,
+            SLICE_BASE_COMMIT,
+            implementation,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        )
+        return (
+            value["artifact_fingerprints"] == expected_fingerprints
+            and value.get("implementation_tombstones", []) == expected_tombstones
+        )
     except (
         AssertionError,
         EvidenceSupportError,

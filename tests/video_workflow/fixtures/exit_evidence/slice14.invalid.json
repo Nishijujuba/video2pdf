@@ -7,7 +7,7 @@
     "number": 14,
     "name": "batch-projection-cutover"
   },
-  "slice_base_commit": "0000000000000000000000000000000000000000",
+  "slice_base_commit": "bb50b1ce8a0f91961d9c7077e8e130ac8eaa955f",
   "implementation_commit": "2222222222222222222222222222222222222222",
   "evidence_paths": [
     "evidence/slice-14/exit-evidence-manifest.json",
@@ -35,6 +35,11 @@
     "youtube": "active_kernel"
   },
   "batch_evidence": {
+    "collection": {
+      "role": "batch_evidence_collection",
+      "path": "evidence/slice-14/collection.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
     "batch_record_contract_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "batch_item_projection_contract_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "batch_record": {

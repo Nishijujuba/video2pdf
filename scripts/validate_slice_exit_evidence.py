@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -33,6 +34,7 @@ from video2pdf_workflow_kernel.guarded_delivery import (
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
     git_output,
     sha256_file,
     sha256_git_blob,
@@ -1075,6 +1077,28 @@ def validate_batch_exit_evidence(
                 )
             return decoded
 
+        collection = decode_bound_json(
+            batch_evidence.get("collection"), label="collection"
+        )
+        collected_batch_evidence = collection.get("batch_evidence")
+        expected_collected_batch_evidence = deepcopy(batch_evidence)
+        expected_collected_batch_evidence.pop("collection", None)
+        expected_batch_record = expected_collected_batch_evidence.get("batch_record")
+        if isinstance(expected_batch_record, dict):
+            expected_batch_record.pop("role", None)
+        if (
+            collection.get("schema_name") != "issue15-exit-evidence-collection"
+            or collection.get("schema_version") != "2.0.0"
+            or collection.get("implementation_commit")
+            != value.get("implementation_commit")
+            or collected_batch_evidence != expected_collected_batch_evidence
+        ):
+            raise EvidenceError(
+                "Batch collection does not match the finalized Batch evidence",
+                first_failing_gate="batch_evidence",
+                error_code="batch_collection_mismatch",
+            )
+
         expected_contract_hashes = {
             "batch_record_contract_sha256": sha256_file(
                 project_root / "schemas/video-workflow/v5/batch-record.v1.schema.json"
@@ -1442,6 +1466,12 @@ def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
             implementation_commit,
             excluded_prefixes=(config["evidence_prefix"],),
         )
+        expected_tombstones = implementation_change_tombstones(
+            PROJECT_ROOT,
+            slice_base_commit,
+            implementation_commit,
+            excluded_prefixes=(config["evidence_prefix"],),
+        )
     except EvidenceSupportError as exc:
         raise EvidenceError(str(exc)) from exc
     provided = manifest["artifact_fingerprints"]
@@ -1464,6 +1494,10 @@ def validate_implementation_artifacts(manifest: dict[str, Any]) -> None:
                 "complete implementation change set fingerprint differs for "
                 f"{path}: expected {expected_item}, got {provided_item}"
             )
+    if manifest.get("implementation_tombstones", []) != expected_tombstones:
+        raise EvidenceError(
+            "implementation_tombstones must equal the complete removed-path change set"
+        )
 
 
 def _decode_persisted_run_evidence(
@@ -1839,6 +1873,9 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                 )
     batch_evidence = manifest.get("batch_evidence")
     if isinstance(batch_evidence, dict):
+        collection = batch_evidence.get("collection")
+        if isinstance(collection, dict):
+            guarded_artifacts.append(collection)
         batch_record = batch_evidence.get("batch_record")
         if isinstance(batch_record, dict):
             guarded_artifacts.append(batch_record)

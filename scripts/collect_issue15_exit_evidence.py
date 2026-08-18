@@ -13,7 +13,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-for import_root in (PROJECT_ROOT / "src", PROJECT_ROOT / "scripts"):
+for import_root in (PROJECT_ROOT, PROJECT_ROOT / "src", PROJECT_ROOT / "scripts"):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
@@ -41,6 +41,7 @@ from video2pdf_workflow_kernel.errors import ContractError
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
 )
 
 BATCH_RECORD_SCHEMA = PROJECT_ROOT / "schemas/video-workflow/v5/batch-record.v1.schema.json"
@@ -542,6 +543,7 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
             "before finalization"
         )
 
+    collection_binding = _binding(collection_path.resolve(), label="Issue 15 collection")
     batch_record_binding = _project_binding(
         batch_evidence["batch_record"], role="batch_record_evidence"
     )
@@ -558,6 +560,9 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         for entry in batch_evidence["projections"]
     ]
     guarded = {
+        "collection": _project_binding(
+            collection_binding, role="batch_evidence_collection"
+        ),
         "batch_record_contract_sha256": batch_evidence["batch_record_contract_sha256"],
         "batch_item_projection_contract_sha256": batch_evidence["batch_item_projection_contract_sha256"],
         "batch_record": batch_record_binding,
@@ -621,7 +626,6 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         )
     implementation_commit = next(iter(commits))
 
-    collection_binding = _binding(collection_path.resolve(), label="Issue 15 collection")
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_dir = manifest_path.resolve().parent / "logs"
     commands = []
@@ -716,6 +720,12 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         "results": deepcopy(RESULTS),
         "result_bindings": deepcopy(RESULT_BINDINGS),
         "artifact_fingerprints": fingerprint_implementation_changes(
+            PROJECT_ROOT,
+            SLICE_BASE_COMMIT,
+            implementation_commit,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        ),
+        "implementation_tombstones": implementation_change_tombstones(
             PROJECT_ROOT,
             SLICE_BASE_COMMIT,
             implementation_commit,

@@ -37,6 +37,7 @@ from scripts.issue14_exit_evidence_contract import (
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
+    implementation_change_tombstones,
 )
 from video2pdf_workflow_kernel.errors import ContractError
 from video2pdf_workflow_kernel.guarded_delivery import (
@@ -587,6 +588,12 @@ def finalize(*, collection_path: Path, manifest_path: Path) -> dict[str, Any]:
         ],
         "result_bindings": deepcopy(RESULT_BINDINGS),
         "artifact_fingerprints": fingerprint_implementation_changes(
+            PROJECT_ROOT,
+            SLICE_BASE_COMMIT,
+            implementation_commit,
+            excluded_prefixes=(EVIDENCE_PREFIX,),
+        ),
+        "implementation_tombstones": implementation_change_tombstones(
             PROJECT_ROOT,
             SLICE_BASE_COMMIT,
             implementation_commit,

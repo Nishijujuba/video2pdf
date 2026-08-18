@@ -132,6 +132,22 @@ def implementation_change_paths(
     *,
     excluded_prefixes: Iterable[str] = (),
 ) -> tuple[str, ...]:
+    paths, _ = _implementation_change_authority(
+        project_root,
+        slice_base_commit,
+        implementation_commit,
+        excluded_prefixes=excluded_prefixes,
+    )
+    return paths
+
+
+def _implementation_change_authority(
+    project_root: Path,
+    slice_base_commit: str,
+    implementation_commit: str,
+    *,
+    excluded_prefixes: Iterable[str] = (),
+) -> tuple[tuple[str, ...], tuple[dict[str, str | None], ...]]:
     git_output(project_root, "cat-file", "-e", f"{slice_base_commit}^{{commit}}")
     git_output(project_root, "cat-file", "-e", f"{implementation_commit}^{{commit}}")
     raw = _run_git(
@@ -139,7 +155,7 @@ def implementation_change_paths(
         (
             "diff",
             "--name-status",
-            "--no-renames",
+            "--find-renames",
             "-z",
             f"{slice_base_commit}...{implementation_commit}",
             "--",
@@ -148,32 +164,106 @@ def implementation_change_paths(
     tokens = raw.split(b"\0")
     if tokens and tokens[-1] == b"":
         tokens.pop()
-    if len(tokens) % 2:
-        raise EvidenceSupportError("git diff --name-status returned an incomplete record")
     excluded = tuple(excluded_prefixes)
     paths: list[str] = []
-    for index in range(0, len(tokens), 2):
+    tombstones: list[dict[str, str | None]] = []
+
+    def is_excluded(path: str) -> bool:
+        return path in excluded or any(path.startswith(prefix) for prefix in excluded)
+
+    index = 0
+    while index < len(tokens):
         try:
             status = tokens[index].decode("ascii")
-            path = _canonical_git_path(tokens[index + 1].decode("utf-8"))
+            index += 1
+            if index >= len(tokens):
+                raise EvidenceSupportError(
+                    "git diff --name-status returned an incomplete record"
+                )
+            source_path = _canonical_git_path(tokens[index].decode("utf-8"))
+            index += 1
+            target_path: str | None = None
+            if status.startswith("R"):
+                if index >= len(tokens):
+                    raise EvidenceSupportError(
+                        "git diff --name-status returned an incomplete rename record"
+                    )
+                target_path = _canonical_git_path(tokens[index].decode("utf-8"))
+                index += 1
         except UnicodeDecodeError as exc:
             raise EvidenceSupportError(
                 "implementation change contains an unsupported path encoding"
             ) from exc
-        if path in excluded or any(path.startswith(prefix) for prefix in excluded):
+
+        if status in {"A", "M"}:
+            if not is_excluded(source_path):
+                paths.append(source_path)
             continue
         if status == "D":
-            raise EvidenceSupportError(
-                f"deleted implementation path cannot be fingerprinted: {path}"
-            )
-        if status not in {"A", "M"}:
-            raise EvidenceSupportError(
-                f"unsupported implementation change status {status!r}: {path}"
-            )
-        paths.append(path)
+            if not is_excluded(source_path):
+                tombstones.append(
+                    {
+                        "role": "implementation_tombstone",
+                        "path": source_path,
+                        "base_sha256": sha256_git_blob(
+                            project_root, slice_base_commit, source_path
+                        ),
+                        "change": "deleted",
+                        "target_path": None,
+                    }
+                )
+            continue
+        if status.startswith("R") and status[1:].isdigit() and target_path is not None:
+            source_excluded = is_excluded(source_path)
+            target_excluded = is_excluded(target_path)
+            if not target_excluded:
+                paths.append(target_path)
+            if not source_excluded:
+                tombstones.append(
+                    {
+                        "role": "implementation_tombstone",
+                        "path": source_path,
+                        "base_sha256": sha256_git_blob(
+                            project_root, slice_base_commit, source_path
+                        ),
+                        "change": "renamed" if not target_excluded else "deleted",
+                        "target_path": target_path if not target_excluded else None,
+                    }
+                )
+            continue
+        raise EvidenceSupportError(
+            f"unsupported implementation change status {status!r}: {source_path}"
+        )
+
     if len(paths) != len(set(paths)):
         raise EvidenceSupportError("implementation change set contains duplicate paths")
-    return tuple(sorted(paths))
+    tombstone_paths = [item["path"] for item in tombstones]
+    if len(tombstone_paths) != len(set(tombstone_paths)):
+        raise EvidenceSupportError(
+            "implementation change tombstones contain duplicate paths"
+        )
+    if not paths and not tombstones:
+        raise EvidenceSupportError("implementation change set is empty")
+    return (
+        tuple(sorted(paths)),
+        tuple(sorted(tombstones, key=lambda item: str(item["path"]))),
+    )
+
+
+def implementation_change_tombstones(
+    project_root: Path,
+    slice_base_commit: str,
+    implementation_commit: str,
+    *,
+    excluded_prefixes: Iterable[str] = (),
+) -> list[dict[str, str | None]]:
+    _, tombstones = _implementation_change_authority(
+        project_root,
+        slice_base_commit,
+        implementation_commit,
+        excluded_prefixes=excluded_prefixes,
+    )
+    return [dict(item) for item in tombstones]
 
 
 def sha256_git_archive(project_root: Path, commit: str, path: str) -> str:
@@ -221,37 +311,85 @@ def fingerprint_implementation_changes(
         excluded_prefixes=excluded_prefixes,
     )
     if not paths:
-        raise EvidenceSupportError("implementation change set is empty")
-    archive = _run_git(
-        project_root,
-        ("archive", "--format=tar", implementation_commit, "--", *paths),
-    )
-    result: list[dict[str, str]] = []
-    try:
-        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:
-            for path in paths:
-                try:
-                    member = handle.getmember(path)
-                except KeyError as exc:
-                    raise EvidenceSupportError(
-                        f"implementation path is absent from its Git commit: {path}"
-                    ) from exc
-                if not member.isfile() or member.issym() or member.islnk():
-                    raise EvidenceSupportError(
-                        f"implementation path is not a regular Git file: {path}"
-                    )
-                extracted = handle.extractfile(member)
-                if extracted is None:
-                    raise EvidenceSupportError(
-                        f"implementation Git file cannot be read: {path}"
-                    )
-                result.append(
-                    {
-                        "role": "implementation_artifact",
-                        "path": path,
-                        "sha256": hashlib.sha256(extracted.read()).hexdigest(),
-                    }
-                )
-    except tarfile.TarError as exc:
-        raise EvidenceSupportError("Git implementation archive is invalid") from exc
-    return result
+        return []
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    argument_size = 0
+    for path in paths:
+        path_size = len(path.encode("utf-8")) + 3
+        if batch and argument_size + path_size > 6000:
+            batches.append(batch)
+            batch = []
+            argument_size = 0
+        batch.append(path)
+        argument_size += path_size
+    if batch:
+        batches.append(batch)
+
+    fingerprints: dict[str, str] = {}
+    for selected in batches:
+        tree_raw = _run_git(
+            project_root,
+            ("ls-tree", "-z", implementation_commit, "--", *selected),
+        )
+        tree_entries: dict[str, tuple[str, str, str]] = {}
+        for record in tree_raw.split(b"\0"):
+            if not record:
+                continue
+            try:
+                authority, raw_path = record.split(b"\t", 1)
+                mode, object_type, object_id = authority.decode("ascii").split(" ")
+                tree_path = _canonical_git_path(raw_path.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise EvidenceSupportError(
+                    "implementation Git tree returned an invalid record"
+                ) from exc
+            tree_entries[tree_path] = (mode, object_type, object_id)
+        archive = _run_git(
+            project_root,
+            ("archive", "--format=tar", implementation_commit, "--", *selected),
+        )
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:
+                for path in selected:
+                    entry = tree_entries.get(path)
+                    if entry is None:
+                        raise EvidenceSupportError(
+                            f"implementation path is absent from its Git commit: {path}"
+                        )
+                    mode, object_type, object_id = entry
+                    if mode == "160000" and object_type == "commit":
+                        fingerprints[path] = hashlib.sha256(
+                            f"gitlink {object_id}\n".encode("ascii")
+                        ).hexdigest()
+                        continue
+                    if object_type != "blob":
+                        raise EvidenceSupportError(
+                            f"implementation path has unsupported Git type {object_type}: {path}"
+                        )
+                    try:
+                        member = handle.getmember(path)
+                    except KeyError as exc:
+                        raise EvidenceSupportError(
+                            f"implementation path is absent from its Git commit: {path}"
+                        ) from exc
+                    if not member.isfile() or member.issym() or member.islnk():
+                        raise EvidenceSupportError(
+                            f"implementation path is not a regular Git file: {path}"
+                        )
+                    extracted = handle.extractfile(member)
+                    if extracted is None:
+                        raise EvidenceSupportError(
+                            f"implementation Git file cannot be read: {path}"
+                        )
+                    fingerprints[path] = hashlib.sha256(extracted.read()).hexdigest()
+        except tarfile.TarError as exc:
+            raise EvidenceSupportError("Git implementation archive is invalid") from exc
+    return [
+        {
+            "role": "implementation_artifact",
+            "path": path,
+            "sha256": fingerprints[path],
+        }
+        for path in paths
+    ]

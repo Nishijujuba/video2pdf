@@ -526,6 +526,26 @@
       "invariants": ["kernel-delivery-target-archive-v1"],
       "positive_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target-archive.valid.json",
       "negative_example": "tests/video_workflow/fixtures/contracts/kernel-delivery-target-archive.invalid.json"
+    },
+    {
+      "schema_name": "batch-record",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v5/batch-record.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v5/batch-record.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["batch-record-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/batch-record.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/batch-record.invalid.json"
+    },
+    {
+      "schema_name": "batch-item-projection",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v5/batch-item-projection.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v5/batch-item-projection.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["batch-item-projection-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/batch-item-projection.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/batch-item-projection.invalid.json"
     }
   ]
 }

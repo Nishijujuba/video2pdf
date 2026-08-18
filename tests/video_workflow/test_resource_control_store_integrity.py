@@ -280,12 +280,16 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
             connection.execute("DROP TABLE source_publication_intents")
             for table in RESOURCE_V8_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
+            connection.execute("DROP TABLE projection_publication_slots")
+            connection.execute("DROP TABLE delivery_lifecycle_intents")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (8, 9)"
+                "DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)"
             )
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
         with sqlite3.connect(database) as connection:
             versions = [
                 row[0]
@@ -311,7 +315,7 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
                     "VALUES ('duplicate-version', 1, '1.0.0', ?, '{}', 'RETIRED')",
                     ("f" * 64,),
                 )
-        self.assertEqual(versions, list(range(1, 10)))
+        self.assertEqual(versions, list(range(1, 12)))
         self.assertEqual(tables, set(RESOURCE_V8_TABLES))
         self.assertEqual(active_configurations, 1)
 
@@ -324,8 +328,12 @@ class ResourceControlStoreIntegrityTests(unittest.TestCase):
             connection.execute("PRAGMA foreign_keys=OFF")
             connection.execute("DROP TABLE source_publication_intents")
             connection.execute("DROP TABLE resource_control_events")
+            connection.execute("DROP TABLE projection_publication_slots")
+            connection.execute("DROP TABLE delivery_lifecycle_intents")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (8, 9)"
+                "DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)"
             )
 
         with self.assertRaisesRegex(

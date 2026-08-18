@@ -1246,6 +1246,7 @@ class TaskExecution:
         logical_task_key: str,
         prepared_at: str,
         whisper_audio_candidate: dict[str, Any] | None = None,
+        batch_id: str | None = None,
     ) -> tuple[dict[str, Any], bytes | None]:
         if record.get("schema_version") not in {"3.0.0", "4.0.0"}:
             raise ContractError(
@@ -1532,8 +1533,10 @@ class TaskExecution:
             "bounded_semantic_fields": bounded_fields,
             "whisper_audio_candidate": bound_whisper_candidate,
             "resource_request": resources,
-            "fairness_group_id": record["run_id"],
+            "fairness_group_id": batch_id or record["run_id"],
         }
+        if batch_id is not None:
+            envelope["batch_id"] = batch_id
         self.contracts.validate("subagent-task-envelope", envelope)
         return envelope, prompt
 
@@ -1551,6 +1554,7 @@ class TaskExecution:
                 logical_task_key=str(envelope["logical_task_key"]),
                 prepared_at=str(envelope["prepared_at"]),
                 whisper_audio_candidate=envelope.get("whisper_audio_candidate"),
+                batch_id=envelope.get("batch_id"),
             )
         return self._build_envelope(
             run_dir,
@@ -1573,6 +1577,7 @@ class TaskExecution:
         logical_task_key: str,
         prepared_at: str,
         whisper_audio_candidate: dict[str, Any] | None = None,
+        batch_id: str | None = None,
         fault_point: str | None = None,
     ) -> TaskPreparationResult:
         if fault_point is not None and fault_point not in PREPARATION_FAULT_POINTS:
@@ -1592,6 +1597,7 @@ class TaskExecution:
             logical_task_key=logical_task_key,
             prepared_at=prepared_at,
             whisper_audio_candidate=whisper_audio_candidate,
+            batch_id=batch_id,
         )
         task_id = envelope["task_id"]
         task_dir = self._safe_run_path(

@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["number", "name"],
       "properties": {
-        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]},
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
       }
     },
@@ -51,7 +51,8 @@
         {"$ref": "#/$defs/inactiveActivationScope"},
         {"$ref": "#/$defs/globalGateActivationScope"},
         {"$ref": "#/$defs/bilibiliPlatformActivationScope"},
-        {"$ref": "#/$defs/youtubePlatformActivationScope"}
+        {"$ref": "#/$defs/youtubePlatformActivationScope"},
+        {"$ref": "#/$defs/batchActivationScope"}
       ]
     },
     "platform_statuses": {
@@ -64,6 +65,7 @@
       }
     },
     "guarded_delivery_evidence": {"$ref": "#/$defs/guardedDeliveryEvidence"},
+    "batch_evidence": {"$ref": "#/$defs/batchEvidence"},
     "atomic_members": {
       "type": "array",
       "minItems": 12,
@@ -346,7 +348,8 @@
         },
         "results": {"required": ["fencing", "recovery"]},
         "fault_points": false,
-        "platform_smokes": false
+        "platform_smokes": false,
+        "batch_evidence": false
       }
     },
     {
@@ -380,7 +383,29 @@
         "fault_points": false,
         "platform_smokes": false,
         "mirror_checks": false,
-        "policy_status": false
+        "policy_status": false,
+        "batch_evidence": false
+      }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "mirror_checks", "policy_status", "batch_evidence"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 14}, "name": {"const": "batch-projection-cutover"}}},
+        "activation_scope": {"$ref": "#/$defs/batchActivationScope"},
+        "atomic_members": {"minItems": 14, "maxItems": 14},
+        "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
+        "commands": {
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/commandEvidence"},
+              {"required": ["persisted_run"]}
+            ]
+          }
+        },
+        "results": {"required": ["positive", "negative", "recovery", "fencing", "fairness"]},
+        "fault_points": false,
+        "platform_smokes": false,
+        "guarded_delivery_evidence": false
       }
     }
   ],
@@ -457,6 +482,23 @@
         "qualification_contract_sha256": {"const": "ee5d74bbb55b1854d495af62be1a3d784021b636f58dce50f55039eef8a2df31"}
       }
     },
+    "batchActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "global_gate_authority", "platform_kernel_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "batch_cutover"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "global_gate_authority": {"const": "unchanged"},
+        "platform_kernel_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
     "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
     "guardedDeliveryEvidence": {
       "type": "object",
@@ -474,6 +516,55 @@
           "items": {"$ref": "#/$defs/fingerprintedArtifact"}
         },
         "qualification_run": {"$ref": "#/$defs/persistedRunEvidence"}
+      }
+    },
+    "batchEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batch_record_contract_sha256",
+        "batch_item_projection_contract_sha256",
+        "batch_record",
+        "projections",
+        "batch_guarded_delivered_count",
+        "negative_evidence",
+        "fairness_group_id"
+      ],
+      "properties": {
+        "batch_record_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "batch_item_projection_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "batch_record": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "projections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["item_index", "run_id", "delivery_stage", "guarded_delivered", "artifact"],
+            "properties": {
+              "item_index": {"type": "integer", "minimum": 1},
+              "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "delivery_stage": {"enum": ["generating", "ready_for_delivery", "accepted", "delivered", "blocked"]},
+              "guarded_delivered": {"type": "boolean"},
+              "artifact": {"$ref": "#/$defs/fingerprintedArtifact"}
+            }
+          }
+        },
+        "batch_guarded_delivered_count": {"type": "integer", "minimum": 0},
+        "negative_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact", "duplicate_run_rejected", "pdf_existence_success_rejected", "per_video_mutation_rejected", "fairness_group_is_batch_id", "auth_breaker_delegated_to_resource_admission"],
+          "properties": {
+            "artifact": {"$ref": "#/$defs/fingerprintedArtifact"},
+            "duplicate_run_rejected": {"type": "boolean"},
+            "pdf_existence_success_rejected": {"type": "boolean"},
+            "per_video_mutation_rejected": {"type": "boolean"},
+            "fairness_group_is_batch_id": {"type": "boolean"},
+            "auth_breaker_delegated_to_resource_admission": {"type": "boolean"}
+          }
+        },
+        "fairness_group_id": {"type": "string", "minLength": 1}
       }
     },
     "fingerprintedArtifact": {

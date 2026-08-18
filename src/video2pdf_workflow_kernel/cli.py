@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -48,6 +49,7 @@ from .acceptance_v2 import (
     PREPARE_FAULT_POINTS as ACCEPTANCE_PREPARE_FAULT_POINTS,
     AcceptanceV2Provider,
 )
+from .batch_projection import BatchProjectionProvider
 from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcceptanceProvider
 from .platform_kernel import (
     ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
@@ -653,6 +655,34 @@ def _parser() -> argparse.ArgumentParser:
     guarded_compile.add_argument("--run-dir", required=True, type=Path)
     guarded_compile.add_argument("--manifest", required=True, type=Path)
     guarded_compile.add_argument("--runtime-policy", required=True, type=Path)
+
+    batch_plan = commands.add_parser("batch-plan")
+    batch_plan.add_argument("--workspace-root", type=Path)
+    batch_plan.add_argument("--platform", required=True, choices=("bilibili", "youtube"))
+    batch_plan.add_argument("--source-url")
+    batch_plan.add_argument("--task-start", required=True)
+    batch_plan.add_argument("--request-id", required=True)
+    batch_plan.add_argument("--selection")
+    batch_plan.add_argument("--url-set")
+
+    batch_run = commands.add_parser("batch-run")
+    batch_run.add_argument("--batch-id", required=True)
+    batch_run.add_argument("--control-store-root", required=True, type=Path)
+    batch_run.add_argument("--session-id", required=True)
+    batch_run.add_argument("--run-task-start")
+    batch_run.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
+
+    batch_recover = commands.add_parser("batch-recover")
+    batch_recover.add_argument("--batch-id", required=True)
+    batch_recover.add_argument("--control-store-root", required=True, type=Path)
+
+    batch_rebuild = commands.add_parser("batch-rebuild-projections")
+    batch_rebuild.add_argument("--batch-id", required=True)
+    batch_rebuild.add_argument("--workspace-root", required=True, type=Path)
+
+    batch_status = commands.add_parser("batch-status")
+    batch_status.add_argument("--batch-id", required=True)
+    batch_status.add_argument("--workspace-root", required=True, type=Path)
     return parser
 
 
@@ -709,6 +739,21 @@ def _production_probe_from_path(
         canonical_item_id=value["canonical_item_id"],
         source_identity=value["source_identity"],
     )
+
+
+def _parse_batch_selection(raw: str | None) -> list | None:
+    if raw is None or not raw.strip():
+        return None
+    values: list = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            raise CliUsageError("batch-plan --selection contains an empty entry")
+        if token.isdigit():
+            values.append(int(token))
+        else:
+            values.append(token)
+    return values
 
 
 def _ok(command: str, classification: str, data: dict[str, Any], evidence_path: str | None = None) -> dict:
@@ -2020,6 +2065,111 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             command,
             "capability_available",
             {"capability": args.capability},
+        )
+    if command == "batch-plan":
+        contracts = ContractRegistry(project_root)
+        if (args.source_url is None) == (args.url_set is None):
+            raise CliUsageError(
+                "batch-plan requires exactly one of --source-url or --url-set"
+            )
+        result = BatchProjectionProvider().plan(
+            workspace_root=args.workspace_root or project_root,
+            contracts=contracts,
+            platform=args.platform,
+            source_url=args.source_url,
+            task_start=args.task_start,
+            request_id=args.request_id,
+            selection=_parse_batch_selection(args.selection),
+            url_set=args.url_set,
+        )
+        return _ok(
+            command,
+            "batch_planned",
+            {
+                "batch_id": result["batch_id"],
+                "batch_dir": result["batch_dir"],
+                "item_order": result["item_order"],
+                "created_or_replayed": result["created_or_replayed"],
+            },
+            result["batch_record_path"],
+        )
+    if command == "batch-run":
+        contracts = ContractRegistry(project_root)
+        store = ControlStore.initialize(args.control_store_root, contracts)
+        record = store.get_batch_record(args.batch_id)
+        if record is None:
+            raise KernelConflict(
+                "batch record not found", data={"batch_id": args.batch_id}
+            )
+        contracts.validate("batch-record", record)
+        platform = record["batch_identity"]["canonical_platform"]
+        authority = BilibiliPlatformCutoverPublisher().require_current(
+            platform=platform, control_store_root=args.control_store_root
+        )
+        platform_authority = read_json(Path(authority["authority_path"]))
+        run_task_start = args.run_task_start or record.get("run_task_start")
+        if run_task_start is None:
+            run_task_start = datetime.now(timezone.utc).isoformat()
+        store.bind_batch_run_task_start(args.batch_id, run_task_start)
+        result = BatchProjectionProvider().run(
+            workspace_root=args.control_store_root,
+            contracts=contracts,
+            batch_id=args.batch_id,
+            control_store_root=args.control_store_root,
+            session_id=args.session_id,
+            global_gate_binding=platform_authority["global_gate_binding"],
+            run_task_start=run_task_start,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "batch_run_submitted",
+            result,
+            str(Path(record["batch_dir"]) / "batch-record.json"),
+        )
+    if command == "batch-recover":
+        contracts = ContractRegistry(project_root)
+        store = ControlStore.initialize(args.control_store_root, contracts)
+        record = store.get_batch_record(args.batch_id)
+        if record is None:
+            raise KernelConflict(
+                "batch record not found", data={"batch_id": args.batch_id}
+            )
+        result = BatchProjectionProvider().recover(
+            workspace_root=args.control_store_root,
+            contracts=contracts,
+            batch_id=args.batch_id,
+            control_store_root=args.control_store_root,
+        )
+        return _ok(
+            command,
+            "batch_recovered",
+            result,
+            str(Path(record["batch_dir"]) / "batch-record.json"),
+        )
+    if command == "batch-rebuild-projections":
+        contracts = ContractRegistry(project_root)
+        result = BatchProjectionProvider().rebuild_projections(
+            workspace_root=args.workspace_root,
+            contracts=contracts,
+            batch_id=args.batch_id,
+        )
+        return _ok(
+            command,
+            "batch_projections_rebuilt",
+            {"batch_id": args.batch_id, "projections": result},
+        )
+    if command == "batch-status":
+        contracts = ContractRegistry(project_root)
+        result = BatchProjectionProvider().status(
+            workspace_root=args.workspace_root,
+            contracts=contracts,
+            batch_id=args.batch_id,
+        )
+        return _ok(
+            command,
+            "batch_status_reported",
+            result,
         )
     raise CliUsageError(f"unsupported command: {command}")
 

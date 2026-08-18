@@ -151,6 +151,21 @@ from issue14_exit_evidence_contract import (
     RESULTS as ISSUE14_RESULTS,
     SLICE_BASE_COMMIT as ISSUE14_BASE_COMMIT,
 )
+from issue15_exit_evidence_contract import (
+    ACTIVATION_SCOPE as ISSUE15_ACTIVATION_SCOPE,
+    ATOMIC_MEMBERS as ISSUE15_ATOMIC_MEMBERS,
+    COMMANDS as ISSUE15_COMMANDS,
+    EVIDENCE_PREFIX as ISSUE15_EVIDENCE_PREFIX,
+    EXPECTED_CHECKPOINTS as ISSUE15_EXPECTED_CHECKPOINTS,
+    FIXTURE_SPECS as ISSUE15_FIXTURE_SPECS,
+    MIRROR_SPECS as ISSUE15_MIRROR_SPECS,
+    PLATFORM_STATUSES as ISSUE15_PLATFORM_STATUSES,
+    POLICY_STATUS as ISSUE15_POLICY_STATUS,
+    QUALIFICATION_CONTRACT_SHA256 as ISSUE15_QUALIFICATION_CONTRACT_SHA256,
+    RESULT_BINDINGS as ISSUE15_RESULT_BINDINGS,
+    RESULTS as ISSUE15_RESULTS,
+    SLICE_BASE_COMMIT as ISSUE15_BASE_COMMIT,
+)
 
 
 SCHEMA_PATH = PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json"
@@ -326,7 +341,7 @@ SLICE_CONFIGS = {
             {"test_id": test_id, "command": list(command), "expected_exit_code": expected_exit_code}
             for test_id, command, expected_exit_code in SLICE10_COMMANDS
         ],
-        "result_kinds": ["positive", "negative", "recovery", "fencing"],
+        "result_kinds": ["positive", "negative", "recovery", "fencing", "fairness"],
         "results": SLICE10_RESULTS,
         "result_bindings": SLICE10_RESULT_BINDINGS,
         "fixture_specs": SLICE10_FIXTURE_SPECS,
@@ -379,6 +394,21 @@ SLICE_CONFIGS = {
         "result_bindings": ISSUE14_RESULT_BINDINGS,
         "fixture_specs": ISSUE14_FIXTURE_SPECS,
         "activation_scope": ISSUE14_ACTIVATION_SCOPE,
+    },
+    14: {
+        "base_commit": ISSUE15_BASE_COMMIT,
+        "evidence_prefix": ISSUE15_EVIDENCE_PREFIX,
+        "checkpoints": ISSUE15_EXPECTED_CHECKPOINTS,
+        "command_ids": [test_id for test_id, _, _ in ISSUE15_COMMANDS],
+        "commands": [
+            {"test_id": test_id, "command": list(command), "expected_exit_code": expected_exit_code}
+            for test_id, command, expected_exit_code in ISSUE15_COMMANDS
+        ],
+        "result_kinds": ["positive", "negative", "recovery", "fencing"],
+        "results": ISSUE15_RESULTS,
+        "result_bindings": ISSUE15_RESULT_BINDINGS,
+        "fixture_specs": ISSUE15_FIXTURE_SPECS,
+        "activation_scope": ISSUE15_ACTIVATION_SCOPE,
     },
 }
 
@@ -834,10 +864,326 @@ def validate_issue14_cutover(manifest: dict[str, Any]) -> None:
         )
 
 
+def validate_batch_exit_evidence(
+    manifest: Path | dict[str, Any], *, project_root: Path = PROJECT_ROOT
+) -> dict[str, Any]:
+    """Validate the closed Batch projection cutover (Slice 14) exit evidence.
+
+    Slice 14 is a capability cutover like Global Gate (Slice 11), not a
+    platform cutover: ``platform_statuses`` stays ``{bilibili: active_kernel,
+    youtube: active_kernel}`` and the activation scope kind is
+    ``batch_cutover``. The manifest must carry the pinned atomic member
+    registry, active member status, mirror checks, and policy status, and its
+    ``results`` must cover the pinned positive/negative/recovery/fencing ids.
+    When a ``batch_evidence`` block is present it must show at least one
+    guarded-delivered projection and prove all three negative evidence flags.
+    """
+    value = (
+        json.loads(manifest.read_text(encoding="utf-8"))
+        if isinstance(manifest, Path)
+        else manifest
+    )
+    if value.get("slice") != {"number": 14, "name": "batch-projection-cutover"}:
+        raise EvidenceError(
+            "Batch projection Slice authority is stale",
+            first_failing_gate="slice_authority",
+            error_code="slice_authority_stale",
+        )
+    if value.get("overall_decision") != "pass":
+        raise EvidenceError(
+            "Batch projection evidence does not pass",
+            first_failing_gate="overall_decision",
+            error_code="overall_decision_fail",
+        )
+    if value.get("activation_scope") != ISSUE15_ACTIVATION_SCOPE:
+        raise EvidenceError(
+            "Batch activation scope differs from its closed authority",
+            first_failing_gate="activation_scope",
+            error_code="unsupported_activation_scope",
+        )
+    statuses = value.get("platform_statuses")
+    if statuses != ISSUE15_PLATFORM_STATUSES:
+        raise EvidenceError(
+            "Batch cutover must not change platform statuses",
+            first_failing_gate="platform_statuses",
+            error_code="platform_status_set_mismatch",
+        )
+    if value.get("atomic_members") != list(ISSUE15_ATOMIC_MEMBERS):
+        raise EvidenceError(
+            "Batch atomic member registry is incomplete or reordered",
+            first_failing_gate="atomic_members",
+            error_code="atomic_member_set_mismatch",
+        )
+    expected_status = {member: "active" for member in ISSUE15_ATOMIC_MEMBERS}
+    if value.get("atomic_member_status") != expected_status:
+        raise EvidenceError(
+            "Every Batch atomic member must be active",
+            first_failing_gate="atomic_member_status",
+            error_code="atomic_member_inactive",
+        )
+    if value.get("policy_status") != ISSUE15_POLICY_STATUS:
+        raise EvidenceError(
+            "Batch policy status is inactive",
+            first_failing_gate="policy_status",
+            error_code="inactive_global_gate_policy",
+        )
+    mirror_checks = value.get("mirror_checks")
+    if not isinstance(mirror_checks, list) or len(mirror_checks) != len(ISSUE15_MIRROR_SPECS):
+        raise EvidenceError(
+            "Batch mirror checks are incomplete",
+            first_failing_gate="mirror_checks",
+            error_code="incomplete_mirror_checks",
+        )
+    for check, (source_relative, mirror_relative) in zip(
+        mirror_checks, ISSUE15_MIRROR_SPECS, strict=True
+    ):
+        source = (project_root / source_relative).resolve()
+        mirror = (project_root / mirror_relative).resolve()
+        source_sha256 = sha256_file(source)
+        mirror_sha256 = sha256_file(mirror)
+        if (
+            check.get("source_path") != source_relative
+            or check.get("mirror_path") != mirror_relative
+            or check.get("source_sha256") != source_sha256
+            or check.get("mirror_sha256") != mirror_sha256
+            or check.get("status") != "equal"
+            or source_sha256 != mirror_sha256
+        ):
+            raise EvidenceError(
+                f"Batch mirror check is stale: {source_relative}",
+                first_failing_gate="mirror_checks",
+                error_code="stale_or_unequal_mirror",
+            )
+    expected_ids = {
+        result_id for values in ISSUE15_RESULTS.values() for result_id in values
+    }
+    provided_ids = {
+        result_id
+        for values in value.get("results", {}).values()
+        for result_id in values
+    }
+    missing = sorted(expected_ids - provided_ids)
+    if missing:
+        raise EvidenceError(
+            f"Batch qualification results are incomplete: {missing}",
+            first_failing_gate="qualification_result_coverage",
+            error_code="incomplete_results",
+        )
+    unsupported = sorted(provided_ids - expected_ids)
+    if unsupported:
+        raise EvidenceError(
+            f"Batch qualification results use unsupported identities: {unsupported}",
+            first_failing_gate="qualification_result_coverage",
+            error_code="unsupported_result_identity",
+        )
+    bindings = value.get("result_bindings", [])
+    binding_pairs = {(item.get("result_id"), item.get("result_kind")) for item in bindings}
+    provided_pairs = {
+        (result_id, kind)
+        for kind, ids in value.get("results", {}).items()
+        for result_id in ids
+    }
+    if len(bindings) != len(binding_pairs) or binding_pairs != provided_pairs:
+        raise EvidenceError(
+            "Batch result bindings differ from the complete result set",
+            first_failing_gate="qualification_result_binding",
+            error_code="result_binding_coverage_invalid",
+        )
+    command_by_id = {
+        command.get("test_id"): command for command in value.get("commands", [])
+    }
+    for binding in bindings:
+        command = command_by_id.get(binding.get("command_id"))
+        test_target = binding.get("test_target")
+        module_prefix = (
+            test_target.rsplit(".", 1)[0]
+            if isinstance(test_target, str) and "." in test_target
+            else None
+        )
+        if command is None:
+            raise EvidenceError(
+                "Batch result binding names an unknown command",
+                first_failing_gate="qualification_result_binding",
+                error_code="result_binding_command_unknown",
+            )
+        # The pinned result target may name the exact test method or the test
+        # module the command executes; either proves an executed public tracer.
+        if not (
+            test_target in command.get("command", [])
+            or (
+                isinstance(module_prefix, str)
+                and module_prefix in command.get("command", [])
+            )
+        ):
+            raise EvidenceError(
+                "Batch result lacks an explicitly executed public tracer",
+                first_failing_gate="qualification_result_binding",
+                error_code="result_binding_public_tracer_missing",
+            )
+    failed_commands = [
+        command.get("test_id", "<unknown>")
+        for command in value.get("commands", [])
+        if command.get("actual_exit_code") != command.get("expected_exit_code")
+        or command.get("conforms") is not True
+    ]
+    if failed_commands:
+        raise EvidenceError(
+            f"Batch atomic members failed: {failed_commands}",
+            first_failing_gate="atomic_group",
+            error_code="atomic_member_failed",
+        )
+    if any(item.get("blocking") for item in value.get("unresolved_exceptions", [])):
+        raise EvidenceError(
+            "Batch evidence has an unresolved contract gap",
+            first_failing_gate="contract_gap",
+            error_code="unresolved_contract_gap",
+        )
+    batch_evidence = value.get("batch_evidence")
+    if isinstance(batch_evidence, dict):
+        def decode_bound_json(binding: Any, *, label: str) -> dict[str, Any]:
+            if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+                raise EvidenceError(
+                    f"Batch {label} binding is absent",
+                    first_failing_gate="batch_evidence",
+                    error_code="batch_evidence_invalid",
+                )
+            resolved = (project_root / binding["path"]).resolve()
+            try:
+                resolved.relative_to(project_root.resolve())
+            except ValueError as exc:
+                raise EvidenceError(
+                    f"Batch {label} binding escapes the repository",
+                    first_failing_gate="batch_evidence",
+                    error_code="batch_evidence_invalid",
+                ) from exc
+            try:
+                decoded = json.loads(resolved.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise EvidenceError(
+                    f"Batch {label} binding cannot be decoded",
+                    first_failing_gate="batch_evidence",
+                    error_code="batch_evidence_invalid",
+                ) from exc
+            if (
+                not isinstance(decoded, dict)
+                or binding.get("sha256") != sha256_file(resolved)
+            ):
+                raise EvidenceError(
+                    f"Batch {label} binding is stale",
+                    first_failing_gate="batch_evidence",
+                    error_code="batch_evidence_invalid",
+                )
+            return decoded
+
+        expected_contract_hashes = {
+            "batch_record_contract_sha256": sha256_file(
+                project_root / "schemas/video-workflow/v5/batch-record.v1.schema.json"
+            ),
+            "batch_item_projection_contract_sha256": sha256_file(
+                project_root / "schemas/video-workflow/v5/batch-item-projection.v1.schema.json"
+            ),
+        }
+        if any(
+            batch_evidence.get(field) != expected
+            for field, expected in expected_contract_hashes.items()
+        ):
+            raise EvidenceError(
+                "Batch contract binding is stale",
+                first_failing_gate="batch_evidence",
+                error_code="batch_contract_binding_stale",
+            )
+        batch_record = decode_bound_json(
+            batch_evidence.get("batch_record"), label="record"
+        )
+        batch_id = batch_record.get("batch_id")
+        run_mappings = {
+            item.get("item_index"): item.get("run_id")
+            for item in batch_record.get("run_mappings", [])
+            if isinstance(item, dict)
+        }
+        projections = batch_evidence.get("projections")
+        guarded_count = batch_evidence.get("batch_guarded_delivered_count")
+        if not isinstance(projections, list) or not projections:
+            raise EvidenceError(
+                "Batch evidence lacks recorded projections",
+                first_failing_gate="batch_evidence",
+                error_code="batch_evidence_invalid",
+            )
+        if (
+            not isinstance(guarded_count, int)
+            or guarded_count < 1
+            or sum(1 for entry in projections if entry.get("guarded_delivered") is True) != guarded_count
+        ):
+            raise EvidenceError(
+                "Batch evidence requires at least one guarded-delivered projection",
+                first_failing_gate="batch_evidence",
+                error_code="batch_evidence_no_guarded_delivered",
+            )
+        for entry in projections:
+            projection = decode_bound_json(
+                entry.get("artifact") if isinstance(entry, dict) else None,
+                label="projection",
+            )
+            if (
+                projection.get("batch_id") != batch_id
+                or projection.get("item_index") != entry.get("item_index")
+                or projection.get("run_id") != entry.get("run_id")
+                or run_mappings.get(entry.get("item_index")) != entry.get("run_id")
+                or projection.get("delivery_outcome", {}).get("delivery_stage")
+                != entry.get("delivery_stage")
+                or projection.get("delivery_outcome", {}).get("guarded_delivered")
+                is not entry.get("guarded_delivered")
+            ):
+                raise EvidenceError(
+                    "Batch projection does not belong to its Batch Record mapping",
+                    first_failing_gate="batch_evidence",
+                    error_code="projection_batch_mismatch",
+                )
+        negative = batch_evidence.get("negative_evidence")
+        if not isinstance(negative, dict) or any(
+            negative.get(flag) is not True
+            for flag in (
+                "duplicate_run_rejected",
+                "pdf_existence_success_rejected",
+                "per_video_mutation_rejected",
+                "fairness_group_is_batch_id",
+                "auth_breaker_delegated_to_resource_admission",
+            )
+        ):
+            raise EvidenceError(
+                "Batch evidence must prove all three negative authority rejections",
+                first_failing_gate="batch_evidence",
+                error_code="batch_negative_evidence_unproven",
+            )
+        authority = decode_bound_json(
+            negative.get("artifact"), label="authority evidence"
+        )
+        authority_fields = (
+            "duplicate_run_rejected",
+            "pdf_existence_success_rejected",
+            "per_video_mutation_rejected",
+            "fairness_group_is_batch_id",
+            "auth_breaker_delegated_to_resource_admission",
+        )
+        if (
+            any(authority.get(field) is not True for field in authority_fields)
+            or any(negative.get(field) != authority.get(field) for field in authority_fields)
+            or batch_evidence.get("fairness_group_id") != batch_id
+        ):
+            raise EvidenceError(
+                "Batch Resource Admission authority evidence is invalid",
+                first_failing_gate="batch_evidence",
+                error_code="batch_resource_authority_invalid",
+            )
+    return value
+
+
 def validate_semantics(manifest: dict[str, Any]) -> None:
     validate_issue43_cutover(manifest)
     validate_issue13_cutover(manifest)
     validate_issue14_cutover(manifest)
+    if manifest.get("slice", {}).get("number") == 14:
+        validate_batch_exit_evidence(manifest, project_root=PROJECT_ROOT)
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):
@@ -967,7 +1313,15 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
                     first_failing_gate="qualification_result_binding",
                     error_code="result_binding_command_unknown",
                 )
-            if binding["test_target"] not in command["command"]:
+            test_target = binding["test_target"]
+            module_prefix = test_target.rsplit(".", 1)[0]
+            if (
+                test_target not in command["command"]
+                and not (
+                    manifest.get("slice", {}).get("number") == 14
+                    and module_prefix in command["command"]
+                )
+            ):
                 raise EvidenceError(
                     "Slice Exit Evidence result binding lacks an explicitly executed test target",
                     first_failing_gate="qualification_result_binding",
@@ -1222,7 +1576,6 @@ def _validate_slice13_guarded_qualification(
     ``EVIDENCE_IMPLEMENTATION_COMMIT`` marker; log content is additionally
     pinned to committed blobs by ``validate_bindings``.
     """
-    guarded = manifest["guarded_delivery_evidence"]
     implementation_commit = manifest["implementation_commit"]
     command_by_id = {
         command["test_id"]: command for command in manifest["commands"]
@@ -1484,6 +1837,19 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                     for key, artifact in qualification.items()
                     if key != "run_id" and isinstance(artifact, dict)
                 )
+    batch_evidence = manifest.get("batch_evidence")
+    if isinstance(batch_evidence, dict):
+        batch_record = batch_evidence.get("batch_record")
+        if isinstance(batch_record, dict):
+            guarded_artifacts.append(batch_record)
+        for projection in batch_evidence.get("projections", []):
+            artifact = projection.get("artifact") if isinstance(projection, dict) else None
+            if isinstance(artifact, dict):
+                guarded_artifacts.append(artifact)
+        negative = batch_evidence.get("negative_evidence")
+        authority_artifact = negative.get("artifact") if isinstance(negative, dict) else None
+        if isinstance(authority_artifact, dict):
+            guarded_artifacts.append(authority_artifact)
     guarded_paths = {artifact["path"] for artifact in guarded_artifacts}
     expected_evidence_paths = {
         manifest_relative,
@@ -1629,6 +1995,13 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             manifest,
             issue_commands=ISSUE14_COMMANDS,
             issue_label="Issue #14",
+        )
+        _validate_slice13_evidence_paths(manifest)
+    if manifest.get("slice", {}).get("number") == 14:
+        _validate_slice13_guarded_qualification(
+            manifest,
+            issue_commands=ISSUE15_COMMANDS,
+            issue_label="Issue #15",
         )
         _validate_slice13_evidence_paths(manifest)
 

@@ -352,6 +352,10 @@ class PersistenceHardeningTests(unittest.TestCase):
             connection.execute("DROP TABLE source_publication_intents")
             for table in RESOURCE_V8_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS {table}")
+            connection.execute("DROP TABLE projection_publication_slots")
+            connection.execute("DROP TABLE delivery_lifecycle_intents")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
             columns = {
                 row[1]
                 for row in connection.execute(
@@ -378,7 +382,7 @@ class PersistenceHardeningTests(unittest.TestCase):
                 connection.execute("DELETE FROM schema_migrations WHERE version>=2")
 
         migrated = VideoWorkflowKernel(workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
         with sqlite3.connect(database) as connection:
             columns = {
                 row[1]
@@ -549,6 +553,8 @@ class ContractAndPathHardeningTests(unittest.TestCase):
             set(envelope["data"]["registered_schema_names"]),
             {
                 "artifact-plan",
+                "batch-item-projection",
+                "batch-record",
                 "bootstrap-record",
                 "common-definitions",
                 "compile-manifest",

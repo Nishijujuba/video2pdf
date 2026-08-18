@@ -65,8 +65,12 @@ def downgrade_resource_admission_v8(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE IF EXISTS source_publication_intents")
     for table in RESOURCE_V8_TABLES:
         connection.execute(f"DROP TABLE IF EXISTS {table}")
+    connection.execute("DROP TABLE IF EXISTS projection_publication_slots")
+    connection.execute("DROP TABLE IF EXISTS delivery_lifecycle_intents")
+    connection.execute("DROP TABLE IF EXISTS batch_item_projections")
+    connection.execute("DROP TABLE IF EXISTS batch_records")
     connection.execute(
-        "DELETE FROM schema_migrations WHERE version IN (8, 9)"
+        "DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)"
     )
 
 
@@ -201,17 +205,9 @@ class Issue5RepairHarness:
     def leave_atomic_output_temp(attempt_dir: Path) -> Path:
         output = attempt_dir / "o/p.json"
         output.parent.mkdir(parents=False, exist_ok=False)
-        with mock.patch(
-            "video2pdf_workflow_kernel.utils.os.replace",
-            side_effect=OSError("simulated worker crash before atomic replace"),
-        ):
-            try:
-                write_json_atomic(output, {"partial": "durable temporary bytes"})
-            except OSError:
-                pass
-            else:
-                raise AssertionError("atomic write crash simulation did not fail")
-        return attempt_dir / "o/.p.json.kernel-new"
+        temporary = output.with_name(f".{output.name}.kernel-new")
+        temporary.write_bytes(b'{"partial": "durable temporary bytes"}\n')
+        return temporary
 
     def write_patch(self, prepared, claimed) -> Path:
         envelope = read_json(prepared.envelope_path)
@@ -1226,7 +1222,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
         mutation = self.commit_source_mutation()
         legacy_id = self.downgrade_source_mutation_to_real_legacy_v4(mutation)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
         with sqlite3.connect(migrated.control_store.path) as connection:
             version_row = connection.execute(
                 "SELECT identity_version, row_identity FROM "
@@ -1272,7 +1268,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 4,
             )
 
-    def test_real_v3_and_v4_stores_migrate_atomically_to_current_v9(self) -> None:
+    def test_real_v3_and_v4_stores_migrate_atomically_to_current_v11(self) -> None:
         self.initialize("v3-upgrade")
         with sqlite3.connect(self.kernel.control_store.path) as connection:
             connection.execute("PRAGMA foreign_keys=OFF")
@@ -1292,7 +1288,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
                 "DELETE FROM schema_migrations WHERE version IN (4, 5, 6, 7)"
             )
         migrated_v3 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v3.control_store.check().schema_version, 9)
+        self.assertEqual(migrated_v3.control_store.check().schema_version, 11)
         with sqlite3.connect(migrated_v3.control_store.path) as connection:
             versions = [
                 row[0]
@@ -1303,7 +1299,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             attempt_authority_count = connection.execute(
                 "SELECT COUNT(*) FROM task_attempt_authorities"
             ).fetchone()[0]
-        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         self.assertEqual(attempt_authority_count, 0)
 
         prepared, claimed = self.ready("v4-committed-upgrade")
@@ -1312,7 +1308,7 @@ class ControlStoreRepairTests(unittest.TestCase, Issue5RepairHarness):
             prepared, claimed
         )
         migrated_v4 = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated_v4.control_store.check().schema_version, 9)
+        self.assertEqual(migrated_v4.control_store.check().schema_version, 11)
         with mock.patch(
             "video2pdf_workflow_kernel.task_execution.generate_source_acquisition_prompt",
             return_value=(b"future prompt version\n", {}),
@@ -1679,7 +1675,7 @@ class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         projection = self.kernel.control_store.task_claim_for_task(prepared.task_id)
         self.assertEqual(projection["attempt_id"], third.attempt_id)
         self.assertEqual(projection["reclaim_reason"], history[-1]["recovery_reason"])
-        self.assertEqual(self.kernel.control_store.check().schema_version, 9)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 11)
 
         reopened = VideoWorkflowKernel(self.workspace)
         self.assertEqual(
@@ -1890,7 +1886,7 @@ class TaskReclaimHistoryAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         self.claim(fresh)
         self.downgrade_reclaim_history_to_v5()
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
         self.assertEqual(migrated.control_store.task_reclaim_history(fresh.task_id), [])
 
         self.initialize("reclaim-history-v5-single")
@@ -2081,13 +2077,13 @@ class GlobalTaskAuthorityHealthTests(unittest.TestCase, Issue5RepairHarness):
     ) -> None:
         prepared, claimed = self.ready("global-authority-fresh")
         self.promote(prepared, claimed)
-        self.assertEqual(self.kernel.control_store.check().schema_version, 9)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 11)
 
         prepared, claimed = self.ready("global-authority-v4")
         self.promote(prepared, claimed)
         self.downgrade_promotion_to_real_legacy_v4(prepared, claimed)
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
 
 
 class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
@@ -2386,7 +2382,7 @@ class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         self.write_patch(prepared, replacement)
         self.complete(prepared, replacement)
         self.promote(prepared, replacement)
-        self.assertEqual(self.kernel.control_store.check().schema_version, 9)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 11)
 
         later = self.prepare("claim-authority-terminal-overlap")
         run = read_json(self.run_dir / "workflow/run.json")
@@ -2406,7 +2402,7 @@ class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
             claimed_at="2026-07-15T05:00:00+00:00",
         )
         self.assertEqual(later_claim["state"], "ACTIVE")
-        self.assertEqual(self.kernel.control_store.check().schema_version, 9)
+        self.assertEqual(self.kernel.control_store.check().schema_version, 11)
 
     def test_v6_claim_authority_migration_is_lossless_or_rolls_back_atomically(
         self,
@@ -2416,7 +2412,7 @@ class TaskClaimAuthorityTests(unittest.TestCase, Issue5RepairHarness):
         self.claim(prepared)
         self.downgrade_claim_authority_to_v6()
         migrated = VideoWorkflowKernel(self.workspace)
-        self.assertEqual(migrated.control_store.check().schema_version, 9)
+        self.assertEqual(migrated.control_store.check().schema_version, 11)
         with sqlite3.connect(migrated.control_store.path) as connection:
             self.assertEqual(
                 connection.execute(

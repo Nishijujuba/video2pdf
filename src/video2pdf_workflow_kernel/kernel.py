@@ -1232,6 +1232,7 @@ class VideoWorkflowKernel:
         logical_task_key: str,
         prepared_at: str,
         whisper_audio_candidate: dict[str, Any] | None = None,
+        batch_id: str | None = None,
         fault_point: str | None = None,
     ) -> Any:
         from .task_execution import TaskExecution
@@ -1242,6 +1243,7 @@ class VideoWorkflowKernel:
             logical_task_key=logical_task_key,
             prepared_at=prepared_at,
             whisper_audio_candidate=whisper_audio_candidate,
+            batch_id=batch_id,
             fault_point=fault_point,
         )
 

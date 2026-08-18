@@ -557,6 +557,83 @@ class ProductionSourceTaskTests(unittest.TestCase):
         )
         self.assertEqual(claim.resource_admission.queue_state, "admitted")
 
+    def test_batch_provider_task_claim_uses_batch_fairness_identity(self) -> None:
+        from video2pdf_workflow_kernel.utils import read_json
+
+        kernel, run_dir = self._initialized_youtube_run()
+        batch_id = "batch-provider-fairness"
+        prepared = kernel.prepare_production_source_task(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key="source-provider-epoch-1",
+            prepared_at="2026-07-18T04:01:00Z",
+            batch_id=batch_id,
+        )
+
+        envelope = read_json(prepared.envelope_path)
+        self.assertEqual(envelope["batch_id"], batch_id)
+        self.assertEqual(envelope["fairness_group_id"], batch_id)
+
+        claim = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="issue-15-batch-coordinator",
+            worker_id="issue-15-youtube-provider",
+        )
+        self.assertEqual(claim.resource_admission.batch_id, batch_id)
+        self.assertEqual(claim.resource_admission.fairness_group_id, batch_id)
+        self.assertEqual(claim.resource_admission.queue_state, "admitted")
+
+    def test_batch_provider_breaker_queues_only_matching_platform_resource(self) -> None:
+        kernel, run_dir = self._initialized_youtube_run()
+        kernel.set_resource_circuit_breaker(
+            "youtube_download",
+            state="open",
+            reason="cookie rejected",
+            platform="youtube",
+        )
+        prepared = kernel.prepare_production_source_task(
+            run_dir,
+            task_stage="provider_acquisition",
+            logical_task_key="source-provider-epoch-1",
+            prepared_at="2026-07-18T04:01:00Z",
+            batch_id="youtube-batch",
+        )
+        queued = kernel.claim_task(
+            run_dir,
+            prepared.task_id,
+            coordinator_session_id="issue-15-youtube-coordinator",
+            worker_id="issue-15-youtube-provider",
+        )
+        self.assertEqual(queued.resource_admission.queue_state, "queued")
+        self.assertEqual(queued.resource_admission.fairness_group_id, "youtube-batch")
+
+        traced = kernel.trace_source_ready(
+            fixture=(
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/source-ready-tracer"
+            ),
+            task_start="2026-07-18T05:00:00+08:00",
+            request_id=f"issue-15-unrelated-{uuid.uuid4().hex[:8]}",
+        )
+        unrelated = kernel.prepare_source_acquisition_task(
+            traced.run_dir,
+            logical_task_key="unrelated-bilibili-provider",
+            prepared_at="2026-07-18T05:01:00+08:00",
+            required_resources=("bilibili_download",),
+            batch_id="bilibili-batch",
+        )
+        admitted = kernel.claim_task(
+            traced.run_dir,
+            unrelated.task_id,
+            coordinator_session_id="issue-15-bilibili-coordinator",
+            worker_id="issue-15-bilibili-provider",
+        )
+        self.assertEqual(admitted.resource_admission.queue_state, "admitted")
+        self.assertEqual(
+            admitted.resource_admission.fairness_group_id, "bilibili-batch"
+        )
+
     def test_provider_cookie_writeback_is_disposable_and_does_not_block_completion(
         self,
     ) -> None:

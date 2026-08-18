@@ -25,7 +25,7 @@ class SourceReopenIntegrationTests(unittest.TestCase):
         kernel, run_dir, _ = (
             test_source_publication_integration.build_decision_ready_authority()
         )
-        self.assertEqual(kernel.control_store.check().schema_version, 9)
+        self.assertEqual(kernel.control_store.check().schema_version, 11)
         kernel.finalize_production_source(
             run_dir,
             published_at="2026-07-18T12:00:00+08:00",

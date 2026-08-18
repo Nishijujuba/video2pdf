@@ -10,7 +10,7 @@
   "quiescence_proven": true,
   "store_id": "0000000000000000000000000000000000000000000000000000000000000000",
   "workspace_path": "D:\\workspace",
-  "control_store_schema_version": 9,
+  "control_store_schema_version": 11,
   "candidate_integrity": {
     "status": "ok",
     "quick_check": "ok",
@@ -22,10 +22,21 @@
     "configuration_version": 1,
     "configuration_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
   },
-  "run_authorities": ["22222222222222222222222222222222"],
+  "run_authorities": [
+    "22222222222222222222222222222222"
+  ],
   "artifacts": {
-    "database": {"path": "control.sqlite3", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"},
-    "marker": {"path": "control-store.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"},
-    "anchor": {"path": "anchor.json", "sha256": "5555555555555555555555555555555555555555555555555555555555555555"}
+    "database": {
+      "path": "control.sqlite3",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "marker": {
+      "path": "control-store.json",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "anchor": {
+      "path": "anchor.json",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
   }
 }

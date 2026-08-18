@@ -33,7 +33,7 @@ DEFAULT_PART_RESULT_SCHEMA = (
     Path(__file__).resolve().parents[1] / "references" / "part-result.schema.json"
 )
 DEFAULT_PYRAMID_OUTPUT_GATE = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "pyramid-principle-validate"
     / "scripts"
     / "check_output_gate.py"
@@ -1049,7 +1049,7 @@ def print_manual_instructions(manifest: dict[str, Any], args: argparse.Namespace
         print(f"  Output: {item['output_dir']}")
         print("  After the PDF, TeX, consistency review, independent review, and Pyramid Gate reports exist, run:")
         print(
-            "  python .agents\\skills\\bilibili-batch-render-pdf\\scripts\\run_batch.py "
+            "  python .agents\\skills\\bilibili-batch-render-pdf\\legacy\\scripts\\run_batch.py "
             f"--manifest \"{manifest.get('control_dir')}\\manifest.json\" --mode reconcile --part {index}"
         )
 

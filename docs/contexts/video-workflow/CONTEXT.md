@@ -464,6 +464,10 @@ The durable Batch-level record for source selection, deterministic item order, r
 
 A read-only, rebuildable view of one Video Workflow Run inside a Batch Record.
 
+## Batch activation status
+
+Batch remains `target_only` until runtime authority activation; the Batch Supervisor, Batch Record, and Batch Item Projections are implemented and the `batch-*` CLI is available, but new-batch authority begins only with a published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired. The Batch Supervisor, Batch Record, and Batch Item Projections are implemented as `target_only` and activate with Slice 14 Exit Evidence.
+
 ## Delivery Target
 
 The bounded workflow projection that identifies the final artifacts, required evidence, ownership, and delivery stage for one Video Output Directory. Kernel Track lifecycle authority remains in the Video Workflow Run Record.

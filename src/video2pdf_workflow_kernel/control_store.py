@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -33,7 +34,7 @@ from .utils import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 BUSY_TIMEOUT_MS = 5000
 RESOURCE_CLASSES = frozenset(
     {
@@ -355,6 +356,30 @@ RESOURCE_EVENTS_TABLE_SQL = (
     "lease_id TEXT, configuration_id TEXT NOT NULL, configuration_version INTEGER NOT NULL, "
     "configuration_sha256 TEXT NOT NULL, payload_json TEXT NOT NULL)"
 )
+BATCH_RECORDS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS batch_records ("
+    "batch_id TEXT PRIMARY KEY, "
+    "batch_identity_json TEXT NOT NULL, "
+    "batch_record_json TEXT NOT NULL, "
+    "batch_record_sha256 TEXT NOT NULL UNIQUE, "
+    "batch_stage TEXT NOT NULL CHECK(batch_stage IN "
+    "('planned','running','completed','blocked')), "
+    "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+)
+BATCH_ITEM_PROJECTIONS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS batch_item_projections ("
+    "batch_id TEXT NOT NULL REFERENCES batch_records(batch_id), "
+    "item_index INTEGER NOT NULL CHECK(item_index >= 1), "
+    "run_id TEXT NOT NULL REFERENCES run_bindings(run_id), "
+    "projection_revision INTEGER NOT NULL CHECK(projection_revision >= 1), "
+    "projection_json TEXT NOT NULL, projection_sha256 TEXT NOT NULL, "
+    "projected_at TEXT NOT NULL, "
+    "PRIMARY KEY (batch_id, item_index))"
+)
+BATCH_ITEM_PROJECTIONS_INDEX_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS one_projection_per_batch_item "
+    "ON batch_item_projections(batch_id, item_index)"
+)
 
 
 @dataclass(frozen=True)
@@ -377,6 +402,10 @@ def _normalized_sql(value: str | None) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", "", value).casefold().replace("ifnotexists", "")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ControlStore:
@@ -623,6 +652,8 @@ class ControlStore:
                     self._validate_source_publication_rows(connection)
                 if version >= 10:
                     self._validate_delivery_lifecycle_tables(connection)
+                if version >= 11:
+                    self._validate_batch_tables(connection)
                 plan = planner(connection)
                 connection.execute("COMMIT")
                 if not self._begin_immediate_if_snapshot_unchanged(
@@ -698,6 +729,7 @@ class ControlStore:
             self._create_resource_tables(connection)
             self._create_source_publication_table(connection)
             self._create_delivery_lifecycle_tables(connection)
+            self._create_batch_tables(connection)
             self._insert_resource_configuration(
                 connection,
                 resource_configuration,
@@ -718,6 +750,7 @@ class ControlStore:
             connection.execute("INSERT INTO schema_migrations(version) VALUES (8)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (9)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (10)")
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (11)")
             connection.execute("COMMIT")
         except BaseException:
             if connection.in_transaction:
@@ -1041,6 +1074,96 @@ class ControlStore:
         }
         for run_id in run_ids:
             self._current_run_record_sha(connection, run_id)
+
+    @staticmethod
+    def _create_batch_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(BATCH_RECORDS_TABLE_SQL)
+        connection.execute(BATCH_ITEM_PROJECTIONS_TABLE_SQL)
+        connection.execute(BATCH_ITEM_PROJECTIONS_INDEX_SQL)
+        ControlStore._validate_batch_tables(connection)
+
+    @staticmethod
+    def _require_batch_schema_absent(connection: sqlite3.Connection) -> None:
+        batch_objects = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE name IN ("
+                "'batch_records',"
+                "'batch_item_projections',"
+                "'one_projection_per_batch_item')"
+            ).fetchall()
+        }
+        if batch_objects:
+            raise ControlStoreUnavailable(
+                "Control Store v10 has a partial v11 Batch migration"
+            )
+
+    @staticmethod
+    def _validate_batch_tables(connection: sqlite3.Connection) -> None:
+        expected_columns = {
+            "batch_records": {
+                "batch_id",
+                "batch_identity_json",
+                "batch_record_json",
+                "batch_record_sha256",
+                "batch_stage",
+                "created_at",
+                "updated_at",
+            },
+            "batch_item_projections": {
+                "batch_id",
+                "item_index",
+                "run_id",
+                "projection_revision",
+                "projection_json",
+                "projection_sha256",
+                "projected_at",
+            },
+        }
+        for table, expected in expected_columns.items():
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
+            }
+            if columns != expected:
+                raise ControlStoreUnavailable(
+                    f"Control Store {table} table is incomplete"
+                )
+
+        expected_sql = {
+            "batch_records": BATCH_RECORDS_TABLE_SQL,
+            "batch_item_projections": BATCH_ITEM_PROJECTIONS_TABLE_SQL,
+            "one_projection_per_batch_item": BATCH_ITEM_PROJECTIONS_INDEX_SQL,
+        }
+        for name, expected in expected_sql.items():
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name=?", (name,)
+            ).fetchone()
+            if row is None or _normalized_sql(row[0]) != _normalized_sql(expected):
+                raise ControlStoreUnavailable(
+                    f"Control Store SQL authority differs for {name}"
+                )
+
+        allowed_objects = {
+            ("table", "batch_records"),
+            ("table", "batch_item_projections"),
+            ("index", "one_projection_per_batch_item"),
+        }
+        actual_objects = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                "SELECT type, name FROM sqlite_master WHERE sql IS NOT NULL "
+                "AND (name LIKE 'batch_records%' "
+                "OR name LIKE 'batch_item_%' "
+                "OR name LIKE 'one_projection_per_batch_item%')"
+            ).fetchall()
+        }
+        if actual_objects != allowed_objects:
+            raise ControlStoreUnavailable(
+                "Control Store has unsupported Batch schema objects"
+            )
 
     @staticmethod
     def _validate_source_publication_table(
@@ -4010,6 +4133,18 @@ class ControlStore:
                     self._validate_source_publication_table(connection)
                     self._validate_source_publication_rows(connection)
                     self._validate_delivery_lifecycle_tables(connection)
+                    self._require_batch_schema_absent(connection)
+                    self._create_batch_tables(connection)
+                    connection.execute(
+                        "INSERT INTO schema_migrations(version) VALUES (11)"
+                    )
+                    version = 11
+                if version == 11:
+                    self._validate_resource_tables(connection)
+                    self._validate_source_publication_table(connection)
+                    self._validate_source_publication_rows(connection)
+                    self._validate_delivery_lifecycle_tables(connection)
+                    self._validate_batch_tables(connection)
                 else:
                     raise ControlStoreUnavailable(
                         f"unknown Control Store schema version: {version}"
@@ -4288,6 +4423,11 @@ class ControlStore:
             self._create_delivery_lifecycle_tables(connection)
             connection.execute("INSERT INTO schema_migrations(version) VALUES (10)")
             version = 10
+        if version == 10:
+            self._require_batch_schema_absent(connection)
+            self._create_batch_tables(connection)
+            connection.execute("INSERT INTO schema_migrations(version) VALUES (11)")
+            version = 11
         self._ensure_maintenance_indexes(connection)
         if version != SCHEMA_VERSION or self._migration_versions(connection) != list(
             range(1, SCHEMA_VERSION + 1)
@@ -4549,6 +4689,8 @@ class ControlStore:
                     "source_publication_intents",
                     "delivery_lifecycle_intents",
                     "projection_publication_slots",
+                    "batch_records",
+                    "batch_item_projections",
                     "resource_configurations",
                     "resource_sequences",
                     "resource_queue_entries",
@@ -4605,6 +4747,7 @@ class ControlStore:
                 self._validate_source_publication_rows(connection)
                 self._validate_delivery_lifecycle_tables(connection)
                 self._validate_delivery_lifecycle_rows(connection)
+                self._validate_batch_tables(connection)
                 if not self._maintenance_index_is_valid(connection):
                     raise ControlStoreUnavailable(
                         "Control Store Task Claim maintenance index is invalid"
@@ -8574,3 +8717,399 @@ class ControlStore:
             return None if row is None else str(row["identity_version"])
         finally:
             connection.close()
+
+    def create_batch_record(
+        self, batch_record: dict, batch_identity: dict
+    ) -> tuple[str, str]:
+        batch_id = batch_record.get("batch_id")
+        if not isinstance(batch_id, str) or not batch_id:
+            raise ContractError("Batch Record identity is missing its batch_id")
+        batch_record_json = canonical_json_bytes(batch_record).decode("utf-8")
+        batch_record_sha256 = hashlib.sha256(
+            batch_record_json.encode("utf-8")
+        ).hexdigest()
+        batch_identity_json = canonical_json_bytes(batch_identity).decode("utf-8")
+
+        def plan_create(connection: sqlite3.Connection) -> str:
+            existing = connection.execute(
+                "SELECT batch_record_sha256 FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            if existing is None:
+                return "INSERT"
+            if str(existing["batch_record_sha256"]) == batch_record_sha256:
+                return "REPLAY"
+            raise KernelConflict("batch record identity changed on replay")
+
+        with self._planned_immediate(plan_create) as (connection, plan):
+            if plan == "INSERT":
+                connection.execute(
+                    "INSERT INTO batch_records(batch_id, batch_identity_json, "
+                    "batch_record_json, batch_record_sha256, batch_stage, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        batch_id,
+                        batch_identity_json,
+                        batch_record_json,
+                        batch_record_sha256,
+                        str(batch_record["batch_stage"]),
+                        str(batch_record.get("created_at") or _utc_now()),
+                        str(batch_record.get("updated_at") or _utc_now()),
+                    ),
+                )
+                return batch_id, "CREATED"
+            return batch_id, "REPLAY"
+
+    def get_batch_record(self, batch_id: str) -> dict | None:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        return json.loads(str(row["batch_record_json"]))
+
+    @staticmethod
+    def _decode_batch_record_row(row: sqlite3.Row | None) -> dict:
+        if row is None:
+            raise KernelConflict("batch record not found")
+        try:
+            record = json.loads(str(row["batch_record_json"]))
+        except json.JSONDecodeError as exc:
+            raise ControlStoreUnavailable("Batch Record JSON is invalid") from exc
+        if not isinstance(record, dict):
+            raise ControlStoreUnavailable("Batch Record JSON is invalid")
+        return record
+
+    @staticmethod
+    def _batch_record_storage(record: dict) -> tuple[str, str, str]:
+        updated_at = _utc_now()
+        record["updated_at"] = updated_at
+        record_json = canonical_json_bytes(record).decode("utf-8")
+        record_sha256 = hashlib.sha256(record_json.encode("utf-8")).hexdigest()
+        return record_json, record_sha256, updated_at
+
+    def bind_batch_run_task_start(
+        self, batch_id: str, run_task_start: str
+    ) -> str:
+        with self._immediate() as connection:
+            row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            record = self._decode_batch_record_row(row)
+            current = record.get("run_task_start")
+            if current == run_task_start:
+                return "REPLAY"
+            if current is not None:
+                raise KernelConflict(
+                    "batch run_task_start changed on replay",
+                    data={"batch_id": batch_id},
+                )
+            if record.get("batch_stage") != "planned":
+                raise KernelConflict(
+                    "batch run_task_start can only be bound while planned",
+                    data={"batch_id": batch_id},
+                )
+            updated = dict(record)
+            updated["run_task_start"] = run_task_start
+            self.contracts.validate("batch-record", updated)
+            record_json, record_sha256, updated_at = self._batch_record_storage(updated)
+            connection.execute(
+                "UPDATE batch_records SET batch_record_json=?, "
+                "batch_record_sha256=?, updated_at=? WHERE batch_id=?",
+                (record_json, record_sha256, updated_at, batch_id),
+            )
+            return "BOUND"
+
+    def commit_batch_run_mappings(
+        self, batch_id: str, mappings: list[dict]
+    ) -> str:
+        ordered_mappings = sorted(
+            (dict(mapping) for mapping in mappings),
+            key=lambda mapping: int(mapping.get("item_index", 0)),
+        )
+        with self._immediate() as connection:
+            row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            record = self._decode_batch_record_row(row)
+            stage = record.get("batch_stage")
+            if stage == "running" and record.get("run_mappings") == ordered_mappings:
+                return "REPLAY"
+            if stage != "planned":
+                raise KernelConflict(
+                    "batch run mappings changed after commit",
+                    data={"batch_id": batch_id, "batch_stage": stage},
+                )
+            if not isinstance(record.get("run_task_start"), str):
+                raise KernelConflict(
+                    "batch run_task_start must be bound before mappings commit",
+                    data={"batch_id": batch_id},
+                )
+            updated = dict(record)
+            updated["run_mappings"] = ordered_mappings
+            updated["batch_stage"] = "running"
+            try:
+                self.contracts.validate("batch-record", updated)
+            except ContractError as exc:
+                raise KernelConflict(
+                    "batch run mappings do not form one complete valid commit",
+                    data={"batch_id": batch_id},
+                ) from exc
+            record_json, record_sha256, updated_at = self._batch_record_storage(updated)
+            connection.execute(
+                "UPDATE batch_records SET batch_stage='running', "
+                "batch_record_json=?, batch_record_sha256=?, updated_at=? "
+                "WHERE batch_id=? AND batch_stage='planned'",
+                (record_json, record_sha256, updated_at, batch_id),
+            )
+            return "COMMITTED"
+
+    def update_batch_stage(
+        self, batch_id: str, expected_stage: str, new_stage: str
+    ) -> str:
+        with self._immediate() as connection:
+            row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("batch record not found")
+            try:
+                record = json.loads(str(row["batch_record_json"]))
+            except json.JSONDecodeError as exc:
+                raise ControlStoreUnavailable(
+                    "Batch Record JSON is invalid"
+                ) from exc
+            if not isinstance(record, dict):
+                raise ControlStoreUnavailable("Batch Record JSON is invalid")
+            updated_at = _utc_now()
+            record["batch_stage"] = new_stage
+            record["updated_at"] = updated_at
+            record_json = canonical_json_bytes(record).decode("utf-8")
+            record_sha256 = hashlib.sha256(
+                record_json.encode("utf-8")
+            ).hexdigest()
+            cursor = connection.execute(
+                "UPDATE batch_records SET batch_stage=?, batch_record_json=?, "
+                "batch_record_sha256=?, updated_at=? "
+                "WHERE batch_id=? AND batch_stage=?",
+                (
+                    new_stage,
+                    record_json,
+                    record_sha256,
+                    updated_at,
+                    batch_id,
+                    expected_stage,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KernelConflict(
+                    "batch stage compare-and-swap failed",
+                    data={
+                        "expected_stage": expected_stage,
+                        "new_stage": new_stage,
+                    },
+                )
+            return new_stage
+
+    def record_run_mapping(
+        self, batch_id: str, item_index: int, run_id: str, request_id: str
+    ) -> str:
+        mapping = {
+            "item_index": item_index,
+            "run_id": run_id,
+            "request_id": request_id,
+        }
+
+        def plan_mapping(connection: sqlite3.Connection) -> tuple[str, object]:
+            row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise KernelConflict("batch record not found")
+            try:
+                record = json.loads(str(row["batch_record_json"]))
+            except json.JSONDecodeError as exc:
+                raise ControlStoreUnavailable(
+                    "Batch Record JSON is invalid"
+                ) from exc
+            if not isinstance(record, dict):
+                raise ControlStoreUnavailable("Batch Record JSON is invalid")
+            for existing in record.get("run_mappings", []):
+                if (
+                    existing.get("item_index") == item_index
+                    and existing.get("run_id") == run_id
+                    and existing.get("request_id") == request_id
+                ):
+                    return "REPLAY", None
+            updated_at = _utc_now()
+            updated = dict(record)
+            updated["run_mappings"] = [*record.get("run_mappings", []), mapping]
+            updated["updated_at"] = updated_at
+            updated_json = canonical_json_bytes(updated).decode("utf-8")
+            updated_sha256 = hashlib.sha256(
+                updated_json.encode("utf-8")
+            ).hexdigest()
+            return "RECORDED", (updated_json, updated_sha256, updated_at)
+
+        with self._planned_immediate(plan_mapping) as (connection, plan):
+            action, payload = plan
+            if action == "REPLAY":
+                return "REPLAY"
+            updated_json, updated_sha256, updated_at = payload
+            connection.execute(
+                "UPDATE batch_records SET batch_record_json=?, "
+                "batch_record_sha256=?, updated_at=? WHERE batch_id=?",
+                (updated_json, updated_sha256, updated_at, batch_id),
+            )
+            return "RECORDED"
+
+    def put_item_projection(
+        self, batch_id: str, item_index: int, run_id: str, projection: dict
+    ) -> int:
+        def plan_projection(connection: sqlite3.Connection) -> tuple[str, object]:
+            existing = connection.execute(
+                "SELECT projection_revision, projection_json, projected_at "
+                "FROM batch_item_projections WHERE batch_id=? AND item_index=?",
+                (batch_id, item_index),
+            ).fetchone()
+            candidate = dict(projection)
+            if existing is not None:
+                candidate.setdefault("projected_at", str(existing["projected_at"]))
+            else:
+                candidate.setdefault("projected_at", _utc_now())
+            content = {
+                key: value
+                for key, value in candidate.items()
+                if key != "projection_revision"
+            }
+            existing_content = None
+            if existing is not None:
+                try:
+                    existing_projection = json.loads(str(existing["projection_json"]))
+                except json.JSONDecodeError as exc:
+                    raise ControlStoreUnavailable(
+                        "Batch Item Projection JSON is invalid"
+                    ) from exc
+                existing_content = {
+                    key: value
+                    for key, value in existing_projection.items()
+                    if key != "projection_revision"
+                }
+            if existing is not None and existing_content == content:
+                return "REPLAY", int(existing["projection_revision"])
+            stored_revision = (
+                1
+                if existing is None
+                else int(existing["projection_revision"]) + 1
+            )
+            final = dict(candidate)
+            final["projection_revision"] = stored_revision
+            final_json = canonical_json_bytes(final).decode("utf-8")
+            projection_sha256 = hashlib.sha256(final_json.encode("utf-8")).hexdigest()
+            return (
+                "UPSERT",
+                (
+                    stored_revision,
+                    final_json,
+                    projection_sha256,
+                    final["projected_at"],
+                ),
+            )
+
+        with self._planned_immediate(plan_projection) as (connection, plan):
+            action, payload = plan
+            if action == "REPLAY":
+                return int(payload)
+            stored_revision, final_json, projection_sha256, projected_at = payload
+            batch_row = connection.execute(
+                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            batch_record = self._decode_batch_record_row(batch_row)
+            final_projection = json.loads(final_json)
+            projection_binding = {
+                "item_index": item_index,
+                "run_id": run_id,
+                "projection_revision": stored_revision,
+                "projection_sha256": projection_sha256,
+                "item_projection": final_projection,
+            }
+            bindings = [
+                binding
+                for binding in batch_record.get("projections", [])
+                if int(binding["item_index"]) != item_index
+            ]
+            bindings.append(projection_binding)
+            updated_record = dict(batch_record)
+            updated_record["projections"] = sorted(
+                bindings, key=lambda binding: int(binding["item_index"])
+            )
+            self.contracts.validate("batch-record", updated_record)
+            batch_json, batch_sha256, batch_updated_at = self._batch_record_storage(
+                updated_record
+            )
+            connection.execute(
+                "INSERT INTO batch_item_projections(batch_id, item_index, run_id, "
+                "projection_revision, projection_json, projection_sha256, projected_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(batch_id, item_index) DO UPDATE SET "
+                "run_id=excluded.run_id, "
+                "projection_revision=excluded.projection_revision, "
+                "projection_json=excluded.projection_json, "
+                "projection_sha256=excluded.projection_sha256, "
+                "projected_at=excluded.projected_at",
+                (
+                    batch_id,
+                    item_index,
+                    run_id,
+                    stored_revision,
+                    final_json,
+                    projection_sha256,
+                    projected_at,
+                ),
+            )
+            connection.execute(
+                "UPDATE batch_records SET batch_record_json=?, "
+                "batch_record_sha256=?, updated_at=? WHERE batch_id=?",
+                (batch_json, batch_sha256, batch_updated_at, batch_id),
+            )
+            return stored_revision
+
+    def get_item_projection(self, batch_id: str, item_index: int) -> dict | None:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT projection_json FROM batch_item_projections "
+                "WHERE batch_id=? AND item_index=?",
+                (batch_id, item_index),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        return json.loads(str(row["projection_json"]))
+
+    def list_run_mappings(self, batch_id: str) -> list[dict]:
+        record = self.get_batch_record(batch_id)
+        if record is None:
+            return []
+        return list(record.get("run_mappings", []))
+
+    def list_batch_records(self) -> list[dict]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT batch_record_json FROM batch_records ORDER BY batch_id"
+            ).fetchall()
+        finally:
+            connection.close()
+        return [json.loads(str(row["batch_record_json"])) for row in rows]

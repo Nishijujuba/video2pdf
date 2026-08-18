@@ -32,7 +32,7 @@ class ContractRegistryPreparedCacheTests(unittest.TestCase):
                 ).read_text(encoding="utf-8")
             )["contracts"]
         )
-        self.assertEqual(self.schema_count, 54)
+        self.assertEqual(self.schema_count, 61)
 
     def tearDown(self) -> None:
         contracts._clear_prepared_registry_cache_for_tests()

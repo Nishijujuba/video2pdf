@@ -160,9 +160,9 @@ class SourcePublicationControlStoreTests(unittest.TestCase):
         self.assertEqual(row["intent_id"], intent_id)
         return intent_id, replacement, manifest_sha, row
 
-    def test_new_database_is_v10_and_preparation_binds_every_authority(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 10)
-        self.assertEqual(self.store.check().schema_version, 10)
+    def test_new_database_is_v11_and_preparation_binds_every_authority(self) -> None:
+        self.assertEqual(SCHEMA_VERSION, 11)
+        self.assertEqual(self.store.check().schema_version, 11)
         intent_id, replacement, manifest_sha, row = self._prepare()
         replacement_sha = hashlib.sha256(
             canonical_json_bytes(replacement)
@@ -324,7 +324,7 @@ class SourcePublicationControlStoreTests(unittest.TestCase):
                 staging_path=self.root / "unrelated-staging",
             )
 
-    def test_real_v8_store_migrates_to_v10_and_partial_v10_fails_closed(self) -> None:
+    def test_real_v8_store_migrates_to_v11_and_partial_v10_fails_closed(self) -> None:
         database = self.store.path
         with sqlite3.connect(database) as connection:
             for index in (
@@ -335,7 +335,10 @@ class SourcePublicationControlStoreTests(unittest.TestCase):
                 connection.execute(f"DROP INDEX {index}")
             connection.execute("DROP TABLE projection_publication_slots")
             connection.execute("DROP TABLE delivery_lifecycle_intents")
-            connection.execute("DELETE FROM schema_migrations WHERE version=10")
+            connection.execute("DROP INDEX one_projection_per_batch_item")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (10, 11)")
             for index in (
                 "one_nonterminal_source_publication_per_run",
                 "one_source_publication_epoch_per_run",
@@ -345,11 +348,11 @@ class SourcePublicationControlStoreTests(unittest.TestCase):
             connection.execute("DROP TABLE source_publication_intents")
             connection.execute("DELETE FROM schema_migrations WHERE version=9")
         migrated = ControlStore(self.workspace, self.contracts)
-        self.assertEqual(migrated.check().schema_version, 10)
+        self.assertEqual(migrated.check().schema_version, 11)
         self.assertEqual(migrated.current_run_record_sha(self.run_id), self.initial_sha)
 
         with sqlite3.connect(database) as connection:
-            connection.execute("DELETE FROM schema_migrations WHERE version=10")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (10, 11)")
         with self.assertRaisesRegex(
             ControlStoreUnavailable,
             "partial v10 Delivery Lifecycle migration",

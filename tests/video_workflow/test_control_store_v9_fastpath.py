@@ -21,14 +21,14 @@ from video2pdf_workflow_kernel.errors import ControlStoreUnavailable  # noqa: E4
 from video2pdf_workflow_kernel.utils import write_json_atomic  # noqa: E402
 
 
-class ControlStoreV10FastPathTests(unittest.TestCase):
+class ControlStoreV11FastPathTests(unittest.TestCase):
     def new_store(self, label: str) -> ControlStore:
         return ControlStore.initialize(
-            new_workflow_workspace(self.id(), label=f"v10-fastpath-{label}"),
+            new_workflow_workspace(self.id(), label=f"v11-fastpath-{label}"),
             ContractRegistry(PROJECT_ROOT),
         )
 
-    def test_current_v10_store_skips_migration_snapshot_planning(self) -> None:
+    def test_current_v11_store_skips_migration_snapshot_planning(self) -> None:
         store = self.new_store("current")
         original_connect = sqlite3.connect
         backup_calls: list[str] = []
@@ -68,7 +68,7 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
         self.assertEqual(migration_rows.call_count, 0)
         self.assertEqual(validate_resources.call_count, 1)
         self.assertEqual(backup_calls, [])
-        self.assertEqual(reopened.check().schema_version, 10)
+        self.assertEqual(reopened.check().schema_version, 11)
         self.assertEqual(validate_resources.call_count, 1)
 
         primary = store._connect()
@@ -91,7 +91,7 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
         )
         bypassing_secondary.close.assert_called_once_with()
 
-    def test_v9_store_adds_delivery_lifecycle_contracts_and_migrates_to_v10(
+    def test_v9_store_adds_lifecycle_contracts_and_migrates_to_v11(
         self,
     ) -> None:
         store = self.new_store("v9-delivery-lifecycle")
@@ -104,11 +104,16 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
                 connection.execute(f"DROP INDEX {index}")
             connection.execute("DROP TABLE projection_publication_slots")
             connection.execute("DROP TABLE delivery_lifecycle_intents")
-            connection.execute("DELETE FROM schema_migrations WHERE version=10")
+            connection.execute("DROP INDEX one_projection_per_batch_item")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (10, 11)"
+            )
 
         reopened = ControlStore(store.workspace_root, store.contracts)
 
-        self.assertEqual(reopened.check().schema_version, 10)
+        self.assertEqual(reopened.check().schema_version, 11)
         with sqlite3.connect(store.path) as connection:
             objects = {
                 (row[0], row[1])
@@ -116,18 +121,24 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
                     "SELECT type, name FROM sqlite_master WHERE name IN ("
                     "'delivery_lifecycle_intents',"
                     "'projection_publication_slots',"
+                    "'batch_records',"
+                    "'batch_item_projections',"
                     "'one_nonterminal_delivery_lifecycle_per_run',"
                     "'one_delivery_lifecycle_revision_per_run',"
-                    "'one_held_projection_publication_slot_per_path')"
+                    "'one_held_projection_publication_slot_per_path',"
+                    "'one_projection_per_batch_item')"
                 )
             }
         self.assertEqual(
             {
                 ("table", "delivery_lifecycle_intents"),
                 ("table", "projection_publication_slots"),
+                ("table", "batch_records"),
+                ("table", "batch_item_projections"),
                 ("index", "one_nonterminal_delivery_lifecycle_per_run"),
                 ("index", "one_delivery_lifecycle_revision_per_run"),
                 ("index", "one_held_projection_publication_slot_per_path"),
+                ("index", "one_projection_per_batch_item"),
             },
             objects,
         )
@@ -142,7 +153,9 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
             ):
                 connection.execute(f"DROP INDEX {index}")
             connection.execute("DROP TABLE projection_publication_slots")
-            connection.execute("DELETE FROM schema_migrations WHERE version=10")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version IN (10, 11)"
+            )
 
         with self.assertRaisesRegex(
             ControlStoreUnavailable,
@@ -169,7 +182,7 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
         ):
             store.check()
 
-    def test_v8_store_still_uses_planner_and_migrates_to_v10(self) -> None:
+    def test_v8_store_still_uses_planner_and_migrates_to_v11(self) -> None:
         store = self.new_store("v8")
         with sqlite3.connect(store.path) as connection:
             for index in (
@@ -187,8 +200,11 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
             ):
                 connection.execute(f"DROP INDEX {index}")
             connection.execute("DROP TABLE source_publication_intents")
+            connection.execute("DROP INDEX one_projection_per_batch_item")
+            connection.execute("DROP TABLE batch_item_projections")
+            connection.execute("DROP TABLE batch_records")
             connection.execute(
-                "DELETE FROM schema_migrations WHERE version IN (9, 10)"
+                "DELETE FROM schema_migrations WHERE version IN (9, 10, 11)"
             )
 
         with mock.patch.object(
@@ -200,7 +216,7 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
             reopened = ControlStore(store.workspace_root, store.contracts)
 
         self.assertGreaterEqual(planner.call_count, 1)
-        self.assertEqual(reopened.check().schema_version, 10)
+        self.assertEqual(reopened.check().schema_version, 11)
 
     def test_migration_ledger_gap_fails_before_planning(self) -> None:
         store = self.new_store("gap")
@@ -220,7 +236,9 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
     def test_future_schema_version_fails_before_planning(self) -> None:
         store = self.new_store("future")
         with sqlite3.connect(store.path) as connection:
-            connection.execute("INSERT INTO schema_migrations(version) VALUES (11)")
+            connection.execute(
+                "INSERT INTO schema_migrations(version) VALUES (12)"
+            )
 
         with mock.patch.object(
             ControlStore,
@@ -228,7 +246,7 @@ class ControlStoreV10FastPathTests(unittest.TestCase):
             side_effect=AssertionError("future version invoked migration planner"),
         ), self.assertRaisesRegex(
             ControlStoreUnavailable,
-            "unknown Control Store schema version: 11",
+            "unknown Control Store schema version: 12",
         ):
             ControlStore(store.workspace_root, store.contracts)
 

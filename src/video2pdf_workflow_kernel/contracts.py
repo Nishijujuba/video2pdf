@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -117,6 +118,8 @@ KNOWN_INVARIANTS = frozenset(
     {
         "artifact-plan-paths-v1",
         "artifact-plan-paths-v2",
+        "batch-item-projection-v1",
+        "batch-record-v1",
         "bootstrap-source-identity-v2",
         "control-store-identity-path-v1",
         "fixture-package-paths-v1",
@@ -1141,6 +1144,92 @@ def _validate_run_record_v4(instance: dict[str, Any]) -> None:
         raise ContractError("Run delivery projection paths must be unique")
 
 
+def _validate_batch_record_v1(instance: dict[str, Any]) -> None:
+    item_order = instance["item_order"]
+    indices = [item["item_index"] for item in item_order]
+    if indices != list(range(1, len(indices) + 1)):
+        raise ContractError(
+            "Batch item_order indices must be exactly 1..N without gaps or duplicates"
+        )
+    known_indices = set(indices)
+    canonical_item_ids = [item["canonical_item_id"] for item in item_order]
+    if len(canonical_item_ids) != len(set(canonical_item_ids)):
+        raise ContractError("Batch item canonical identities must be unique")
+    for mapping in instance["run_mappings"]:
+        if mapping["item_index"] not in known_indices:
+            raise ContractError("Batch run_mappings references an unknown item_index")
+    for projection in instance["projections"]:
+        if projection["item_index"] not in known_indices:
+            raise ContractError("Batch projections references an unknown item_index")
+    selected = sorted(item["item_index"] for item in item_order if item["selected"])
+    if instance["batch_stage"] == "planned":
+        if instance["run_mappings"]:
+            raise ContractError("planned Batch record must have no run mappings")
+        if instance["projections"]:
+            raise ContractError("planned Batch record must have no projections")
+        return
+    run_task_start = instance["run_task_start"]
+    if not isinstance(run_task_start, str) or not run_task_start:
+        raise ContractError("non-planned Batch record requires run_task_start")
+    mapped = sorted(mapping["item_index"] for mapping in instance["run_mappings"])
+    if mapped != selected:
+        raise ContractError("Batch run_mappings must cover exactly the selected items")
+    run_ids = [mapping["run_id"] for mapping in instance["run_mappings"]]
+    request_ids = [mapping["request_id"] for mapping in instance["run_mappings"]]
+    if len(run_ids) != len(set(run_ids)):
+        raise ContractError("Batch run_mappings run identities must be unique")
+    if len(request_ids) != len(set(request_ids)):
+        raise ContractError("Batch run_mappings request identities must be unique")
+    items_by_index = {item["item_index"]: item for item in item_order}
+    platform = instance["batch_identity"]["canonical_platform"]
+    for mapping in instance["run_mappings"]:
+        item_index = mapping["item_index"]
+        expected_request_id = f"{instance['batch_id']}:{item_index}"
+        if mapping["request_id"] != expected_request_id:
+            raise ContractError(
+                "Batch run mapping request identity differs from batch item identity"
+            )
+        expected_run_id = hashlib.sha256(
+            "\0".join(
+                (
+                    platform,
+                    items_by_index[item_index]["canonical_item_id"],
+                    run_task_start,
+                    expected_request_id,
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:32]
+        if mapping["run_id"] != expected_run_id:
+            raise ContractError(
+                "Batch run mapping identity differs from Kernel bootstrap identity"
+            )
+    projection_indices = {
+        projection["item_index"] for projection in instance["projections"]
+    }
+    if not projection_indices.issubset(set(mapped)):
+        raise ContractError(
+            "Batch projections must reference only run-mapped items"
+        )
+
+
+def _validate_batch_item_projection_v1(instance: dict[str, Any]) -> None:
+    outcome = instance["delivery_outcome"]
+    if not outcome["guarded_delivered"]:
+        return
+    if outcome["delivery_stage"] != "delivered":
+        raise ContractError(
+            "guarded_delivered requires the delivered delivery stage"
+        )
+    if not outcome["guard_report_sha256"]:
+        raise ContractError(
+            "guarded_delivered requires a passing guard report fingerprint"
+        )
+    if not instance["source_authority"]["run_record_sha256"]:
+        raise ContractError(
+            "guarded_delivered requires authoritative source run record"
+        )
+
+
 def _validate_kernel_delivery_target(instance: dict[str, Any]) -> None:
     require_safe_path_segment(
         instance["ownership"]["session_id"],
@@ -1616,6 +1705,8 @@ def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
 INVARIANT_VALIDATORS = {
     "artifact-plan-paths-v1": _validate_artifact_plan,
     "artifact-plan-paths-v2": _validate_artifact_plan_v2,
+    "batch-item-projection-v1": _validate_batch_item_projection_v1,
+    "batch-record-v1": _validate_batch_record_v1,
     "bootstrap-source-identity-v2": _validate_bootstrap_record_v2,
     "control-store-identity-path-v1": lambda value: _validate_canonical_absolute_path(
         value["workspace_path"]

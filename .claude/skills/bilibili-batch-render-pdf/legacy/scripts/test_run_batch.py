@@ -8,6 +8,8 @@ import time
 import unittest
 from unittest import mock
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
 
 def load_run_batch():
     script_path = Path(__file__).with_name("run_batch.py")
@@ -51,9 +53,10 @@ class RunBatchFailureRecoveryTests(unittest.TestCase):
             )
 
     def test_new_batch_manifest_uses_project_runtime_without_removed_cli_state(self) -> None:
-        trash_root = Path.cwd() / "待删除" / "kernel-test-runs"
-        trash_root.mkdir(parents=True, exist_ok=True)
-        output_root = trash_root / f"batch-runtime-{time.time_ns()}"
+        output_root = new_fixture_dir(
+            "batch-runtime",
+            expected_suite="skill-tests",
+        )
         args = self.run_batch.parse_args(
             [
                 "--url",
@@ -159,9 +162,7 @@ class RunBatchFailureRecoveryTests(unittest.TestCase):
         self.assertTrue(self.run_batch.has_codex_app_server_history(manifest))
 
     def test_reconcile_marks_manual_completion_succeeded(self) -> None:
-        trash_root = Path.cwd() / "待删除" / "skill-tests"
-        trash_root.mkdir(parents=True, exist_ok=True)
-        root = trash_root / f"run-batch-{time.time_ns()}"
+        root = new_fixture_dir("run-batch", expected_suite="skill-tests")
         output_dir = root / "P05-P05"
         review_dir = output_dir / "review"
         review_dir.mkdir(parents=True)
@@ -205,9 +206,10 @@ class RunBatchFailureRecoveryTests(unittest.TestCase):
         self.assertEqual(1, saved_manifest["summary"]["succeeded"])
 
     def test_reconcile_requires_pyramid_gate_reports(self) -> None:
-        trash_root = Path.cwd() / "待删除" / "skill-tests"
-        trash_root.mkdir(parents=True, exist_ok=True)
-        root = trash_root / f"run-batch-missing-pyramid-{time.time_ns()}"
+        root = new_fixture_dir(
+            "run-batch-missing-pyramid",
+            expected_suite="skill-tests",
+        )
         output_dir = root / "P06-P06"
         review_dir = output_dir / "review"
         review_dir.mkdir(parents=True)

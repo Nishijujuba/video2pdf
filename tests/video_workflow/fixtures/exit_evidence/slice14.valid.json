@@ -1,0 +1,363 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 14,
+    "name": "batch-projection-cutover"
+  },
+  "slice_base_commit": "0000000000000000000000000000000000000000",
+  "implementation_commit": "2222222222222222222222222222222222222222",
+  "evidence_paths": [
+    "evidence/slice-14/exit-evidence-manifest.json",
+    "evidence/slice-14/logs/issue15-batch-projection-tests.log",
+    "evidence/slice-14/logs/issue15-exit-evidence-tests.log"
+  ],
+  "generated_at": "2026-08-16T00:00:00Z",
+  "activation_scope": {
+    "kind": "batch_cutover",
+    "runtime_authority_change": true,
+    "components_activated": [
+      "batch_record_contract",
+      "batch_item_projection_contract",
+      "control_store_batch_persistence",
+      "batch_projection_provider",
+      "batch_cli",
+      "batch_skill"
+    ],
+    "global_gate_authority": "unchanged",
+    "platform_kernel_authority": "unchanged",
+    "qualification_contract_sha256": "ee5d124c949bc33f61b8c47718dcbaa1a4990ab97cd990549457ba117c0694c3"
+  },
+  "platform_statuses": {
+    "bilibili": "active_kernel",
+    "youtube": "active_kernel"
+  },
+  "batch_evidence": {
+    "batch_record_contract_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "batch_item_projection_contract_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "batch_record": {
+      "role": "batch_record_evidence",
+      "path": "evidence/slice-14/batch-record.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "projections": [
+      {
+        "item_index": 1,
+        "run_id": "15151515151515151515151515151515",
+        "delivery_stage": "delivered",
+        "guarded_delivered": true,
+        "artifact": {"role": "batch_item_projection", "path": "evidence/slice-14/projections/item-1.json", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}
+      },
+      {
+        "item_index": 2,
+        "run_id": "25151515151515151515151515151515",
+        "delivery_stage": "generating",
+        "guarded_delivered": false,
+        "artifact": {"role": "batch_item_projection", "path": "evidence/slice-14/projections/item-2.json", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}
+      }
+    ],
+    "batch_guarded_delivered_count": 1,
+    "negative_evidence": {
+      "artifact": {"role": "batch_authority_evidence", "path": "evidence/slice-14/authority-evidence.json", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+      "duplicate_run_rejected": true,
+      "pdf_existence_success_rejected": true,
+      "per_video_mutation_rejected": true,
+      "fairness_group_is_batch_id": true,
+      "auth_breaker_delegated_to_resource_admission": true
+    },
+    "fairness_group_id": "0123456789abcdef0123456789abcdef"
+  },
+  "atomic_members": [
+    "batch_record_contract",
+    "batch_item_projection_contract",
+    "control_store_batch_persistence",
+    "batch_projection_provider",
+    "batch_cli",
+    "legacy_batch_retirement",
+    "batch_skill",
+    "project_instructions",
+    "validators",
+    "tests",
+    "activation_documentation",
+    "mirrors",
+    "exit_evidence_schema",
+    "evidence_collector"
+  ],
+  "atomic_member_status": {
+    "batch_record_contract": "active",
+    "batch_item_projection_contract": "active",
+    "control_store_batch_persistence": "active",
+    "batch_projection_provider": "active",
+    "batch_cli": "active",
+    "legacy_batch_retirement": "active",
+    "batch_skill": "active",
+    "project_instructions": "active",
+    "validators": "active",
+    "tests": "active",
+    "activation_documentation": "active",
+    "mirrors": "active",
+    "exit_evidence_schema": "active",
+    "evidence_collector": "active"
+  },
+  "mirror_checks": [
+    {
+      "source_path": ".agents/skills/bilibili-batch-render-pdf/SKILL.md",
+      "mirror_path": ".claude/skills/bilibili-batch-render-pdf/SKILL.md",
+      "source_sha256": "1ffff41d659d9318e7e343010270240f92639678fed8a5c7669b317b312a72c3",
+      "mirror_sha256": "1ffff41d659d9318e7e343010270240f92639678fed8a5c7669b317b312a72c3",
+      "status": "equal"
+    }
+  ],
+  "policy_status": "active_global_gate",
+  "commands": [
+    {
+      "test_id": "issue15-batch-projection-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_issue15_batch_projection",
+        "tests.video_workflow.test_issue15_batch_authority",
+        "tests.video_workflow.test_issue15_batch_contracts",
+        "tests.video_workflow.test_issue15_control_store_batch",
+        "tests.video_workflow.test_issue15_batch_cli",
+        "tests.video_workflow.test_issue15_batch_policy_docs"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-14/logs/issue15-batch-projection-tests.log",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "persisted_run": {
+        "run_id": "15151515-1515-4515-8515-151515151515",
+        "command_record": {
+          "role": "persisted_command_record",
+          "path": "evidence/slice-14/persisted/issue15-batch-projection-tests/command.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "terminal_status": {
+          "role": "persisted_terminal_status",
+          "path": "evidence/slice-14/persisted/issue15-batch-projection-tests/status.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "exit_code": {
+          "role": "persisted_exit_code",
+          "path": "evidence/slice-14/persisted/issue15-batch-projection-tests/exit-code.txt",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "issue15-exit-evidence-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_issue15_exit_evidence"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-14/logs/issue15-exit-evidence-tests.log",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "persisted_run": {
+        "run_id": "15151515-1515-4515-8515-151515151515",
+        "command_record": {
+          "role": "persisted_command_record",
+          "path": "evidence/slice-14/persisted/issue15-exit-evidence-tests/command.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "terminal_status": {
+          "role": "persisted_terminal_status",
+          "path": "evidence/slice-14/persisted/issue15-exit-evidence-tests/status.json",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "exit_code": {
+          "role": "persisted_exit_code",
+          "path": "evidence/slice-14/persisted/issue15-exit-evidence-tests/exit-code.txt",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "batch_projection",
+      "status": "current"
+    },
+    {
+      "name": "bilibili_platform_kernel",
+      "status": "preserved"
+    },
+    {
+      "name": "youtube_platform_kernel",
+      "status": "preserved"
+    },
+    {
+      "name": "active_global_gate",
+      "status": "preserved"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "batch_record_contract",
+      "path": "schemas/video-workflow/v5/batch-record.v1.schema.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "batch_item_projection_contract",
+      "path": "schemas/video-workflow/v5/batch-item-projection.v1.schema.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "batch_record_positive_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/batch-record.valid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "batch_record_negative_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/batch-record.invalid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "batch_item_projection_positive_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/batch-item-projection.valid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "batch_item_projection_negative_fixture",
+      "path": "tests/video_workflow/fixtures/contracts/batch-item-projection.invalid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "exit_evidence_manifest_contract",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "slice14_positive_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence/slice14.valid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "role": "slice14_single_contradiction_fixture",
+      "path": "tests/video_workflow/fixtures/exit_evidence/slice14.invalid.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "results": {
+    "positive": [
+      "batch_record_contract_pass",
+      "projection_rebuild_pass",
+      "guarded_delivered_only_success"
+      ,"auth_breaker_uses_resource_admission"
+    ],
+    "negative": [
+      "duplicate_run_rejected",
+      "pdf_existence_success_rejected",
+      "per_video_mutation_rejected"
+    ],
+    "recovery": [
+      "reconcile_interrupted_item_creation"
+    ],
+    "fencing": [
+      "projection_revision_fencing"
+    ],
+    "fairness": [
+      "fairness_group_is_batch_id"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "batch_record_contract_pass",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_batch_record_contract_pass"
+    },
+    {
+      "result_id": "projection_rebuild_pass",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_projection_rebuild_pass"
+    },
+    {
+      "result_id": "guarded_delivered_only_success",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_guarded_delivered_only_success"
+    },
+    {
+      "result_id": "duplicate_run_rejected",
+      "result_kind": "negative",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_duplicate_run_rejected",
+      "expected_first_failing_gate": "batch_authority",
+      "expected_error_code": "duplicate_run_rejected"
+    },
+    {
+      "result_id": "pdf_existence_success_rejected",
+      "result_kind": "negative",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_pdf_existence_success_rejected",
+      "expected_first_failing_gate": "batch_authority",
+      "expected_error_code": "pdf_existence_success_rejected"
+    },
+    {
+      "result_id": "per_video_mutation_rejected",
+      "result_kind": "negative",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_per_video_mutation_rejected",
+      "expected_first_failing_gate": "batch_authority",
+      "expected_error_code": "per_video_mutation_rejected"
+    },
+    {
+      "result_id": "reconcile_interrupted_item_creation",
+      "result_kind": "recovery",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_reconcile_interrupted_item_creation"
+    },
+    {
+      "result_id": "projection_revision_fencing",
+      "result_kind": "fencing",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_projection_revision_fencing"
+    },
+    {
+      "result_id": "fairness_group_is_batch_id",
+      "result_kind": "fairness",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_fairness_group_id_is_batch_id"
+    },
+    {
+      "result_id": "auth_breaker_uses_resource_admission",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_auth_breaker_flows_through_resource_admission"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/issue15_exit_evidence_contract.py",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

@@ -291,7 +291,7 @@ The Delivery Glossary is a workflow contract artifact and is not a PDF appendix 
 
 ## Pyramid Gate Workflow
 
-Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here.
+Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here. Batch orchestration now lives in the Kernel `batch-*` CLI (`bilibili-batch-render-pdf`).
 
 Canonical Pyramid Gate artifacts for each video output directory:
 

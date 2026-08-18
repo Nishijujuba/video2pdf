@@ -20,6 +20,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
+from video2pdf_workflow_kernel.control_store import SCHEMA_VERSION  # noqa: E402
 from video2pdf_workflow_kernel.control_store_recovery import (  # noqa: E402
     ControlStoreRecovery,
 )
@@ -808,7 +809,10 @@ class ControlStoreRecoveryTests(unittest.TestCase):
         )
         connection = sqlite3.connect(mismatched / "control.sqlite3")
         try:
-            connection.execute("DELETE FROM schema_migrations WHERE version=9")
+            connection.execute(
+                "DELETE FROM schema_migrations WHERE version=?",
+                (SCHEMA_VERSION,),
+            )
             connection.commit()
         finally:
             connection.close()

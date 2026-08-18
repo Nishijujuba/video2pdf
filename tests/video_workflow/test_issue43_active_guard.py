@@ -20,7 +20,7 @@ from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
 from tests.video_workflow import test_issue13_candidate_confirmation as candidate_test
 from tests.video_workflow import test_issue13_cold_start_cutover as cold_start_test
 from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
-from tests.video_workflow.test_issue43_global_gate import Issue43GlobalGateTests
+from tests.video_workflow import test_issue43_global_gate as global_gate_tests
 
 PROJECT_ROOT = acceptance_v2_tests.PROJECT_ROOT
 file_sha = acceptance_v2_tests.file_sha
@@ -1262,7 +1262,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
                 data = pdf_bytes
             return original_write_bytes(path, data)
 
-        fixture = Issue43GlobalGateTests()
+        fixture = global_gate_tests.Issue43GlobalGateTests()
         with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
             _, paths = fixture.legacy_graph(video_root, compile_wrapper=wrapper)
         adopted, envelope = fixture.adopt(video_root, paths)

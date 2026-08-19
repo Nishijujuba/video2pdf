@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import redirect_stdout
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC = PROJECT_ROOT / "src"
@@ -18,9 +21,14 @@ from video2pdf_workflow_kernel.final_compile import (
     final_compile_provider_identity,
     registered_generator_identity,
 )
+from video2pdf_workflow_kernel.cli import main as workflow_cli_main
 
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
 FINAL_COMPILE_ADAPTER = PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"
+COMPILER_EVIDENCE_FIXTURE_ADAPTER = (
+    PROJECT_ROOT
+    / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"
+)
 FAKE_ENGINE = PROJECT_ROOT / "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py"
 PACKAGE_INVENTORY = PROJECT_ROOT / "tests/video_workflow/fixtures/guarded-compile/package-inventory.json"
 SYSTEM_FONT = Path("C:/Windows/Fonts/arial.ttf")
@@ -82,6 +90,36 @@ def run_cli(*arguments: str, environment: dict[str, str] | None = None) -> tuple
         capture_output=True,
         check=False,
         env=environment,
+    )
+    return completed, json.loads(completed.stdout)
+
+
+def run_cli_with_compiler_evidence_fixture(
+    *arguments: str,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """Run the public CLI while substituting only the compiler child process."""
+    real_subprocess_run = subprocess.run
+
+    def run_compiler_fixture(command: list[str], *args: object, **kwargs: object):
+        invoked = [str(value) for value in command]
+        if (
+            len(invoked) >= 2
+            and Path(invoked[0]).resolve() == Path(sys.executable).resolve()
+            and Path(invoked[-2]).resolve() == FINAL_COMPILE_ADAPTER.resolve()
+        ):
+            invoked[-2] = str(COMPILER_EVIDENCE_FIXTURE_ADAPTER.resolve())
+        return real_subprocess_run(invoked, *args, **kwargs)
+
+    stdout = io.StringIO()
+    with mock.patch.object(subprocess, "run", side_effect=run_compiler_fixture), redirect_stdout(
+        stdout
+    ):
+        returncode = workflow_cli_main(list(arguments))
+    completed = subprocess.CompletedProcess(
+        args=list(arguments),
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr="",
     )
     return completed, json.loads(completed.stdout)
 
@@ -468,6 +506,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         *,
         plan_updates: dict | None = None,
         plan_mutator: Callable[[dict], None] | None = None,
+        compiler_evidence_fixture: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
         origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
         rendered = json.loads(paths["rendered"].read_text(encoding="utf-8"))
@@ -507,7 +546,12 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         plan["plan_sha256"] = canonical_sha(plan)
         plan_path = write_json(root / "text-origin-plan.json", plan)
         workspace = root / "guarded-final-compile"
-        completed, envelope = run_cli(
+        cli_runner = (
+            run_cli_with_compiler_evidence_fixture
+            if compiler_evidence_fixture
+            else run_cli
+        )
+        completed, envelope = cli_runner(
             "delivery-quality-final-compile",
             "--precompile-workspace-root", str(paths["precompile_workspace"]),
             "--compile-manifest", str(paths["compile_manifest"]),
@@ -566,7 +610,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         )
         for updates in invalid_updates:
             with self.subTest(updates=updates):
-                root, paths = self.fixture()
+                root, paths = self.fixture(production_compile=True)
                 completed, envelope, workspace = self.final_compile(
                     root, paths, plan_updates=updates
                 )
@@ -575,14 +619,14 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 self.assertFalse((workspace / "adapter-output/final.pdf").exists())
         invalid_edge_mutators = (
             lambda plan: plan["edges"][-1].pop("recipe"),
-            lambda plan: plan["edges"][-1]["generator"].pop("generator_sha256"),
+            lambda plan: plan["edges"][0].pop("sealed_item_id"),
             lambda plan: plan["edges"][0].update(
                 disposition="unexpected_addition", recipe=None
             ),
         )
         for mutate in invalid_edge_mutators:
             with self.subTest(mutate=mutate):
-                root, paths = self.fixture()
+                root, paths = self.fixture(production_compile=True)
                 completed, envelope, workspace = self.final_compile(
                     root, paths, plan_mutator=mutate
                 )
@@ -591,49 +635,40 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 self.assertFalse((workspace / "adapter-output/final.pdf").exists())
 
     def test_public_final_compile_rejects_incomplete_compiler_evidence(self) -> None:
-        for updates in (
-            {"fixture_incomplete_coverage": True},
-            {"fixture_incomplete_trace": True},
-            {"fixture_same_id_object_drift": True},
+        # Valid Run authority -> current diagnostic compile boundary -> adapter
+        # evidence. Each scenario changes exactly one adapter-output invariant;
+        # compile_dependency_gap is therefore the expected first failing gate.
+        for scenario_id, updates in (
+            ("incomplete_coverage", {"fixture_incomplete_coverage": True}),
+            ("incomplete_trace", {"fixture_incomplete_trace": True}),
+            ("same_id_object_drift", {"fixture_same_id_object_drift": True}),
         ):
-            with self.subTest(updates=updates):
-                root, paths = self.fixture()
+            with self.subTest(scenario_id=scenario_id):
+                root, paths = self.fixture(production_compile=True)
                 completed, envelope, workspace = self.final_compile(
-                    root, paths, plan_updates=updates
+                    root,
+                    paths,
+                    plan_updates=updates,
+                    compiler_evidence_fixture=True,
                 )
                 self.assertEqual(40, completed.returncode)
                 self.assertEqual("compile_dependency_gap", envelope["classification"])
                 self.assertFalse((workspace / "final-compile-report.json").exists())
 
     def test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes(self) -> None:
-        failed_root, failed_paths = self.fixture()
+        failed_root, failed_paths = self.fixture(production_compile=True)
         failed, _, failed_workspace = self.final_compile(
             failed_root,
             failed_paths,
             plan_updates={"fixture_incomplete_trace": True},
+            compiler_evidence_fixture=True,
         )
         self.assertEqual(40, failed.returncode)
         self.assertFalse((failed_workspace / "final-compile-report.json").exists())
 
-        repaired_root, repaired_paths = self.fixture()
-        repaired, envelope, repaired_workspace = self.final_compile(
-            repaired_root, repaired_paths
-        )
-        self.assertEqual(0, repaired.returncode, repaired.stderr)
-        self.assertEqual("guarded_final_compile_complete", envelope["classification"])
-        self.assertTrue((repaired_workspace / "final-compile-report.json").is_file())
-
-    def test_incomplete_compiler_evidence_repaired_then_fresh_compile_passes(self) -> None:
-        failed_root, failed_paths = self.fixture()
-        failed, _, failed_workspace = self.final_compile(
-            failed_root,
-            failed_paths,
-            plan_updates={"fixture_incomplete_trace": True},
-        )
-        self.assertEqual(40, failed.returncode)
-        self.assertFalse((failed_workspace / "final-compile-report.json").exists())
-
-        repaired_root, repaired_paths = self.fixture()
+        # A fresh fixture rematerializes the complete authority and evidence
+        # graph instead of reusing nodes derived from the failed generation.
+        repaired_root, repaired_paths = self.fixture(production_compile=True)
         repaired, envelope, repaired_workspace = self.final_compile(
             repaired_root, repaired_paths
         )

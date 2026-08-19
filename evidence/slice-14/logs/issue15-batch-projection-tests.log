@@ -94,11 +94,23 @@ ok
 [stderr 175]
 test_activate_publishes_current_batch_authority (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_activate_publishes_current_batch_authority) ... [stderr 4]
 ok
+[stderr 213]
+test_after_intent_evidence_drift_is_cancelled_then_retry_converges (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_after_intent_evidence_drift_is_cancelled_then_retry_converges) ... [stderr 4]
+ok
+[stderr 221]
+test_after_intent_prerequisite_drift_is_cancelled_then_retry_converges (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_after_intent_prerequisite_drift_is_cancelled_then_retry_converges) ... [stderr 4]
+ok
+[stderr 191]
+test_after_intent_publication_commit_drift_is_cancelled (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_after_intent_publication_commit_drift_is_cancelled) ... [stderr 4]
+ok
 [stderr 161]
 test_batch_authority_commands_are_public (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_batch_authority_commands_are_public) ... [stderr 4]
 ok
 [stderr 191]
 test_batch_authority_commands_return_workflow_envelopes (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_batch_authority_commands_return_workflow_envelopes) ... [stderr 4]
+ok
+[stderr 221]
+test_cancelled_refresh_and_reconcile_have_distinct_cli_classifications (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_cancelled_refresh_and_reconcile_have_distinct_cli_classifications) ... [stderr 4]
 ok
 [stderr 213]
 test_current_authority_normalizes_malformed_json_and_type_failures (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_normalizes_malformed_json_and_type_failures) ... [stderr 4]
@@ -112,8 +124,14 @@ ok
 [stderr 185]
 test_current_authority_verifies_its_self_fingerprint (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_verifies_its_self_fingerprint) ... [stderr 4]
 ok
+[stderr 221]
+test_current_refreshed_authority_rejects_resealed_invalid_refreshed_at (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_refreshed_authority_rejects_resealed_invalid_refreshed_at) ... [stderr 4]
+ok
 [stderr 193]
 test_different_evidence_loses_singleton_activation_fence (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_different_evidence_loses_singleton_activation_fence) ... [stderr 4]
+ok
+[stderr 159]
+test_exact_refresh_replay_is_idempotent (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_exact_refresh_replay_is_idempotent) ... [stderr 4]
 ok
 [stderr 217]
 test_incompatible_database_fails_closed_without_leaking_sqlite_error (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_incompatible_database_fails_closed_without_leaking_sqlite_error) ... [stderr 4]
@@ -124,6 +142,12 @@ ok
 [stderr 219]
 test_missing_batch_authority_database_is_rejected_without_creating_it (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_missing_batch_authority_database_is_rejected_without_creating_it) ... [stderr 4]
 ok
+[stderr 199]
+test_normal_refresh_cancels_evidence_drift_and_allows_retry (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_normal_refresh_cancels_evidence_drift_and_allows_retry) ... [stderr 4]
+ok
+[stderr 225]
+test_prepared_refresh_blocks_current_and_legacy_activate_until_reconcile (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_prepared_refresh_blocks_current_and_legacy_activate_until_reconcile) ... [stderr 4]
+ok
 [stderr 189]
 test_publisher_releases_sqlite_transaction_after_fault (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_publisher_releases_sqlite_transaction_after_fault) ... [stderr 4]
 ok
@@ -133,11 +157,44 @@ ok
 [stderr 197]
 test_reconcile_completes_interrupted_authority_publication (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_publication) ... [stderr 4]
 ok
+[stderr 189]
+test_reconcile_completes_interrupted_authority_refresh (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_refresh) ... [stderr 4]
+ok
 [stderr 197]
 test_reconcile_fails_closed_with_multiple_prepared_intents (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_fails_closed_with_multiple_prepared_intents) ... [stderr 4]
 ok
 [stderr 203]
 test_reconcile_recovers_after_intent_and_after_control_commit (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_recovers_after_intent_and_after_control_commit) ... [stderr 4]
+ok
+[stderr 199]
+test_reconcile_rejects_mixed_activation_and_refresh_intents (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_rejects_mixed_activation_and_refresh_intents) ... [stderr 4]
+ok
+[stderr 201]
+test_refresh_accepts_new_canonical_evidence_at_the_same_path (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_accepts_new_canonical_evidence_at_the_same_path) ... [stderr 4]
+ok
+[stderr 209]
+test_refresh_additively_upgrades_an_existing_activation_database (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_additively_upgrades_an_existing_activation_database) ... [stderr 4]
+ok
+[stderr 213]
+test_refresh_advances_generation_and_rebinds_current_prerequisites (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_advances_generation_and_rebinds_current_prerequisites) ... [stderr 4]
+ok
+[stderr 209]
+test_refresh_does_not_require_old_evidence_to_match_current_head (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_does_not_require_old_evidence_to_match_current_head) ... [stderr 4]
+ok
+[stderr 203]
+test_refresh_reconcile_normalizes_conflicting_authority_bytes (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_reconcile_normalizes_conflicting_authority_bytes) ... [stderr 4]
+ok
+[stderr 213]
+test_refresh_reconcile_reproves_generation_and_prior_authority_sha (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_reconcile_reproves_generation_and_prior_authority_sha) ... [stderr 4]
+ok
+[stderr 215]
+test_refresh_rejects_a_stale_expected_generation_before_publication (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_rejects_a_stale_expected_generation_before_publication) ... [stderr 4]
+ok
+[stderr 211]
+test_refresh_rejects_non_positive_generation_through_the_cli_seam (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_rejects_non_positive_generation_through_the_cli_seam) ... [stderr 4]
+ok
+[stderr 173]
+test_refresh_replay_rejects_prerequisite_drift (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_replay_rejects_prerequisite_drift) ... [stderr 4]
 ok
 [stderr 197]
 test_require_current_rejects_changed_platform_prerequisite (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_require_current_rejects_changed_platform_prerequisite) ... [stderr 4]
@@ -169,6 +226,9 @@ ok
 [stderr 244]
 test_recover_requires_current_authority_before_store_initialization (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_recover_requires_current_authority_before_store_initialization) ... [stderr 4]
 ok
+[stderr 250]
+test_refresh_makes_old_batch_record_run_recover_and_status_fail_closed (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_refresh_makes_old_batch_record_run_recover_and_status_fail_closed) ... [stderr 4]
+ok
 [stderr 194]
 test_run_accepts_the_exact_current_binding (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_run_accepts_the_exact_current_binding) ... [stderr 4]
 ok
@@ -179,9 +239,8 @@ ok
 test_unmapped_status_and_rebuild_do_not_create_run_store (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_unmapped_status_and_rebuild_do_not_create_run_store) ... [stderr 4]
 ok
 [stderr 194]
-test_batch_record_and_projection_registered_in_registry (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_batch_record_and_projection_registered_in_registry) ... [stderr 4]
+test_batch_record_and_projection_registered_in_registry (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_batch_record_and_projection_registered_in_registry) ... [stderr 206]
 ok
-[stderr 202]
 test_batch_record_requires_explicit_authority_binding_field (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_batch_record_requires_explicit_authority_binding_field) ... [stderr 4]
 ok
 [stderr 162]
@@ -307,13 +366,9 @@ ok
 [stderr 209]
 test_recover_rebuild_and_status_derive_output_root_from_batch_record (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_recover_rebuild_and_status_derive_output_root_from_batch_record) ... [stderr 4]
 ok
-[stderr 219]
-test_batch_activation_status_is_consistent_across_active_docs (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_activation_status_is_consistent_across_active_docs) ... [stderr 4]
-ok
 [stderr 191]
-test_batch_skill_documents_cli_default_bindings (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_documents_cli_default_bindings) ... [stderr 4]
+test_batch_skill_documents_cli_default_bindings (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_documents_cli_default_bindings) ... [stderr 211]
 ok
-[stderr 207]
 test_batch_skill_documents_governed_activation_sequence (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_documents_governed_activation_sequence) ... [stderr 4]
 ok
 [stderr 185]
@@ -325,22 +380,26 @@ ok
 [stderr 183]
 test_batch_skill_retires_legacy_authorities (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_retires_legacy_authorities) ... [stderr 4]
 ok
+[stderr 213]
+test_batch_skill_routes_absent_and_stale_authority_repairs (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_routes_absent_and_stale_authority_repairs) ... [stderr 4]
+ok
 [stderr 221]
 test_batch_skill_success_definition_requires_guarded_delivered (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_success_definition_requires_guarded_delivered) ... [stderr 4]
 ok
 [stderr 195]
 test_existing_platform_status_sentences_unchanged (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_existing_platform_status_sentences_unchanged) ... [stderr 4]
 ok
+[stderr 251]
+test_new_batches_use_active_batch_and_existing_directories_keep_legacy_driver (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_new_batches_use_active_batch_and_existing_directories_keep_legacy_driver) ... [stderr 4]
+ok
 [stderr 223]
 test_rebuild_and_status_examples_supply_only_control_store_root (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_rebuild_and_status_examples_supply_only_control_store_root) ... [stderr 4]
 ok
 [stderr 2]
 
-[stderr 99]
+[stderr 104]
 ----------------------------------------------------------------------
-Ran 112 tests in 175.994s
-[stderr 2]
+Ran 133 tests in 56.209s
 
-[stderr 4]
 OK
-EVIDENCE_IMPLEMENTATION_COMMIT: f6189dba8949f431c8bc682060aea7a891682977
+EVIDENCE_IMPLEMENTATION_COMMIT: f289d6dbcd4a2c151e2f04e74335d9a2e6899e85

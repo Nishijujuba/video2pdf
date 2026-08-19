@@ -1,0 +1,76 @@
+[stderr 360]
+test_batch_artifacts_are_mandatory_evidence_paths (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_artifacts_are_mandatory_evidence_paths) ... ok
+test_batch_collection_tampering_breaks_bound_sha (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_collection_tampering_breaks_bound_sha) ... [stderr 4]
+ok
+[stderr 197]
+test_batch_mirror_checks_are_repo_relative_and_relocatable (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_mirror_checks_are_repo_relative_and_relocatable) ... [stderr 4]
+ok
+[stderr 177]
+test_batch_projection_tampering_breaks_bound_sha (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_projection_tampering_breaks_bound_sha) ... [stderr 4]
+ok
+[stderr 197]
+test_batch_validator_rejects_collection_from_another_batch (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_validator_rejects_collection_from_another_batch) ... [stderr 4]
+ok
+[stderr 219]
+test_batch_validator_rejects_projection_summary_outside_batch_mapping (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_validator_rejects_projection_summary_outside_batch_mapping) ... [stderr 4]
+ok
+[stderr 233]
+test_closed_qualification_covers_every_issue15_module_and_resource_authority (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_closed_qualification_covers_every_issue15_module_and_resource_authority) ... [stderr 193]
+ok
+test_collect_binds_batch_inputs_and_resource_authority (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_collect_binds_batch_inputs_and_resource_authority) ... [stderr 4]
+ok
+[stderr 181]
+test_collect_rejects_projection_from_another_batch (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_collect_rejects_projection_from_another_batch) ... [stderr 4]
+ok
+[stderr 197]
+test_direct_validator_resolves_repository_unittest_targets (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_direct_validator_resolves_repository_unittest_targets) ... [stderr 4]
+ok
+[stderr 193]
+test_finalize_binds_collection_and_closes_evidence_paths (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_finalize_binds_collection_and_closes_evidence_paths) ... [stderr 4]
+ok
+[stderr 457]
+test_slice14_contract_constants_are_pinned (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_contract_constants_are_pinned) ... ok
+test_slice14_fixture_cannot_bypass_common_binding_and_lineage_gates (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_fixture_cannot_bypass_common_binding_and_lineage_gates)
+A schema fixture carries no materialized files or Git publication authority.[stderr 5]
+ ... [stderr 4]
+ok
+[stderr 167]
+test_slice14_invalid_fixture_fails_dispatch (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_invalid_fixture_fails_dispatch) ... [stderr 4]
+ok
+[stderr 175]
+test_slice14_invalid_fixture_rejected_by_schema (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_invalid_fixture_rejected_by_schema) ... [stderr 4]
+ok
+[stderr 187]
+test_slice14_lineage_accepts_pre_and_post_publication (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_lineage_accepts_pre_and_post_publication) ... [stderr 4]
+ok
+[stderr 187]
+test_slice14_lineage_is_relocatable_after_publication (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_lineage_is_relocatable_after_publication) ... [stderr 4]
+ok
+[stderr 189]
+test_slice14_positive_fixture_validates_against_schema (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_positive_fixture_validates_against_schema) ... [stderr 4]
+ok
+[stderr 195]
+test_slice14_postpublication_rejects_extra_committed_path (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_postpublication_rejects_extra_committed_path) ... [stderr 4]
+ok
+[stderr 199]
+test_slice14_prepublication_rejects_dirty_non_evidence_path (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_prepublication_rejects_dirty_non_evidence_path) ... [stderr 4]
+ok
+[stderr 193]
+test_slice14_rejects_a_nonexistent_bound_unittest_target (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_rejects_a_nonexistent_bound_unittest_target) ... [stderr 4]
+ok
+[stderr 167]
+test_slice14_schema_requires_batch_evidence (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_schema_requires_batch_evidence) ... [stderr 4]
+ok
+[stderr 203]
+test_slice14_schema_requires_fingerprinted_collection_binding (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_schema_requires_fingerprinted_collection_binding) ... [stderr 4]
+ok
+[stderr 245]
+test_slice14_validates_each_persisted_qualification_without_guarded_delivery_block (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_validates_each_persisted_qualification_without_guarded_delivery_block) ... [stderr 4]
+ok
+[stderr 106]
+
+----------------------------------------------------------------------
+Ran 24 tests in 100.346s
+
+OK
+EVIDENCE_IMPLEMENTATION_COMMIT: 2945e8d01f3786725d81374a75a51d6827455380

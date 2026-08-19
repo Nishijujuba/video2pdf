@@ -1,0 +1,345 @@
+[stderr 149]
+test_batch_record_contract_pass (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_record_contract_pass) ... [stderr 4]
+ok
+[stderr 211]
+test_batch_recover_discovers_claimed_run_before_mapping_commit (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_recover_discovers_claimed_run_before_mapping_commit) ... [stderr 4]
+ok
+[stderr 211]
+test_batch_recover_does_not_commit_partial_discovered_mappings (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_recover_does_not_commit_partial_discovered_mappings) ... [stderr 4]
+ok
+[stderr 157]
+test_batch_run_deterministic_run_id (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_run_deterministic_run_id) ... [stderr 4]
+ok
+[stderr 221]
+test_batch_source_identity_covers_unselected_items_and_source_order (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_source_identity_covers_unselected_items_and_source_order) ... [stderr 4]
+ok
+[stderr 195]
+test_invalid_url_set_item_does_not_create_batch_record (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_invalid_url_set_item_does_not_create_batch_record) ... [stderr 4]
+ok
+[stderr 205]
+test_new_session_recovers_claimed_run_before_mapping_commit (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_new_session_recovers_claimed_run_before_mapping_commit) ... [stderr 4]
+ok
+[stderr 171]
+test_plan_is_idempotent_and_writes_no_runs (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_plan_is_idempotent_and_writes_no_runs) ... [stderr 4]
+ok
+[stderr 201]
+test_plan_replay_rejects_changed_authoritative_item_order (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_plan_replay_rejects_changed_authoritative_item_order) ... [stderr 4]
+ok
+[stderr 221]
+test_plan_replay_rematerializes_record_file_from_database_authority (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_plan_replay_rematerializes_record_file_from_database_authority) ... [stderr 4]
+ok
+[stderr 143]
+test_projection_rebuild_pass (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_projection_rebuild_pass) ... [stderr 4]
+ok
+[stderr 195]
+test_projection_rebuild_without_guard_is_not_delivered (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_projection_rebuild_without_guard_is_not_delivered) ... [stderr 4]
+ok
+[stderr 151]
+test_projection_revision_fencing (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_projection_revision_fencing) ... [stderr 4]
+ok
+[stderr 167]
+test_reconcile_interrupted_item_creation (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_reconcile_interrupted_item_creation) ... [stderr 4]
+ok
+[stderr 225]
+test_second_item_initialization_interruption_keeps_batch_record_valid (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_second_item_initialization_interruption_keeps_batch_record_valid) ... [stderr 4]
+ok
+[stderr 207]
+test_source_enumeration_failure_does_not_create_batch_record (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_source_enumeration_failure_does_not_create_batch_record) ... [stderr 4]
+ok
+[stderr 167]
+test_status_reports_projection_summaries (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_status_reports_projection_summaries) ... [stderr 4]
+ok
+[stderr 147]
+test_unknown_batch_id_rejected (tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_unknown_batch_id_rejected) ... [stderr 4]
+ok
+[stderr 185]
+test_auth_breaker_flows_through_resource_admission (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_auth_breaker_flows_through_resource_admission) ... [stderr 4]
+ok
+[stderr 195]
+test_delivered_with_foreign_guard_report_is_not_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_delivered_with_foreign_guard_report_is_not_success) ... [stderr 4]
+ok
+[stderr 191]
+test_delivered_with_stale_guard_report_is_not_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_delivered_with_stale_guard_report_is_not_success) ... [stderr 4]
+ok
+[stderr 201]
+test_delivered_with_stale_lifecycle_binding_is_not_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_delivered_with_stale_lifecycle_binding_is_not_success) ... [stderr 4]
+ok
+[stderr 139]
+test_duplicate_run_rejected (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_duplicate_run_rejected) ... [stderr 4]
+ok
+[stderr 153]
+test_fairness_group_id_is_batch_id (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_fairness_group_id_is_batch_id) ... [stderr 4]
+ok
+[stderr 207]
+test_final_pdf_mutation_invalidates_guarded_delivered_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_final_pdf_mutation_invalidates_guarded_delivered_success) ... [stderr 4]
+ok
+[stderr 155]
+test_guarded_delivered_only_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_guarded_delivered_only_success) ... [stderr 4]
+ok
+[stderr 155]
+test_pdf_existence_success_rejected (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_pdf_existence_success_rejected) ... [stderr 4]
+ok
+[stderr 149]
+test_per_video_mutation_rejected (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_per_video_mutation_rejected) ... [stderr 4]
+ok
+[stderr 215]
+test_rendered_page_mutation_invalidates_guarded_delivered_success (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_rendered_page_mutation_invalidates_guarded_delivered_success) ... [stderr 4]
+ok
+[stderr 199]
+test_status_rejects_cached_success_after_guard_is_removed (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_status_rejects_cached_success_after_guard_is_removed) ... [stderr 4]
+ok
+[stderr 217]
+test_success_helper_respects_explicit_false_and_matching_authority (tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_success_helper_respects_explicit_false_and_matching_authority) ... [stderr 4]
+ok
+[stderr 175]
+test_activate_publishes_current_batch_authority (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_activate_publishes_current_batch_authority) ... [stderr 4]
+ok
+[stderr 161]
+test_batch_authority_commands_are_public (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_batch_authority_commands_are_public) ... [stderr 4]
+ok
+[stderr 191]
+test_batch_authority_commands_return_workflow_envelopes (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_batch_authority_commands_return_workflow_envelopes) ... [stderr 4]
+ok
+[stderr 213]
+test_current_authority_normalizes_malformed_json_and_type_failures (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_normalizes_malformed_json_and_type_failures) ... [stderr 4]
+ok
+[stderr 219]
+test_current_authority_rejects_authority_evidence_and_database_tamper (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_rejects_authority_evidence_and_database_tamper) ... [stderr 4]
+ok
+[stderr 201]
+test_current_authority_rejects_resealed_invalid_activated_at (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_rejects_resealed_invalid_activated_at) ... [stderr 4]
+ok
+[stderr 185]
+test_current_authority_verifies_its_self_fingerprint (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_verifies_its_self_fingerprint) ... [stderr 4]
+ok
+[stderr 193]
+test_different_evidence_loses_singleton_activation_fence (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_different_evidence_loses_singleton_activation_fence) ... [stderr 4]
+ok
+[stderr 217]
+test_incompatible_database_fails_closed_without_leaking_sqlite_error (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_incompatible_database_fails_closed_without_leaking_sqlite_error) ... [stderr 4]
+ok
+[stderr 193]
+test_invalid_activated_at_is_rejected_before_publication (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_invalid_activated_at_is_rejected_before_publication) ... [stderr 4]
+ok
+[stderr 219]
+test_missing_batch_authority_database_is_rejected_without_creating_it (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_missing_batch_authority_database_is_rejected_without_creating_it) ... [stderr 4]
+ok
+[stderr 189]
+test_publisher_releases_sqlite_transaction_after_fault (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_publisher_releases_sqlite_transaction_after_fault) ... [stderr 4]
+ok
+[stderr 225]
+test_real_validator_loader_rejects_non_slice14_and_prepublication_inputs (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_real_validator_loader_rejects_non_slice14_and_prepublication_inputs) ... [stderr 4]
+ok
+[stderr 197]
+test_reconcile_completes_interrupted_authority_publication (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_publication) ... [stderr 4]
+ok
+[stderr 197]
+test_reconcile_fails_closed_with_multiple_prepared_intents (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_fails_closed_with_multiple_prepared_intents) ... [stderr 4]
+ok
+[stderr 203]
+test_reconcile_recovers_after_intent_and_after_control_commit (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_recovers_after_intent_and_after_control_commit) ... [stderr 4]
+ok
+[stderr 197]
+test_require_current_rejects_changed_platform_prerequisite (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_require_current_rejects_changed_platform_prerequisite) ... [stderr 4]
+ok
+[stderr 159]
+test_same_evidence_replay_is_idempotent (tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_same_evidence_replay_is_idempotent) ... [stderr 4]
+ok
+[stderr 242]
+test_distinct_output_and_control_roots_plan_and_run_the_same_batch (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_distinct_output_and_control_roots_plan_and_run_the_same_batch) ... [stderr 4]
+ok
+[stderr 230]
+test_mapped_status_and_rebuild_fail_closed_without_run_store (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_mapped_status_and_rebuild_fail_closed_without_run_store) ... [stderr 4]
+ok
+[stderr 258]
+test_plan_rechecks_after_enumeration_before_directory_or_database_mutation (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_rechecks_after_enumeration_before_directory_or_database_mutation) ... [stderr 4]
+ok
+[stderr 208]
+test_plan_records_exact_current_authority_binding (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_records_exact_current_authority_binding) ... [stderr 4]
+ok
+[stderr 232]
+test_plan_replay_rejects_a_record_bound_to_an_older_authority (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_replay_rejects_a_record_bound_to_an_older_authority) ... [stderr 4]
+ok
+[stderr 228]
+test_plan_requires_authority_before_enumeration_or_mutation (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_requires_authority_before_enumeration_or_mutation) ... [stderr 4]
+ok
+[stderr 244]
+test_recover_rejects_stale_record_binding_before_run_store_mutation (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_recover_rejects_stale_record_binding_before_run_store_mutation) ... [stderr 4]
+ok
+[stderr 244]
+test_recover_requires_current_authority_before_store_initialization (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_recover_requires_current_authority_before_store_initialization) ... [stderr 4]
+ok
+[stderr 194]
+test_run_accepts_the_exact_current_binding (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_run_accepts_the_exact_current_binding) ... [stderr 4]
+ok
+[stderr 232]
+test_run_rejects_missing_or_stale_binding_before_any_mutation (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_run_rejects_missing_or_stale_binding_before_any_mutation) ... [stderr 4]
+ok
+[stderr 222]
+test_unmapped_status_and_rebuild_do_not_create_run_store (tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_unmapped_status_and_rebuild_do_not_create_run_store) ... [stderr 4]
+ok
+[stderr 194]
+test_batch_record_and_projection_registered_in_registry (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_batch_record_and_projection_registered_in_registry) ... [stderr 4]
+ok
+[stderr 202]
+test_batch_record_requires_explicit_authority_binding_field (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_batch_record_requires_explicit_authority_binding_field) ... [stderr 4]
+ok
+[stderr 162]
+test_committed_negative_fixtures_reject (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_committed_negative_fixtures_reject) ... [stderr 4]
+ok
+[stderr 166]
+test_committed_positive_fixtures_validate (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_committed_positive_fixtures_validate) ... [stderr 4]
+ok
+[stderr 164]
+test_duplicate_item_order_index_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_duplicate_item_order_index_rejected) ... [stderr 4]
+ok
+[stderr 146]
+test_gapped_item_order_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_gapped_item_order_rejected) ... [stderr 4]
+ok
+[stderr 178]
+test_guarded_delivered_requires_delivered_stage (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_guarded_delivered_requires_delivered_stage) ... [stderr 4]
+ok
+[stderr 180]
+test_guarded_delivered_requires_guard_report_sha (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_guarded_delivered_requires_guard_report_sha) ... [stderr 4]
+ok
+[stderr 188]
+test_guarded_delivered_requires_run_record_authority (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_guarded_delivered_requires_run_record_authority) ... [stderr 4]
+ok
+[stderr 166]
+test_item_canonical_identities_are_unique (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_item_canonical_identities_are_unique) ... [stderr 4]
+ok
+[stderr 180]
+test_mapping_request_id_must_bind_batch_and_item (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_mapping_request_id_must_bind_batch_and_item) ... [stderr 4]
+ok
+[stderr 184]
+test_mapping_run_and_request_identities_are_unique (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_mapping_run_and_request_identities_are_unique) ... [stderr 4]
+ok
+[stderr 174]
+test_mapping_run_id_must_match_kernel_formula (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_mapping_run_id_must_match_kernel_formula) ... [stderr 4]
+ok
+[stderr 198]
+test_planned_record_may_bind_run_task_start_before_commit (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_planned_record_may_bind_run_task_start_before_commit) ... [stderr 4]
+ok
+[stderr 168]
+test_planned_record_with_mappings_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_planned_record_with_mappings_rejected) ... [stderr 4]
+ok
+[stderr 174]
+test_planned_record_with_projections_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_planned_record_with_projections_rejected) ... [stderr 4]
+ok
+[stderr 172]
+test_planned_record_with_selection_validates (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_planned_record_with_selection_validates) ... [stderr 4]
+ok
+[stderr 170]
+test_projection_unknown_item_index_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_projection_unknown_item_index_rejected) ... [stderr 4]
+ok
+[stderr 180]
+test_running_mapping_unknown_item_index_rejected (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_running_mapping_unknown_item_index_rejected) ... [stderr 4]
+ok
+[stderr 178]
+test_running_mappings_must_cover_selected_items (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_running_mappings_must_cover_selected_items) ... [stderr 4]
+ok
+[stderr 182]
+test_running_record_requires_bound_run_task_start (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_running_record_requires_bound_run_task_start) ... [stderr 4]
+ok
+[stderr 154]
+test_unguarded_projection_validates (tests.video_workflow.test_issue15_batch_contracts.Issue15BatchContractTests.test_unguarded_projection_validates) ... [stderr 4]
+ok
+[stderr 220]
+test_bind_batch_run_task_start_is_idempotent_and_conflict_closed (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_bind_batch_run_task_start_is_idempotent_and_conflict_closed) ... [stderr 4]
+ok
+[stderr 162]
+test_check_passes_with_batch_tables (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_check_passes_with_batch_tables) ... [stderr 4]
+ok
+[stderr 196]
+test_commit_batch_run_mappings_is_atomic_and_replays (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_commit_batch_run_mappings_is_atomic_and_replays) ... [stderr 4]
+ok
+[stderr 210]
+test_commit_batch_run_mappings_rejects_partial_selected_set (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_commit_batch_run_mappings_rejects_partial_selected_set) ... [stderr 4]
+ok
+[stderr 200]
+test_create_batch_record_conflicts_on_changed_identity (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_create_batch_record_conflicts_on_changed_identity) ... [stderr 4]
+ok
+[stderr 194]
+test_create_batch_record_replays_identical_identity (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_create_batch_record_replays_identical_identity) ... [stderr 4]
+ok
+[stderr 174]
+test_fresh_store_is_v11_with_batch_tables (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_fresh_store_is_v11_with_batch_tables) ... [stderr 4]
+ok
+[stderr 176]
+test_get_and_list_batch_records_round_trip (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_get_and_list_batch_records_round_trip) ... [stderr 4]
+ok
+[stderr 182]
+test_partial_v11_batch_migration_fails_closed (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_partial_v11_batch_migration_fails_closed) ... [stderr 4]
+ok
+[stderr 204]
+test_put_item_projection_revision_increments_and_replays (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_put_item_projection_revision_increments_and_replays) ... [stderr 4]
+ok
+[stderr 146]
+test_update_batch_stage_cas (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_update_batch_stage_cas) ... [stderr 4]
+ok
+[stderr 152]
+test_v10_store_migrates_to_v11 (tests.video_workflow.test_issue15_control_store_batch.Issue15BatchControlStoreTests.test_v10_store_migrates_to_v11) ... [stderr 4]
+ok
+[stderr 141]
+test_batch_commands_are_registered (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_commands_are_registered) ... [stderr 4]
+ok
+[stderr 143]
+test_batch_plan_requires_task_start (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_plan_requires_task_start) ... [stderr 4]
+ok
+[stderr 137]
+test_batch_plan_returns_envelope (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_plan_returns_envelope) ... [stderr 4]
+ok
+[stderr 183]
+test_batch_plan_workspace_defaults_to_project_workspace (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_plan_workspace_defaults_to_project_workspace) ... [stderr 4]
+ok
+[stderr 149]
+test_batch_recover_unknown_batch_fails (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_recover_unknown_batch_fails) ... [stderr 4]
+ok
+[stderr 183]
+test_batch_run_accepts_claim_before_mapping_fault_point (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_run_accepts_claim_before_mapping_fault_point) ... [stderr 4]
+ok
+[stderr 173]
+test_batch_run_delegates_start_binding_to_provider (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_run_delegates_start_binding_to_provider) ... [stderr 4]
+ok
+[stderr 147]
+test_batch_status_unknown_batch_fails (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_batch_status_unknown_batch_fails) ... [stderr 4]
+ok
+[stderr 209]
+test_recover_rebuild_and_status_derive_output_root_from_batch_record (tests.video_workflow.test_issue15_batch_cli.Issue15BatchCliTests.test_recover_rebuild_and_status_derive_output_root_from_batch_record) ... [stderr 4]
+ok
+[stderr 219]
+test_batch_activation_status_is_consistent_across_active_docs (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_activation_status_is_consistent_across_active_docs) ... [stderr 4]
+ok
+[stderr 191]
+test_batch_skill_documents_cli_default_bindings (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_documents_cli_default_bindings) ... [stderr 4]
+ok
+[stderr 207]
+test_batch_skill_documents_governed_activation_sequence (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_documents_governed_activation_sequence) ... [stderr 4]
+ok
+[stderr 185]
+test_batch_skill_exposes_kernel_cli_commands (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_exposes_kernel_cli_commands) ... [stderr 4]
+ok
+[stderr 179]
+test_batch_skill_mirror_is_byte_identical (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_mirror_is_byte_identical) ... [stderr 4]
+ok
+[stderr 183]
+test_batch_skill_retires_legacy_authorities (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_retires_legacy_authorities) ... [stderr 4]
+ok
+[stderr 221]
+test_batch_skill_success_definition_requires_guarded_delivered (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_batch_skill_success_definition_requires_guarded_delivered) ... [stderr 4]
+ok
+[stderr 195]
+test_existing_platform_status_sentences_unchanged (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_existing_platform_status_sentences_unchanged) ... [stderr 4]
+ok
+[stderr 223]
+test_rebuild_and_status_examples_supply_only_control_store_root (tests.video_workflow.test_issue15_batch_policy_docs.Issue15BatchPolicyDocumentationTests.test_rebuild_and_status_examples_supply_only_control_store_root) ... [stderr 4]
+ok
+[stderr 2]
+
+[stderr 101]
+----------------------------------------------------------------------
+Ran 112 tests in 191.690s
+
+[stderr 4]
+OK
+EVIDENCE_IMPLEMENTATION_COMMIT: 2945e8d01f3786725d81374a75a51d6827455380

@@ -306,6 +306,21 @@ def _parser() -> argparse.ArgumentParser:
         "--fault-point", choices=sorted(BATCH_ACTIVATION_FAULT_POINTS)
     )
 
+    batch_authority_refresh = commands.add_parser("batch-authority-refresh")
+    batch_authority_refresh.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    batch_authority_refresh.add_argument(
+        "--exit-evidence", required=True, type=Path
+    )
+    batch_authority_refresh.add_argument(
+        "--expected-generation", required=True, type=int
+    )
+    batch_authority_refresh.add_argument("--refreshed-at", required=True)
+    batch_authority_refresh.add_argument(
+        "--fault-point", choices=sorted(BATCH_ACTIVATION_FAULT_POINTS)
+    )
+
     batch_reconcile = commands.add_parser("batch-reconcile")
     batch_reconcile.add_argument("--control-store-root", required=True, type=Path)
 
@@ -932,13 +947,35 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             result,
             result["authority_path"],
         )
+    if command == "batch-authority-refresh":
+        result = BatchCutoverPublisher().refresh_authority(
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            expected_generation=args.expected_generation,
+            refreshed_at=args.refreshed_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            (
+                "batch_authority_refresh_cancelled"
+                if result.get("cancelled") is True
+                else "batch_authority_refreshed"
+            ),
+            result,
+            result["authority_path"],
+        )
     if command == "batch-reconcile":
         result = BatchCutoverPublisher().reconcile(
             control_store_root=args.control_store_root
         )
         return _ok(
             command,
-            "batch_authority_reconciled",
+            (
+                "batch_authority_reconcile_cancelled"
+                if result.get("cancelled") is True
+                else "batch_authority_reconciled"
+            ),
             result,
             result["authority_path"],
         )

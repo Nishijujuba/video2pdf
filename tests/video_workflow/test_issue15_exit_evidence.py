@@ -592,6 +592,10 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
                     "batch_cutover_activation_publishes_current_authority",
                     "batch_cutover_current_authority_is_verified",
                     "batch_cutover_reconcile_completes_publication",
+                    "batch_authority_refresh_advances_generation",
+                    "batch_authority_refresh_rejects_stale_generation",
+                    "batch_authority_refresh_reconciles_interrupted_publication",
+                    "batch_authority_old_generation_binding_fails_closed",
                     "batch_plan_preactivation_closure",
                     "batch_run_preactivation_closure",
                 }
@@ -608,6 +612,26 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
                 "batch_cutover_reconcile_completes_publication": (
                     "tests.video_workflow.test_issue15_batch_cutover."
                     "Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_publication"
+                ),
+                "batch_authority_refresh_advances_generation": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests."
+                    "test_refresh_advances_generation_and_rebinds_current_prerequisites"
+                ),
+                "batch_authority_refresh_rejects_stale_generation": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests."
+                    "test_refresh_rejects_a_stale_expected_generation_before_publication"
+                ),
+                "batch_authority_refresh_reconciles_interrupted_publication": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests."
+                    "test_reconcile_completes_interrupted_authority_refresh"
+                ),
+                "batch_authority_old_generation_binding_fails_closed": (
+                    "tests.video_workflow.test_issue15_batch_activation_integration."
+                    "Issue15BatchActivationIntegrationTests."
+                    "test_refresh_makes_old_batch_record_run_recover_and_status_fail_closed"
                 ),
                 "batch_plan_preactivation_closure": (
                     "tests.video_workflow.test_issue15_batch_activation_integration."
@@ -641,6 +665,7 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
             fixture["activation_scope"]["qualification_contract_sha256"],
             contract.QUALIFICATION_CONTRACT_SHA256,
         )
+        self.assertEqual(fixture["result_bindings"], contract.RESULT_BINDINGS)
 
     def test_slice14_schema_requires_batch_evidence(self) -> None:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))

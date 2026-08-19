@@ -125,6 +125,34 @@ RESULT_SPECS = (
         None,
     ),
     (
+        "batch_authority_refresh_advances_generation",
+        "positive",
+        "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_advances_generation_and_rebinds_current_prerequisites",
+        None,
+        None,
+    ),
+    (
+        "batch_authority_refresh_rejects_stale_generation",
+        "fencing",
+        "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_refresh_rejects_a_stale_expected_generation_before_publication",
+        "batch_cutover_authority",
+        "batch_authority_refresh_fenced",
+    ),
+    (
+        "batch_authority_refresh_reconciles_interrupted_publication",
+        "recovery",
+        "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_refresh",
+        None,
+        None,
+    ),
+    (
+        "batch_authority_old_generation_binding_fails_closed",
+        "fencing",
+        "tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_refresh_makes_old_batch_record_run_recover_and_status_fail_closed",
+        "batch_authority_binding",
+        "batch_authority_binding_stale",
+    ),
+    (
         "batch_plan_preactivation_closure",
         "positive",
         "tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_requires_authority_before_enumeration_or_mutation",
@@ -201,7 +229,11 @@ RESULT_BINDINGS = [
             else "issue15-exit-evidence-tests"
         ),
         "test_target": target,
-        **({"expected_first_failing_gate": gate, "expected_error_code": code} if result_kind == "negative" else {}),
+        **(
+            {"expected_first_failing_gate": gate, "expected_error_code": code}
+            if gate is not None and code is not None
+            else {}
+        ),
     }
     for (result_id, result_kind, target, gate, code) in RESULT_SPECS
 ]

@@ -101,11 +101,17 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 if command
                 in {
                     "batch-activate",
+                    "batch-authority-refresh",
                     "batch-reconcile",
                     "batch-authority-check",
                 }
             },
-            {"batch-activate", "batch-reconcile", "batch-authority-check"},
+            {
+                "batch-activate",
+                "batch-authority-refresh",
+                "batch-reconcile",
+                "batch-authority-check",
+            },
         )
 
     def test_missing_batch_authority_database_is_rejected_without_creating_it(self) -> None:
@@ -146,6 +152,21 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 ],
                 "activate",
                 "batch_authority_activated",
+            ),
+            (
+                [
+                    "batch-authority-refresh",
+                    "--control-store-root",
+                    "D:/workspace",
+                    "--exit-evidence",
+                    "D:/repo/evidence/slice-14/exit-evidence-manifest.json",
+                    "--expected-generation",
+                    "1",
+                    "--refreshed-at",
+                    "2026-08-20T00:00:00Z",
+                ],
+                "refresh_authority",
+                "batch_authority_refreshed",
             ),
             (
                 ["batch-reconcile", "--control-store-root", "D:/workspace"],
@@ -242,6 +263,715 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         self.assertFalse(first["idempotent"])
         self.assertTrue(replay["idempotent"])
         self.assertEqual(replay["authority_sha256"], first["authority_sha256"])
+
+    def test_refresh_advances_generation_and_rebinds_current_prerequisites(self) -> None:
+        root, evidence = self._case("refresh")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root) as platform_bindings:
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            platform_bindings["youtube"] = {
+                **platform_bindings["youtube"],
+                "authority_sha256": "e" * 64,
+                "generation": 2,
+            }
+            refreshed = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+            current = publisher.require_current(control_store_root=root)
+
+        authority = read_json(root / BATCH_AUTHORITY_FILE)
+        self.assertEqual(refreshed["generation"], 2)
+        self.assertFalse(refreshed["idempotent"])
+        self.assertEqual(current["generation"], 2)
+        self.assertEqual(authority["refreshed_at"], "2026-08-20T00:00:00Z")
+        self.assertEqual(
+            authority["platform_authority_bindings"]["youtube"]["generation"], 2
+        )
+
+    def test_reconcile_completes_interrupted_authority_refresh(self) -> None:
+        for fault_point in (
+            "after_intent",
+            "after_authority_write",
+            "after_control_commit",
+        ):
+            with self.subTest(fault_point=fault_point):
+                root, evidence = self._case(f"refresh-{fault_point}")
+                refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+                refreshed_evidence.write_text(
+                    '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+                    '"refresh":true}',
+                    encoding="utf-8",
+                )
+                publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+                with self._publisher_boundary(root):
+                    publisher.activate(
+                        control_store_root=root,
+                        exit_evidence=evidence,
+                        activated_at="2026-08-19T00:00:00Z",
+                    )
+                    with self.assertRaises(BatchCutoverFault):
+                        publisher.refresh_authority(
+                            control_store_root=root,
+                            exit_evidence=refreshed_evidence,
+                            expected_generation=1,
+                            refreshed_at="2026-08-20T00:00:00Z",
+                            fault_point=fault_point,
+                        )
+                    reconciled = publisher.reconcile(control_store_root=root)
+
+                self.assertTrue(reconciled["reconciled"])
+                self.assertTrue(reconciled["current"])
+                self.assertEqual(reconciled["generation"], 2)
+
+    def test_prepared_refresh_blocks_current_and_legacy_activate_until_reconcile(self) -> None:
+        root, evidence = self._case("prepared-refresh-blocks-current")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            with self.assertRaisesRegex(KernelConflict, "stale|incomplete"):
+                publisher.require_current(control_store_root=root)
+            with self.assertRaisesRegex(KernelConflict, "reconciliation"):
+                publisher.activate(
+                    control_store_root=root,
+                    exit_evidence=evidence,
+                    activated_at="2026-08-20T00:01:00Z",
+                )
+
+    def test_refresh_rejects_a_stale_expected_generation_before_publication(self) -> None:
+        root, evidence = self._case("refresh-generation-fence")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            original = (root / BATCH_AUTHORITY_FILE).read_bytes()
+            with self.assertRaises(KernelConflict) as raised:
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=2,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                )
+
+        self.assertEqual(
+            raised.exception.data.get("error_code"),
+            "batch_authority_refresh_fenced",
+        )
+        self.assertEqual((root / BATCH_AUTHORITY_FILE).read_bytes(), original)
+
+    def test_exact_refresh_replay_is_idempotent(self) -> None:
+        root, evidence = self._case("refresh-replay")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            first = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+            replay = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:01:00Z",
+            )
+
+        self.assertFalse(first["idempotent"])
+        self.assertTrue(replay["idempotent"])
+        self.assertEqual(replay["generation"], 2)
+        self.assertEqual(replay["authority_sha256"], first["authority_sha256"])
+
+    def test_refresh_does_not_require_old_evidence_to_match_current_head(self) -> None:
+        root, evidence = self._case("refresh-old-publication")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        global_binding, platform_bindings = self._bindings(root)
+        refresh_started = False
+
+        def validate_publication(*, evidence_path: Path, project_root: Path) -> str:
+            self.assertEqual(project_root, PROJECT_ROOT)
+            if evidence_path == evidence.resolve():
+                if refresh_started:
+                    self.fail(
+                        "refresh revalidated historical evidence against current HEAD"
+                    )
+                return "d" * 40
+            self.assertEqual(evidence_path, refreshed_evidence.resolve())
+            return "e" * 40
+
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with (
+            patch(
+                "video2pdf_workflow_kernel.batch_authority._validate_post_publication",
+                side_effect=validate_publication,
+            ),
+            patch(
+                "video2pdf_workflow_kernel.batch_authority.GlobalGatePublisher.require_current",
+                return_value=global_binding,
+            ),
+            patch(
+                "video2pdf_workflow_kernel.batch_authority.BilibiliPlatformCutoverPublisher.require_current",
+                side_effect=lambda *, platform, control_store_root: platform_bindings[platform],
+            ),
+        ):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            refresh_started = True
+            refreshed = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+
+        self.assertEqual(refreshed["generation"], 2)
+        self.assertEqual(
+            read_json(root / BATCH_AUTHORITY_FILE)["publication_commit"],
+            "e" * 40,
+        )
+
+    def test_refresh_replay_rejects_prerequisite_drift(self) -> None:
+        root, evidence = self._case("refresh-replay-prerequisite-drift")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root) as platform_bindings:
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+            platform_bindings["youtube"] = {
+                **platform_bindings["youtube"],
+                "authority_sha256": "f" * 64,
+                "generation": 2,
+            }
+            with self.assertRaisesRegex(KernelConflict, "prerequisite"):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:01:00Z",
+                )
+
+    def test_refresh_reconcile_normalizes_conflicting_authority_bytes(self) -> None:
+        root, evidence = self._case("refresh-reconcile-conflicting-bytes")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            (root / BATCH_AUTHORITY_FILE).write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(KernelConflict, "bytes conflict"):
+                publisher.reconcile(control_store_root=root)
+
+    def test_refresh_reconcile_reproves_generation_and_prior_authority_sha(self) -> None:
+        root, evidence = self._case("refresh-reconcile-cas")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            prior_sha256 = hashlib.sha256(
+                (root / BATCH_AUTHORITY_FILE).read_bytes()
+            ).hexdigest()
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_authority_write",
+                )
+            with sqlite3.connect(root / BATCH_CUTOVER_DB) as connection:
+                intent = connection.execute(
+                    "SELECT expected_generation,expected_authority_sha256 "
+                    "FROM batch_authority_refresh_intents WHERE state='PREPARED'"
+                ).fetchone()
+                self.assertEqual(intent, (1, prior_sha256))
+                connection.execute(
+                    "UPDATE batch_cutover_authority SET authority_sha256=? "
+                    "WHERE singleton=1",
+                    ("f" * 64,),
+                )
+            with self.assertRaisesRegex(KernelConflict, "reconciliation fence"):
+                publisher.reconcile(control_store_root=root)
+
+    def test_current_refreshed_authority_rejects_resealed_invalid_refreshed_at(self) -> None:
+        root, evidence = self._case("refresh-invalid-refreshed-at")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+            authority_path = root / BATCH_AUTHORITY_FILE
+            authority = read_json(authority_path)
+            authority["refreshed_at"] = "20 August 2026"
+            unsigned = dict(authority)
+            unsigned.pop("authority_sha256")
+            authority["authority_sha256"] = hashlib.sha256(
+                canonical_json_bytes(unsigned)
+            ).hexdigest()
+            authority_path.write_bytes(canonical_json_bytes(authority))
+            outer_sha256 = hashlib.sha256(authority_path.read_bytes()).hexdigest()
+            with sqlite3.connect(root / BATCH_CUTOVER_DB) as connection:
+                connection.execute(
+                    "UPDATE batch_cutover_authority SET authority_sha256=? "
+                    "WHERE singleton=1",
+                    (outer_sha256,),
+                )
+            with self.assertRaises(KernelConflict):
+                publisher.require_current(control_store_root=root)
+
+    def test_refresh_additively_upgrades_an_existing_activation_database(self) -> None:
+        root, evidence = self._case("refresh-existing-activation-database")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            with sqlite3.connect(root / BATCH_CUTOVER_DB) as connection:
+                connection.execute("DROP TABLE batch_authority_refresh_intents")
+            current = publisher.require_current(control_store_root=root)
+            refreshed = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+
+        self.assertEqual(current["generation"], 1)
+        self.assertEqual(refreshed["generation"], 2)
+
+    def test_refresh_accepts_new_canonical_evidence_at_the_same_path(self) -> None:
+        root, evidence = self._case("refresh-same-evidence-path")
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            evidence.write_text(
+                '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+                '"refresh":true}',
+                encoding="utf-8",
+            )
+            refreshed = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+
+        self.assertEqual(refreshed["generation"], 2)
+        self.assertEqual(
+            read_json(root / BATCH_AUTHORITY_FILE)["exit_evidence_path"],
+            str(evidence.resolve()),
+        )
+
+    def test_after_intent_prerequisite_drift_is_cancelled_then_retry_converges(self) -> None:
+        root, evidence = self._case("refresh-prerequisite-drift-retry")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root) as platform_bindings:
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            prior_authority = (root / BATCH_AUTHORITY_FILE).read_bytes()
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            platform_bindings["youtube"] = {
+                **platform_bindings["youtube"],
+                "authority_sha256": "f" * 64,
+                "generation": 2,
+            }
+            cancelled = publisher.reconcile(control_store_root=root)
+            self.assertEqual(
+                (root / BATCH_AUTHORITY_FILE).read_bytes(), prior_authority
+            )
+            retried = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:01:00Z",
+            )
+
+        self.assertTrue(cancelled["cancelled"])
+        self.assertEqual(cancelled["cancellation_reason"], "prerequisite_drift")
+        self.assertFalse(cancelled["current"])
+        self.assertEqual(retried["generation"], 2)
+        self.assertFalse(retried["idempotent"])
+
+    def test_after_intent_evidence_drift_is_cancelled_then_retry_converges(self) -> None:
+        root, evidence = self._case("refresh-evidence-drift-retry")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":1}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            prior_authority = (root / BATCH_AUTHORITY_FILE).read_bytes()
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            refreshed_evidence.write_text(
+                '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+                '"refresh":2}',
+                encoding="utf-8",
+            )
+            cancelled = publisher.reconcile(control_store_root=root)
+            self.assertEqual(
+                (root / BATCH_AUTHORITY_FILE).read_bytes(), prior_authority
+            )
+            retried = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:01:00Z",
+            )
+
+        self.assertTrue(cancelled["cancelled"])
+        self.assertTrue(cancelled["reconciled"])
+        self.assertEqual(cancelled["cancellation_reason"], "evidence_drift")
+        self.assertEqual(retried["generation"], 2)
+
+    def test_cancelled_refresh_and_reconcile_have_distinct_cli_classifications(self) -> None:
+        cancelled = {
+            "authority_path": "D:/workspace/active_batch.json",
+            "authority_sha256": "a" * 64,
+            "generation": 1,
+            "current": False,
+            "cancelled": True,
+            "reconciled": False,
+            "cancellation_reason": "evidence_drift",
+        }
+        refresh_args = kernel_cli._parser().parse_args(
+            [
+                "batch-authority-refresh",
+                "--control-store-root",
+                "D:/workspace",
+                "--exit-evidence",
+                "D:/repo/evidence/slice-14/exit-evidence-manifest.json",
+                "--expected-generation",
+                "1",
+                "--refreshed-at",
+                "2026-08-20T00:00:00Z",
+            ]
+        )
+        with patch.object(
+            BatchCutoverPublisher, "refresh_authority", return_value=cancelled
+        ):
+            refresh_envelope = kernel_cli._execute(refresh_args, PROJECT_ROOT)
+
+        reconciled_cancelled = {**cancelled, "reconciled": True}
+        reconcile_args = kernel_cli._parser().parse_args(
+            ["batch-reconcile", "--control-store-root", "D:/workspace"]
+        )
+        with patch.object(
+            BatchCutoverPublisher,
+            "reconcile",
+            return_value=reconciled_cancelled,
+        ):
+            reconcile_envelope = kernel_cli._execute(reconcile_args, PROJECT_ROOT)
+
+        self.assertEqual(
+            refresh_envelope["classification"],
+            "batch_authority_refresh_cancelled",
+        )
+        self.assertEqual(
+            reconcile_envelope["classification"],
+            "batch_authority_reconcile_cancelled",
+        )
+
+    def test_after_intent_publication_commit_drift_is_cancelled(self) -> None:
+        root, evidence = self._case("refresh-publication-drift")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publication_commit = "d" * 40
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            with patch(
+                "video2pdf_workflow_kernel.batch_authority._validate_post_publication",
+                return_value="e" * 40,
+            ):
+                cancelled = publisher.reconcile(control_store_root=root)
+
+        self.assertEqual(publication_commit, "d" * 40)
+        self.assertTrue(cancelled["cancelled"])
+        self.assertEqual(
+            cancelled["cancellation_reason"], "publication_commit_drift"
+        )
+
+    def test_normal_refresh_cancels_evidence_drift_and_allows_retry(self) -> None:
+        root, evidence = self._case("refresh-normal-evidence-drift")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":1}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            validation_calls = 0
+
+            def drift_during_validation(
+                *, evidence_path: Path, project_root: Path
+            ) -> str:
+                nonlocal validation_calls
+                self.assertEqual(evidence_path, refreshed_evidence.resolve())
+                self.assertEqual(project_root, PROJECT_ROOT)
+                validation_calls += 1
+                if validation_calls == 2:
+                    refreshed_evidence.write_text(
+                        '{"slice":{"number":14,'
+                        '"name":"batch-projection-cutover"},"refresh":2}',
+                        encoding="utf-8",
+                    )
+                return "d" * 40
+
+            with patch(
+                "video2pdf_workflow_kernel.batch_authority._validate_post_publication",
+                side_effect=drift_during_validation,
+            ):
+                cancelled = publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                )
+            retried = publisher.refresh_authority(
+                control_store_root=root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:01:00Z",
+            )
+
+        self.assertTrue(cancelled["cancelled"])
+        self.assertFalse(cancelled["reconciled"])
+        self.assertEqual(cancelled["cancellation_reason"], "evidence_drift")
+        self.assertEqual(retried["generation"], 2)
+
+    def test_reconcile_rejects_mixed_activation_and_refresh_intents(self) -> None:
+        root, evidence = self._case("mixed-prepared-intents")
+        refreshed_evidence = root / "refreshed-exit-evidence-manifest.json"
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"refresh":true}',
+            encoding="utf-8",
+        )
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+        with self._publisher_boundary(root):
+            publisher.activate(
+                control_store_root=root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            with self.assertRaises(BatchCutoverFault):
+                publisher.refresh_authority(
+                    control_store_root=root,
+                    exit_evidence=refreshed_evidence,
+                    expected_generation=1,
+                    refreshed_at="2026-08-20T00:00:00Z",
+                    fault_point="after_intent",
+                )
+            with sqlite3.connect(root / BATCH_CUTOVER_DB) as connection:
+                connection.execute(
+                    "INSERT INTO batch_cutover_intents("
+                    "intent_id,expected_generation,evidence_sha256,state,"
+                    "authority_sha256,authority_json,evidence_path,project_root,"
+                    "publication_commit) VALUES(?,?,?,'PREPARED',?,?,?,?,?)",
+                    (
+                        "f" * 64,
+                        1,
+                        "a" * 64,
+                        "b" * 64,
+                        "{}",
+                        str(evidence),
+                        str(PROJECT_ROOT),
+                        "d" * 40,
+                    ),
+                )
+            with self.assertRaisesRegex(KernelConflict, "ambiguous"):
+                publisher.reconcile(control_store_root=root)
+
+    def test_refresh_rejects_non_positive_generation_through_the_cli_seam(self) -> None:
+        root, evidence = self._case("refresh-non-positive-generation")
+        argv = [
+            "batch-authority-refresh",
+            "--control-store-root",
+            str(root),
+            "--exit-evidence",
+            str(evidence),
+            "--expected-generation",
+            "0",
+            "--refreshed-at",
+            "2026-08-20T00:00:00Z",
+        ]
+        args = kernel_cli._parser().parse_args(argv)
+
+        with self.assertRaisesRegex(ContractError, "expected_generation"):
+            kernel_cli._execute(args, PROJECT_ROOT)
 
     def test_different_evidence_loses_singleton_activation_fence(self) -> None:
         root, evidence = self._case("different-evidence-fence")

@@ -116,6 +116,23 @@ def _validate_activated_at(value: str) -> None:
         )
 
 
+def _validate_refreshed_at(value: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ContractError(
+            "Batch authority refreshed_at must be an ISO 8601 timestamp"
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ContractError(
+            "Batch authority refreshed_at must be an ISO 8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ContractError(
+            "Batch authority refreshed_at must include a timezone offset"
+        )
+
+
 class BatchCutoverPublisher:
     """Crash-safe publication for the singleton new-Batch runtime authority."""
 
@@ -183,6 +200,39 @@ class BatchCutoverPublisher:
                     "evidence_path TEXT NOT NULL, project_root TEXT NOT NULL, "
                     "publication_commit TEXT NOT NULL)"
                 )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS batch_authority_refresh_intents ("
+                    "intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, "
+                    "expected_authority_sha256 TEXT NOT NULL, "
+                    "evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL "
+                    "CHECK(state IN ('PREPARED','COMMITTED')), "
+                    "authority_json TEXT NOT NULL, prior_authority_json TEXT, "
+                    "cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0,1)), "
+                    "cancellation_reason TEXT, evidence_path TEXT NOT NULL, "
+                    "project_root TEXT NOT NULL, publication_commit TEXT NOT NULL)"
+                )
+                refresh_columns = {
+                    str(column["name"])
+                    for column in connection.execute(
+                        "PRAGMA table_info(batch_authority_refresh_intents)"
+                    ).fetchall()
+                }
+                if "prior_authority_json" not in refresh_columns:
+                    connection.execute(
+                        "ALTER TABLE batch_authority_refresh_intents "
+                        "ADD COLUMN prior_authority_json TEXT"
+                    )
+                if "cancelled" not in refresh_columns:
+                    connection.execute(
+                        "ALTER TABLE batch_authority_refresh_intents "
+                        "ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0 "
+                        "CHECK(cancelled IN (0,1))"
+                    )
+                if "cancellation_reason" not in refresh_columns:
+                    connection.execute(
+                        "ALTER TABLE batch_authority_refresh_intents "
+                        "ADD COLUMN cancellation_reason TEXT"
+                    )
             yield connection
         except ControlStoreUnavailable:
             raise
@@ -286,6 +336,12 @@ class BatchCutoverPublisher:
                     "WHERE state='PREPARED'"
                 ).fetchone()[0]
             )
+            pending += int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM batch_authority_refresh_intents "
+                    "WHERE state='PREPARED' AND cancelled=0"
+                ).fetchone()[0]
+            )
             if current is not None:
                 if pending:
                     connection.execute("ROLLBACK")
@@ -386,6 +442,605 @@ class BatchCutoverPublisher:
             "idempotent": False,
         }
 
+    def refresh_authority(
+        self,
+        *,
+        control_store_root: Path,
+        exit_evidence: Path,
+        expected_generation: int,
+        refreshed_at: str,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance active Batch authority to a newer evidence generation."""
+
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 1
+        ):
+            raise ContractError(
+                "Batch authority refresh expected_generation must be at least 1"
+            )
+        if fault_point is not None and fault_point not in ACTIVATION_FAULT_POINTS:
+            raise ContractError(
+                f"unsupported Batch authority refresh fault point: {fault_point}"
+            )
+        _validate_refreshed_at(refreshed_at)
+        root = control_store_root.resolve()
+        evidence_path = exit_evidence.resolve()
+        if not evidence_path.is_file():
+            raise ContractError("Batch authority refresh Exit Evidence is unavailable")
+        publication_commit = _validate_post_publication(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+        )
+        evidence_sha256 = sha256_file(evidence_path)
+        global_binding, platform_bindings = self._require_prerequisites(root)
+        authority_path = root / BATCH_AUTHORITY_FILE
+
+        with self._connect(root, initialize=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+            ).fetchone()
+            pending = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM batch_authority_refresh_intents "
+                    "WHERE state='PREPARED' AND cancelled=0"
+                ).fetchone()[0]
+            )
+            committed = connection.execute(
+                "SELECT authority_json FROM batch_authority_refresh_intents "
+                "WHERE expected_generation=? AND evidence_sha256=? "
+                "AND state='COMMITTED'",
+                (expected_generation, evidence_sha256),
+            ).fetchone()
+            if current is None or not authority_path.is_file():
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh requires a current active authority"
+                )
+            if pending:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Interrupted Batch authority refresh requires reconciliation"
+                )
+            if sha256_file(authority_path) != current["authority_sha256"]:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh requires current authority bytes"
+                )
+            try:
+                current_authority = read_json(authority_path)
+                if not isinstance(current_authority, dict):
+                    raise TypeError("Batch authority must be an object")
+                current_conflicts = (
+                    current_authority.get("schema_name")
+                    != "batch-cutover-authority"
+                    or current_authority.get("schema_version") != "1.0.0"
+                    or current_authority.get("generation") != current["generation"]
+                    or current_authority.get("authority_status") != "active_batch"
+                    or current_authority.get("authority_sha256")
+                    != _fingerprint(current_authority, "authority_sha256")
+                    or current_authority.get("exit_evidence_sha256")
+                    != current["evidence_sha256"]
+                    or current_authority.get("publication_commit")
+                    != current["publication_commit"]
+                )
+            except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh found conflicting authority bytes"
+                ) from exc
+            if current_conflicts:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh found conflicting authority bytes"
+                )
+            prerequisites_current = (
+                current_authority.get("global_gate_binding") == global_binding
+                and current_authority.get("platform_authority_bindings")
+                == platform_bindings
+            )
+            if (
+                committed is not None
+                and int(current["generation"]) == expected_generation + 1
+                and current["evidence_sha256"] == evidence_sha256
+                and current_authority == json.loads(committed["authority_json"])
+            ):
+                if not prerequisites_current:
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Batch authority refresh replay found prerequisite drift"
+                    )
+                connection.execute("COMMIT")
+                return {
+                    "authority_path": str(authority_path),
+                    "authority_sha256": str(current["authority_sha256"]),
+                    "generation": int(current["generation"]),
+                    "current": True,
+                    "idempotent": True,
+                }
+            if int(current["generation"]) != expected_generation:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh expected generation is stale",
+                    data={
+                        "first_failing_gate": "batch_cutover_authority",
+                        "error_code": "batch_authority_refresh_fenced",
+                    },
+                )
+            if current["evidence_sha256"] == evidence_sha256:
+                if not prerequisites_current:
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Batch authority refresh requires new evidence after "
+                        "prerequisite drift"
+                    )
+                connection.execute("COMMIT")
+                return {
+                    "authority_path": str(authority_path),
+                    "authority_sha256": str(current["authority_sha256"]),
+                    "generation": int(current["generation"]),
+                    "current": True,
+                    "idempotent": True,
+                }
+            generation = expected_generation + 1
+            authority = dict(current_authority)
+            authority.update(
+                {
+                    "generation": generation,
+                    "global_gate_binding": global_binding,
+                    "platform_authority_bindings": platform_bindings,
+                    "exit_evidence_path": str(evidence_path),
+                    "exit_evidence_sha256": evidence_sha256,
+                    "publication_commit": publication_commit,
+                    "refreshed_at": refreshed_at,
+                }
+            )
+            authority["authority_sha256"] = _fingerprint(
+                authority, "authority_sha256"
+            )
+            authority_json = canonical_json_bytes(authority).decode("utf-8")
+            prior_authority_json = canonical_json_bytes(current_authority).decode(
+                "utf-8"
+            )
+            intent_id = hashlib.sha256(
+                (
+                    "batch-refresh\0"
+                    + str(generation)
+                    + "\0"
+                    + evidence_sha256
+                    + "\0"
+                    + authority["authority_sha256"]
+                ).encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO batch_authority_refresh_intents("
+                "intent_id,expected_generation,expected_authority_sha256,"
+                "evidence_sha256,state,authority_json,prior_authority_json,"
+                "evidence_path,project_root,publication_commit) "
+                "VALUES(?,?,?,?,'PREPARED',?,?,?,?,?)",
+                (
+                    intent_id,
+                    expected_generation,
+                    current["authority_sha256"],
+                    evidence_sha256,
+                    authority_json,
+                    prior_authority_json,
+                    str(evidence_path),
+                    str(self.project_root),
+                    publication_commit,
+                ),
+            )
+            connection.execute("COMMIT")
+
+        if fault_point == "after_intent":
+            raise BatchCutoverFault(fault_point)
+        if not evidence_path.is_file() or sha256_file(evidence_path) != evidence_sha256:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="evidence_drift",
+            )
+        try:
+            current_publication_commit = _validate_post_publication(
+                evidence_path=evidence_path,
+                project_root=self.project_root,
+            )
+        except ContractError:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="publication_validation_failed",
+            )
+        if current_publication_commit != publication_commit:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="publication_commit_drift",
+            )
+        current_global, current_platforms = self._require_prerequisites(root)
+        if (
+            current_global != global_binding
+            or current_platforms != platform_bindings
+        ):
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="prerequisite_drift",
+            )
+        write_json_atomic(authority_path, authority)
+        if fault_point == "after_authority_write":
+            raise BatchCutoverFault(fault_point)
+        file_sha256 = sha256_file(authority_path)
+        if not evidence_path.is_file() or sha256_file(evidence_path) != evidence_sha256:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="evidence_drift",
+            )
+        try:
+            current_publication_commit = _validate_post_publication(
+                evidence_path=evidence_path,
+                project_root=self.project_root,
+            )
+        except ContractError:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="publication_validation_failed",
+            )
+        if current_publication_commit != publication_commit:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="publication_commit_drift",
+            )
+        current_global, current_platforms = self._require_prerequisites(root)
+        if current_global != global_binding or current_platforms != platform_bindings:
+            return self._cancel_authority_refresh(
+                control_store_root=root,
+                intent_id=intent_id,
+                reason="prerequisite_drift",
+            )
+        with self._connect(root, initialize=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            intent = connection.execute(
+                "SELECT * FROM batch_authority_refresh_intents "
+                "WHERE intent_id=? AND state='PREPARED' AND cancelled=0",
+                (intent_id,),
+            ).fetchone()
+            if intent is None:
+                connection.execute("ROLLBACK")
+                raise KernelConflict("Batch authority refresh lost its prepared intent")
+            if (
+                not evidence_path.is_file()
+                or sha256_file(evidence_path) != evidence_sha256
+            ):
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=connection.execute(
+                        "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+                    ).fetchone(),
+                    authority_path=authority_path,
+                    reason="evidence_drift",
+                    reconciled=False,
+                )
+            try:
+                current_publication_commit = _validate_post_publication(
+                    evidence_path=evidence_path,
+                    project_root=self.project_root,
+                )
+            except ContractError:
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=connection.execute(
+                        "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+                    ).fetchone(),
+                    authority_path=authority_path,
+                    reason="publication_validation_failed",
+                    reconciled=False,
+                )
+            if current_publication_commit != publication_commit:
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=connection.execute(
+                        "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+                    ).fetchone(),
+                    authority_path=authority_path,
+                    reason="publication_commit_drift",
+                    reconciled=False,
+                )
+            current_global, current_platforms = self._require_prerequisites(root)
+            if (
+                current_global != global_binding
+                or current_platforms != platform_bindings
+            ):
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=connection.execute(
+                        "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+                    ).fetchone(),
+                    authority_path=authority_path,
+                    reason="prerequisite_drift",
+                    reconciled=False,
+                )
+            changed = connection.execute(
+                "UPDATE batch_cutover_authority SET generation=?,evidence_sha256=?,"
+                "authority_sha256=?,publication_commit=? "
+                "WHERE singleton=1 AND generation=? AND authority_sha256=?",
+                (
+                    generation,
+                    evidence_sha256,
+                    file_sha256,
+                    publication_commit,
+                    expected_generation,
+                    intent["expected_authority_sha256"],
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh lost its generation fence"
+                )
+            connection.execute(
+                "UPDATE batch_authority_refresh_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND state='PREPARED'",
+                (intent_id,),
+            )
+            connection.execute("COMMIT")
+        if fault_point == "after_control_commit":
+            raise BatchCutoverFault(fault_point)
+        return {
+            "authority_path": str(authority_path),
+            "authority_sha256": file_sha256,
+            "generation": generation,
+            "current": True,
+            "idempotent": False,
+        }
+
+    def _cancel_prepared_authority_refresh(
+        self,
+        *,
+        connection: sqlite3.Connection,
+        intent: sqlite3.Row,
+        current: sqlite3.Row | None,
+        authority_path: Path,
+        reason: str,
+        reconciled: bool,
+    ) -> dict[str, Any]:
+        if (
+            current is None
+            or int(current["generation"]) != int(intent["expected_generation"])
+            or current["authority_sha256"]
+            != intent["expected_authority_sha256"]
+        ):
+            connection.execute("ROLLBACK")
+            raise KernelConflict(
+                "Batch authority refresh cancellation lost its generation fence"
+            )
+        prior_json = intent["prior_authority_json"]
+        if prior_json is None:
+            connection.execute("ROLLBACK")
+            raise KernelConflict(
+                "Batch authority refresh cancellation requires its prior authority"
+            )
+        try:
+            authority = json.loads(str(intent["authority_json"]))
+            prior_authority = json.loads(str(prior_json))
+            if not isinstance(authority, dict) or not isinstance(
+                prior_authority, dict
+            ):
+                raise TypeError("Batch authority intent values must be objects")
+            prior_bytes = canonical_json_bytes(prior_authority)
+            if hashlib.sha256(prior_bytes).hexdigest() != intent[
+                "expected_authority_sha256"
+            ]:
+                raise ValueError("prior Batch authority SHA conflicts")
+            existing_authority = (
+                read_json(authority_path) if authority_path.is_file() else None
+            )
+            if existing_authority not in (prior_authority, authority, None):
+                raise ValueError("Batch authority bytes belong to another writer")
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            connection.execute("ROLLBACK")
+            raise KernelConflict(
+                "Interrupted Batch authority refresh bytes conflict"
+            ) from exc
+        if existing_authority != prior_authority:
+            write_json_atomic(authority_path, prior_authority)
+        changed = connection.execute(
+            "UPDATE batch_authority_refresh_intents "
+            "SET cancelled=1,cancellation_reason=? "
+            "WHERE intent_id=? AND state='PREPARED' AND cancelled=0",
+            (reason, intent["intent_id"]),
+        ).rowcount
+        if changed != 1:
+            connection.execute("ROLLBACK")
+            raise KernelConflict(
+                "Batch authority refresh cancellation lost its intent fence"
+            )
+        connection.execute("COMMIT")
+        return {
+            "authority_path": str(authority_path),
+            "authority_sha256": str(intent["expected_authority_sha256"]),
+            "generation": int(intent["expected_generation"]),
+            "current": False,
+            "reconciled": reconciled,
+            "cancelled": True,
+            "cancellation_reason": reason,
+        }
+
+    def _cancel_authority_refresh(
+        self,
+        *,
+        control_store_root: Path,
+        intent_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        with self._connect(root, initialize=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            intent = connection.execute(
+                "SELECT * FROM batch_authority_refresh_intents "
+                "WHERE intent_id=? AND state='PREPARED' AND cancelled=0",
+                (intent_id,),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+            ).fetchone()
+            if intent is None:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh cancellation lost its prepared intent"
+                )
+            return self._cancel_prepared_authority_refresh(
+                connection=connection,
+                intent=intent,
+                current=current,
+                authority_path=root / BATCH_AUTHORITY_FILE,
+                reason=reason,
+                reconciled=False,
+            )
+
+    def _reconcile_authority_refresh(
+        self,
+        *,
+        control_store_root: Path,
+        intent_id: str,
+    ) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        authority_path = root / BATCH_AUTHORITY_FILE
+        with self._connect(root, initialize=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            intent = connection.execute(
+                "SELECT * FROM batch_authority_refresh_intents "
+                "WHERE intent_id=? AND state='PREPARED' AND cancelled=0",
+                (intent_id,),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT * FROM batch_cutover_authority WHERE singleton=1"
+            ).fetchone()
+            if (
+                intent is None
+                or current is None
+                or int(current["generation"])
+                != int(intent["expected_generation"])
+                or current["authority_sha256"]
+                != intent["expected_authority_sha256"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh lost its reconciliation fence"
+                )
+            evidence_path = Path(str(intent["evidence_path"]))
+            project_root = Path(str(intent["project_root"]))
+            if not evidence_path.is_file() or sha256_file(evidence_path) != intent[
+                "evidence_sha256"
+            ]:
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=current,
+                    authority_path=authority_path,
+                    reason="evidence_drift",
+                    reconciled=True,
+                )
+            try:
+                current_publication_commit = _validate_post_publication(
+                    evidence_path=evidence_path,
+                    project_root=project_root,
+                )
+            except ContractError:
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=current,
+                    authority_path=authority_path,
+                    reason="publication_validation_failed",
+                    reconciled=True,
+                )
+            if current_publication_commit != intent["publication_commit"]:
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=current,
+                    authority_path=authority_path,
+                    reason="publication_commit_drift",
+                    reconciled=True,
+                )
+            authority = json.loads(str(intent["authority_json"]))
+            global_binding, platform_bindings = self._require_prerequisites(root)
+            if (
+                authority.get("global_gate_binding") != global_binding
+                or authority.get("platform_authority_bindings")
+                != platform_bindings
+            ):
+                return self._cancel_prepared_authority_refresh(
+                    connection=connection,
+                    intent=intent,
+                    current=current,
+                    authority_path=authority_path,
+                    reason="prerequisite_drift",
+                    reconciled=True,
+                )
+            existing_authority: dict[str, Any] | None = None
+            if authority_path.is_file():
+                existing_sha256 = sha256_file(authority_path)
+                try:
+                    existing_value = read_json(authority_path)
+                    if not isinstance(existing_value, dict):
+                        raise TypeError("Batch authority must be an object")
+                    existing_authority = existing_value
+                except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Interrupted Batch authority refresh bytes conflict"
+                    ) from exc
+                if (
+                    existing_sha256 != intent["expected_authority_sha256"]
+                    and existing_authority != authority
+                ):
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        "Interrupted Batch authority refresh bytes conflict"
+                    )
+            if existing_authority != authority:
+                write_json_atomic(authority_path, authority)
+            file_sha256 = sha256_file(authority_path)
+            generation = int(intent["expected_generation"]) + 1
+            changed = connection.execute(
+                "UPDATE batch_cutover_authority SET generation=?,evidence_sha256=?,"
+                "authority_sha256=?,publication_commit=? "
+                "WHERE singleton=1 AND generation=? AND authority_sha256=?",
+                (
+                    generation,
+                    intent["evidence_sha256"],
+                    file_sha256,
+                    intent["publication_commit"],
+                    intent["expected_generation"],
+                    intent["expected_authority_sha256"],
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    "Batch authority refresh lost its generation fence"
+                )
+            connection.execute(
+                "UPDATE batch_authority_refresh_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND state='PREPARED'",
+                (intent_id,),
+            )
+            connection.execute("COMMIT")
+        result = self.require_current(control_store_root=root)
+        return {**result, "reconciled": True}
+
     def require_current(self, *, control_store_root: Path) -> dict[str, Any]:
         root = control_store_root.resolve()
         authority_path = root / BATCH_AUTHORITY_FILE
@@ -411,6 +1066,17 @@ class BatchCutoverPublisher:
                     "WHERE state!='COMMITTED'"
                 ).fetchone()[0]
             )
+            refresh_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='batch_authority_refresh_intents'"
+            ).fetchone()
+            if refresh_table is not None:
+                pending += int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM batch_authority_refresh_intents "
+                        "WHERE state!='COMMITTED' AND cancelled=0"
+                    ).fetchone()[0]
+                )
         if (
             current is None
             or pending
@@ -429,6 +1095,8 @@ class BatchCutoverPublisher:
             if not isinstance(authority, dict):
                 raise TypeError("Batch cutover authority must be an object")
             _validate_activated_at(authority.get("activated_at"))
+            if int(current["generation"]) > 1:
+                _validate_refreshed_at(authority.get("refreshed_at"))
             evidence_path = Path(str(authority.get("exit_evidence_path", "")))
             content_conflicts = (
                 authority.get("schema_name") != "batch-cutover-authority"
@@ -499,12 +1167,30 @@ class BatchCutoverPublisher:
         root = control_store_root.resolve()
         authority_path = root / BATCH_AUTHORITY_FILE
         with self._connect(root, initialize=True) as connection:
+            refresh_pending = connection.execute(
+                "SELECT * FROM batch_authority_refresh_intents "
+                "WHERE state='PREPARED' AND cancelled=0"
+            ).fetchall()
             current = connection.execute(
                 "SELECT * FROM batch_cutover_authority WHERE singleton=1"
             ).fetchone()
             pending = connection.execute(
                 "SELECT * FROM batch_cutover_intents WHERE state='PREPARED'"
             ).fetchall()
+        if refresh_pending and pending:
+            raise KernelConflict(
+                "Batch cutover reconciliation is ambiguous across activation "
+                "and refresh intents"
+            )
+        if len(refresh_pending) > 1:
+            raise KernelConflict(
+                "Multiple Batch authority refreshes require operator disposition"
+            )
+        if refresh_pending:
+            return self._reconcile_authority_refresh(
+                control_store_root=root,
+                intent_id=str(refresh_pending[0]["intent_id"]),
+            )
         if not pending:
             if current is None:
                 raise KernelConflict(

@@ -1154,11 +1154,24 @@ class BatchProjectionProvider:
             if control_store_root is None
             else Path(control_store_root).resolve()
         )
+        current_authority = self.batch_authority_publisher.require_current(
+            control_store_root=control_root
+        )
+        current_binding = self._batch_authority_binding(current_authority)
         store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
+        if record.get("batch_authority_binding") != current_binding:
+            raise KernelConflict(
+                "Batch Record authority binding is missing or stale",
+                data={
+                    "batch_id": batch_id,
+                    "first_failing_gate": "batch_authority_binding",
+                    "error_code": "batch_authority_binding_stale",
+                },
+            )
         mappings = list(record.get("run_mappings", []))
         run_store = (
             None

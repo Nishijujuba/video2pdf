@@ -56,6 +56,7 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         for command in (
             "batch-activate",
+            "batch-authority-refresh",
             "batch-reconcile",
             "batch-authority-check",
             "batch-plan",
@@ -65,6 +66,32 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
             "batch-status",
         ):
             self.assertIn(command, text)
+
+    def test_batch_skill_routes_absent_and_stale_authority_repairs(self) -> None:
+        text = (
+            ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Absent Batch authority", text)
+        self.assertIn("Stale Batch authority", text)
+        self.assertIn(
+            "batch-authority-refresh --control-store-root \"<control-store-root>\" "
+            "--exit-evidence \"<refreshed-slice14-manifest>\" "
+            "--expected-generation \"<current-generation>\" "
+            "--refreshed-at \"<iso>\"",
+            text,
+        )
+        refresh = text.index("Stale Batch authority")
+        reconcile = text.index("batch-reconcile", refresh)
+        check = text.index("batch-authority-check", reconcile)
+        self.assertLess(refresh, reconcile)
+        self.assertLess(reconcile, check)
+        self.assertIn(
+            "Existing Legacy batch directories remain on the Legacy driver",
+            text,
+        )
+        self.assertIn("<control-store-root>/active_batch.json", text)
+        self.assertIn("integer greater than or equal to 1", text)
+        self.assertIn("does not supply the current generation", text)
 
     def test_batch_skill_documents_governed_activation_sequence(self) -> None:
         text = (

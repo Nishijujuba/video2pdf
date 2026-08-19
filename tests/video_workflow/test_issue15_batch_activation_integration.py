@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_workflow_workspace
+from video2pdf_workflow_kernel.batch_authority import BatchCutoverPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
@@ -226,6 +227,112 @@ class Issue15BatchActivationIntegrationTests(unittest.TestCase):
 
                 kernel.assert_not_called()
                 self.assertEqual(store.get_batch_record(record["batch_id"]), before)
+
+    def test_refresh_makes_old_batch_record_run_recover_and_status_fail_closed(self) -> None:
+        control_root = self.workspace / "control-refresh-binding"
+        output_root = self.workspace / "outputs-refresh-binding"
+        control_root.mkdir()
+        output_root.mkdir()
+        evidence = self.workspace / "slice14-generation-1.json"
+        refreshed_evidence = self.workspace / "slice14-generation-2.json"
+        evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"generation":1}',
+            encoding="utf-8",
+        )
+        refreshed_evidence.write_text(
+            '{"slice":{"number":14,"name":"batch-projection-cutover"},'
+            '"generation":2}',
+            encoding="utf-8",
+        )
+        global_binding = {
+            "path": str(control_root / "active-global-gate.json"),
+            "file_sha256": "d" * 64,
+            "generation": 1,
+        }
+        platform_bindings = {
+            platform: {
+                "platform": platform,
+                "authority_path": str(control_root / f"active-{platform}.json"),
+                "authority_sha256": character * 64,
+                "generation": 1,
+            }
+            for platform, character in (("bilibili", "e"), ("youtube", "f"))
+        }
+        publisher = BatchCutoverPublisher(project_root=PROJECT_ROOT)
+
+        with (
+            patch(
+                "video2pdf_workflow_kernel.batch_authority._validate_post_publication",
+                side_effect=lambda **kwargs: (
+                    "1" * 40
+                    if kwargs["evidence_path"] == evidence.resolve()
+                    else "2" * 40
+                ),
+            ),
+            patch(
+                "video2pdf_workflow_kernel.batch_authority.GlobalGatePublisher.require_current",
+                return_value=global_binding,
+            ),
+            patch(
+                "video2pdf_workflow_kernel.batch_authority.BilibiliPlatformCutoverPublisher.require_current",
+                side_effect=lambda *, platform, control_store_root: platform_bindings[
+                    platform
+                ],
+            ),
+        ):
+            publisher.activate(
+                control_store_root=control_root,
+                exit_evidence=evidence,
+                activated_at="2026-08-19T00:00:00Z",
+            )
+            generation_1 = publisher.require_current(control_store_root=control_root)
+            store = ControlStore.initialize(control_root, self.contracts)
+            record = _record(output_root, _binding(generation_1))
+            store.create_batch_record(record, record["batch_identity"])
+
+            refreshed = publisher.refresh_authority(
+                control_store_root=control_root,
+                exit_evidence=refreshed_evidence,
+                expected_generation=1,
+                refreshed_at="2026-08-20T00:00:00Z",
+            )
+            self.assertEqual(refreshed["generation"], 2)
+            provider = BatchProjectionProvider(batch_authority_publisher=publisher)
+            operations = {
+                "run": lambda: provider.run(
+                    output_root,
+                    self.contracts,
+                    batch_id=record["batch_id"],
+                    control_store_root=control_root,
+                    session_id="session-refresh-binding",
+                    run_task_start=RUN_TASK_START,
+                ),
+                "recover": lambda: provider.recover(
+                    output_root,
+                    self.contracts,
+                    batch_id=record["batch_id"],
+                    control_store_root=control_root,
+                ),
+                "status": lambda: provider.status(
+                    output_root,
+                    self.contracts,
+                    batch_id=record["batch_id"],
+                    control_store_root=control_root,
+                ),
+            }
+            for operation_name, operation in operations.items():
+                with self.subTest(operation=operation_name):
+                    with self.assertRaises(KernelConflict) as raised:
+                        operation()
+                    self.assertEqual(
+                        raised.exception.data.get("first_failing_gate"),
+                        "batch_authority_binding",
+                    )
+                    self.assertEqual(
+                        raised.exception.data.get("error_code"),
+                        "batch_authority_binding_stale",
+                    )
 
     def test_run_accepts_the_exact_current_binding(self) -> None:
         current = _authority()

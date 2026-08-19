@@ -2,15 +2,15 @@
 
 Status: active domain language. Component runtime activation is recorded in the [Video Workflow Kernel 2.0 decision map](../../adr/video-workflow-kernel-2.0-decision-map.md).
 
-Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy, and YouTube remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Final-quality authority remains the Delivery Quality `active_global_gate`. Bilibili platform status is resolved at runtime: run `workflow-policy-check` and read the formal Platform Kernel authority before choosing a track; the repository baseline is `active_legacy` until a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence makes it `active_kernel`.
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. Final-quality authority remains the Delivery Quality `active_global_gate`.
 
-During the cold-start cutover, one exact Bilibili Run may be bound as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` are bounded candidate states and do not constitute `active_kernel`; ordinary `init-run` remains closed until final activation records `CONFIRMED` for the matching delivered candidate and its published Exit Evidence.
+The completed cold-start cutover bound one exact Bilibili Run as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` were bounded candidate states; final activation recorded `CONFIRMED` for the matching delivered candidate and its published Exit Evidence before ordinary new-run authority opened.
 
-After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
+The completed cutover candidate used the public `source-acquire` command against its existing `--run-dir`; source evidence remained attached to that same Run and no second Run was created.
 
 When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
 
-The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
+Source acquisition must never call `source-live-smoke`; no second Run may be created for source acquisition.
 
 An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
 
@@ -18,7 +18,7 @@ After receiving the refreshed Cookie, close the source circuit breaker, run `sou
 
 The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
 
-If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <run-dir>`.
 
 `source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
 
@@ -70,7 +70,7 @@ The candidate-only state published after the bound Run reaches `ready_for_delive
 
 The final platform authority recorded only after a published Exit Evidence Manifest identifies the same delivered candidate and passes formal validation. `CONFIRMED` opens ordinary new-run initialization and realizes the platform's `active_kernel` status.
 
-The cutover lifecycle follows `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` remain outside `active_kernel`.
+The completed cutover lifecycle followed `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` carried candidate-only authority during that activation.
 
 ## Contract Schema Version
 
@@ -466,7 +466,7 @@ A read-only, rebuildable view of one Video Workflow Run inside a Batch Record.
 
 ## Batch activation status
 
-Batch remains `target_only` until runtime authority activation; the Batch Supervisor, Batch Record, and Batch Item Projections are implemented and the `batch-*` CLI is available, but new-batch authority begins only with a published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired. The Batch Supervisor, Batch Record, and Batch Item Projections are implemented as `target_only` and activate with Slice 14 Exit Evidence.
+Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
 
 ## Delivery Target
 

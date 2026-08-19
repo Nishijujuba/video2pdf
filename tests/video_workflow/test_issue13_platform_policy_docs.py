@@ -56,7 +56,7 @@ COOKIE_SECRET_BOUNDARY = (
 SOURCE_ACQUIRE_RECONCILE = (
     "If acquisition is interrupted after terminal proof persistence and before "
     "Resource Lease release, run `source-acquire-reconcile --run-dir "
-    "<candidate-run-dir>`."
+    "<run-dir>`."
 )
 
 SOURCE_RECONCILE_SAME_RUN = (
@@ -65,28 +65,20 @@ SOURCE_RECONCILE_SAME_RUN = (
     "it must not initialize or attach another Run."
 )
 
-CURRENT_BILIBILI_STATUS = (
-    "Bilibili remains `active_legacy`; the Platform Kernel implementation and "
-    "one-candidate cutover seam are available."
+BILIBILI_ACTIVE_STATUS = (
+    "Bilibili is `active_kernel` for all new tasks under the current runtime "
+    "`CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing "
+    "Bilibili directories remain Legacy unless an explicit migration authority is "
+    "introduced."
 )
-CONFIRMED_BILIBILI_STATUS = (
-    "`active_kernel` begins only after runtime `CONFIRMED` platform authority "
-    "and published Slice 12 Exit Evidence."
+YOUTUBE_ACTIVE_STATUS = (
+    "YouTube is `active_kernel` for all new tasks under the current runtime "
+    "`CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing "
+    "YouTube directories remain Legacy unless an explicit migration authority is "
+    "introduced."
 )
-BILIBILI_STATUS_IS_RUNTIME_RESOLVED = (
-    "Bilibili platform status is resolved at runtime: run `workflow-policy-check` "
-    "and read the formal Platform Kernel authority before choosing a track; the "
-    "repository baseline is `active_legacy` until a runtime `CONFIRMED` authority "
-    "plus published Slice 12 Exit Evidence makes it `active_kernel`."
-)
-BILIBILI_BOOTSTRAP_ROUTES_ON_RUNTIME_STATE = (
-    "Start by reading the actual runtime state: run `workflow-policy-check` and "
-    "inspect the formal Platform Kernel authority before selecting a track."
-)
-
-
 class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
-    def test_current_bilibili_status_requires_runtime_confirmation(self) -> None:
+    def test_new_bilibili_tasks_use_active_kernel_and_existing_directories_stay_legacy(self) -> None:
         paths = (
             "AGENTS.md",
             "CLAUDE.md",
@@ -100,46 +92,49 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn(CURRENT_BILIBILI_STATUS, text)
-                self.assertIn(CONFIRMED_BILIBILI_STATUS, text)
-                self.assertIn(BILIBILI_STATUS_IS_RUNTIME_RESOLVED, text)
+                self.assertIn(BILIBILI_ACTIVE_STATUS, text)
+                self.assertNotIn("Bilibili remains `active_legacy`", text)
+                self.assertNotIn("No component has `active_kernel` status", text)
 
-    def test_bilibili_skill_bootstrap_routes_on_runtime_state(self) -> None:
+    def test_bilibili_skill_routes_new_tasks_through_ordinary_kernel_entrypoint(self) -> None:
         for relative in (
             ".agents/skills/bilibili-render-pdf/SKILL.md",
             ".claude/skills/bilibili-render-pdf/SKILL.md",
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn(BILIBILI_BOOTSTRAP_ROUTES_ON_RUNTIME_STATE, text)
+                self.assertIn("workflow-policy-check", text)
+                self.assertIn("init-run", text)
                 self.assertNotIn(
                     "The current repository has no confirmed Bilibili platform authority",
                     text,
                 )
+                self.assertNotIn("Cold-start cutover bootstrap", text)
+                self.assertIn("never redirect a new task", text)
 
     def test_cold_start_cutover_order_is_consistent_across_authority_docs(self) -> None:
         paths = (
-            ".agents/skills/bilibili-render-pdf/SKILL.md",
-            ".claude/skills/bilibili-render-pdf/SKILL.md",
             "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
-            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
-            "docs/contexts/video-workflow/CONTEXT.md",
-            "docs/contexts/delivery-quality/CONTEXT.md",
         )
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
                 self.assertIn(COLD_START_CUTOVER_SEQUENCE, text)
 
+    def test_active_decision_map_has_no_candidate_route_for_new_tasks(self) -> None:
+        text = (ROOT / "docs/adr/video-workflow-kernel-2.0-decision-map.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('PC -->|"yes"| BP["Bootstrap Probe"]', text)
+        self.assertIn('PC -->|"no"| FC["Fail closed and repair authority"]', text)
+        self.assertNotIn('CS -->|"cold-start candidate"|', text)
+        self.assertNotIn('PR["Prepare one bound cutover candidate"]', text)
+
     def test_candidate_source_acquisition_uses_one_public_same_run_seam(self) -> None:
         paths = (
-            ".agents/skills/bilibili-render-pdf/SKILL.md",
-            ".claude/skills/bilibili-render-pdf/SKILL.md",
             "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
             "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
             "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
-            "docs/adr/video-workflow-kernel-2.0-decision-map.md",
-            "docs/contexts/video-workflow/CONTEXT.md",
         )
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
@@ -151,8 +146,6 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
 
     def test_cookie_authentication_blocker_is_recoverable_on_the_same_run(self) -> None:
         paths = (
-            ".agents/skills/bilibili-render-pdf/SKILL.md",
-            ".claude/skills/bilibili-render-pdf/SKILL.md",
             "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
             "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
             "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
@@ -168,11 +161,6 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
 
     def test_source_acquisition_recovery_reconciles_the_same_run(self) -> None:
         paths = (
-            ".agents/skills/bilibili-render-pdf/SKILL.md",
-            ".claude/skills/bilibili-render-pdf/SKILL.md",
-            "docs/adr/0012-use-two-phase-bootstrap-and-run-initialization.md",
-            "docs/adr/0019-bound-source-agent-judgment-with-script-owned-acquisition-evidence.md",
-            "docs/adr/0040-cut-over-to-the-kernel-one-platform-at-a-time.md",
             "docs/adr/video-workflow-kernel-2.0-decision-map.md",
             "docs/contexts/video-workflow/CONTEXT.md",
         )
@@ -197,18 +185,14 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
                 self.assertIn("Bilibili", text)
                 self.assertIn("`active_kernel`", text)
                 self.assertIn("YouTube", text)
-                self.assertIn("`active_legacy`", text)
+                self.assertIn(BILIBILI_ACTIVE_STATUS, text)
+                self.assertIn(YOUTUBE_ACTIVE_STATUS, text)
                 self.assertIn("`active_global_gate`", text)
 
     def test_bilibili_skill_mirror_delegates_kernel_mechanics_to_public_cli(self) -> None:
         authority = (ROOT / ".agents/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")
         mirror = (ROOT / ".claude/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(authority, mirror)
-        self.assertIn(
-            "Run `platform-kernel-candidate-activate` for that exact ready candidate.",
-            authority,
-        )
-        self.assertNotIn("that exact accepted candidate", authority)
         for command in (
             "bootstrap-probe",
             "init-run",
@@ -221,10 +205,35 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
             "delivery-archive",
         ):
             self.assertIn(command, authority)
-        self.assertIn(CURRENT_BILIBILI_STATUS, authority)
+        self.assertIn(BILIBILI_ACTIVE_STATUS, authority)
         self.assertIn("Existing Bilibili directories remain Legacy", authority)
-        self.assertIn("YouTube remains `active_legacy`", authority)
+        self.assertNotIn("Bilibili remains `active_legacy`", authority)
+        self.assertIn("never redirect a new task", authority)
         self.assertIn("Global Gate remains `active_global_gate`", authority)
+        self.assertIn(
+            "Direct `yt-dlp`, `whisper`, and `compile_latex_ascii.py` commands in "
+            "this skill are Legacy recovery references for pre-existing directories "
+            "only; they are forbidden for a new task.",
+            authority,
+        )
+        self.assertIn(
+            "For a new Kernel task, invoke compilation only through the Workflow CLI:",
+            authority,
+        )
+        self.assertIn(
+            "The `workspace` directory is the only authorized parent for new Bilibili "
+            "PDF outputs.",
+            authority,
+        )
+        self.assertNotIn(
+            "unless the user explicitly asks for a legacy/root-level location",
+            authority,
+        )
+        self.assertNotIn(
+            "compile through the LaTeX Compile Guard with "
+            "`scripts/compile_latex_ascii.py`",
+            authority,
+        )
 
     def test_skill_keeps_semantic_roles_and_independent_reviewer(self) -> None:
         text = (ROOT / ".agents/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")

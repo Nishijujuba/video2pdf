@@ -35,43 +35,21 @@ The output must:
 
 ## Active Authority Boundary
 
-Bilibili remains `active_legacy`; the Platform Kernel implementation and one-candidate cutover seam are available. `active_kernel` begins only after runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless a separate explicit migration authority is activated. Bilibili platform status is resolved at runtime: run `workflow-policy-check` and read the formal Platform Kernel authority before choosing a track; the repository baseline is `active_legacy` until a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence makes it `active_kernel`. YouTube remains `active_legacy`. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both tracks.
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both Legacy and Kernel inputs.
+
+For every new Bilibili task, run `workflow-policy-check` first. When Bilibili reports current `active_kernel` authority, start the new task with ordinary `init-run`. If the Global Gate or platform authority is missing, stale, or unconfirmed, fail closed and repair authority before creating the task; never redirect a new task into a Legacy directory or a historical activation path.
 
 The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
 
 Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
 
-### Cold-start cutover bootstrap
+### Cold-start recovery only
 
-Start by reading the actual runtime state: run `workflow-policy-check` and inspect the formal Platform Kernel authority before selecting a track. When the platform has no runtime `CONFIRMED` authority (the repository baseline `active_legacy`), use the one-candidate public bootstrap seam below; when a runtime `CONFIRMED` authority plus published Slice 12 Exit Evidence exists, ordinary `init-run` is open and the seam is closed. The provisional candidate is bounded evidence-generation authority for one exact Run; it is not `active_kernel` and cannot admit an ordinary `init-run`.
+If `workflow-policy-check` reports that the formal Bilibili authority is absent, stop new-task initialization and obtain repository-owner authorization for authority recovery. Historical cutover mechanics and evidence remain in the governing ADRs and published Slice 12 records; this active skill provides no executable cutover path.
 
-1. Run `bootstrap-probe` for the selected Bilibili source and retain the exact probe, Run identity, source identity, and candidate session identity.
-2. Run `platform-kernel-prepare` with the current implementation commit, the exact probe, and the candidate session. This creates one durable `PREPARED` candidate binding without publishing platform authority.
-3. Run `init-cutover-candidate` for that same probe and session. This is the only initialization path available before confirmation; ordinary `init-run` remains fail-closed.
-4. Run `source-acquire` against the initialized candidate's existing `--run-dir`, advance that same Run to `source_ready`, continue through the normal Kernel production and final-compile operations, then transition it to `ready_for_delivery` with current final-artifact evidence.
-5. At `ready_for_delivery`, materialize a provider-current passing Acceptance Report v2. Run `platform-kernel-candidate-activate` for that exact ready candidate. The resulting `PROVISIONAL` state authorizes only that candidate to continue; it does not authorize any second Run or ordinary initialization.
-6. Transition the same candidate to `accepted`, generate a fresh current Delivery Guard, and use that Guard to transition to `delivered`. Then use `scripts/collect_issue13_exit_evidence.py collect` and `finalize` plus the formal Exit Evidence validator to collect and publish fingerprint-bound Slice 12 evidence for that delivered Run.
-7. Run `platform-kernel-activate` with the published Exit Evidence Manifest. Activation succeeds only when the manifest identifies the same delivered candidate and returns `CONFIRMED`. After confirmation, run `workflow-policy-check` and the platform-authority reconciliation/confirmation checks. Only `CONFIRMED` opens ordinary Bilibili `init-run` admission.
+### Execution track partition
 
-At every intermediate state (`PREPARED`, `INITIALIZED`, or `PROVISIONAL`), startup and recovery must preserve the single candidate binding and reject ordinary Bilibili Run creation. Existing Bilibili directories remain Legacy throughout this bootstrap and cannot be converted into the candidate by synthesizing a Run Record.
-
-After `init-cutover-candidate`, run the public `source-acquire` command against the candidate's existing `--run-dir`; it attaches source evidence to that same Run and must not create a second Run.
-
-When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
-
-The candidate workflow must never call `source-live-smoke`; no second Run may be created for source acquisition.
-
-An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
-
-After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
-
-The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
-
-If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <candidate-run-dir>`.
-
-`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
-
-Canonical order: `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` never constitute `active_kernel`.
+For a new Kernel task, all filesystem creation, source acquisition, Whisper fallback, and compilation execute only through the public Workflow CLI and its provider-issued tasks. Direct `yt-dlp`, `whisper`, and `compile_latex_ascii.py` commands in this skill are Legacy recovery references for pre-existing directories only; they are forbidden for a new task. A request for a root-level or Legacy-shaped output path does not grant migration or Legacy creation authority.
 
 ## Semantic Roles
 
@@ -94,6 +72,8 @@ The notes must read like a strong human teacher is guiding the reader through th
 - do not dump subtitle content in chronological order; rewrite it into a teaching sequence with clear intent, contrast, and buildup
 
 ## Source Acquisition
+
+For a new Kernel task, treat the requirements in this section as provider constraints and use `source-acquire`, `source-acquire-reconcile`, or `source-import` against the real `--run-dir`. The direct acquisition commands below apply only when recovering a pre-existing Legacy directory.
 
 Run source acquisition as a dedicated **Data Preparation agent** stage before the Outline agent starts. The Data Preparation agent must:
 
@@ -224,13 +204,13 @@ Skip subtitles entirely and rely on dense frame sampling to extract teaching con
 
 ## Output Naming
 
-Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
+For a new Kernel task, `init-run` creates the output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
 
 ```text
 D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
 ```
 
-The `workspace` directory is the default parent for new Bilibili PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
+The `workspace` directory is the only authorized parent for new Bilibili PDF outputs. Never manually create a new Legacy or root-level output directory. A pre-existing Legacy directory remains in its current location unless explicit migration authority is introduced.
 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 
@@ -246,7 +226,7 @@ Use these safeguards when running inside this project workspace:
 - when a downloaded merged temp file contains both video and audio streams, copy it to a stable workspace filename for downstream frame extraction
 - keep the failed temp files in `待删除` for audit; permanent cleanup belongs to the user
 - pass Chinese paths to Python tools through command-line arguments or environment variables; avoid embedding those paths inside stdin scripts because Windows console encodings may replace characters with `?`
-- compile through the LaTeX Compile Guard with `scripts/compile_latex_ascii.py`; pass the engine path with `--engine` and keep direct engine shell calls out of the workflow
+- for a new Kernel task, compile through Workflow CLI `guarded-compile`; when recovering a pre-existing Legacy directory, use the LaTeX Compile Guard at `scripts/compile_latex_ascii.py`, pass the engine path with `--engine`, and keep direct engine shell calls out of the workflow
 
 ## Long Video Strategy
 
@@ -615,6 +595,14 @@ Do not add decorative graphics that do not teach anything.
 
 Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
 
+For a new Kernel task, invoke compilation only through the Workflow CLI:
+
+```powershell
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py guarded-compile --run-dir "<run-dir>" --manifest "<compile-manifest>" --runtime-policy "<runtime-policy>"
+```
+
+The direct `compile_latex_ascii.py` reference below applies only to an existing Legacy directory. It must never compile a new Kernel task.
+
 Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
 
 ```powershell
@@ -669,7 +657,7 @@ Required evidence paths:
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged. This active Legacy workflow must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`. It must never create a synthetic Legacy Run. Run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, then publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
+Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged by acceptance. A new Kernel task retains its real Run and Control Store authority. An existing Legacy directory must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`; it must never create a synthetic Legacy Run. Both inputs then run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, and publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
 
 The three precompile semantic owners retain their committed semantic decisions. `source-faithfulness-reviewer` owns source fidelity, `writing-quality-reviewer` owns full reader-facing text, formula, and Delivery Glossary semantic review, and `pyramid-reviewer` owns document structure. The Acceptance Reviewer handles only the `visual_quality` criteria in the provider-created Task Envelope. It reads only the exact path-and-SHA `authorized_read_set` and writes one Visual Quality Judgment Patch to `required_output.path`, the sole `declared_write_set` entry inside the provider-created Attempt directory. The Reviewer has no report-publication authority; after `acceptance-patch-commit`, the `acceptance-materialize` provider materializes the canonical Acceptance Report v2 without reinterpreting precompile decisions.
 

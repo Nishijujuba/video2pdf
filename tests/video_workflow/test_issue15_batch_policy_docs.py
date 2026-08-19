@@ -6,20 +6,18 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-BATCH_PENDING_STATUS = (
-    "Batch remains `target_only` until runtime authority activation; the "
-    "Batch Supervisor, Batch Record, and Batch Item Projections are implemented "
-    "and the `batch-*` CLI is available, but new-batch authority begins only "
-    "with a published Slice 14 Exit Evidence Manifest. The Legacy batch driver "
-    "is retained for pre-existing batch directories only; PDF-existence success "
-    "and global `--concurrency` are retired."
+BATCH_ACTIVE_STATUS = (
+    "Batch is `active_batch` for all new batches under the current runtime authority "
+    "and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is "
+    "retained for pre-existing batch directories only; PDF-existence success and "
+    "global `--concurrency` are retired."
 )
 
 SUCCESS_DEFINITION = "cannot establish success"
 
 
 class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
-    def test_batch_activation_status_is_consistent_across_active_docs(self) -> None:
+    def test_new_batches_use_active_batch_and_existing_directories_keep_legacy_driver(self) -> None:
         paths = (
             "AGENTS.md",
             "CLAUDE.md",
@@ -32,9 +30,8 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn("Slice 14 Exit Evidence", text)
-                self.assertIn("PDF-existence success", text)
-                self.assertIn("`--concurrency`", text)
+                self.assertIn(BATCH_ACTIVE_STATUS, text)
+                self.assertNotIn("Batch remains `target_only`", text)
 
     def test_batch_skill_success_definition_requires_guarded_delivered(self) -> None:
         authority = (
@@ -73,11 +70,14 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
         text = (
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("Publishing Slice 14 and activating Batch authority are separate", text)
-        self.assertIn("published-slice14-manifest", text)
+        self.assertIn(
+            "Publishing Slice 14 and activating Batch authority are separate governed recovery steps.",
+            text,
+        )
         self.assertIn("active_batch.json", text)
-        self.assertIn("leaves Batch `target_only`", text)
-        self.assertIn("`batch-reconcile` is required only after an interrupted", text)
+        self.assertIn(BATCH_ACTIVE_STATUS, text)
+        self.assertNotIn("leaves Batch `target_only`", text)
+        self.assertIn("Use `batch-reconcile` after an interrupted activation.", text)
         self.assertIn("`batch-authority-check` is required before `batch-plan`", text)
 
     def test_batch_skill_documents_cli_default_bindings(self) -> None:

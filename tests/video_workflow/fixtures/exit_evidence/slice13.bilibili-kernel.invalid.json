@@ -1,0 +1,12 @@
+{
+  "scenario_id": "bilibili_legacy_restored",
+  "scenario_class": "single_contradiction",
+  "base_fixture": "slice13.valid.json",
+  "target_invariant": "platform_statuses",
+  "mutation_seam": "platform_statuses.bilibili",
+  "mutation": {"platform_statuses": {"bilibili": "active_legacy", "youtube": "active_kernel"}},
+  "rematerialized_nodes": [],
+  "intentionally_stale_nodes": [],
+  "expected_first_failing_gate": "platform_statuses",
+  "expected_error_code": "bilibili_platform_authority_changed"
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "scaffold_version", "max_absolute_path_utf16_units", "max_output_component_utf16_units", "managed_directories", "reserved_descendant_paths"],
+  "properties": {
+    "schema_name": {"const": "scaffold-contract"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "scaffold_version": {"const": "1.0.0"},
+    "max_absolute_path_utf16_units": {"const": 240},
+    "max_output_component_utf16_units": {"const": 96},
+    "managed_directories": {"type": "array", "minItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "reserved_descendant_paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  }
+}

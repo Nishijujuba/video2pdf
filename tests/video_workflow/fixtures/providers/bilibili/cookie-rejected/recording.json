@@ -1,0 +1,19 @@
+{
+  "$schema": "https://video2pdf.local/schemas/video-workflow/v1/recorded-provider-package.v1.schema.json",
+  "schema_name": "recorded-provider-package",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "recording_id": "bilibili-cookie-rejected-v1",
+  "canonical_platform": "bilibili",
+  "adapter": {"id": "bilibili-yt-dlp.v1", "contract_version": "1.0.0"},
+  "commands": [
+    {
+      "operation": "subtitle_list",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--list-subs", "--", "https://www.bilibili.com/video/BV1TEST00001/"],
+      "returncode": 1,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/auth.txt", "sha256": "065685ba0c8618685252a6445e6cedf67556471ddfb67ca55a3fdcc323286790"},
+      "outputs": []
+    }
+  ]
+}

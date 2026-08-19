@@ -1,0 +1,40 @@
+{
+  "schema_name":"source-manifest",
+  "schema_version":"2.0.0",
+  "kernel_version":"2.0.0",
+  "run_id":"00000000000000000000000000000000",
+  "source_epoch":1,
+  "acquisition_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mode":"fresh_download",
+  "adapter":{"id":"bilibili","contract_version":"1.0.0"},
+  "canonical_platform":"bilibili",
+  "canonical_item_id":"BV1Issue7001",
+  "source_identity_scheme":"canonical-platform-item-v1",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "source_version_scheme":"source-content-v1",
+  "source_version":"956e831ae1860223cf8029838eb9e977793241f39f7d76bbb5ab2e7f2c904ccb",
+  "original_title":"Issue 7 recorded source",
+  "policy_binding":{"policy_id":"source-acquisition-policy","version":"1.0.0","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "provenance":{"kind":"fresh_download","candidate_inventory_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","decision_skeleton_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","judgment_patch":{"task_id":"11111111111111111111111111111111","attempt_id":"222222222222222222222222","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"whisper_generation":null,"authentication_classification":"cookie_accepted"},
+  "selection":{"selected_subtitle_artifact_id":"subtitle_en","whisper_status":"not_required"},
+  "technical_validation":{"duration_seconds":120,"video_stream_count":1,"audio_stream_count":1,"subtitle_languages":["en"],"status":"pass"},
+  "source_version_basis":{
+    "canonicalization":"video2pdf-canonical-json-v1",
+    "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+    "artifacts":[
+      {"logical_id":"cover","role":"cover","media_type":"image/jpeg","sha256":"2222222222222222222222222222222222222222222222222222222222222222","size_bytes":200,"language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["image"],"codec_names":["jpeg"]}},
+      {"logical_id":"metadata","role":"metadata","media_type":"application/json","sha256":"1111111111111111111111111111111111111111111111111111111111111111","size_bytes":100,"language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["metadata"],"codec_names":["json"]}},
+      {"logical_id":"subtitle_en","role":"subtitle","media_type":"application/x-subrip","sha256":"4444444444444444444444444444444444444444444444444444444444444444","size_bytes":400,"language":"en","subtitle_kind":"manual","technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["subtitle"],"codec_names":["subrip"]}},
+      {"logical_id":"video","role":"video","media_type":"video/mp4","sha256":"3333333333333333333333333333333333333333333333333333333333333333","size_bytes":3000,"language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["video","audio"],"codec_names":["h264","aac"]}}
+    ]
+  },
+  "artifacts":[
+    {"logical_id":"metadata","role":"metadata","path":"source/metadata/platform.json","media_type":"application/json","sha256":"1111111111111111111111111111111111111111111111111111111111111111","size_bytes":100,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["metadata"],"codec_names":["json"]}},
+    {"logical_id":"cover","role":"cover","path":"source/cover/cover.jpg","media_type":"image/jpeg","sha256":"2222222222222222222222222222222222222222222222222222222222222222","size_bytes":200,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":null,"stream_types":["image"],"codec_names":["jpeg"]}},
+    {"logical_id":"video","role":"video","path":"source/media/video.mp4","media_type":"video/mp4","sha256":"3333333333333333333333333333333333333333333333333333333333333333","size_bytes":3000,"origin":"platform_download","language":null,"subtitle_kind":null,"technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["video","audio"],"codec_names":["h264","aac"]}},
+    {"logical_id":"subtitle_en","role":"subtitle","path":"source/subtitles/subtitle.en.srt","media_type":"application/x-subrip","sha256":"4444444444444444444444444444444444444444444444444444444444444444","size_bytes":400,"origin":"platform_download","language":"en","subtitle_kind":"manual","technical_probe":{"status":"pass","duration_seconds":120,"stream_types":["subtitle"],"codec_names":["subrip"]}}
+  ],
+  "known_gaps":[],
+  "published_at":"2026-07-18T01:03:00Z",
+  "package_status":"validated"
+}

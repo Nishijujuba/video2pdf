@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-quality-report.v1.schema.json",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "report_id", "activation_status", "materialized_at", "generation_set_sha256", "inventory_sha256", "reader_text_set_sha256", "language_profile_id", "delivery_glossary", "catalog_sha256", "role_projections_sha256", "semantic_dependencies_sha256", "provider", "owner_reports", "normalized_rule_results", "failure_set", "repair_routing", "contract_gaps", "semantic_attempt_budget_consumed", "overall_decision", "report_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-quality-report"},
+    "schema_version": {"const": "1.0.0"},
+    "report_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "activation_status": {"const": "target_only"},
+    "materialized_at": {"type": "string", "minLength": 1},
+    "generation_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reader_text_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "language_profile_id": {"type": "string", "minLength": 1},
+    "delivery_glossary": {"type": ["object", "null"]},
+    "catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "role_projections_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semantic_dependencies_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider": {"type": "object"},
+    "owner_reports": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type":"object","additionalProperties":false,"required":["owner","task_id","skeleton_sha256","patch_sha256","commit_sha256","reviewer","result_count","decision"],"properties":{"owner":{"enum":["source-faithfulness-reviewer","writing-quality-reviewer","pyramid-reviewer"]},"task_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"skeleton_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"patch_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"commit_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"reviewer":{"type":"object","additionalProperties":false,"required":["reviewer_id","runtime_sha256","independent_from_generation_producers"],"properties":{"reviewer_id":{"type":"string","minLength":1},"runtime_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"independent_from_generation_producers":{"const":true}}},"result_count":{"type":"integer","minimum":1},"decision":{"enum":["pass","fail"]}}}},
+    "normalized_rule_results": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "rule_semantic_sha256", "primary_semantic_decision_owner", "source_patch_sha256", "decision", "evidence", "violations", "exceptions"],
+        "properties": {
+          "rule_id": {"type": "string", "minLength": 1},
+          "rule_semantic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "primary_semantic_decision_owner": {"const": "writing-quality-reviewer"},
+          "source_patch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "decision": {"enum": ["pass", "fail"]},
+          "evidence": {"type": "array", "minItems": 1, "items": {"type":"object","additionalProperties":false,"required":["result_key","decision","evidence_locator","violation_id","repair_write_set"],"properties":{"result_key":{"type":"string","minLength":1},"decision":{"enum":["pass","fail"]},"evidence_locator":{"type":"string","minLength":1},"violation_id":{"type":["string","null"]},"repair_write_set":{"type":"array","items":{"type":"string"}}}}},
+          "violations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "exceptions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "failure_set": {"type": "array", "items": {"type": "object"}},
+    "repair_routing": {"type": "object"},
+    "contract_gaps": {"type": "array", "maxItems": 0},
+    "semantic_attempt_budget_consumed": {"type": "boolean"},
+    "overall_decision": {"enum": ["pass", "fail"]},
+    "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

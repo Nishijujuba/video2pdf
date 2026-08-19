@@ -16,35 +16,162 @@ def read(path: Path) -> str:
 
 
 class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
+    def test_new_task_skills_use_current_kernel_authority_and_preserve_legacy_directories(self) -> None:
+        required_by_skill = {
+            "bilibili-render-pdf": (
+                "Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence.",
+                "For every new Bilibili task, run `workflow-policy-check` first.",
+                "When Bilibili reports current `active_kernel` authority, start the new task with ordinary `init-run`.",
+                "Existing Bilibili directories remain Legacy",
+                "Cold-start recovery only",
+            ),
+            "youtube-render-pdf": (
+                "YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence.",
+                "For every new YouTube task, run `workflow-policy-check` first.",
+                "When YouTube reports current `active_kernel` authority, start the new task with ordinary `init-run`.",
+                "Existing YouTube directories remain Legacy",
+                "Cold-start recovery only",
+            ),
+            "bilibili-batch-render-pdf": (
+                "Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest.",
+                "For every new batch, run `workflow-policy-check` and `batch-authority-check` first.",
+                "When Batch reports current `active_batch` authority, create the new batch with ordinary `batch-plan`.",
+                "Pre-existing legacy batch directories",
+                "Cold-start recovery only",
+            ),
+            "final-delivery-acceptance": (
+                "For newly generated Bilibili and YouTube work, runtime Platform Kernel authority is resolved with `workflow-policy-check` before `init-run`.",
+                "Existing Legacy directories remain Legacy",
+            ),
+        }
+
+        for name, required in required_by_skill.items():
+            with self.subTest(skill=name):
+                source = REPO_ROOT / ".agents" / "skills" / name / "SKILL.md"
+                source_text = read(source)
+                mirror_text = read(REPO_ROOT / ".claude" / "skills" / name / "SKILL.md")
+                self.assertEqual(source_text, mirror_text)
+                for phrase in required:
+                    self.assertIn(phrase, source_text)
+
+        for name in ("bilibili-render-pdf", "youtube-render-pdf"):
+            with self.subTest(no_executable_cutover_candidate=name):
+                text = read(REPO_ROOT / ".agents" / "skills" / name / "SKILL.md")
+                self.assertNotIn("Cold-start cutover bootstrap", text)
+                self.assertNotIn("cutover-candidate seam", text)
+                self.assertNotIn("init-cutover-candidate", text)
+                self.assertNotIn("platform-kernel-candidate-activate", text)
+
+    def test_global_gate_cutover_contract_and_mirrors_are_synchronized(self) -> None:
+        authoritative = {
+            "final-delivery-acceptance": REPO_ROOT / ".agents/skills/final-delivery-acceptance/SKILL.md",
+            "bilibili-render-pdf": REPO_ROOT / ".agents/skills/bilibili-render-pdf/SKILL.md",
+            "youtube-render-pdf": REPO_ROOT / ".agents/skills/youtube-render-pdf/SKILL.md",
+        }
+        required = (
+            "active_global_gate",
+            "Acceptance Report v2",
+            "acceptance-prepare",
+            "acceptance-patch-commit",
+            "acceptance-materialize",
+            "Acceptance Report v1 is rejected",
+            "synthetic Legacy Run",
+            "fallback",
+            "translation",
+            "dual authority",
+        )
+        for name, source in authoritative.items():
+            with self.subTest(skill=name):
+                source_text = read(source)
+                mirror_text = read(REPO_ROOT / ".claude/skills" / name / "SKILL.md")
+                self.assertEqual(source_text, mirror_text)
+                for phrase in required:
+                    self.assertIn(phrase, source_text)
+
+        for relative in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(instructions=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in required:
+                    self.assertIn(phrase, text)
+                self.assertIn("Bilibili is `active_kernel` for all new tasks", text)
+                self.assertIn("YouTube is `active_kernel` for all new tasks", text)
+                self.assertIn("Batch is `active_batch` for all new batches", text)
+
+        final_context = read(REPO_ROOT / "docs/contexts/final-acceptance/CONTEXT.md")
+        delivery_context = read(REPO_ROOT / "docs/contexts/delivery-quality/CONTEXT.md")
+        decision_map = read(REPO_ROOT / "docs/adr/video-workflow-kernel-2.0-decision-map.md")
+        context_map = read(REPO_ROOT / "CONTEXT-MAP.md")
+        self.assertIn("Status: superseded", final_context)
+        self.assertIn("Status: active_global_gate", delivery_context)
+        self.assertIn("`active_global_gate`", decision_map)
+        self.assertIn("Bilibili is `active_kernel` for all new tasks", decision_map)
+        self.assertIn("YouTube is `active_kernel` for all new tasks", decision_map)
+        self.assertIn("Batch is `active_batch` for all new batches", decision_map)
+        self.assertIn("active_global_gate", context_map)
+
     def test_reviewer_skill_defines_read_only_context_and_outputs(self) -> None:
         text = read(REPO_ROOT / ".agents" / "skills" / "final-delivery-acceptance" / "SKILL.md")
 
         required = [
             "Acceptance Reviewer",
-            "docs/acceptance/acceptance_criteria.v1.json",
+            "Acceptance Report v2",
+            "Delivery Quality policy",
             "review/acceptance/allowed_artifacts_manifest.json",
             "review/acceptance/rendered_pages/",
-            "review/acceptance/delivery_glossary.json",
-            "--include-delivery-glossary",
+            "`authorized_read_set`",
             "review/acceptance/acceptance_report.json",
-            "review/acceptance/acceptance_summary.md",
             "acceptance_report.json is the only machine-readable delivery decision source",
             "read-only",
-            "final delivered artifacts",
+            "Final delivered artifacts",
             "generation notes",
             "writer drafts",
             "chat history",
             "work/",
             "review/pyramid/",
             "review/consistency/",
-            "evaluate every criterion",
-            "one result for every rendered PDF page",
+            "every `criterion_ids` entry",
+            "one `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page",
             "repair brief",
-            "fresh Acceptance Reviewer run",
+            "fresh provider Attempt",
         ]
         for item in required:
             with self.subTest(item=item):
                 self.assertIn(item, text)
+
+    def test_visual_reviewer_policy_uses_only_the_provider_attempt_contract(self) -> None:
+        skills = (
+            ".agents/skills/final-delivery-acceptance/SKILL.md",
+            ".agents/skills/bilibili-render-pdf/SKILL.md",
+            ".agents/skills/youtube-render-pdf/SKILL.md",
+        )
+        required = (
+            "precompile semantic owners",
+            "`writing-quality-reviewer`",
+            "full reader-facing text, formula, and Delivery Glossary semantic review",
+            "provider-created Task Envelope",
+            "`authorized_read_set`",
+            "provider-created Attempt directory",
+            "`declared_write_set`",
+            "`required_output.path`",
+            "one Visual Quality Judgment Patch",
+            "`acceptance-materialize`",
+            "provider materializes",
+        )
+        forbidden = (
+            "run a full final text scan for style criteria",
+            "run a full final formula scan",
+            "`generation_process_used: false`",
+            "`review_context_used.artifacts_read`",
+            "replace every skeleton placeholder",
+            "final-artifacts-only context",
+        )
+        for relative in skills:
+            with self.subTest(relative=relative):
+                text = read(REPO_ROOT / relative)
+                for phrase in required:
+                    self.assertIn(phrase, text)
+                for phrase in forbidden:
+                    self.assertNotIn(phrase, text)
 
     def test_project_instructions_require_acceptance_reviewer_and_repair_separation(self) -> None:
         for relative in ("AGENTS.md", "CLAUDE.md"):
@@ -53,7 +180,7 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 self.assertIn("Independent review agent", text)
                 self.assertIn("Acceptance Reviewer", text)
                 self.assertIn("read-only", text)
-                self.assertIn("final delivered artifacts", text)
+                self.assertIn("exact path-and-SHA read set", text)
                 self.assertIn("repair subagents", text)
 
     def test_render_skills_place_acceptance_after_render_before_delivery(self) -> None:
@@ -77,12 +204,15 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 self.assertLess(acceptance, checklist)
                 self.assertLess(checklist, delivery)
                 required = [
-                    "docs/acceptance/acceptance_criteria.v1.json",
+                    "Acceptance Report v2",
+                    "acceptance-prepare",
+                    "acceptance-patch-commit",
+                    "acceptance-materialize",
                     "review/acceptance/allowed_artifacts_manifest.json",
                     "review/acceptance/rendered_pages/",
                     "review/acceptance/acceptance_report.json",
                     "acceptance_report.json is the only machine-readable",
-                    "missing, failed, malformed, stale, or forbidden-context report blocks final delivery",
+                    "non-v2 report blocks final delivery",
                     "Pyramid Gate and independent content review remain separate",
                     "repair subagents",
                     "session-scoped active target",
@@ -204,11 +334,12 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         ):
             with self.subTest(relative=relative):
                 text = read(REPO_ROOT / relative)
-                self.assertIn("review\\latex\\compile_report.json", text)
-                self.assertIn("compile provenance", text)
                 self.assertIn("compile report cannot replace acceptance_report.json", text)
                 self.assertIn("acceptance_report.json is the only machine-readable delivery decision source", text)
                 self.assertIn("The Stop hook must not launch the Acceptance Reviewer, repair subagents, page rendering, or LaTeX compilation", text)
+
+        final_skill = read(REPO_ROOT / ".agents/skills/final-delivery-acceptance/SKILL.md")
+        self.assertIn("review\\latex\\compile_report.json", final_skill)
 
 
 if __name__ == "__main__":

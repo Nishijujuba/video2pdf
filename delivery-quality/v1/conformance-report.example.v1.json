@@ -1,0 +1,29 @@
+{
+  "schema_name": "delivery-quality-conformance-report",
+  "schema_version": "1.0.0",
+  "report_id": "structural-example",
+  "authority": "implementation_qualification_only",
+  "implementation": {
+    "track": "kernel",
+    "activation_status": "target_only",
+    "adapter_id": "recorded-fixture",
+    "adapter_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "bindings": {
+    "catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "projections_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "corpus_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "semantic_results": [],
+  "mechanical_results": [
+    {"fixture_id": "projection-identity-valid", "entry_point": "delivery-quality-contracts-check", "expected": "pass", "actual": "pass", "exit_code": 0, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true},
+    {"fixture_id": "projection-identity-rewrite", "entry_point": "delivery-quality-contracts-check", "expected": "fail_closed", "actual": "fail_closed", "exit_code": 20, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true},
+    {"fixture_id": "reviewer-ownership-valid", "entry_point": "delivery-quality-contracts-check", "expected": "pass", "actual": "pass", "exit_code": 0, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true},
+    {"fixture_id": "reviewer-ownership-missing", "entry_point": "delivery-quality-contracts-check", "expected": "fail_closed", "actual": "fail_closed", "exit_code": 20, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true},
+    {"fixture_id": "closed-contract-valid", "entry_point": "delivery-quality-contracts-check", "expected": "pass", "actual": "pass", "exit_code": 0, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true},
+    {"fixture_id": "closed-contract-unregistered-violation", "entry_point": "delivery-quality-contracts-check", "expected": "fail_closed", "actual": "fail_closed", "exit_code": 20, "stdout_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conforms": true}
+  ],
+  "failures": ["Structural example does not contain semantic qualification results."],
+  "overall_decision": "fail"
+}

@@ -1,0 +1,31 @@
+{
+  "schema_name": "delivery-quality-language-profiles",
+  "schema_version": "1.0.0",
+  "profile_registry_version": "1.0.0",
+  "profiles": [
+    {
+      "profile_id": "zh-hans",
+      "semantic_sha256": "bdeaaf73b9a7d74c6ae6c6960a2eecf1b5ef764faa7e66e73df010f16f9b4105",
+      "primary_language": "zh-Hans",
+      "permitted_supporting_languages": ["en"],
+      "reader_contract": "Reader-facing explanations are primarily Simplified Chinese.",
+      "terminology_policy": "English source terms remain where evidence, learning value, or the Delivery Glossary requires them."
+    },
+    {
+      "profile_id": "en",
+      "semantic_sha256": "12d59ce450bf6fad9b78add6acd97a3d957dab73ff458576aef67f97be05a00c",
+      "primary_language": "en",
+      "permitted_supporting_languages": [],
+      "reader_contract": "Reader-facing explanations are English.",
+      "terminology_policy": "Domain terms retain their established English form and receive local definitions when first introduced."
+    },
+    {
+      "profile_id": "zh-en-bilingual",
+      "semantic_sha256": "37b5b3a66633967ba0efc2de120ce9791b66f78fe5d514015ba1708716f7eecd",
+      "primary_language": "zh-Hans",
+      "permitted_supporting_languages": ["en"],
+      "reader_contract": "Chinese explanation and source-faithful English examples form one bilingual teaching surface.",
+      "terminology_policy": "English wording remains primary evidence for model language, quotations, collocations, and examiner-style expressions."
+    }
+  ]
+}

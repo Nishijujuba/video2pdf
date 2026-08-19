@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v5/batch-record.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "batch_id",
+    "batch_identity",
+    "output_root",
+    "batch_dir",
+    "control_dir",
+    "batch_stage",
+    "batch_authority_binding",
+    "run_task_start",
+    "item_order",
+    "run_mappings",
+    "projections",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_name": {"const": "batch-record"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "batch_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "batch_identity": {"$ref": "#/$defs/batchIdentity"},
+    "output_root": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "batch_dir": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "control_dir": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "batch_stage": {"enum": ["planned", "running", "completed", "blocked"]},
+    "batch_authority_binding": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/batchAuthorityBinding"}
+      ]
+    },
+    "run_task_start": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "format": "date-time"}
+      ]
+    },
+    "item_order": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/batchItem"}
+    },
+    "run_mappings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/runMapping"}
+    },
+    "projections": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/batchProjection"}
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "batchAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority_path", "authority_sha256", "exit_evidence_sha256", "generation", "publication_commit"],
+      "properties": {
+        "authority_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "authority_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "exit_evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "generation": {"type": "integer", "minimum": 1},
+        "publication_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "batchIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "canonical_platform", "batch_source_identity", "source_url", "original_title", "task_start", "request_id"],
+      "properties": {
+        "kind": {"enum": ["bilibili_playlist", "bilibili_collection", "bilibili_multipart", "url_set"]},
+        "canonical_platform": {"enum": ["bilibili", "youtube"]},
+        "batch_source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "original_title": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "task_start": {"type": "string", "format": "date-time"},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "batchItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_index", "part_id", "canonical_item_id", "canonical_url", "title", "selected"],
+      "properties": {
+        "item_index": {"type": "integer", "minimum": 1},
+        "part_id": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]},
+        "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "canonical_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "title": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "selected": {"type": "boolean"}
+      }
+    },
+    "runMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_index", "run_id", "request_id"],
+      "properties": {
+        "item_index": {"type": "integer", "minimum": 1},
+        "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "batchProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_index", "run_id", "projection_revision", "projection_sha256", "item_projection"],
+      "properties": {
+        "item_index": {"type": "integer", "minimum": 1},
+        "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "projection_revision": {"type": "integer", "minimum": 1},
+        "projection_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "item_projection": {"$ref": "https://video2pdf.local/schemas/video-workflow/v5/batch-item-projection.v1.schema.json"}
+      }
+    }
+  }
+}

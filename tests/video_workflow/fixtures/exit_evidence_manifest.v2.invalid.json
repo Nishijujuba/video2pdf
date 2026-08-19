@@ -1,0 +1,7 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "slice": {"number": 0, "name": "baseline-protection"},
+  "overall_decision": "pass"
+}

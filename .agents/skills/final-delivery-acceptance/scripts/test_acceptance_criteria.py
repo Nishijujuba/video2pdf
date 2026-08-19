@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from validate_acceptance_criteria import ValidationError, validate_acceptance_criteria
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 def default_criteria() -> dict[str, object]:
@@ -18,9 +19,10 @@ def default_criteria() -> dict[str, object]:
 
 class AcceptanceCriteriaValidationTests(unittest.TestCase):
     def setUp(self) -> None:
-        repo_root = Path(__file__).resolve().parents[4]
-        self.run_dir = repo_root / "待删除" / "final-delivery-acceptance-test-runs"
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir = new_fixture_dir(
+            "acceptance-criteria",
+            expected_suite="skill-tests",
+        )
 
     def write_json(self, payload: dict[str, object], name: str) -> Path:
         path = self.run_dir / name

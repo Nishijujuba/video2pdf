@@ -1,6 +1,6 @@
 # Final Acceptance Context
 
-Status: active.
+Status: superseded at the Global Gate Cutover by the Delivery Quality Context and Acceptance Report v2. This file is historical vocabulary and grants no active delivery authority.
 
 This context owns final-artifact quality standards, reviewer partitions, semantic judgments, and the authoritative Acceptance Report. Video Workflow owns evidence production, Judgment Patch mechanics, compilation, delivery targets, Delivery Guard checks, lifecycle state, and actions taken from that report.
 
@@ -44,6 +44,18 @@ The versioned contract that assigns every Acceptance Criterion to exactly one Pr
 
 A read-only semantic actor that evaluates assigned criteria within the Acceptance Review Context and writes one workflow-owned Judgment Patch. It cannot modify final artifacts or publish the Acceptance Report.
 
+## Semantic Decision Independence
+
+The rule that a role which authored, integrated, or repaired the current Artifact Generation cannot serve as the Primary Semantic Decision Owner for a blocking quality rule on that generation. Semantic ownership requires a separate read-only actor. A finding from another actor may add a blocking failure and cannot grant a pass or transfer pass authority.
+
+## Consistency Role
+
+A guidance and defect-discovery role that checks terminology, notation, cross-chapter transitions, cross-references, and duplicate definitions before independent semantic evaluation. It routes findings to the earliest valid repair stage and has no pass-or-fail authority. Each blocking finding remains governed by its assigned Primary Semantic Decision Owner.
+
+## Writing Quality Reviewer
+
+An independent read-only semantic actor that owns proposition-level clarity, completeness, logical integrity, terminology, and rule conformance of reader-facing text. Its semantic boundary includes causal, conditional, subject-predicate, referential, and argumentative connections represented by the current Artifact Generation.
+
 ## Text Acceptance Reviewer
 
 The Acceptance Dimension Adapter that evaluates final-text quality criteria from the allowed text artifacts.
@@ -51,6 +63,10 @@ The Acceptance Dimension Adapter that evaluates final-text quality criteria from
 ## Visual Acceptance Reviewer
 
 The Acceptance Dimension Adapter that evaluates final rendered-page quality criteria through individual inspection of every in-scope page.
+
+## Visual Quality Reviewer
+
+An independent read-only postcompile semantic actor that owns rendered-quality rules requiring final-page evidence, including legibility, clipping, overlap, pagination, whitespace, typography, figure and table integrity, caption association, and rendered disclosure placement. It inspects every in-scope rendered page individually. A semantic problem exposed by rendering enters the owning precompile boundary through an add-only Cross-Phase Finding.
 
 ## Cross-Dimension Finding
 

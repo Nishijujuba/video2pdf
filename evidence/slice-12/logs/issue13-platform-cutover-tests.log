@@ -1,0 +1,2 @@
+EVIDENCE_IMPLEMENTATION_COMMIT: 4ccc7eb7ac629bfa8507316f22c367ec17d0f755
+{"actual_exit_code":0,"expected_exit_code":0,"qualification_run_id":"8bb4f511-ad67-482b-8018-87a9c9b9a887","schema_name":"issue13-qualified-command-summary","schema_version":"1.0.0","test_id":"issue13-platform-cutover-tests"}

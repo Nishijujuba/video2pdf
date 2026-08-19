@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/source-manifest.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "run_id",
+    "source_epoch",
+    "acquisition_id",
+    "mode",
+    "adapter",
+    "canonical_platform",
+    "canonical_item_id",
+    "source_identity_scheme",
+    "source_identity",
+    "source_version_scheme",
+    "source_version",
+    "original_title",
+    "policy_binding",
+    "provenance",
+    "selection",
+    "technical_validation",
+    "source_version_basis",
+    "artifacts",
+    "known_gaps",
+    "published_at",
+    "package_status"
+  ],
+  "properties": {
+    "schema_name": {"const": "source-manifest"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "source_epoch": {"type": "integer", "minimum": 1},
+    "acquisition_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "mode": {"enum": ["fresh_download", "verified_import"]},
+    "adapter": {"$ref": "#/$defs/adapter"},
+    "canonical_platform": {"enum": ["bilibili", "youtube"]},
+    "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_identity_scheme": {"const": "canonical-platform-item-v1"},
+    "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "source_version_scheme": {"const": "source-content-v1"},
+    "source_version": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "original_title": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "policy_binding": {"$ref": "#/$defs/policyBinding"},
+    "provenance": {
+      "oneOf": [
+        {"$ref": "#/$defs/freshProvenance"},
+        {"$ref": "#/$defs/importProvenance"}
+      ]
+    },
+    "selection": {"$ref": "#/$defs/selection"},
+    "technical_validation": {"$ref": "#/$defs/technicalValidation"},
+    "source_version_basis": {"$ref": "#/$defs/sourceVersionBasis"},
+    "artifacts": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "known_gaps": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/knownGap"}
+    },
+    "published_at": {"type": "string", "format": "date-time"},
+    "package_status": {"const": "validated"}
+  },
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "contract_version"],
+      "properties": {
+        "id": {"enum": ["bilibili", "youtube"]},
+        "contract_version": {"const": "1.0.0"}
+      }
+    },
+    "policyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "version", "sha256"],
+      "properties": {
+        "policy_id": {"const": "source-acquisition-policy"},
+        "version": {"const": "1.0.0"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "judgmentPatchBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "attempt_id", "sha256"],
+      "properties": {
+        "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "whisperGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "sha256"],
+      "properties": {
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "freshProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "candidate_inventory_sha256",
+        "decision_skeleton_sha256",
+        "judgment_patch",
+        "whisper_generation",
+        "authentication_classification"
+      ],
+      "properties": {
+        "kind": {"const": "fresh_download"},
+        "candidate_inventory_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "decision_skeleton_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "judgment_patch": {"$ref": "#/$defs/judgmentPatchBinding"},
+        "whisper_generation": {
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/whisperGeneration"}
+          ]
+        },
+        "authentication_classification": {"enum": ["anonymous", "cookie_accepted"]}
+      }
+    },
+    "importProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "candidate_inventory_sha256",
+        "prior_run_id",
+        "prior_source_manifest_sha256",
+        "prior_source_identity",
+        "prior_source_version",
+        "import_validation_sha256",
+        "authentication_classification"
+      ],
+      "properties": {
+        "kind": {"const": "verified_import"},
+        "candidate_inventory_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "prior_run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "prior_source_manifest_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "prior_source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "prior_source_version": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "import_validation_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "authentication_classification": {"const": "not_applicable"}
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected_subtitle_artifact_id", "whisper_status"],
+      "properties": {
+        "selected_subtitle_artifact_id": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"}
+          ]
+        },
+        "whisper_status": {"enum": ["not_required", "used", "unavailable"]}
+      }
+    },
+    "technicalValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration_seconds",
+        "video_stream_count",
+        "audio_stream_count",
+        "subtitle_languages",
+        "status"
+      ],
+      "properties": {
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "video_stream_count": {"type": "integer", "minimum": 1},
+        "audio_stream_count": {"type": "integer", "minimum": 1},
+        "subtitle_languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "status": {"const": "pass"}
+      }
+    },
+    "technicalProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "duration_seconds", "stream_types", "codec_names"],
+      "properties": {
+        "status": {"const": "pass"},
+        "duration_seconds": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "number", "exclusiveMinimum": 0}
+          ]
+        },
+        "stream_types": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["metadata", "image", "video", "audio", "subtitle", "transcript"]}
+        },
+        "codec_names": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_id",
+        "role",
+        "path",
+        "media_type",
+        "sha256",
+        "size_bytes",
+        "origin",
+        "language",
+        "subtitle_kind",
+        "technical_probe"
+      ],
+      "properties": {
+        "logical_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+        "role": {"enum": ["metadata", "cover", "video", "audio", "subtitle", "transcript"]},
+        "path": {"type": "string", "pattern": "^source/"},
+        "media_type": {"type": "string", "minLength": 1, "maxLength": 256},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "origin": {"enum": ["platform_download", "verified_import", "whisper_transcription"]},
+        "language": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "minLength": 1, "maxLength": 64}
+          ]
+        },
+        "subtitle_kind": {
+          "anyOf": [
+            {"type": "null"},
+            {"enum": ["manual", "automatic", "transcript"]}
+          ]
+        },
+        "technical_probe": {"$ref": "#/$defs/technicalProbe"}
+      }
+    },
+    "versionArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_id",
+        "role",
+        "media_type",
+        "sha256",
+        "size_bytes",
+        "language",
+        "subtitle_kind",
+        "technical_probe"
+      ],
+      "properties": {
+        "logical_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+        "role": {"enum": ["metadata", "cover", "video", "audio", "subtitle", "transcript"]},
+        "media_type": {"type": "string", "minLength": 1, "maxLength": 256},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "language": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "minLength": 1, "maxLength": 64}
+          ]
+        },
+        "subtitle_kind": {
+          "anyOf": [
+            {"type": "null"},
+            {"enum": ["manual", "automatic", "transcript"]}
+          ]
+        },
+        "technical_probe": {"$ref": "#/$defs/technicalProbe"}
+      }
+    },
+    "sourceVersionBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalization", "source_identity", "artifacts"],
+      "properties": {
+        "canonicalization": {"const": "video2pdf-canonical-json-v1"},
+        "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "artifacts": {
+          "type": "array",
+          "minItems": 3,
+          "items": {"$ref": "#/$defs/versionArtifact"}
+        }
+      }
+    },
+    "knownGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "description", "affected_ranges"],
+      "properties": {
+        "code": {
+          "enum": [
+            "metadata_incomplete",
+            "missing_audio",
+            "missing_cover",
+            "missing_subtitles",
+            "other",
+            "partial_subtitles",
+            "subtitle_quality"
+          ]
+        },
+        "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "affected_ranges": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/timeRange"}
+        }
+      }
+    },
+    "timeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_seconds", "end_seconds"],
+      "properties": {
+        "start_seconds": {"type": "number", "minimum": 0},
+        "end_seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

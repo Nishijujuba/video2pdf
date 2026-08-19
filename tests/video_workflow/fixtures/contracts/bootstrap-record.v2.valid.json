@@ -1,0 +1,19 @@
+{
+  "schema_name":"bootstrap-record",
+  "schema_version":"2.0.0",
+  "kernel_version":"2.0.0",
+  "run_id":"00000000000000000000000000000000",
+  "request_id":"issue-7-recorded-bilibili",
+  "task_start":"2026-07-18T09:00:00+08:00",
+  "requested_source_acquisition_mode":"fresh_download",
+  "adapter":{"id":"bilibili","contract_version":"1.0.0","canonical_platform":"bilibili"},
+  "source_request":{"kind":"fresh_download","canonical_locator":"https://www.bilibili.com/video/BV1Issue7001"},
+  "canonical_platform":"bilibili",
+  "canonical_item_id":"BV1Issue7001",
+  "source_identity_scheme":"canonical-platform-item-v1",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "original_title":"Issue 7 recorded source",
+  "availability":{"duration_seconds":120,"chapter_count":0,"subtitle_languages":["en"],"media_format_classes":["combined"]},
+  "probe_execution":{"provider_kind":"recorded_fixture","command_argv_redacted":["recorded-bilibili","--cookies","<localized-cookie-file>","--source","https://www.bilibili.com/video/BV1Issue7001"],"authentication_classification":"cookie_accepted","normalized_result_sha256":"1111111111111111111111111111111111111111111111111111111111111111","resource_admission":null},
+  "status":"probe_complete"
+}

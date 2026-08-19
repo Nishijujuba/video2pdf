@@ -1,0 +1,759 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "title": "Video Workflow Exit Evidence Manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "kind",
+    "fingerprint_algorithm",
+    "slice",
+    "slice_base_commit",
+    "implementation_commit",
+    "evidence_paths",
+    "generated_at",
+    "activation_scope",
+    "commands",
+    "expected_checkpoints",
+    "fixtures",
+    "results",
+    "artifact_fingerprints",
+    "unresolved_exceptions",
+    "overall_decision"
+  ],
+  "properties": {
+    "$schema": {"const": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json"},
+    "schema_version": {"const": 2},
+    "kind": {"const": "video-workflow-exit-evidence"},
+    "fingerprint_algorithm": {"const": "sha256-raw-v1"},
+    "slice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "name"],
+      "properties": {
+        "number": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]},
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"}
+      }
+    },
+    "slice_base_commit": {"$ref": "#/$defs/gitCommit"},
+    "implementation_commit": {"$ref": "#/$defs/gitCommit"},
+    "evidence_paths": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/projectPath"}
+    },
+    "generated_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "activation_scope": {
+      "oneOf": [
+        {"$ref": "#/$defs/inactiveActivationScope"},
+        {"$ref": "#/$defs/globalGateActivationScope"},
+        {"$ref": "#/$defs/bilibiliPlatformActivationScope"},
+        {"$ref": "#/$defs/youtubePlatformActivationScope"},
+        {"$ref": "#/$defs/batchActivationScope"}
+      ]
+    },
+    "platform_statuses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bilibili", "youtube"],
+      "properties": {
+        "bilibili": {"enum": ["active_kernel", "active_legacy"]},
+        "youtube": {"enum": ["active_kernel", "active_legacy"]}
+      }
+    },
+    "guarded_delivery_evidence": {"$ref": "#/$defs/guardedDeliveryEvidence"},
+    "batch_evidence": {"$ref": "#/$defs/batchEvidence"},
+    "atomic_members": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 15,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$"}
+    },
+    "atomic_member_status": {
+      "type": "object",
+      "minProperties": 12,
+      "maxProperties": 15,
+      "additionalProperties": {"enum": ["active", "failed"]}
+    },
+    "mirror_checks": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_path", "mirror_path", "source_sha256", "mirror_sha256", "status"],
+        "properties": {
+          "source_path": {"type": "string", "minLength": 1},
+          "mirror_path": {"type": "string", "minLength": 1},
+          "source_sha256": {"$ref": "#/$defs/sha256"},
+          "mirror_sha256": {"$ref": "#/$defs/sha256"},
+          "status": {"const": "equal"}
+        }
+      }
+    },
+    "policy_status": {"enum": ["active_global_gate", "target_only"]},
+    "commands": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/commandEvidence"}
+    },
+    "expected_checkpoints": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["current", "stale", "blocked", "preserved", "retired"]}
+        }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["positive", "negative", "recovery"],
+      "properties": {
+        "positive": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "negative": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "quota": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "fencing": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "fairness": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "restart": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "recovery": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "result_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/resultBinding"}
+    },
+    "fault_points": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]{2,119}$"}
+    },
+    "platform_smokes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/platformSmokeEvidence"},
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["platform"],
+            "properties": {"platform": {"const": "bilibili"}}
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["platform"],
+            "properties": {"platform": {"const": "youtube"}}
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "artifact_fingerprints": {
+      "type": "array",
+      "minItems": 0,
+      "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+    },
+    "implementation_tombstones": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/implementationTombstone"}
+    },
+    "unresolved_exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["blocking", "code", "message"],
+        "properties": {
+          "blocking": {"type": "boolean"},
+          "code": {"type": "string", "minLength": 1},
+          "message": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "overall_decision": {"enum": ["pass", "fail"]}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 1},
+            "name": {"const": "offline-source-ready-tracer"}
+          }
+        },
+        "slice_base_commit": {"const": "96089b99c9ae63fff61107e1920fc3481ffc0802"},
+        "result_bindings": false,
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 2},
+            "name": {"const": "fenced-task-execution-and-promotion"}
+          }
+        },
+        "slice_base_commit": {"const": "904f46409b87aca96aeecf5cb0be4855c2cfdafa"},
+        "results": {"required": ["fencing"]},
+        "result_bindings": false,
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings", "fault_points"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 3},
+            "name": {"const": "cross-run-resource-admission"}
+          }
+        },
+        "slice_base_commit": {"const": "aaaaeac5747fddc0915a59df34de47e6e8cfec48"},
+        "results": {"required": ["quota", "fencing", "fairness", "restart", "recovery"]},
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings", "fault_points", "platform_smokes"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 4},
+            "name": {"const": "production-source-acquisition"}
+          }
+        },
+        "slice_base_commit": {"const": "654362017fa974946fb252af5311868bb47efcf0"},
+        "results": {"required": ["fencing", "restart", "recovery"]}
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 5},
+            "name": {"const": "single-section-production"}
+          }
+        },
+        "slice_base_commit": {"const": "7b33a2dcf8b19608943f12efd814907a69c35e8f"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 6}, "name": {"const": "multi-section-production"}}},
+        "slice_base_commit": {"const": "6f8241ddb4bd725d3b584dd1c403ed59dda32219"},
+        "results": {
+          "required": ["fencing", "restart", "recovery"],
+          "properties": {"positive": {"contains": {"const": "deterministic_integration"}}}
+        },
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 7},
+            "name": {"const": "delivery-quality-contracts-and-conformance"}
+          }
+        },
+        "slice_base_commit": {"const": "68189e7744e22c9ce78b3ee1a58def69d09e711a"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {
+          "properties": {
+            "number": {"const": 8},
+            "name": {"const": "precompile-quality-and-text-seal"}
+          }
+        },
+        "slice_base_commit": {"const": "bb18eb2112bd4d9f3403d46230dbee8131389eaf"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 9}, "name": {"const": "final-compile-and-rendered-text-reconciliation"}}},
+        "slice_base_commit": {"const": "abcf95744110070a435baebb7900393f6ffb75fd"},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 10}, "name": {"const": "acceptance-report-v2-and-bounded-repair"}}},
+        "slice_base_commit": {"const": "3fa54d09ab39349dd05bf225fefbc408046d4015"},
+        "results": {"required": ["fencing", "recovery"]},
+        "fault_points": false,
+        "platform_smokes": false
+      }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "mirror_checks", "policy_status"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 11}, "name": {"const": "global-acceptance-v2-gate"}}},
+        "slice_base_commit": {"const": "64f3fb1638f601b533cb0ee4dec908203c1bef71"},
+        "activation_scope": {"$ref": "#/$defs/globalGateActivationScope"},
+        "atomic_members": {"minItems": 12, "maxItems": 12},
+        "atomic_member_status": {"minProperties": 12, "maxProperties": 12},
+        "result_bindings": {
+          "minItems": 37,
+          "maxItems": 37,
+          "items": {"$ref": "#/$defs/globalGateResultBinding"}
+        },
+        "commands": {
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/commandEvidence"},
+              {"required": ["persisted_run"]}
+            ]
+          }
+        },
+        "results": {"required": ["fencing", "recovery"]},
+        "fault_points": false,
+        "platform_smokes": false,
+        "batch_evidence": false
+      }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "platform_statuses", "guarded_delivery_evidence"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 12}, "name": {"const": "bilibili-platform-kernel-cutover"}}},
+        "slice_base_commit": {"const": "2e80c5d1d83bb40cf7ef47a9cc01685728cd615c"},
+        "activation_scope": {"$ref": "#/$defs/bilibiliPlatformActivationScope"},
+        "platform_statuses": {
+          "const": {"bilibili": "active_kernel", "youtube": "active_legacy"}
+        },
+        "atomic_members": {"minItems": 14, "maxItems": 14},
+        "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
+        "fault_points": false,
+        "platform_smokes": false,
+        "mirror_checks": false,
+        "policy_status": false
+      }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "platform_statuses", "guarded_delivery_evidence"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 13}, "name": {"const": "youtube-platform-kernel-cutover"}}},
+        "slice_base_commit": {"const": "f20b9caff0aa0af1a83f89877ab0c7c0292308d6"},
+        "activation_scope": {"$ref": "#/$defs/youtubePlatformActivationScope"},
+        "platform_statuses": {
+          "const": {"bilibili": "active_kernel", "youtube": "active_kernel"}
+        },
+        "atomic_members": {"minItems": 14, "maxItems": 14},
+        "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
+        "fault_points": false,
+        "platform_smokes": false,
+        "mirror_checks": false,
+        "policy_status": false,
+        "batch_evidence": false
+      }
+    },
+    {
+      "required": ["result_bindings", "atomic_members", "atomic_member_status", "mirror_checks", "policy_status", "batch_evidence"],
+      "properties": {
+        "slice": {"properties": {"number": {"const": 14}, "name": {"const": "batch-projection-cutover"}}},
+        "slice_base_commit": {"const": "bb50b1ce8a0f91961d9c7077e8e130ac8eaa955f"},
+        "activation_scope": {"$ref": "#/$defs/batchActivationScope"},
+        "atomic_members": {"minItems": 15, "maxItems": 15},
+        "atomic_member_status": {"minProperties": 15, "maxProperties": 15},
+        "commands": {
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/commandEvidence"},
+              {"required": ["persisted_run"]}
+            ]
+          }
+        },
+        "results": {"required": ["positive", "negative", "recovery", "fencing", "fairness"]},
+        "fault_points": false,
+        "platform_smokes": false,
+        "guarded_delivery_evidence": false
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"slice": {"properties": {"number": {"maximum": 10}}}}
+      },
+      "then": {
+        "properties": {"activation_scope": {"$ref": "#/$defs/inactiveActivationScope"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"slice": {"properties": {"number": {"maximum": 11}}}}
+      },
+      "then": {
+        "properties": {"platform_statuses": false}
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "inactiveActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority"],
+      "properties": {
+        "kind": {"const": "none"},
+        "runtime_authority_change": {"const": false},
+        "components_activated": {"type": "array", "maxItems": 0},
+        "legacy_track_authority": {"const": "preserved"}
+      }
+    },
+    "globalGateActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "legacy_track_authority", "platform_kernel_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "active_global_gate"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {
+          "const": ["acceptance_report_v2", "delivery_quality_context"]
+        },
+        "legacy_track_authority": {"const": "acceptance_report_v2"},
+        "platform_kernel_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"const": "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"}
+      }
+    },
+    "bilibiliPlatformActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "platform", "global_gate_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "platform_kernel_cutover"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {"const": ["bilibili_platform_kernel"]},
+        "platform": {"const": "bilibili"},
+        "global_gate_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"const": "927022a0bcf5f626f4b9275928dce9de201775523ab1bf4c0c9b6803f0012461"}
+      }
+    },
+    "youtubePlatformActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "platform", "global_gate_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "platform_kernel_cutover"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {"const": ["youtube_platform_kernel"]},
+        "platform": {"const": "youtube"},
+        "global_gate_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"const": "ee5d74bbb55b1854d495af62be1a3d784021b636f58dce50f55039eef8a2df31"}
+      }
+    },
+    "batchActivationScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runtime_authority_change", "components_activated", "global_gate_authority", "platform_kernel_authority", "qualification_contract_sha256"],
+      "properties": {
+        "kind": {"const": "batch_cutover"},
+        "runtime_authority_change": {"const": true},
+        "components_activated": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "global_gate_authority": {"const": "unchanged"},
+        "platform_kernel_authority": {"const": "unchanged"},
+        "qualification_contract_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "projectPath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "guardedDeliveryEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collection", "run_id", "canonical_platform", "delivery_stage", "artifacts", "qualification_run"],
+      "properties": {
+        "collection": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "canonical_platform": {"enum": ["bilibili", "youtube"]},
+        "delivery_stage": {"const": "delivered"},
+        "artifacts": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "items": {"$ref": "#/$defs/fingerprintedArtifact"}
+        },
+        "qualification_run": {"$ref": "#/$defs/persistedRunEvidence"}
+      }
+    },
+    "batchEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection",
+        "batch_record_contract_sha256",
+        "batch_item_projection_contract_sha256",
+        "batch_record",
+        "projections",
+        "batch_guarded_delivered_count",
+        "negative_evidence",
+        "fairness_group_id"
+      ],
+      "properties": {
+        "collection": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "batch_record_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "batch_item_projection_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "batch_record": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "projections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["item_index", "run_id", "delivery_stage", "guarded_delivered", "artifact"],
+            "properties": {
+              "item_index": {"type": "integer", "minimum": 1},
+              "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "delivery_stage": {"enum": ["generating", "ready_for_delivery", "accepted", "delivered", "blocked"]},
+              "guarded_delivered": {"type": "boolean"},
+              "artifact": {"$ref": "#/$defs/fingerprintedArtifact"}
+            }
+          }
+        },
+        "batch_guarded_delivered_count": {"type": "integer", "minimum": 0},
+        "negative_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact", "duplicate_run_rejected", "pdf_existence_success_rejected", "per_video_mutation_rejected", "fairness_group_is_batch_id", "auth_breaker_delegated_to_resource_admission"],
+          "properties": {
+            "artifact": {"$ref": "#/$defs/fingerprintedArtifact"},
+            "duplicate_run_rejected": {"type": "boolean"},
+            "pdf_existence_success_rejected": {"type": "boolean"},
+            "per_video_mutation_rejected": {"type": "boolean"},
+            "fairness_group_is_batch_id": {"type": "boolean"},
+            "auth_breaker_delegated_to_resource_admission": {"type": "boolean"}
+          }
+        },
+        "fairness_group_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "fingerprintedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/projectPath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "implementationTombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "base_sha256", "change", "target_path"],
+      "properties": {
+        "role": {"const": "implementation_tombstone"},
+        "path": {"$ref": "#/$defs/projectPath"},
+        "base_sha256": {"$ref": "#/$defs/sha256"},
+        "change": {"enum": ["deleted", "renamed"]},
+        "target_path": {
+          "oneOf": [
+            {"$ref": "#/$defs/projectPath"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"change": {"const": "deleted"}}},
+          "then": {"properties": {"target_path": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"change": {"const": "renamed"}}},
+          "then": {"properties": {"target_path": {"$ref": "#/$defs/projectPath"}}}
+        }
+      ]
+    },
+    "commandEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_id", "command", "expected_exit_code", "actual_exit_code", "log", "conforms"],
+      "properties": {
+        "test_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "expected_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+        "actual_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+        "log": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "persisted_run": {"$ref": "#/$defs/persistedRunEvidence"},
+        "source_log_sha256": {"$ref": "#/$defs/sha256"},
+        "published_log_sha256": {"$ref": "#/$defs/sha256"},
+        "conforms": {"type": "boolean"}
+      }
+    },
+    "persistedRunEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "command_record", "terminal_status", "exit_code"],
+      "properties": {
+        "run_id": {"type": "string", "format": "uuid"},
+        "command_record": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "terminal_status": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "exit_code": {"$ref": "#/$defs/fingerprintedArtifact"},
+        "executable_sha256": {"$ref": "#/$defs/sha256"},
+        "python_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[a-zA-Z0-9._+-]*)$"
+        }
+      }
+    },
+    "resultBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result_id", "result_kind", "command_id", "test_target"],
+      "properties": {
+        "result_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,119}$"},
+        "result_kind": {"enum": ["positive", "negative", "quota", "fencing", "fairness", "restart", "recovery"]},
+        "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "test_target": {"type": "string", "pattern": "^(?:tests\\.video_workflow\\.[A-Za-z0-9_.]+|test_delivery_guard\\.py)$"},
+        "expected_first_failing_gate": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,119}$"},
+        "expected_error_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,159}$"}
+      }
+    },
+    "globalGateResultBinding": {
+      "allOf": [
+        {"$ref": "#/$defs/resultBinding"},
+        {
+          "if": {"properties": {"result_kind": {"const": "negative"}}, "required": ["result_kind"]},
+          "then": {"required": ["expected_first_failing_gate", "expected_error_code"]},
+          "else": {
+            "properties": {
+              "expected_first_failing_gate": false,
+              "expected_error_code": false
+            }
+          }
+        }
+      ]
+    },
+    "platformSmokeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "adapter_id",
+        "adapter_contract_version",
+        "provider_kind",
+        "run_id",
+        "command_id",
+        "command_argv_redacted",
+        "authentication_classification",
+        "tool_versions",
+        "target_checkpoint",
+        "source_manifest",
+        "sanitized_log",
+        "runtime_policy_sha256",
+        "recorded_at"
+      ],
+      "properties": {
+        "platform": {"enum": ["bilibili", "youtube"]},
+        "adapter_id": {"enum": ["bilibili", "youtube"]},
+        "adapter_contract_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "provider_kind": {"const": "live"},
+        "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"},
+        "command_argv_redacted": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "authentication_classification": {
+          "enum": [
+            "not_applicable",
+            "anonymous",
+            "cookie_accepted",
+            "cookie_missing",
+            "cookie_unreadable",
+            "cookie_rejected",
+            "cookie_expired"
+          ]
+        },
+        "tool_versions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "target_checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "status", "evidence_sha256"],
+          "properties": {
+            "name": {"const": "source_ready"},
+            "status": {"const": "current"},
+            "evidence_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "source_manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "canonical_platform", "canonical_item_id", "source_identity", "source_version"],
+          "properties": {
+            "path": {"$ref": "#/$defs/projectPath"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "canonical_platform": {"enum": ["bilibili", "youtube"]},
+            "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "source_identity": {"$ref": "#/$defs/sha256"},
+            "source_version": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "sanitized_log": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "no_secret_scan"],
+          "properties": {
+            "path": {"$ref": "#/$defs/projectPath"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "no_secret_scan": {"const": "pass"}
+          }
+        },
+        "runtime_policy_sha256": {"$ref": "#/$defs/sha256"},
+        "recorded_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

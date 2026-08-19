@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+
+class KernelError(RuntimeError):
+    """Base class for classified, fail-closed Kernel errors."""
+
+    classification = "kernel_error"
+    exit_code = 70
+
+    def __init__(self, message: str, *, data: dict | None = None) -> None:
+        super().__init__(message)
+        self.data = data or {}
+
+
+class ContractError(KernelError):
+    classification = "contract_invalid"
+    exit_code = 20
+
+
+class DeliveryQualityConformanceFailed(KernelError):
+    classification = "delivery_quality_conformance_failed"
+    exit_code = 30
+
+
+class TextEquivalenceRejected(KernelError):
+    classification = "text_equivalence_rejected"
+    exit_code = 30
+
+
+class RenderedTextReconciliationFailed(KernelError):
+    classification = "rendered_text_reconciliation_failed"
+    exit_code = 30
+
+
+class RenderedTextReconciliationContractGap(ContractError):
+    classification = "rendered_text_reconciliation_contract_gap"
+
+
+class PrecompileFault(KernelError):
+    classification = "injected_precompile_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected precompile quality fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class AcceptanceV2Rejected(KernelError):
+    classification = "acceptance_v2_rejected"
+    exit_code = 30
+
+
+class AcceptanceV2Fault(KernelError):
+    classification = "injected_acceptance_v2_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Acceptance v2 fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class GlobalGateFault(KernelError):
+    classification = "injected_global_gate_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Global Gate fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class PlatformKernelFault(KernelError):
+    classification = "injected_platform_kernel_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Platform Kernel fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class DeliveryLifecycleFault(KernelError):
+    classification = "injected_delivery_lifecycle_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Delivery Lifecycle fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+
+
+class UnknownContractVersion(ContractError):
+    classification = "unknown_contract_version"
+
+
+class UnresolvedSchemaReference(ContractError):
+    classification = "unresolved_schema_reference"
+
+
+class KernelConflict(KernelError):
+    classification = "identity_or_path_conflict"
+    exit_code = 30
+
+
+class SupersededProductionAttempt(KernelConflict, ContractError):
+    """A stale Attempt is both contract-invalid and identity-conflicting."""
+
+
+class PathBudgetError(KernelError):
+    classification = "path_budget_exceeded"
+    exit_code = 30
+
+
+class CapabilityForbidden(KernelError):
+    classification = "capability_forbidden"
+    exit_code = 30
+
+
+class ArtifactDrift(KernelError):
+    classification = "artifact_drift"
+    exit_code = 40
+
+
+class CompileDependencyGap(KernelError):
+    classification = "compile_dependency_gap"
+    exit_code = 40
+
+
+class ProductionFault(KernelError):
+    classification = "injected_production_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Content Production fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
+class FinalEvidenceFault(KernelError):
+    classification = "injected_final_evidence_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Final Evidence fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
+class ControlStoreUnavailable(KernelError):
+    classification = "control_store_unavailable"
+    exit_code = 50
+
+
+class ResourceAdmissionBlocked(KernelError):
+    classification = "resource_admission_blocked"
+    exit_code = 30
+
+
+class ResourceAdmissionFault(KernelError):
+    classification = "injected_resource_admission_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Resource Admission fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
+class InitializationFault(KernelError):
+    classification = "injected_initialization_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected initialization fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
+class TaskFault(KernelError):
+    classification = "injected_task_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Task lifecycle fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
+class CliUsageError(KernelError):
+    classification = "usage_error"
+    exit_code = 2

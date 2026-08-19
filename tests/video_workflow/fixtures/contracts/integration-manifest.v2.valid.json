@@ -1,0 +1,11 @@
+{
+  "schema_name": "integration-manifest",
+  "schema_version": "2.0.0",
+  "kernel_version": "2.0.0",
+  "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "main": {"logical_id": "integrated_main", "path": "work/integration/main.tex", "generation": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 10, "producer": "kernel:main-integration"},
+  "sections": [{"logical_id": "integrated_section_01", "path": "work/integration/section_01.tex", "generation": 1, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "size": 20, "producer": "kernel:section-integration"}],
+  "figures": [{"logical_id": "figure_asset_figure_01", "path": "figures/figure_01.png", "generation": 1, "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size": 30, "producer": "task:fixture"}],
+  "terminology": [{"term": "Figure Slot", "definition": "A stable intended figure placement."}],
+  "source_binding": {"logical_id": "source_manifest", "generation": 1, "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+}

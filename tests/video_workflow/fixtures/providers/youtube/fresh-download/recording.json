@@ -1,0 +1,67 @@
+{
+  "$schema": "https://video2pdf.local/schemas/video-workflow/v1/recorded-provider-package.v1.schema.json",
+  "schema_name": "recorded-provider-package",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "recording_id": "youtube-fresh-download-v1",
+  "canonical_platform": "youtube",
+  "adapter": {"id": "youtube-yt-dlp.v1", "contract_version": "1.0.0"},
+  "commands": [
+    {
+      "operation": "subtitle_list",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--skip-download", "--list-subs", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/subtitle-list.txt", "sha256": "ed29605aab32f431c549eebd10c5dc3de524ef07923e2253a6d3ebc6820169b4"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    },
+    {
+      "operation": "metadata_probe",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--skip-download", "--dump-single-json", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/metadata.json", "sha256": "0e4269ddc6cab08e31d22f1c46e2bcddd9f577d44e7c81abf8cf073194bd1bf1"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    },
+    {
+      "operation": "subtitle_manual",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--skip-download", "--write-subs", "--sub-langs", "en", "--sub-format", "srt/vtt/best", "--convert-subs", "srt", "--paths", "home:.", "--output", "candidate.%(language)s.%(ext)s", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "candidate.en.srt", "fixture": "outputs/subtitle.manual.en.srt", "sha256": "f48b675e6fd77f0e47b2521fa7601910aa3727c3d0fa92c4e4a04a0573010581"}]
+    },
+    {
+      "operation": "subtitle_automatic",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--skip-download", "--write-auto-subs", "--sub-langs", "en-orig", "--sub-format", "srt/vtt/best", "--convert-subs", "srt", "--paths", "home:.", "--output", "candidate.%(language)s.%(ext)s", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "candidate.en-orig.srt", "fixture": "outputs/subtitle.automatic.en-orig.srt", "sha256": "c057be279a47278cc2a083a6bd23a21aa53c55af9937b3c28f8cbf800098a579"}]
+    },
+    {
+      "operation": "thumbnail_download",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg", "--paths", "home:.", "--output", "cover.%(ext)s", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "cover.jpg", "fixture": "outputs/cover.jpg", "sha256": "0a04664a72d15383db0e22e3fe0854e6f94024769daa93b661370f08b3d0abab"}]
+    },
+    {
+      "operation": "media_download",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--js-runtimes", "node", "--format", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4", "--paths", "home:.", "--output", "video.%(ext)s", "--", "https://www.youtube.com/watch?v=yt-test-001"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "video.mp4", "fixture": "outputs/video.mp4", "sha256": "2e1c10bc4dff22a8e6205a1104e0770bb60dc9efadbec994fb657bc9a2aca7f2"}]
+    },
+    {
+      "operation": "media_probe",
+      "argv": ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", "video.mp4"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/media-probe.json", "sha256": "cb564fe777126aeb93e0e2f6a585d696d330727829b9920f4eb3f937c58e6d47"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    }
+  ]
+}

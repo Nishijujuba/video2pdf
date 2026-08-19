@@ -1,8 +1,10 @@
 # Context Map
 
-This repository uses four active contexts and one supporting context. Every canonical term has one owning glossary; cross-context consumers use the Published Language below and do not redefine it.
+This repository uses four active contexts and one supporting context. Delivery Quality succeeded Final Acceptance at the Global Gate Cutover; every active canonical term has one owning glossary.
 
-Runtime activation is independent from domain-document presence. The [Video Workflow Kernel 2.0 decision map](./docs/adr/video-workflow-kernel-2.0-decision-map.md) records component-level `target_only`, `active_legacy`, `active_global_gate`, and `active_kernel` status.
+Runtime activation is independent from domain-document presence. The [Video Workflow Kernel 2.0 decision map](./docs/adr/video-workflow-kernel-2.0-decision-map.md) records component-level `target_only`, `active_legacy`, `active_global_gate`, `active_kernel`, and `active_batch` status.
+
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired. Delivery Quality and Acceptance Report v2 remain the shared `active_global_gate` for every input track.
 
 ## Contexts
 
@@ -11,7 +13,8 @@ Runtime activation is independent from domain-document presence. The [Video Work
 | [Project Governance](./docs/contexts/project-governance/CONTEXT.md) | active | Current Project 2.0 planning language and Human Publication authority | Runtime state and frozen Project 1.0 execution language |
 | [Video Workflow](./docs/contexts/video-workflow/CONTEXT.md) | active | Run lifecycle, source preparation, production, assurance, repair, compile provenance, resources, Batch projections, and delivery mechanics | Pyramid semantic judgment, Final Acceptance semantic judgment, and historical-directory relocation |
 | [Pyramid Evaluation](./docs/contexts/pyramid-evaluation/CONTEXT.md) | active | Pyramid standards, evaluation targets, semantic review, Pyramid Gate Reports, and waiver boundaries | Workflow invocation timing, checkpoints, and continuation state |
-| [Final Acceptance](./docs/contexts/final-acceptance/CONTEXT.md) | active | Final quality criteria, Reviewer partitions, semantic evidence, and the Acceptance Report | Artifact generation, compilation, Delivery Targets, Delivery Guard mechanics, and delivery lifecycle state |
+| [Delivery Quality](./docs/contexts/delivery-quality/CONTEXT.md) | `active_global_gate` | Canonical quality policy, semantic ownership, precompile quality, rendered reconciliation, and Acceptance Report v2 | Artifact generation, platform Run ownership, Delivery Targets, and Guard mechanics |
+| [Final Acceptance](./docs/contexts/final-acceptance/CONTEXT.md) | superseded | Historical Acceptance Report v1 vocabulary | Active delivery authority |
 | [Legacy Workspace Maintenance](./docs/contexts/legacy-workspace-maintenance/CONTEXT.md) | supporting | Evidence-based classification and relocation of historical video documentation directories | New-run naming, Final PDF naming, Run Migration, and active workflow state |
 
 ## Published Language and Relationships

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/source-acquisition-judgment-patch.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "task_id",
+    "attempt_id",
+    "task_envelope_sha256",
+    "skeleton_sha256",
+    "judgment"
+  ],
+  "properties": {
+    "schema_name": {"const": "source-acquisition-judgment-patch"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+    "task_envelope_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "skeleton_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected_subtitle_candidate_id",
+        "subtitle_selection_rationale",
+        "whisper_fallback",
+        "known_gaps"
+      ],
+      "properties": {
+        "selected_subtitle_candidate_id": {
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+          ]
+        },
+        "subtitle_selection_rationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "whisper_fallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["choice", "rationale"],
+          "properties": {
+            "choice": {"enum": ["not_required", "use_whisper", "unavailable"]},
+            "rationale": {"type": "string", "minLength": 1, "maxLength": 2000}
+          }
+        },
+        "known_gaps": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/knownGap"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "knownGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "description", "affected_ranges"],
+      "properties": {
+        "code": {
+          "enum": [
+            "metadata_incomplete",
+            "missing_audio",
+            "missing_cover",
+            "missing_subtitles",
+            "other",
+            "partial_subtitles",
+            "subtitle_quality"
+          ]
+        },
+        "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "affected_ranges": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/timeRange"}
+        }
+      }
+    },
+    "timeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_seconds", "end_seconds"],
+      "properties": {
+        "start_seconds": {"type": "number", "minimum": 0},
+        "end_seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

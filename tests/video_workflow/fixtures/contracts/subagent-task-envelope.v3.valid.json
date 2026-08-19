@@ -1,0 +1,27 @@
+{
+  "schema_name":"subagent-task-envelope",
+  "schema_version":"3.0.0",
+  "kernel_version":"2.0.0",
+  "task_id":"3c117c342330e257b59c8df5c2e2d0e0",
+  "logical_task_key":"source-acquisition-semantic-epoch-1",
+  "role":"source_acquisition",
+  "task_stage":"semantic_judgment",
+  "platform":"bilibili",
+  "source_epoch":1,
+  "authority_binding":{"kind":"kernel_run","run_id":"00000000000000000000000000000000","expected_coordination_revision":2,"target_checkpoint":"source_acquisition_decision_ready"},
+  "prepared_at":"2026-07-18T01:01:00Z",
+  "task_root_path":"workflow/tasks/3c117c342330e257b59c8df5c2e2d0e0",
+  "input_artifacts":[
+    {"logical_id":"source_candidate_inventory","path":"work/source-acquisition/candidate-inventory.json","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"logical_id":"source_acquisition_decision_skeleton","path":"work/source-acquisition/decision.skeleton.json","generation":1,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+  ],
+  "allowed_read_paths":["work/source-acquisition/candidate-inventory.json","work/source-acquisition/decision.skeleton.json"],
+  "protected_run_snapshot":[{"path":"workflow/run.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "write_set":["workflow/source-acquisition-judgment-patch.json"],
+  "required_outputs":[{"logical_id":"source_acquisition_decision","attempt_relative_path":"o/p.json","canonical_path":"workflow/source-acquisition-judgment-patch.json","schema_name":"source-acquisition-judgment-patch","schema_version":"2.0.0","expected_prior_generation":null,"expected_prior_sha256":null}],
+  "generated_prompt":{"path":"workflow/tasks/3c117c342330e257b59c8df5c2e2d0e0/prompt.md","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","role_template":{"identity":"source-acquisition","version":"2.0.0","path":"prompts/video-workflow/roles/source-acquisition.v2.md","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"platform_overlay":{"identity":"bilibili","version":"1.0.0","path":"prompts/video-workflow/platforms/bilibili.v1.md","sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}},
+  "bounded_semantic_fields":["selected_subtitle_candidate_id","subtitle_selection_rationale","whisper_fallback.choice","whisper_fallback.rationale","known_gaps"],
+  "whisper_audio_candidate":null,
+  "resource_request":["codex_semantic"],
+  "fairness_group_id":"00000000000000000000000000000000"
+}

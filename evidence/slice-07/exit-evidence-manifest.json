@@ -1,0 +1,386 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 7,
+    "name": "delivery-quality-contracts-and-conformance"
+  },
+  "slice_base_commit": "68189e7744e22c9ce78b3ee1a58def69d09e711a",
+  "implementation_commit": "ace9d1d4239a9387f832513c9d24124104697124",
+  "evidence_paths": [
+    "evidence/slice-07/exit-evidence-manifest.json",
+    "evidence/slice-07/logs/slice7-contracts.log",
+    "evidence/slice-07/logs/slice7-conformance.log",
+    "evidence/slice-07/logs/slice7-qualification-tests.log"
+  ],
+  "generated_at": "2026-07-30T09:29:02Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice7-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "delivery-quality-contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-07/logs/slice7-contracts.log",
+        "sha256": "52c3365c0ac52a7702a9dff00b1e87091714b37fda968b6200d275133f4adb09"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice7-conformance",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "delivery-quality-conformance",
+        "--reviewer-adapter",
+        "tests/video_workflow/fixtures/delivery-quality/deterministic_reviewer_adapter.py",
+        "--output",
+        "待删除/slice7-evidence-conformance-report.json",
+        "--implementation-commit",
+        "ace9d1d4239a9387f832513c9d24124104697124"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-07/logs/slice7-conformance.log",
+        "sha256": "4378d08cacdf9bdd9269f26320f9f86c54e7665b9bd5b6aa59b1375ec11d2342"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice7-qualification-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_contract_check_proves_closed_target_only_policy_surface",
+        "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_contract_check_rejects_each_required_fail_closed_class",
+        "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_conformance_runs_three_isolated_attempts_per_profile_case",
+        "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_conformance_reports_semantic_variance_without_hiding_other_results"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-07/logs/slice7-qualification-tests.log",
+        "sha256": "fe9ddb3808d901ef4b962db05aec83b8be1feb30d6eae1792af1534f4b1e126d"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "delivery_quality_contracts_current",
+      "status": "current"
+    },
+    {
+      "name": "delivery_quality_conformance_current",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "canonical_rule_catalog",
+      "path": "delivery-quality/v1/rule-catalog.v1.json",
+      "sha256": "b25dd274bf2072f75db1f26f9e26892a2e2718de70a358804937e773601f455f"
+    },
+    {
+      "role": "canonical_language_profiles",
+      "path": "delivery-quality/v1/language-profiles.v1.json",
+      "sha256": "f717d7323a6af54fd4eee0e4755dfd1dc509d6ce0dc8016437d269ef45be0236"
+    },
+    {
+      "role": "canonical_role_projections",
+      "path": "delivery-quality/v1/role-projections.v1.json",
+      "sha256": "1c0f7b102c930656fb60fbc25f867bf87187d88566ca25a460c141ebddb6841b"
+    },
+    {
+      "role": "conformance_corpus",
+      "path": "delivery-quality/v1/conformance-corpus.v1.json",
+      "sha256": "111d861664ea16d1d17fcc6efc407be60dc068d5b51fa3470c920a9675ab82db"
+    },
+    {
+      "role": "isolated_reviewer_adapter",
+      "path": "tests/video_workflow/fixtures/delivery-quality/deterministic_reviewer_adapter.py",
+      "sha256": "5854ee3dc65e24af289c208cc3ba3771b49944dcd66b26bee8d5561ef9b1e0cd"
+    }
+  ],
+  "results": {
+    "positive": [
+      "registered_contracts_validate",
+      "isolated_semantic_conformance"
+    ],
+    "negative": [
+      "fail_closed_contract_classes",
+      "semantic_variance_reported"
+    ],
+    "recovery": [
+      "target_only_legacy_authority_preserved"
+    ]
+  },
+  "result_bindings": [
+    {
+      "result_id": "registered_contracts_validate",
+      "result_kind": "positive",
+      "command_id": "slice7-qualification-tests",
+      "test_target": "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_contract_check_proves_closed_target_only_policy_surface"
+    },
+    {
+      "result_id": "isolated_semantic_conformance",
+      "result_kind": "positive",
+      "command_id": "slice7-qualification-tests",
+      "test_target": "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_conformance_runs_three_isolated_attempts_per_profile_case"
+    },
+    {
+      "result_id": "fail_closed_contract_classes",
+      "result_kind": "negative",
+      "command_id": "slice7-qualification-tests",
+      "test_target": "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_contract_check_rejects_each_required_fail_closed_class"
+    },
+    {
+      "result_id": "semantic_variance_reported",
+      "result_kind": "negative",
+      "command_id": "slice7-qualification-tests",
+      "test_target": "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_conformance_reports_semantic_variance_without_hiding_other_results"
+    },
+    {
+      "result_id": "target_only_legacy_authority_preserved",
+      "result_kind": "recovery",
+      "command_id": "slice7-qualification-tests",
+      "test_target": "tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_contract_check_proves_closed_target_only_policy_surface"
+    }
+  ],
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": ".gitattributes",
+      "sha256": "4ead7b465994897b32fc0b68c2fc31d5c9e7c2fad08e102f4a359181051b435c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "CONTEXT-MAP.md",
+      "sha256": "75051e0a71e22bffe466785cefc5544099c0c308b149a59749005ccaf3f2cfe6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/conformance-corpus.v1.json",
+      "sha256": "111d861664ea16d1d17fcc6efc407be60dc068d5b51fa3470c920a9675ab82db"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/conformance-report.example.v1.json",
+      "sha256": "17d8e3520653c56f9ba1572f64b3581b9a5351e54384c883b1684344d51d4ce2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/language-profiles.v1.json",
+      "sha256": "f717d7323a6af54fd4eee0e4755dfd1dc509d6ce0dc8016437d269ef45be0236"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/migration-ledger.v1.json",
+      "sha256": "f1e230f532aa7c2bae78fb887610c4e2c292df303fda634b64eaa47bac2e3355"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/role-projections.v1.json",
+      "sha256": "1c0f7b102c930656fb60fbc25f867bf87187d88566ca25a460c141ebddb6841b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/rule-catalog.v1.json",
+      "sha256": "b25dd274bf2072f75db1f26f9e26892a2e2718de70a358804937e773601f455f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "delivery-quality/v1/waiver-ledger.v1.json",
+      "sha256": "615c2d4f8d7d8fe6776a12267b4c80852a4999b9932c5660cfae2a803a34f09f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/0060-establish-target-only-delivery-quality-contracts-and-conformance.md",
+      "sha256": "ce881baf8f06ef7d49ff117196a1e232784e2f61e1a18ccf1c43e87ce8de2ca9"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/adr/video-workflow-kernel-2.0-decision-map.md",
+      "sha256": "519947af23d77a8f20d74912cfb8b9176b6032dea8fb3f9b4c355eeb2fd68fac"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "docs/contexts/delivery-quality/CONTEXT.md",
+      "sha256": "23a22f647b13ad31f1c982b2d0c9bfd6ab53429eb8cb317ea184130def5932fa"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/delivery-quality/generated/consistency-guidance.v1.md",
+      "sha256": "2c9cd496889725c55c9c621b0910b746246de457071e77a9152ca34646fbae38"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/delivery-quality/generated/visual-quality-evaluation.v1.md",
+      "sha256": "ac4bdbb6a6da2925b82d4c22609e602d3e7bfd071a0a7f966ee1d755ccf3daa7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/delivery-quality/generated/writer-guidance.v1.md",
+      "sha256": "1c7c5cc42e948ed5b342ea34cb28a31ca44642ba6e330961ca3ecb4cbedf8f69"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "prompts/delivery-quality/generated/writing-quality-evaluation.v1.md",
+      "sha256": "17519aa8fb124adde9734e881fff93caf18bdc5a299c2ecd9164fcb009656687"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/registry.v1.json",
+      "sha256": "3b853c464e9932181caf5715f3d447d568d7fba37fcabebb2e1d3ff73b0d3722"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-conformance-corpus.v1.schema.json",
+      "sha256": "25dedd6dca4b4869a6f446d86f42f8e2de40cbaa94cd0026a625e8688bd294cc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-conformance-report.v1.schema.json",
+      "sha256": "d6cc22a330d40223866db8550912774c06f4ccfd62bc67a1de091dd31c255828"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-language-profiles.v1.schema.json",
+      "sha256": "1c08e7ca6e038db3c1ec7c5b99e92ec9d52b67899b924aa23a0940491b9c2e15"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-migration-ledger.v1.schema.json",
+      "sha256": "abb4b671447de2b2d146229b1b3dff3bd574c2a0674e76ac793097c8aa036d06"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-role-projections.v1.schema.json",
+      "sha256": "acde439d3e020cc2074d28cc8c3c02c757343d99b435119631161d9fc8781e8c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-rule-catalog.v1.schema.json",
+      "sha256": "5ad1041ae1cec302c0a2b6cfcc367db7cd7a5c58aabae2b90611986a7b410a7e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/delivery-quality/v1/delivery-quality-waiver-ledger.v1.schema.json",
+      "sha256": "e251bf792f4eed7f616af55b80894a3aceb369b60d70a331cf577c36cf1247e7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "afe3c9278154fcb8b1bc1b28ee030d96642fba5d443e6adb78412ffcab784059"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice7_exit_evidence.py",
+      "sha256": "0a8067b4bfdfbba5034aad3ef724c74ccdaed26fb6789e92b86bc4405b092a6b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/slice7_exit_evidence_contract.py",
+      "sha256": "5a174dab8bcd693b848f7f0935b7e7f69e8b626230217eb8ec5a16d818ca9df5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "5a3717d817c45fc66278831ccb1288ebff67ac1da512db6b455d04be8d2d7beb"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "c56552deb360d3c648cfacf1999f4e71c2902b511d96d4cf47141db633d5fa05"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/delivery_quality.py",
+      "sha256": "52dd4d55c174e7adf4daf7b8563fc9d748062d4bca25686974e95f7cb293e68b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "8eb5e212ac64541d61607f5410097c52be79d46d3b7c892d43cc646bee97be68"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/conformance-corpus.invalid.json",
+      "sha256": "caf5c538bd3d1c43d075d01887deb0d3505fb144ac5d29348766056f5d3b1d56"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/conformance-report.invalid.json",
+      "sha256": "2ca2d4918c827fc6a9979a5bd1f123b8a9ca5c7a89fbf7d9544a806a6bda7046"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/deterministic_reviewer_adapter.py",
+      "sha256": "5854ee3dc65e24af289c208cc3ba3771b49944dcd66b26bee8d5561ef9b1e0cd"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/language-profiles.invalid.json",
+      "sha256": "1a1cc706301a6e31f0b118e174cbae4ea98b6cbad97d8c2a472ea78cfac29063"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/migration-ledger.invalid.json",
+      "sha256": "2320cef3fe3a6a562561b1715448e0703cab71204446a9a5d7b41c20e81c081d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/role-projections.invalid.json",
+      "sha256": "b15bc8fc5c108fde602c59121ec60c4ddaf49c72e3a192c540fd5d19a942c936"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/rule-catalog.invalid.json",
+      "sha256": "90c23ecaf63544969f0a0e47068571278efc998ccab29dc0b6d0b591ccc26e29"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/variance_reviewer_adapter.py",
+      "sha256": "536f581725825b422e3add71ce20fc208bdeb0e81433c5fdbc5ac016e16ac479"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/delivery-quality/waiver-ledger.invalid.json",
+      "sha256": "3b7cca61adc1a21cbd1e7e9360d8806cb4a93d976fdea47342177630dc70d63a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_delivery_quality_contracts.py",
+      "sha256": "353d92765dd6a1135938976e6650ee62bcd62001de3953abd733ae2dc59d7d08"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

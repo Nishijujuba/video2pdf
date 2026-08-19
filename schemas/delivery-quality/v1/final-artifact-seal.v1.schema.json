@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/final-artifact-seal.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "activation_status", "sealed_at", "precompile_text_seal_sha256", "generation_set_sha256", "compile_manifest_sha256", "compile_provider", "final_pdf", "seal_sha256"],
+  "properties": {
+    "schema_name": {"const": "final-artifact-seal"},
+    "schema_version": {"const": "1.0.0"},
+    "activation_status": {"const": "target_only"},
+    "sealed_at": {"type": "string", "minLength": 1},
+    "precompile_text_seal_sha256": {"$ref": "#/$defs/sha256"},
+    "generation_set_sha256": {"$ref": "#/$defs/sha256"},
+    "compile_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "compile_provider": {"$ref": "#/$defs/provider"},
+    "final_pdf": {"$ref": "#/$defs/file"},
+    "seal_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider": {"type": "object", "additionalProperties": false, "required": ["provider_id", "provider_sha256"], "properties": {"provider_id": {"type": "string", "minLength": 1}, "provider_sha256": {"$ref": "#/$defs/sha256"}}},
+    "file": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 1}}}
+  }
+}

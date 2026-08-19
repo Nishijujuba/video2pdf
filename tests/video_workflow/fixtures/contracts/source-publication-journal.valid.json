@@ -1,0 +1,29 @@
+{
+  "schema_name":"source-publication-journal",
+  "schema_version":"1.0.0",
+  "kernel_version":"2.0.0",
+  "intent_id":"0000000000000000000000000000000000000000000000000000000000000000",
+  "run_id":"00000000000000000000000000000000",
+  "source_epoch":1,
+  "mode":"fresh_download",
+  "publication_kind":"initial_publish",
+  "expected_run_revision":3,
+  "prior_run_record_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "replacement_run_record_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_identity":"0e0eb59773c2eddc5c2d40c4e43e6a35ca98372205c57545babd2a41ec50cc9d",
+  "source_version":"956e831ae1860223cf8029838eb9e977793241f39f7d76bbb5ab2e7f2c904ccb",
+  "candidate_source_root":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source",
+  "canonical_source_root":"source",
+  "preservation_root":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source",
+  "prior_source_manifest_sha256":null,
+  "replacement_source_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "coordination_record_path":"workflow/run.json",
+  "outputs":[
+    {"logical_id":"metadata","candidate_path":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source/metadata/platform.json","canonical_path":"source/metadata/platform.json","sha256":"1111111111111111111111111111111111111111111111111111111111111111","prior_sha256":null,"preservation_path":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source/metadata/platform.json"},
+    {"logical_id":"cover","candidate_path":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source/cover/cover.jpg","canonical_path":"source/cover/cover.jpg","sha256":"2222222222222222222222222222222222222222222222222222222222222222","prior_sha256":null,"preservation_path":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source/cover/cover.jpg"},
+    {"logical_id":"video","candidate_path":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source/media/video.mp4","canonical_path":"source/media/video.mp4","sha256":"3333333333333333333333333333333333333333333333333333333333333333","prior_sha256":null,"preservation_path":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source/media/video.mp4"},
+    {"logical_id":"subtitle_en","candidate_path":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source/subtitles/subtitle.en.srt","canonical_path":"source/subtitles/subtitle.en.srt","sha256":"4444444444444444444444444444444444444444444444444444444444444444","prior_sha256":null,"preservation_path":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source/subtitles/subtitle.en.srt"},
+    {"logical_id":"source_manifest","candidate_path":"work/source-acquisition/publications/0000000000000000000000000000000000000000000000000000000000000000/candidate/source/manifest.json","canonical_path":"source/manifest.json","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","prior_sha256":null,"preservation_path":"待删除/source-publications/0000000000000000000000000000000000000000000000000000000000000000/previous/source/manifest.json"}
+  ],
+  "state":"PREPARED"
+}

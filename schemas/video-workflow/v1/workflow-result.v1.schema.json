@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/workflow-result.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "command", "status", "classification", "evidence_path", "data"],
+  "properties": {
+    "schema_name": {"const": "workflow-result"},
+    "schema_version": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/schema_version"},
+    "kernel_version": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/kernel_version"},
+    "command": {"type": "string", "minLength": 1},
+    "status": {"enum": ["ok", "error"]},
+    "classification": {"type": "string", "minLength": 1},
+    "evidence_path": {"type": ["string", "null"]},
+    "data": {"type": "object"}
+  }
+}

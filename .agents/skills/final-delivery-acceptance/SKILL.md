@@ -7,17 +7,13 @@ description: Run the final, read-only delivery acceptance gate for rendered vide
 
 Use this skill after the final PDF has been rendered and before delivery of a `/bilibili-render-pdf` or `/youtube-render-pdf` result.
 
-The Acceptance Reviewer is an independent read-only reviewer. The reviewer evaluates the final delivered artifacts against `docs/acceptance/acceptance_criteria.v1.json`, using the allowed artifact boundary in `review/acceptance/allowed_artifacts_manifest.json` and the fail-closed report skeleton in `review/acceptance/acceptance_report.skeleton.json`.
+Global Gate status is `active_global_gate`. The Acceptance Reviewer is an independent read-only visual-quality actor working from a provider-created Task Envelope. Delivery Quality policy, Role Projections, the immutable input binding, and the Acceptance Report v2 Skeleton define the allowed evidence and decision ownership. For newly generated Bilibili and YouTube work, runtime Platform Kernel authority is resolved with `workflow-policy-check` before `init-run`. Bilibili and YouTube are `active_kernel` for new tasks under their current `CONFIRMED` authorities and published Slice 12 and Slice 13 Exit Evidence. Existing Legacy directories remain Legacy unless an explicit migration authority is introduced. Platform Kernel authority remains unchanged by this acceptance gate.
+
+Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, dual authority, and a synthetic Legacy Run are forbidden. A Legacy directory enters the active gate only through a fresh Run-record-free Legacy Acceptance Input Set created by `legacy-acceptance-adopt`; a Kernel input retains its real Run authority. Both tracks then use the same `acceptance-prepare`, `acceptance-patch-commit`, `acceptance-materialize`, `acceptance-reconcile`, and active Delivery Guard boundaries.
 
 ## Context Boundary
 
-Allowed inputs:
-
-- final delivered artifacts listed in `review/acceptance/allowed_artifacts_manifest.json`
-- the criteria file `docs/acceptance/acceptance_criteria.v1.json`
-- rendered page evidence under `review/acceptance/rendered_pages/`
-- the fail-closed report skeleton `review/acceptance/acceptance_report.skeleton.json`
-- for non-English teaching PDFs, `review/acceptance/delivery_glossary.json` only when it is listed in `review/acceptance/allowed_artifacts_manifest.json`
+Allowed inputs are exactly the entries in the provider-created Task Envelope `authorized_read_set`, with the declared path and SHA for each entry. The current `visual_quality` envelope identifies the final PDF, every rendered page, Delivery Quality catalog and Role Projection bindings, the visual evaluation projection, the Acceptance Report v2 Skeleton, the immutable acceptance input binding, Global Gate authority, and the allowed-artifacts manifest. Final delivered artifacts are readable only when the Task Envelope grants them explicitly; the manifest does not expand the read set.
 
 Forbidden context:
 
@@ -31,24 +27,24 @@ Forbidden context:
 - intermediate drafts
 - intermediate files outside the allowed manifest
 
-The reviewer may write only:
+The reviewer may write only its staged Judgment Patch inside the provider-created Attempt directory. The Task Envelope `declared_write_set` contains one `judgment_patch` entry, and `required_output.path` names that same path. Publication authority belongs to the provider:
 
-- `review/acceptance/acceptance_report.json`
-- `review/acceptance/acceptance_summary.md`
+- `acceptance-patch-commit` validates and commits the staged Judgment Patch
+- `acceptance-materialize` publishes canonical `review/acceptance/acceptance_report.json` and its immutable companion records
 
 The reviewer must not modify final artifacts, TeX source, figures, tables, criteria files, generated page images, subtitles, source materials, or intermediate files.
 
 ## Required Workflow
 
-1. Validate the criteria file with `scripts/validate_acceptance_criteria.py`.
-2. Create or refresh `review/acceptance/allowed_artifacts_manifest.json` with `scripts/validate_acceptance_report.py manifest`. Preserve the default artifact set for ordinary outputs. For non-English teaching PDFs that have a valid delivery glossary contract, pass `--include-delivery-glossary` so the manifest includes `review/acceptance/delivery_glossary.json` with role `delivery_glossary`.
-3. Render the final PDF pages with `scripts/render_pdf_pages.py` so every page has a `review/acceptance/rendered_pages/page_0001.png` style image.
-4. Create or refresh `review/acceptance/acceptance_report.skeleton.json` with `scripts/validate_acceptance_report.py skeleton` so fixed JSON shape, artifact fingerprints, and rendered-page slots come from the validator contract.
-5. Launch the Acceptance Reviewer from a clean context containing only the allowed manifest, the criteria file, final delivered artifacts, rendered pages, and the fail-closed report skeleton.
-6. The Acceptance Reviewer must evaluate every criterion, replace all skeleton placeholders, and record one result for every rendered PDF page.
-7. Validate `review/acceptance/acceptance_report.json` with `scripts/validate_acceptance_report.py validate --enforce-decision`.
+1. For a Legacy directory, run `legacy-acceptance-adopt` with explicit final-artifact, compile-provenance, policy, manifest, and rendered-page paths. It creates a fresh immutable input set and never creates `workflow/run.json`.
+2. For a Kernel input, use the current committed final-quality input binding from the real Run and Control Store authority.
+3. Run `acceptance-prepare` to create the Acceptance Execution Context, fixed Skeleton, one Visual Quality Task Envelope, its Claim, and one provider-created Attempt with an exact authorized read set.
+4. Launch the independent Reviewer named by that Task Envelope. The Reviewer writes one bounded Visual Quality Judgment Patch and cannot publish the report.
+5. Run `acceptance-patch-commit` for that Patch. The provider validates task identity, fencing, independence, exact reads, complete visual-rule coverage, and current fingerprints before committing it.
+6. Run `acceptance-materialize` only after the three precompile owner reports and the Visual Quality Judgment Patch are committed and current. Use `acceptance-reconcile` after an interrupted Patch or report publication.
+7. Bind the session-scoped delivery target to the canonical Acceptance Report v2 and its explicit Global Gate authority path and SHA, set routing to `ready_for_delivery`, then run `delivery_guard.py check`.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. An optional Markdown summary may explain the decision, and it cannot override the JSON result.
+`acceptance_report.json is the only machine-readable delivery decision source`. The active Guard accepts only a current passing Acceptance Report v2 with committed Patch, execution, report-publication, Global Gate, and fingerprint authority. An optional Markdown summary may explain the decision, and it cannot override the JSON result.
 
 ## Visual Input Scope
 
@@ -60,29 +56,23 @@ If the reviewer cannot complete this per-page inspection within the allowed wait
 
 `delivery_guard.py` proves freshness, manifest membership, path boundaries, and rendered-page coverage. It cannot prove that the reviewer actually inspected every page. A structurally valid `acceptance_report.json` based on reduced visual input is invalid workflow evidence and must be treated as delivery-blocking.
 
-## Report Duties
+## Semantic Ownership And Visual Judgment Patch Duties
 
-The Acceptance Reviewer must:
+The three precompile semantic owners complete semantic review before final compilation. `source-faithfulness-reviewer` owns source fidelity, `writing-quality-reviewer` owns full reader-facing text, formula, and Delivery Glossary semantic review, and `pyramid-reviewer` owns document structure. Their committed precompile reports carry those decisions into Acceptance Report v2. The postcompile Acceptance Reviewer cannot reopen, replace, or reinterpret them.
 
-- evaluate every criterion from the criteria file, even after finding a failure
-- run a full final text scan for style criteria
-- run a full final formula scan for `formula_information_gain`
-- inspect every rendered PDF page image for visual criteria
-- write one `criterion_results[]` entry for every configured criterion
+The Acceptance Reviewer evaluates only the `visual_quality` criteria named by the provider-created Task Envelope. It must:
+
+- verify the Task Envelope identity, Claim fencing fields, `criterion_ids`, exact path-and-SHA `authorized_read_set`, sole `declared_write_set` entry, and `required_output.path`
+- read only the exact `authorized_read_set` and reproduce those reads as `actual_read_set`
+- inspect every rendered PDF page image for the visual criteria, even after finding a failure
+- write one `criterion_results[]` entry for every `criterion_ids` entry in the Task Envelope
 - write one `visual_scan_evidence.pages_checked[]` entry for every rendered PDF page
-- write `scan_evidence.formulas_checked[]` for the formula criterion, with one entry for every reader-facing body formula
-- include artifact-grounded evidence for each failed criterion
-- include revision guidance for each failed criterion
-- declare `generation_process_used: false`
-- keep `review_context_used.artifacts_read` inside the manifest final artifacts plus the criteria file and `review/acceptance/acceptance_report.skeleton.json` when the skeleton was used
-- replace every skeleton placeholder before writing the final `review/acceptance/acceptance_report.json`
-- list `review/acceptance/delivery_glossary.json` in `review_context_used.artifacts_read` only when the manifest includes it
-- when a manifest-listed Delivery Glossary is present, check for every Delivery Glossary term found in final body text that the body wording follows `body_display_strategy`, that the original English expression appears only where `where_to_preserve_english` allows, and that each finding includes artifact-grounded evidence
-- bind the report to current artifact fingerprints
+- include artifact-grounded evidence for every visual decision and the required change plus allowed repair types for every failure
+- record only add-only `cross_phase_findings`; it cannot remove or weaken a committed precompile decision
+- record any unclassifiable blocking observation as a Contract Gap
+- write one Visual Quality Judgment Patch with schema `acceptance-v2-judgment-patch` to the exact `required_output.path` inside the provider-created Attempt directory
 
-For glossary-backed non-English teaching PDFs, the Acceptance Reviewer must treat `body_display_strategy` as the rule for reader-facing body prose and `where_to_preserve_english` as the rule for where the original English expression may appear. If the Delivery Glossary says `grief` uses `chinese_primary_only` plus `delivery_glossary_only`, final body text should not make `grief` the sentence subject; body prose should use the Chinese primary wording, and the English expression should remain recoverable through the manifest-listed glossary.
-
-For `formula_information_gain`, the reviewer must classify every body formula as `source_material`, `inherent_quantitative`, or `interpretive_teaching_model`. Each entry in `scan_evidence.formulas_checked[]` must include `location`, `formula_excerpt`, `source_type`, `status`, and `information_gain_summary`. If the final text contains no body formulas, the reviewer must write `formulas_checked: []` and `no_body_formula_found: true`. A formula fails when it only restates adjacent prose, wraps a list as `Y = f(...)` without a decision boundary, or adds symbols without lowering reader cognitive load.
+The Reviewer does not publish or edit the Skeleton, attempt record, repair ledger, summary, or canonical report. `acceptance-patch-commit` validates and commits the one Visual Quality Judgment Patch. After the committed precompile owner reports and Visual Patch are current, `acceptance-materialize` provider materializes `review/acceptance/acceptance_report.json` and its immutable companion records without semantic reinterpretation.
 
 ## Failure And Repair Loop
 
@@ -90,14 +80,14 @@ A failed, missing, malformed, stale, or forbidden-context Acceptance Report bloc
 
 When acceptance fails, the coordinator builds a repair brief from:
 
-- `failed_criteria[]`
 - failed `criterion_results[]`
 - `visual_scan_evidence`
-- each failed criterion's `revision_guidance`
+- each failed visual criterion's `required_change` and `allowed_repair_types`
+- add-only `cross_phase_findings` and blocking `contract_gaps`
 
 Repair subagents may edit TeX, figures, tables, caveat placement, or other final artifacts needed to satisfy the failed criteria. The Acceptance Reviewer remains read-only.
 
-After repair, the workflow must rerender affected final artifacts, refresh rendered page evidence, refresh any upstream evidence invalidated by the repair, and start a fresh Acceptance Reviewer run from final delivered artifacts plus criteria only. Old reports remain audit evidence and cannot approve changed artifacts.
+After repair, the workflow must rerender affected final artifacts, refresh rendered page evidence, refresh any invalidated precompile owner evidence, and create a fresh provider Attempt. The fresh Acceptance Reviewer receives a new provider-created Task Envelope and may read only its exact `authorized_read_set`. Old reports remain audit evidence and cannot approve changed artifacts.
 
 ## Delivery Target And Guard
 
@@ -107,7 +97,7 @@ The video-level target binds the final PDF, main TeX file, `review/acceptance/al
 
 `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The guard proves freshness, manifest membership, rendered page coverage, path boundaries, compile provenance for newly generated video PDFs, and enforced Acceptance Report decision. It does not replace the Acceptance Reviewer.
 
-The Acceptance Reviewer evaluates delivery quality from final delivered artifacts and rendered page evidence. `review\latex\compile_report.json` is compile provenance for `delivery_guard.py check`. A compile report cannot replace acceptance_report.json, cannot override `overall_status`, and cannot serve as Acceptance Reviewer quality judgment.
+The Acceptance Reviewer evaluates postcompile visual quality from the Task Envelope exact `authorized_read_set`. `review\latex\compile_report.json` is compile provenance for `delivery_guard.py check`. A compile report cannot replace acceptance_report.json, cannot override `overall_status`, and cannot serve as Acceptance Reviewer quality judgment.
 
 The task index records task-index ownership for startup, recovery, and observability. It is not a Stop hook blocking source; the Stop hook does not scan all active tasks. Ownership changes require explicit handoff through `task-handoff --from-session-id "<from_session_id>" --to-session-id "<to_session_id>" --target-file "<video-output-dir>\review\acceptance\delivery_target.json" --stage "<stage>" --previous-owner-status "<superseded-or-abandoned>"`.
 
@@ -177,11 +167,10 @@ The delivered session target is moved under `<video-output-dir>\待删除\delive
 
 ## Scripts
 
-- `scripts/validate_acceptance_criteria.py`: validates `docs/acceptance/acceptance_criteria.v1.json`
 - `scripts/validate_delivery_glossary.py`: validates one standalone `delivery_glossary.v1` contract file for non-English teaching PDFs
 - `scripts/render_pdf_pages.py`: renders every final PDF page to `review/acceptance/rendered_pages/`
-- `scripts/validate_acceptance_report.py`: creates the allowed manifest, creates a fail-closed report skeleton, can include `review/acceptance/delivery_glossary.json` through `--include-delivery-glossary`, checks fingerprints, validates report shape, checks visual page coverage, and enforces the JSON delivery decision
-- `scripts/delivery_guard.py`: prepares bounded old-PDF repair, records failed attempts, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
+- `scripts/video_workflow.py`: exposes `legacy-acceptance-adopt` and the active `acceptance-*` provider operations
+- `scripts/delivery_guard.py`: consumes only current Acceptance Report v2 authority, runs `delivery_guard.py check`, implements the Stop-hook `hook-stop` decision, and archives active target state with `delivery_guard.py clear-target`
 
 Use the project virtual environment:
 

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json",
+  "schema_version": 1,
+  "kind": "legacy-workflow-baseline-definition",
+  "normalization_version": 1,
+  "result_identities": {
+    "positive": [
+      "fixture-pyramid",
+      "fixture-compile",
+      "fixture-acceptance",
+      "fixture-delivery-guard",
+      "fixture-batch",
+      "fixture-slice-verification"
+    ],
+    "negative": ["unexpected_status_blocks"]
+  },
+  "fixture_contracts": [
+    {"role": "baseline_definition", "path": "config/legacy-baseline.v1.json", "validation_kind": "fingerprint_only", "expected_validity": "not_applicable"},
+    {"role": "baseline_definition_schema", "path": "schemas/legacy-baseline-definition.v1.schema.json", "validation_kind": "fingerprint_only", "expected_validity": "not_applicable"},
+    {"role": "exit_evidence_schema", "path": "schemas/exit-evidence-manifest.v1.schema.json", "validation_kind": "fingerprint_only", "expected_validity": "not_applicable"},
+    {"role": "baseline_definition_positive_fixture", "path": "tests/video_workflow/fixtures/legacy_baseline_definition.valid.json", "validation_kind": "legacy_baseline_definition_schema", "expected_validity": "valid"},
+    {"role": "baseline_definition_negative_fixture", "path": "tests/video_workflow/fixtures/legacy_baseline_definition.invalid.json", "validation_kind": "legacy_baseline_definition_schema", "expected_validity": "invalid"},
+    {"role": "exit_evidence_positive_fixture", "path": "tests/video_workflow/fixtures/exit_evidence_manifest.valid.json", "validation_kind": "exit_evidence_manifest_schema", "expected_validity": "valid"},
+    {"role": "exit_evidence_negative_fixture", "path": "tests/video_workflow/fixtures/exit_evidence_manifest.invalid.json", "validation_kind": "exit_evidence_manifest_schema", "expected_validity": "invalid"}
+  ],
+  "baselines": [
+    {"test_id": "fixture-pyramid", "category": "pyramid", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-compile", "category": "compile", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-acceptance", "category": "acceptance", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-delivery-guard", "category": "delivery_guard", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"test_id": "fixture-batch", "category": "batch", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "slice_verifications": [
+    {"test_id": "fixture-slice-verification", "category": "slice_verification", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "authority_guards": [
+    {"path": "AGENTS.md", "required_substrings": ["Legacy Track"]}
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/subagent-task-envelope.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "task_id", "logical_task_key", "role", "authority_binding", "prepared_at", "task_root_path", "input_artifacts", "allowed_read_paths", "protected_run_snapshot", "write_set", "required_outputs", "generated_prompt", "bounded_semantic_fields", "resource_request", "fairness_group_id"],
+  "properties": {
+    "schema_name": {"const": "subagent-task-envelope"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "logical_task_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,95}$"},
+    "role": {"const": "source_acquisition"},
+    "authority_binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "run_id", "expected_coordination_revision", "target_checkpoint"],
+      "properties": {
+        "kind": {"const": "kernel_run"},
+        "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+        "expected_coordination_revision": {"type": "integer", "minimum": 1},
+        "target_checkpoint": {"const": "source_acquisition_decision_ready"}
+      }
+    },
+    "prepared_at": {"type": "string", "format": "date-time"},
+    "task_root_path": {"type": "string", "minLength": 1},
+    "input_artifacts": {
+      "type": "array", "minItems": 1, "maxItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["logical_id", "path", "generation", "sha256"],
+        "properties": {
+          "logical_id": {"const": "source_manifest"},
+          "path": {"const": "source/manifest.json"},
+          "generation": {"type": "integer", "minimum": 1},
+          "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+        }
+      }
+    },
+    "allowed_read_paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "protected_run_snapshot": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+        }
+      }
+    },
+    "write_set": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "prefixItems": [{"const": "workflow/source-acquisition-judgment-patch.json"}], "items": false},
+    "required_outputs": {
+      "type": "array", "minItems": 1, "maxItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["logical_id", "attempt_relative_path", "canonical_path", "schema_name", "expected_prior_generation", "expected_prior_sha256"],
+        "properties": {
+          "logical_id": {"const": "source_acquisition_decision"},
+          "attempt_relative_path": {"const": "o/p.json"},
+          "canonical_path": {"const": "workflow/source-acquisition-judgment-patch.json"},
+          "schema_name": {"const": "source-acquisition-judgment-patch"},
+          "expected_prior_generation": {"type": ["integer", "null"], "minimum": 1},
+          "expected_prior_sha256": {"anyOf": [{"type": "null"}, {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}]}
+        }
+      }
+    },
+    "generated_prompt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "role_template", "platform_overlay"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "role_template": {"$ref": "#/$defs/promptSource"},
+        "platform_overlay": {"$ref": "#/$defs/promptSource"}
+      }
+    },
+    "bounded_semantic_fields": {"const": ["selected_subtitle_track", "whisper_fallback.choice", "whisper_fallback.rationale", "known_gaps"]},
+    "resource_request": {
+      "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true,
+      "items": {"enum": ["bilibili_download", "youtube_download", "whisper", "codex_semantic", "latex", "pdf_render", "visual_acceptance"]}
+    },
+    "fairness_group_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "batch_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  },
+  "$defs": {
+    "promptSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identity", "version", "path", "sha256"],
+      "properties": {
+        "identity": {"type": "string", "minLength": 1},
+        "version": {"const": "1.0.0"},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schema_name":"subagent-task-envelope",
+  "schema_version":"3.0.0",
+  "kernel_version":"2.0.0",
+  "task_id":"43fcf2ccde1075da2a77806140769369",
+  "logical_task_key":"source-whisper-transcription-epoch-1",
+  "role":"source_acquisition",
+  "task_stage":"whisper_transcription",
+  "platform":"bilibili",
+  "source_epoch":1,
+  "authority_binding":{"kind":"kernel_run","run_id":"00000000000000000000000000000000","expected_coordination_revision":3,"target_checkpoint":"source_acquisition_decision_ready"},
+  "prepared_at":"2026-07-18T01:02:00Z",
+  "task_root_path":"workflow/tasks/43fcf2ccde1075da2a77806140769369",
+  "input_artifacts":[
+    {"logical_id":"source_candidate_inventory","path":"work/source-acquisition/candidate-inventory.json","generation":1,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"logical_id":"source_acquisition_decision_skeleton","path":"work/source-acquisition/decision.skeleton.json","generation":1,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"logical_id":"source_acquisition_decision","path":"workflow/source-acquisition-judgment-patch.json","generation":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
+  "allowed_read_paths":[
+    "work/source-acquisition/candidate-inventory.json",
+    "work/source-acquisition/decision.skeleton.json",
+    "workflow/source-acquisition-judgment-patch.json",
+    "work/source-acquisition/candidates/e1/media/video.mp4"
+  ],
+  "protected_run_snapshot":[{"path":"workflow/run.json","sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],
+  "write_set":["work/source-acquisition/transcription.srt"],
+  "required_outputs":[{"logical_id":"source_transcription","attempt_relative_path":"o/transcription.srt","canonical_path":"work/source-acquisition/transcription.srt","schema_name":"source-transcription-srt","schema_version":"1.0.0","expected_prior_generation":null,"expected_prior_sha256":null}],
+  "generated_prompt":null,
+  "bounded_semantic_fields":[],
+  "whisper_audio_candidate":{"candidate_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","staged_path":"work/source-acquisition/candidates/e1/media/video.mp4","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},
+  "resource_request":["whisper"],
+  "fairness_group_id":"00000000000000000000000000000000"
+}

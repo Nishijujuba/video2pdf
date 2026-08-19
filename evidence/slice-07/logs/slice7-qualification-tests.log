@@ -1,0 +1,11 @@
+test_public_contract_check_proves_closed_target_only_policy_surface (tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_contract_check_proves_closed_target_only_policy_surface) ... ok
+test_contract_check_rejects_each_required_fail_closed_class (tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_contract_check_rejects_each_required_fail_closed_class) ... ok
+test_public_conformance_runs_three_isolated_attempts_per_profile_case (tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_public_conformance_runs_three_isolated_attempts_per_profile_case) ... ok
+test_conformance_reports_semantic_variance_without_hiding_other_results (tests.video_workflow.test_delivery_quality_contracts.DeliveryQualityContractsCliTests.test_conformance_reports_semantic_variance_without_hiding_other_results) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 134.251s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: ace9d1d4239a9387f832513c9d24124104697124

@@ -1,0 +1,12 @@
+{
+  "schema_name": "source-live-smoke-case",
+  "schema_version": "1.0.0",
+  "platform": "bilibili",
+  "source_url": "https://www.bilibili.com/video/BV1gCLq6YEW4/",
+  "original_title": "Claude Code 在大型代码库中的工作原理：最佳实践与入门指南",
+  "explicit_item_selector": "p1",
+  "content_classification": "general",
+  "subtitle_language_priority": ["en", "zh-Hans", "zh"],
+  "whisper_allowed": false,
+  "max_video_height": 360
+}

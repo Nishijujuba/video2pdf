@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/source-acquisition-decision-skeleton.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "run_id",
+    "source_epoch",
+    "acquisition_id",
+    "task_id",
+    "source_identity",
+    "candidate_inventory",
+    "policy_binding",
+    "allowed_judgment",
+    "required_judgment_fields",
+    "target_checkpoint",
+    "status"
+  ],
+  "properties": {
+    "schema_name": {"const": "source-acquisition-decision-skeleton"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "source_epoch": {"type": "integer", "minimum": 1},
+    "acquisition_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "task_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "candidate_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "generation", "sha256"],
+      "properties": {
+        "path": {"const": "work/source-acquisition/candidate-inventory.json"},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "policy_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "version", "sha256"],
+      "properties": {
+        "policy_id": {"const": "source-acquisition-policy"},
+        "version": {"const": "1.0.0"},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "allowed_judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subtitle_candidate_ids",
+        "whisper_choices",
+        "whisper_audio_candidate_id",
+        "known_gap_codes"
+      ],
+      "properties": {
+        "subtitle_candidate_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+        },
+        "whisper_choices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["not_required", "unavailable", "use_whisper"]}
+        },
+        "whisper_audio_candidate_id": {
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+          ]
+        },
+        "known_gap_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/gapCode"}
+        }
+      }
+    },
+    "required_judgment_fields": {
+      "const": [
+        "selected_subtitle_candidate_id",
+        "subtitle_selection_rationale",
+        "whisper_fallback.choice",
+        "whisper_fallback.rationale",
+        "known_gaps"
+      ]
+    },
+    "target_checkpoint": {"const": "source_acquisition_decision_ready"},
+    "status": {"const": "prepared"}
+  },
+  "$defs": {
+    "gapCode": {
+      "enum": [
+        "metadata_incomplete",
+        "missing_audio",
+        "missing_cover",
+        "missing_subtitles",
+        "other",
+        "partial_subtitles",
+        "subtitle_quality"
+      ]
+    }
+  }
+}

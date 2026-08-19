@@ -1,0 +1,58 @@
+{
+  "schema_name": "delivery-quality-role-projections",
+  "schema_version": "1.0.0",
+  "projection_version": "1.0.0",
+  "source_catalog_sha256": "b25dd274bf2072f75db1f26f9e26892a2e2718de70a358804937e773601f455f",
+  "projections": [
+    {
+      "projection_id": "writer-guidance",
+      "projection_kind": "guidance",
+      "consumer_role": "writer",
+      "rules": [
+        {"rule_id": "no_meta_writing_content", "rule_semantic_sha256": "e46a12f7b8465d2a6673bccef5417af32f23852271ce69805970175bfad9c4ca", "requirement": "Reader-facing content discusses the subject itself without exposing generation instructions, review strategy, rewriting rationale, or acceptance mechanics unless that process is the subject.", "blocking": true},
+        {"rule_id": "core_term_first_use_readability", "rule_semantic_sha256": "a3c9c0877cc962d16fa851fbc10d369b02848fd15833390c42fe64a40d4c9ed7", "requirement": "A core term first appears with enough natural-language context for the intended reader to understand its purpose, boundary, or use before compressed notation or unexplained shorthand carries the explanation.", "blocking": true},
+        {"rule_id": "delivery_glossary_term_strategy", "rule_semantic_sha256": "4da2384dfa83e74614eeb2fd8705a4d1bd11f6b3681d0de4fe15b46e7e1282d6", "requirement": "Every governed term follows its declared body display strategy and English-preservation location throughout the reader-facing artifact.", "blocking": true},
+        {"rule_id": "argument_chain_integrity", "rule_semantic_sha256": "4b5625da523290f5f3bd01f63de862875cf495b722908d77ecd2fd7896bc2d72", "requirement": "Each material claim uses a predicate that fits its subject and semantic domain, preserves lifecycle stage and modifier dimensions, states modal strength supported by evidence, and exposes enough reasoning for the conclusion boundary to follow.", "blocking": true},
+        {"rule_id": "formula_information_gain", "rule_semantic_sha256": "34af3ebde7d1216ed489b50a60c9a4f47b7f07a08c7cdb43e4bd1091253f8981", "requirement": "Every reader-facing formula adds usable quantitative, algorithmic, constraint, threshold, dependency, comparison, or decision value that justifies its cognitive cost.", "blocking": true},
+        {"rule_id": "credibility_disclosure_content", "rule_semantic_sha256": "827e93de0504f906e6aff45ad25c5912706f592ad31b8837a89b0a8facb91777", "requirement": "Required credibility disclosures state the material limitation accurately, concisely, and in reader-facing language without exposing irrelevant generation mechanics.", "blocking": true}
+      ],
+      "generated_prompt": {"path": "prompts/delivery-quality/generated/writer-guidance.v1.md", "sha256": "1c7c5cc42e948ed5b342ea34cb28a31ca44642ba6e330961ca3ecb4cbedf8f69"}
+    },
+    {
+      "projection_id": "consistency-guidance",
+      "projection_kind": "guidance",
+      "consumer_role": "consistency-role",
+      "rules": [
+        {"rule_id": "core_term_first_use_readability", "rule_semantic_sha256": "a3c9c0877cc962d16fa851fbc10d369b02848fd15833390c42fe64a40d4c9ed7", "requirement": "A core term first appears with enough natural-language context for the intended reader to understand its purpose, boundary, or use before compressed notation or unexplained shorthand carries the explanation.", "blocking": true},
+        {"rule_id": "delivery_glossary_term_strategy", "rule_semantic_sha256": "4da2384dfa83e74614eeb2fd8705a4d1bd11f6b3681d0de4fe15b46e7e1282d6", "requirement": "Every governed term follows its declared body display strategy and English-preservation location throughout the reader-facing artifact.", "blocking": true},
+        {"rule_id": "argument_chain_integrity", "rule_semantic_sha256": "4b5625da523290f5f3bd01f63de862875cf495b722908d77ecd2fd7896bc2d72", "requirement": "Each material claim uses a predicate that fits its subject and semantic domain, preserves lifecycle stage and modifier dimensions, states modal strength supported by evidence, and exposes enough reasoning for the conclusion boundary to follow.", "blocking": true}
+      ],
+      "generated_prompt": {"path": "prompts/delivery-quality/generated/consistency-guidance.v1.md", "sha256": "2c9cd496889725c55c9c621b0910b746246de457071e77a9152ca34646fbae38"}
+    },
+    {
+      "projection_id": "writing-quality-evaluation",
+      "projection_kind": "evaluation",
+      "consumer_role": "writing-quality-reviewer",
+      "rules": [
+        {"rule_id": "no_meta_writing_content", "rule_semantic_sha256": "e46a12f7b8465d2a6673bccef5417af32f23852271ce69805970175bfad9c4ca", "requirement": "Reader-facing content discusses the subject itself without exposing generation instructions, review strategy, rewriting rationale, or acceptance mechanics unless that process is the subject.", "blocking": true},
+        {"rule_id": "core_term_first_use_readability", "rule_semantic_sha256": "a3c9c0877cc962d16fa851fbc10d369b02848fd15833390c42fe64a40d4c9ed7", "requirement": "A core term first appears with enough natural-language context for the intended reader to understand its purpose, boundary, or use before compressed notation or unexplained shorthand carries the explanation.", "blocking": true},
+        {"rule_id": "delivery_glossary_term_strategy", "rule_semantic_sha256": "4da2384dfa83e74614eeb2fd8705a4d1bd11f6b3681d0de4fe15b46e7e1282d6", "requirement": "Every governed term follows its declared body display strategy and English-preservation location throughout the reader-facing artifact.", "blocking": true},
+        {"rule_id": "argument_chain_integrity", "rule_semantic_sha256": "4b5625da523290f5f3bd01f63de862875cf495b722908d77ecd2fd7896bc2d72", "requirement": "Each material claim uses a predicate that fits its subject and semantic domain, preserves lifecycle stage and modifier dimensions, states modal strength supported by evidence, and exposes enough reasoning for the conclusion boundary to follow.", "blocking": true},
+        {"rule_id": "formula_information_gain", "rule_semantic_sha256": "34af3ebde7d1216ed489b50a60c9a4f47b7f07a08c7cdb43e4bd1091253f8981", "requirement": "Every reader-facing formula adds usable quantitative, algorithmic, constraint, threshold, dependency, comparison, or decision value that justifies its cognitive cost.", "blocking": true},
+        {"rule_id": "credibility_disclosure_content", "rule_semantic_sha256": "827e93de0504f906e6aff45ad25c5912706f592ad31b8837a89b0a8facb91777", "requirement": "Required credibility disclosures state the material limitation accurately, concisely, and in reader-facing language without exposing irrelevant generation mechanics.", "blocking": true}
+      ],
+      "generated_prompt": {"path": "prompts/delivery-quality/generated/writing-quality-evaluation.v1.md", "sha256": "17519aa8fb124adde9734e881fff93caf18bdc5a299c2ecd9164fcb009656687"}
+    },
+    {
+      "projection_id": "visual-quality-evaluation",
+      "projection_kind": "evaluation",
+      "consumer_role": "visual-quality-reviewer",
+      "rules": [
+        {"rule_id": "figure_visual_integrity", "rule_semantic_sha256": "8f97fb113f776bcd3388e5271a9d563bd68ca7bf5bf9313395ed58f20495068d", "requirement": "Every figure is legible, unclipped, non-overlapping, correctly associated with its caption, and visually supports the nearby explanation.", "blocking": true},
+        {"rule_id": "table_layout_integrity", "rule_semantic_sha256": "d1cec9f2b8109a3d6b97a5f079b44ef0a7a4b39b289bd399ea27b0635f7c05c1", "requirement": "Every table preserves readable cells, headers, alignment, page boundaries, and association with its explanatory context.", "blocking": true},
+        {"rule_id": "credibility_disclosure_rendered_placement", "rule_semantic_sha256": "976479fe15441c1d9a2e8fd2ff7e4f296b06fea20e718868e872768ba6d6f999", "requirement": "Each required credibility disclosure is visible at a rendered location where the reader encounters it before relying on the affected claim and where it does not disrupt reading flow.", "blocking": true}
+      ],
+      "generated_prompt": {"path": "prompts/delivery-quality/generated/visual-quality-evaluation.v1.md", "sha256": "ac4bdbb6a6da2925b82d4c22609e602d3e7bfd071a0a7f966ee1d755ccf3daa7"}
+    }
+  ]
+}

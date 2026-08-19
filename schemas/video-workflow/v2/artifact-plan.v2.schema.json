@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v2/artifact-plan.v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "kernel_version", "run_id", "artifacts"],
+  "properties": {
+    "schema_name": {"const": "artifact-plan"},
+    "schema_version": {"const": "2.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "artifacts": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/artifact"}
+    }
+  },
+  "$defs": {
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_id", "when"],
+      "properties": {
+        "logical_id": {"$ref": "#/$defs/logicalId"},
+        "when": {"enum": ["always", "fresh_download", "verified_import", "whisper_requested"]}
+      }
+    },
+    "logicalId": {
+      "enum": [
+        "run_record",
+        "artifact_plan",
+        "bootstrap_record",
+        "scaffold_contract",
+        "scaffold_ledger",
+        "source_candidate_inventory",
+        "source_acquisition_decision_skeleton",
+        "source_acquisition_decision",
+        "source_transcription",
+        "source_manifest"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_id",
+        "path",
+        "schema_name",
+        "schema_version",
+        "generator",
+        "dependencies",
+        "earliest_checkpoint",
+        "condition"
+      ],
+      "properties": {
+        "logical_id": {"$ref": "#/$defs/logicalId"},
+        "path": {"type": "string", "minLength": 1},
+        "schema_name": {"type": "string", "minLength": 1},
+        "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "generator": {"type": "string", "pattern": "^(kernel|task):[a-z0-9][a-z0-9-]*$"},
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/dependency"}
+        },
+        "earliest_checkpoint": {
+          "enum": [
+            "run_initialized",
+            "source_candidates_ready",
+            "source_acquisition_decision_ready",
+            "source_ready"
+          ]
+        },
+        "condition": {"enum": ["always", "fresh_download", "verified_import", "whisper_requested"]}
+      }
+    }
+  }
+}

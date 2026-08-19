@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v3/run-record.v3.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "kernel_version",
+    "scaffold_version",
+    "run_id",
+    "request_id",
+    "platform_adapter",
+    "adapter_contract_version",
+    "canonical_platform",
+    "canonical_item_id",
+    "source_identity_scheme",
+    "source_identity",
+    "source_version_scheme",
+    "source_version",
+    "original_title",
+    "normalized_title",
+    "task_start",
+    "output_path",
+    "deliverable_version",
+    "version_basis",
+    "requested_source_acquisition_mode",
+    "source_acquisition_mode",
+    "source_epoch",
+    "source_state",
+    "source_blocker",
+    "phase",
+    "initialization_intent_id",
+    "coordination_revision",
+    "last_mutation_intent_id",
+    "artifact_plan",
+    "artifact_generations",
+    "checkpoint_dependencies",
+    "checkpoints"
+  ],
+  "properties": {
+    "schema_name": {"const": "run-record"},
+    "schema_version": {"const": "3.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "scaffold_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "platform_adapter": {"enum": ["bilibili", "youtube"]},
+    "adapter_contract_version": {"const": "1.0.0"},
+    "canonical_platform": {"enum": ["bilibili", "youtube"]},
+    "canonical_item_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "source_identity_scheme": {"const": "canonical-platform-item-v1"},
+    "source_identity": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "source_version_scheme": {"const": "source-content-v1"},
+    "source_version": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      ]
+    },
+    "original_title": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "normalized_title": {"type": "string", "minLength": 1, "maxLength": 240},
+    "task_start": {"type": "string", "format": "date-time"},
+    "output_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "deliverable_version": {"const": 1},
+    "version_basis": {"const": "source_only"},
+    "requested_source_acquisition_mode": {"enum": ["fresh_download", "verified_import"]},
+    "source_acquisition_mode": {"enum": ["fresh_download", "verified_import"]},
+    "source_epoch": {"type": "integer", "minimum": 1},
+    "source_state": {
+      "enum": ["pending", "blocked_user_input", "candidates_ready", "decision_ready", "ready", "stale"]
+    },
+    "source_blocker": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/sourceBlocker"}
+      ]
+    },
+    "phase": {"enum": ["source_acquisition", "source_ready"]},
+    "initialization_intent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "coordination_revision": {"type": "integer", "minimum": 1},
+    "last_mutation_intent_id": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      ]
+    },
+    "artifact_plan": {"const": "workflow/artifact-plan.json"},
+    "artifact_generations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrap_record"],
+      "properties": {
+        "bootstrap_record": {"$ref": "#/$defs/artifactGeneration"},
+        "source_candidate_inventory": {"$ref": "#/$defs/artifactGeneration"},
+        "source_acquisition_decision_skeleton": {"$ref": "#/$defs/artifactGeneration"},
+        "source_acquisition_decision": {"$ref": "#/$defs/artifactGeneration"},
+        "source_transcription": {"$ref": "#/$defs/artifactGeneration"},
+        "source_credential_resolution_evidence": {"$ref": "#/$defs/artifactGeneration"},
+        "source_manifest": {"$ref": "#/$defs/artifactGeneration"}
+      }
+    },
+    "checkpoint_dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_initialized",
+        "source_candidates_ready",
+        "source_acquisition_decision_ready",
+        "source_ready"
+      ],
+      "properties": {
+        "run_initialized": {"const": []},
+        "source_candidates_ready": {"const": ["run_initialized"]},
+        "source_acquisition_decision_ready": {"const": ["source_candidates_ready"]},
+        "source_ready": {
+          "oneOf": [
+            {"const": ["source_candidates_ready"]},
+            {"const": ["source_acquisition_decision_ready"]}
+          ]
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_initialized"],
+      "properties": {
+        "run_initialized": {"$ref": "#/$defs/checkpoint"},
+        "source_candidates_ready": {"$ref": "#/$defs/checkpoint"},
+        "source_acquisition_decision_ready": {"$ref": "#/$defs/checkpoint"},
+        "source_ready": {"$ref": "#/$defs/checkpoint"}
+      }
+    }
+  },
+  "$defs": {
+    "sourceBlocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reason",
+        "canonical_platform",
+        "resource_class",
+        "breaker_state",
+        "evidence_sha256"
+      ],
+      "properties": {
+        "kind": {"const": "user_input"},
+        "reason": {"enum": ["cookie_missing", "cookie_unreadable", "cookie_rejected", "cookie_expired"]},
+        "canonical_platform": {"enum": ["bilibili", "youtube"]},
+        "resource_class": {"enum": ["bilibili_download", "youtube_download"]},
+        "breaker_state": {"enum": ["not_open", "open"]},
+        "evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "artifactGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "generation", "sha256", "producer", "committed_at", "source_epoch"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "producer": {"type": "string", "minLength": 1, "maxLength": 256},
+        "committed_at": {"type": "string", "format": "date-time"},
+        "source_epoch": {"type": "integer", "minimum": 0}
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_id", "generation", "sha256"],
+      "properties": {
+        "logical_id": {
+          "enum": [
+            "bootstrap_record",
+            "source_candidate_inventory",
+            "source_acquisition_decision_skeleton",
+            "source_acquisition_decision",
+            "source_transcription",
+            "source_manifest"
+          ]
+        },
+        "generation": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "prerequisiteBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkpoint", "evidence_sha256"],
+      "properties": {
+        "checkpoint": {
+          "enum": ["run_initialized", "source_candidates_ready", "source_acquisition_decision_ready"]
+        },
+        "evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "artifact_bindings",
+        "prerequisite_bindings",
+        "evidence_sha256",
+        "completed_at"
+      ],
+      "properties": {
+        "status": {"enum": ["current", "stale"]},
+        "artifact_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/artifactBinding"}
+        },
+        "prerequisite_bindings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/prerequisiteBinding"}
+        },
+        "evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "completed_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

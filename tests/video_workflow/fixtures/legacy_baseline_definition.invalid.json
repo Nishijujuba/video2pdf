@@ -1,0 +1,11 @@
+{
+  "$schema": "https://video2pdf.local/schemas/legacy-baseline-definition.v1.schema.json",
+  "schema_version": 1,
+  "kind": "legacy-workflow-baseline-definition",
+  "normalization_version": 1,
+  "baselines": [
+    {"test_id": "fixture-pyramid", "category": "pyramid", "command": ["{python}", "-c", "print('ok')"], "timeout_seconds": 30, "expected_status": "pass", "expected_log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  ],
+  "slice_verifications": [],
+  "authority_guards": []
+}

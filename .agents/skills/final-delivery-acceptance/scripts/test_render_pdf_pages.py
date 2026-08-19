@@ -10,6 +10,7 @@ from pathlib import Path
 import fitz
 
 from render_pdf_pages import render_pdf_pages
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -17,13 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 class RenderPdfPagesTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.video_dir = (
-            REPO_ROOT
-            / "待删除"
-            / "final-delivery-acceptance-render-tests"
-            / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.video_dir = new_fixture_dir(
+            "render-pdf-pages",
+            expected_suite="skill-tests",
         )
-        self.video_dir.mkdir(parents=True, exist_ok=True)
         self.pdf_path = self.video_dir / "final.pdf"
 
     def write_pdf(self, pages: int) -> None:

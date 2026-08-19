@@ -1,0 +1,12 @@
+{
+  "schema_name": "source-live-smoke-case",
+  "schema_version": "1.0.0",
+  "platform": "youtube",
+  "source_url": "https://www.youtube.com/watch?v=Fboj9EC7aa4",
+  "original_title": "Keynote: Claw and Order: Protecting Your Shell",
+  "explicit_item_selector": null,
+  "content_classification": "general",
+  "subtitle_language_priority": ["en"],
+  "whisper_allowed": false,
+  "max_video_height": 144
+}

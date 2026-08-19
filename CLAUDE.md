@@ -9,11 +9,75 @@ These instructions apply whenever this project uses either of the following skil
 
 The goal is to produce a complete, accurate, figure-rich Chinese PDF from a video source while keeping long-running work split across isolated subagents.
 
+## Findings Scope Limits
+
+=== SCOPE LIMITS (these bound what you PROPOSE, never what you look for) ===
+Report anything that is actually wrong here — including a rare-looking case, if
+this project actually produces it. Then keep the fix in scope:
+1. This is not a security paper. Verification is welcome; over-defense is not.
+   Unless this project states otherwise, assume a cooperating operator on their
+   own machine; if it has a real adversary, it will say so and that scope wins.
+2. Do not add hashes, checksums or fingerprints unless the hash replaces a
+   materially more expensive operation AND its result changes what happens next.
+3. No defensive scaffolding: no feature flags, migration frameworks, compat
+   layers or wrappers for cases that do not occur here.
+4. No corner-case obsession: exotic encodings, symlink races, RTL text and
+   millisecond races are out of scope unless the case is reachable through this
+   project's supported use — its documented inputs, its published interface, its
+   real data. Reachable is enough; you do not need a reproduction. Constructible
+   in principle is not enough.
+5. Where judgement is needed, judge. Do not replace it with a scoring table, a
+   checklist, or a re-verification loop over something already settled.
+Shapes already seen, for calibration. Examples, not a checklist — a real finding
+is not dismissed by resembling one:
+  H  hashing every row of two spreadsheets to answer what comparing cells answers
+  H  writing checksum files that nothing reads
+  E  hardening the accounts of an app that has no users and no deployment
+  R  auditing your own patch all night while the feature stays unwritten
+  R  a reviewer that returns a failing verdict on everything
+  O  guards whose justification is the previous guard, not the requirement
+Before running any check, answer: what specific failure would this detect, and
+what would I do differently if it occurred? No answer means do not run it.
+Say plainly when something is correct. Do not manufacture findings.
+
 ## Workflow Kernel 2.0 Activation Boundary
 
-`CONTEXT-MAP.md`, its active context glossaries under `docs/contexts/`, and ADRs beginning with ADR 0008 describe the accepted Workflow Kernel 2.0 target design. Until an explicit Global Gate Cutover or Platform Kernel Cutover activates the affected executable contracts, this file, `AGENTS.md`, and the current skill implementations remain the active runtime policy for Legacy Track work.
+The Global Gate is `active_global_gate`: Delivery Quality policy and Acceptance Report v2 are the sole active final-quality authority for both Legacy and Kernel inputs. Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, dual authority, and a synthetic Legacy Run are forbidden.
 
-Design acceptance alone does not activate Kernel commands, Acceptance Report v2, dual Reviewer orchestration, deterministic scaffolds, or Batch projections. Agents must not mix target-design mechanics with a Legacy Track run or synthesize `workflow/run.json` for an existing output directory. Each cutover updates the relevant instructions, skills, schemas, providers, guards, and tests atomically.
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. The shared final-quality authority remains the `active_global_gate`. A Legacy directory enters that gate through a fresh Run-record-free Legacy Acceptance Input Set; new tasks retain their real Run and Control Store authority. `CONTEXT-MAP.md`, active context glossaries, and the decision map record this boundary explicitly. Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
+
+## Persisted Command Contract
+
+Repository operations must use `scripts\persisted_command.py` when any qualification condition applies: the expected runtime exceeds five minutes; the active tool reports that the process is still running and requires a later wait; the process may continue beyond the initiating agent session; or re-execution is expensive or the result supports acceptance, review, or diagnosis. This repository-wide rule covers qualifying tests, downloads, transcription, rendering, compilation, migration, recovery, and batch commands.
+
+Start every qualifying non-interactive command through the runner and save the returned `data.run_dir`:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py start --task-name "<stable-task-name>" --cwd "<target-working-directory>" -- <command> <arguments>
+```
+
+The accepted exit-code set defaults to `{0}`. When a command needs another set, declare every accepted code before launch by repeating `--accepted-exit-code <code>` before `--`, including `0` when it must remain accepted; accepted exit codes are immutable after launch. Use the same Python entrypoint for observation:
+
+```powershell
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py wait --run-dir "<data.run_dir>"
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py list
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py show --run-dir "<data.run_dir>"
+D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\persisted_command.py reconcile --run-dir "<data.run_dir>"
+```
+
+After session loss, a new session must run `list`, identify the immutable run directory, then use `show`, `reconcile`, or `wait`. `reconcile` only observes process identity and corrects persisted state; it never restarts, terminates, attaches to, or takes over a process. Terminal state `succeeded` or `failed` requires an actual exit code. `launch_failed` means no child was created, `interrupted` means the recorded live process is missing, and `unknown` means continuity cannot be proven. Accepted completion is proven by terminal `status.json` plus `exit-code.txt`, not by generated artifacts alone.
+
+On Windows, persisted execution must not leave a visible PowerShell window open. `start` returns immediately after launching the detached supervisor. Observe the run later with non-blocking `show` or `reconcile` calls. `wait` blocks until a meaningful event and is allowed only when the calling tool guarantees hidden-window execution. Start one `wait` process and keep observing that same process through the tool layer; do not relaunch `wait` on a timer. The calling tool's command timeout must cover the expected wait duration because a short command timeout terminates the observer.
+
+Every run is retained under `待删除/long-running/` with complete `stdout.log`, `stderr.log`, `command.log`, `command.json`, and `status.json`. The runner never truncates, rotates, overwrites, or automatically deletes history. Cleanup is manual and follows the repository rule that material marked for deletion remains staged under `待删除`.
+
+Persisted metadata omits environment values and redacts recognized sensitive arguments. Target commands remain responsible for sanitized output. When detection sets `acceptance_evidence_eligible` to false with `security_failure`, the complete logs remain local diagnostic material and cannot support acceptance evidence. Secret values, raw cookies, tokens, authorization headers, and credential-bearing URLs must never appear in shared summaries or committed evidence.
+
+Persisted heartbeats are execution evidence, not user-facing progress events. After `start`, report the stable task name and returned `data.run_dir` once. If completion blocks the requested delivery, keep the task active and observe it silently; otherwise return control with the run directory so a later session can recover through `list`, `show`, or `reconcile`.
+
+User-facing updates are event-driven. Emit an update only when the persisted state becomes terminal, the security classification or `acceptance_evidence_eligible` changes, the target emits an explicit machine-readable milestone, or an error, blocker, or user decision appears. Log growth, `heartbeat_at` changes, and an unchanged `running` state are not progress events. `wait` emits one compact event containing state, exit code, structured failure and security fields, log telemetry, and log filenames relative to `run_dir`; it never embeds raw log lines. Use `show` for a complete persisted snapshot and read the retained logs only when diagnosis requires them. Report `interrupted` or `unknown` immediately. When a higher-priority runtime rule mandates a heartbeat, use the longest permitted interval and emit only the required minimal heartbeat.
+
+This runner does not activate Workflow Kernel 2.0 and does not replace Acceptance Reports, Delivery Guard reports, Exit Evidence manifests, or Workflow Kernel Run Records. Those authorities keep their existing validation and cutover rules. The complete operator walkthrough is in `docs/operations/persisted-command-runner.md`.
 
 ## Multi-Agent Orchestration
 
@@ -21,12 +85,13 @@ When using `/bilibili-render-pdf` or `/youtube-render-pdf`, the master agent mus
 
 Required subagent roles:
 
+- **Data Preparation agent**: before outline work begins, download the original video and the usable subtitle tracks, collect metadata and cover/source assets, preserve subtitle timestamps, and record the source-material handoff and any acquisition limitations for downstream agents.
 - **Outline agent**: define the global table of contents, terminology, symbol table, chapter boundaries, writing contract, and cross-section conventions before chapter writing begins.
 - **Writer agents**: use one or more writer agents depending on the number of chapters. Each writer agent must write complete chapter drafts directly and save them as `section_*.tex`.
 - **Figure agents**: use one or more figure agents depending on the number of chapters. Figure agents are responsible for frame extraction, image selection, cropping, generating new explanatory diagrams or scripts, writing captions, and adding timestamp footnotes.
 - **Consistency agent**: check for duplicate definitions, inconsistent terminology, broken transitions between chapters, missing cross-references, and unclear notation. When a Delivery Glossary exists, the Consistency agent must check `section_*.tex` and `main.tex` against it and record evidence for first-use wording, later-use stability, source-English preservation location, body display strategy stability, and chapter-to-chapter terminology consistency.
 - **Independent review agent**: after the first PDF is delivered, spawn an independent review agent. This agent must compare the draft against the original subtitle files and check for missing important details or subtle information. The workflow must continue through interaction and revision until the review agent judges that the TeX content is complete enough.
-- **Acceptance Reviewer**: after the final PDF is rendered and before delivery, spawn a read-only Acceptance Reviewer. Before launch, create or refresh `review/acceptance/acceptance_report.skeleton.json` from the project validator so the reviewer receives the fixed report shape, current artifact fingerprints, and rendered-page slots. This reviewer may inspect only final delivered artifacts, `docs/acceptance/acceptance_criteria.v1.json`, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.skeleton.json`, and rendered page evidence under `review/acceptance/rendered_pages/`. It writes `review/acceptance/acceptance_report.json` and optional `review/acceptance/acceptance_summary.md`. When acceptance fails, repair subagents perform artifact changes, the PDF is rendered again, stale evidence is refreshed, a fresh skeleton is generated, and a fresh Acceptance Reviewer run decides delivery.
+- **Acceptance Reviewer**: after final compile and before delivery, run `acceptance-prepare`, then spawn the independent read-only Reviewer from its provider-created Task Envelope. The Reviewer inspects only the exact path-and-SHA read set, writes a staged Judgment Patch, and has no report-publication authority. Commit each Patch through `acceptance-patch-commit`; publish Acceptance Report v2 through `acceptance-materialize`; use `acceptance-reconcile` after interruption. Legacy inputs first use `legacy-acceptance-adopt`. When acceptance fails, repair subagents change artifacts and the coordinator starts a fresh governed attempt.
 
 ### Subagent Wait Policy
 
@@ -48,7 +113,7 @@ If the reviewer cannot complete this per-page inspection within the allowed wait
 
 Every render workflow must bind final delivery to the session-scoped active target `.codex/delivery-targets/sessions/<session_id>/current.json`, the project task index `.codex/delivery-targets/task-index.json`, and the video-level `review/acceptance/delivery_target.json` before delivery. The lifecycle stages are `generating`, `ready_for_delivery`, `accepted`, `delivered`, `blocked`.
 
-The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, `review/acceptance/allowed_artifacts_manifest.json`, `review/acceptance/acceptance_report.json`, and `review/acceptance/delivery_guard_report.json`. Newly generated video PDFs must also have final compile provenance at `review\latex\compile_report.json`. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The compile report cannot replace acceptance_report.json; it only proves guarded compilation provenance for `delivery_guard.py check`.
+The video-level target records `attempt_limit: 3`, the final PDF, the main TeX file, canonical `review/acceptance/acceptance_report.json`, `review/acceptance/delivery_guard_report.json`, and the explicit Global Gate authority path and SHA. `acceptance_report.json is the only machine-readable delivery decision source`. `delivery_guard_report.json is a mechanical proof of freshness and contract validity`. The active Guard accepts only a current passing Acceptance Report v2 and validates committed execution, Patch, report-publication, Global Gate, and artifact-fingerprint authority. A compile report cannot replace acceptance_report.json.
 
 Before final delivery, run `delivery_guard.py check` against the session-scoped current target. The legacy `.codex/delivery-targets/current.json` singleton path is unsupported for `delivery_guard.py check`. Final delivery is allowed only after a fresh passing guard report exists. Do not deliver this PDF until delivery_guard.py records a fresh pass.
 

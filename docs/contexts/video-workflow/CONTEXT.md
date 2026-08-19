@@ -2,6 +2,26 @@
 
 Status: active domain language. Component runtime activation is recorded in the [Video Workflow Kernel 2.0 decision map](../../adr/video-workflow-kernel-2.0-decision-map.md).
 
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. Final-quality authority remains the Delivery Quality `active_global_gate`.
+
+The completed cold-start cutover bound one exact Bilibili Run as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` were bounded candidate states; final activation recorded `CONFIRMED` for the matching delivered candidate and its published Exit Evidence before ordinary new-run authority opened.
+
+The completed cutover candidate used the public `source-acquire` command against its existing `--run-dir`; source evidence remained attached to that same Run and no second Run was created.
+
+When no usable CC subtitle exists, `source-acquire` must stage Whisper output through the Kernel-issued Whisper Task/Attempt and promote the validated Attempt before `source_ready` becomes current.
+
+Source acquisition must never call `source-live-smoke`; no second Run may be created for source acquisition.
+
+An expired or rejected Cookie is a recoverable `user_input` Source Blocker: preserve the same Run and its evidence, do not count it as a delivery attempt failure, and immediately request a refreshed Cookie from the user.
+
+After receiving the refreshed Cookie, close the source circuit breaker, run `source-blocker-resolve`, and retry `source-acquire` on the same Run with a new `source_epoch`.
+
+The Cookie path and Cookie contents are credential-bearing secrets and must never appear in logs, reports, shared evidence, or task prompts.
+
+If acquisition is interrupted after terminal proof persistence and before Resource Lease release, run `source-acquire-reconcile --run-dir <run-dir>`.
+
+`source-acquire-reconcile` reloads the persisted terminal proof, releases the existing Lease, and advances or retries the interrupted Task on the same Run; it must not initialize or attach another Run.
+
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 
 The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and the Pyramid Gate Report. The Final Acceptance Context owns acceptance criteria, Reviewer judgment, and the final semantic delivery decision; this context consumes those published decisions and owns their invocation timing, freshness consequences, repair routing, and delivery mechanics.
@@ -37,6 +57,20 @@ An atomic activation of one shared gate contract across every affected execution
 ## Platform Kernel Cutover
 
 An atomic transfer of new-run lifecycle authority for one source platform to the Video Workflow Kernel.
+
+## Platform Cutover Candidate
+
+The one exact platform Run identity, source identity, implementation commit, Global Gate binding, and coordinator session durably selected to generate real guarded-delivery evidence before platform confirmation. Candidate preparation and initialization grant no ordinary Run-admission authority.
+
+## Provisional Candidate Authority
+
+The candidate-only state published after the bound Run reaches `ready_for_delivery` with a provider-current passing Acceptance Report v2. It permits only that Run to advance to `accepted`, obtain a fresh current Delivery Guard, and use that Guard to reach `delivered` for Exit Evidence collection. It is not `active_kernel` and cannot initialize another Run.
+
+## Confirmed Platform Kernel Authority
+
+The final platform authority recorded only after a published Exit Evidence Manifest identifies the same delivered candidate and passes formal validation. `CONFIRMED` opens ordinary new-run initialization and realizes the platform's `active_kernel` status.
+
+The completed cutover lifecycle followed `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` carried candidate-only authority during that activation.
 
 ## Contract Schema Version
 
@@ -157,6 +191,14 @@ The discriminated identity of the coordination authority allowed to validate and
 ## Generated Task Prompt
 
 The immutable semantic prompt produced from registered role guidance and the applicable platform policy for one Subagent Task Envelope.
+
+## Composite Authoring Contract
+
+The workflow-assembled input contract for a Writer task. It binds the fingerprinted Writer Guidance Projection from the Delivery Quality Rule Catalog, the applicable Source-Faithfulness constraints, and the selected Pyramid authoring target while preserving each input's separate semantic authority. The contract grants artifact-production authority and carries no gate judgment authority.
+
+## Reviewer Task Isolation
+
+The execution rule that assigns each Primary Semantic Decision Owner a separate Subagent Task Envelope bound to one current Artifact Generation set, one Evaluation Projection, and one permitted evidence boundary. Each Reviewer commits an independent immutable judgment before peer verdicts become visible. Provider materialization consumes those judgments and performs no semantic reinterpretation.
 
 ## Task Completion Gate
 
@@ -296,7 +338,7 @@ The read-only Content Assurance Adapter that evaluates terminology, notation, re
 
 ## Source-Faithfulness Reviewer
 
-The read-only Content Assurance Adapter that compares the integrated draft and figure provenance with the Validated Source Package for omissions, unsupported claims, and source drift.
+The read-only Content Assurance Adapter that owns correspondence between the integrated draft, figure provenance, and the Validated Source Package. Its semantic boundary includes material omission, distortion, unsupported claims, attribution, quotation accuracy, timestamp correspondence, and source drift.
 
 ## Content Assurance Checkpoint
 
@@ -314,9 +356,21 @@ The internal deterministic Module that converts a current Content Assurance fail
 
 The validated contract that binds one repair cycle's failures to task capabilities, dependencies, and exact read and write boundaries.
 
+## Conflict-Aware Repair Planning
+
+The rule that repair planning consumes the complete current failure set, permits parallel repair only across disjoint write boundaries, and assigns overlapping or interacting changes to one Integration Repair. A semantic requirement conflict becomes a blocking Contract Gap. Every repair produces the freshness consequences required by its mutation boundary.
+
 ## Repair Capability
 
 A registered class of artifact change with a deterministic ownership boundary for repair planning.
+
+## Content Repair Role
+
+A mutation role that resolves Source-Faithfulness, Writing Quality, or Pyramid findings by changing source claims, reader-facing text, terminology, reasoning connections, or document structure. Its changes create a new Artifact Generation and require fresh evaluation from every invalidated precompile semantic owner.
+
+## Presentation Repair Role
+
+A mutation role that resolves Visual Quality findings through presentation changes proven to preserve the complete Reader-Facing Text Inventory. Any change to reader-facing text, including text inside figures or tables, exceeds this capability and routes to the Content Repair Role.
 
 ## Integration Repair
 
@@ -409,6 +463,10 @@ The durable Batch-level record for source selection, deterministic item order, r
 ## Batch Item Projection
 
 A read-only, rebuildable view of one Video Workflow Run inside a Batch Record.
+
+## Batch activation status
+
+Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
 
 ## Delivery Target
 

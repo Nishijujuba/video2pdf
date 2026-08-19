@@ -1,0 +1,19 @@
+test_production_adapters_share_one_runtime_checkable_interface (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_production_adapters_share_one_runtime_checkable_interface) ... ok
+test_bilibili_recording_is_cookie_first_and_materializes_canonical_outputs (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_recording_is_cookie_first_and_materializes_canonical_outputs) ... ok
+test_youtube_recording_puts_node_on_every_ytdlp_command (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_recording_puts_node_on_every_ytdlp_command) ... ok
+test_cookie_rejection_is_a_closed_user_input_classification_without_secret_leak (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_cookie_rejection_is_a_closed_user_input_classification_without_secret_leak) ... ok
+test_recorded_runner_rejects_an_unconsumed_or_out_of_order_recording (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_runner_rejects_an_unconsumed_or_out_of_order_recording) ... ok
+test_subprocess_runner_redacts_secret_arguments_cookie_lines_and_values (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_subprocess_runner_redacts_secret_arguments_cookie_lines_and_values) ... ok
+test_youtube_translated_subtitle_filename_binds_requested_track (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_translated_subtitle_filename_binds_requested_track) ... ok
+test_recorded_provider_manifest_is_closed_and_versioned (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_provider_manifest_is_closed_and_versioned) ... ok
+test_recorded_provider_rejects_declared_stdio_hash_drift (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_recorded_provider_rejects_declared_stdio_hash_drift) ... ok
+test_bilibili_p2_probe_selection_drives_the_acquisition_command (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_p2_probe_selection_drives_the_acquisition_command) ... ok
+test_bilibili_acquire_rejects_a_different_item_before_provider_launch (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_bilibili_acquire_rejects_a_different_item_before_provider_launch) ... ok
+test_youtube_acquire_rejects_a_different_item_before_provider_launch (tests.video_workflow.test_platform_adapters.PlatformAdapterTests.test_youtube_acquire_rejects_a_different_item_before_provider_launch) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 5.338s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: be7739fed8e224ea5c7c8abd4cb7f33a2c706ff7

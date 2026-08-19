@@ -1,0 +1,22 @@
+{
+  "schema_name": "delivery-quality-migration-ledger",
+  "schema_version": "1.0.0",
+  "ledger_version": "1.0.0",
+  "activation_status": "target_only",
+  "source_contract": {
+    "path": "docs/acceptance/acceptance_criteria.v1.json",
+    "sha256": "97037378976fe01e2b88eb35ee44022d014fd885e2298655beb2cc04bc05e1ae",
+    "schema_version": "1.0"
+  },
+  "entries": [
+    {"source_criterion_id": "no_meta_writing_content", "rule_id": "no_meta_writing_content", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Moves the unchanged blocking meaning to the precompile owner."},
+    {"source_criterion_id": "core_term_first_use_readability", "rule_id": "core_term_first_use_readability", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves first-use readability as a text judgment."},
+    {"source_criterion_id": "delivery_glossary_term_strategy", "rule_id": "delivery_glossary_term_strategy", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves glossary-governed reader-facing term strategy."},
+    {"source_criterion_id": "argument_chain_integrity", "rule_id": "argument_chain_integrity", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves proposition and argument-chain integrity."},
+    {"source_criterion_id": "formula_information_gain", "rule_id": "formula_information_gain", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves the formula information-gain gate."},
+    {"source_criterion_id": "figure_visual_integrity", "rule_id": "figure_visual_integrity", "decision_phase": "postcompile", "primary_semantic_decision_owner": "visual-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves rendered figure integrity."},
+    {"source_criterion_id": "table_layout_integrity", "rule_id": "table_layout_integrity", "decision_phase": "postcompile", "primary_semantic_decision_owner": "visual-quality-reviewer", "migration_kind": "identity", "meaning_preserved": true, "notes": "Preserves rendered table integrity."},
+    {"source_criterion_id": "credibility_disclosure_placement", "rule_id": "credibility_disclosure_content", "decision_phase": "precompile", "primary_semantic_decision_owner": "writing-quality-reviewer", "migration_kind": "split", "meaning_preserved": true, "notes": "Separates disclosure necessity and wording from rendering."},
+    {"source_criterion_id": "credibility_disclosure_placement", "rule_id": "credibility_disclosure_rendered_placement", "decision_phase": "postcompile", "primary_semantic_decision_owner": "visual-quality-reviewer", "migration_kind": "split", "meaning_preserved": true, "notes": "Separates rendered visibility and reading-flow placement."}
+  ]
+}

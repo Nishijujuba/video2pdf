@@ -1,0 +1,27 @@
+{
+  "schema_name": "production-state",
+  "schema_version": "2.0.0",
+  "kernel_version": "2.0.0",
+  "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_binding": {"logical_id": "source_manifest", "generation": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "artifacts": {},
+  "completed_tasks": [],
+  "completed_roles": [],
+  "claims": {
+    "writer-section-01": {"task_id": "cccccccccccccccccccccccccccccccc", "claim_generation": 1, "claim_token": "dddddddddddddddddddddddddddddddd", "status": "available"}
+  },
+  "receipts": {},
+  "checkpoints": {"source_ready": "current", "draft_compile_ready": "pending"},
+  "sections": {
+    "section_01": {
+      "title": "Section 1",
+      "figure_slots": [{"slot_id": "figure_01", "section_id": "section_01", "teaching_purpose": "Explain the section", "placement_marker": "% FIGURE_SLOT:figure_01", "wave": "required"}],
+      "incremental_wave_status": "not_requested",
+      "incremental_wave_count": 0,
+      "rejected_candidates": [],
+      "blocked_evidence": [],
+      "status": "active"
+    }
+  },
+  "promotion_sequence": []
+}

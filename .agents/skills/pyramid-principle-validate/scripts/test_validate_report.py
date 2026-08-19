@@ -13,6 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from validate_report import ValidationError, validate_report
+from tests.project_test_runner._fixture_root import new_fixture_dir
 
 
 def run_cli(args: list[str | Path]) -> subprocess.CompletedProcess[str]:
@@ -107,8 +108,10 @@ class ValidateReportTests(unittest.TestCase):
         return path
 
     def setUp(self) -> None:
-        self.run_dir = Path.cwd() / "待删除" / "pyramid-validate-test-runs"
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir = new_fixture_dir(
+            "pyramid-validate",
+            expected_suite="skill-tests",
+        )
 
     def test_accepts_generalized_gate_report(self) -> None:
         warnings = validate_report(self.write_report(generalized_report()), enforce_gate=False)

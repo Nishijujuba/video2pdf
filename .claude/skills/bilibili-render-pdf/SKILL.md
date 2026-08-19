@@ -14,7 +14,7 @@ This skill extends the `youtube-render-pdf` workflow with Bilibili-specific adap
 | Aspect | Handling |
 |--------|----------|
 | **Subtitle scarcity** | Try cookie-assisted CC subtitle probing first → then inspect metadata → fall back to Whisper speech-to-text → visual-only mode |
-| **Login-gated HD** | 1080P+ requires cookies; invoke `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp` with the required cookie flags |
+| **Login-gated HD** | 1080P+ commonly requires cookies; declare that constraint to the Kernel source-acquisition operation |
 | **Multi-part videos** | Detect 分P videos and ask the user which parts to process |
 | **URL formats** | Support `bilibili.com/video/BVxxxxxxx` and `b23.tv` short links |
 | **Danmaku** | Do not use danmaku as a teaching content source (too noisy); use only CC subtitles or Whisper output |
@@ -33,19 +33,33 @@ The output must:
 - be a complete `.tex` document from `\documentclass` to `\end{document}`
 - be compiled successfully to PDF as part of the final delivery
 
-## Local Environment On This Machine
+## Active Authority Boundary
 
-When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
+Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both Legacy and Kernel inputs.
 
-- Shared Python environment for helper scripts and generated figures: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe`
-- Whisper CLI for subtitle fallback: `D:\Project\video2pdf\kimi\.venv\Scripts\whisper.exe`
-- `yt-dlp` launcher: `D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -m yt_dlp`
-- `ffmpeg`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffmpeg.exe`
-- `ffprobe`: `D:\Project\video2pdf\kimi\tools\ffmpeg\bin\ffprobe.exe`
-- ImageMagick `magick`: `D:\Project\video2pdf\kimi\tools\imagemagick\magick.exe`
-- LaTeX engine path for the guarded wrapper `--engine` argument: `D:\kits\MiKTex\miktex\bin\x64\xelatex.exe`
+For every new Bilibili task, run `workflow-policy-check` first. When Bilibili reports current `active_kernel` authority, start the new task with ordinary `init-run`. If the Global Gate or platform authority is missing, stale, or unconfirmed, fail closed and repair authority before creating the task; never redirect a new task into a Legacy directory or a historical activation path.
 
-Use the shared `kimi` uv environment as the default local runtime for Python-based helper work, and use the `whisper.exe` path above whenever the CC subtitle path is unavailable.
+The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
+
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+
+### Cold-start recovery only
+
+If `workflow-policy-check` reports that the formal Bilibili authority is absent, stop new-task initialization and obtain repository-owner authorization for authority recovery. Historical cutover mechanics and evidence remain in the governing ADRs and published Slice 12 records; this active skill provides no executable cutover path.
+
+### Execution track partition
+
+For a new Kernel task, all filesystem creation, source acquisition, Whisper fallback, and compilation execute only through the public Workflow CLI and its provider-issued tasks. Direct `yt-dlp`, `whisper`, and `compile_latex_ascii.py` commands in this skill are Legacy recovery references for pre-existing directories only; they are forbidden for a new task. A request for a root-level or Legacy-shaped output path does not grant migration or Legacy creation authority.
+
+## Semantic Roles
+
+- **Data Preparation agent**: judges subtitle usefulness, source-language priority, acquisition limitations, and semantic adequacy from the Kernel-provided source task and returns only its bounded Judgment Patch.
+- **Outline agent**: defines the teaching goal, chapter hierarchy, terminology contract, figure plan, and reader progression.
+- **Writer agents**: write complete, source-faithful `section_*.tex` drafts inside their declared task write sets.
+- **Figure agents**: select and explain high-value frames, crops, or teaching diagrams with timestamp provenance.
+- **Consistency agent**: checks terminology, notation, transitions, references, and Delivery Glossary conformance.
+- **Independent review agent**: compares the integrated teaching content with the validated source package and reports omissions or distortions.
+- **Acceptance Reviewer**: performs independent read-only Visual Quality judgment from the provider-created Task Envelope and writes only the bounded Judgment Patch.
 
 ## Pedagogical Standard
 
@@ -58,6 +72,18 @@ The notes must read like a strong human teacher is guiding the reader through th
 - do not dump subtitle content in chronological order; rewrite it into a teaching sequence with clear intent, contrast, and buildup
 
 ## Source Acquisition
+
+For a new Kernel task, treat the requirements in this section as provider constraints and use `source-acquire`, `source-acquire-reconcile`, or `source-import` against the real `--run-dir`. The direct acquisition commands below apply only when recovering a pre-existing Legacy directory.
+
+Run source acquisition as a dedicated **Data Preparation agent** stage before the Outline agent starts. The Data Preparation agent must:
+
+- download the original video or the highest usable source required for frame extraction;
+- download and select usable subtitle tracks, preferring manual subtitles and preserving timestamps;
+- collect the video title, chapters, duration, cover, subtitle-language availability, and acquisition provenance;
+- place source artifacts and disposable acquisition material in the assigned video output directory, with disposable material under `待删除`;
+- write a concise source-material handoff that identifies the selected video, subtitle files, cover, source language, missing assets, and limitations for Outline, Writer, Figure, and review agents.
+
+The Outline agent may start only after this handoff establishes a usable source package or records an explicit acquisition blocker.
 
 ### Cookie-First Subtitle Probe
 
@@ -178,13 +204,13 @@ Skip subtitles entirely and rely on dense frame sampling to extract teaching con
 
 ## Output Naming
 
-Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
+For a new Kernel task, `init-run` creates the output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
 
 ```text
 D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
 ```
 
-The `workspace` directory is the default parent for new Bilibili PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
+The `workspace` directory is the only authorized parent for new Bilibili PDF outputs. Never manually create a new Legacy or root-level output directory. A pre-existing Legacy directory remains in its current location unless explicit migration authority is introduced.
 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 
@@ -200,7 +226,7 @@ Use these safeguards when running inside this project workspace:
 - when a downloaded merged temp file contains both video and audio streams, copy it to a stable workspace filename for downstream frame extraction
 - keep the failed temp files in `待删除` for audit; permanent cleanup belongs to the user
 - pass Chinese paths to Python tools through command-line arguments or environment variables; avoid embedding those paths inside stdin scripts because Windows console encodings may replace characters with `?`
-- compile through the LaTeX Compile Guard with `scripts/compile_latex_ascii.py`; pass the engine path with `--engine` and keep direct engine shell calls out of the workflow
+- for a new Kernel task, compile through Workflow CLI `guarded-compile`; when recovering a pre-existing Legacy directory, use the LaTeX Compile Guard at `scripts/compile_latex_ascii.py`, pass the engine path with `--engine`, and keep direct engine shell calls out of the workflow
 
 ## Long Video Strategy
 
@@ -245,7 +271,7 @@ The Delivery Glossary is a workflow contract artifact and is not a PDF appendix 
 
 ## Pyramid Gate Workflow
 
-Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here.
+Run the general Pyramid Gate during the single-video workflow. Batch orchestration remains out of scope here. Batch orchestration now lives in the Kernel `batch-*` CLI (`bilibili-batch-render-pdf`).
 
 Canonical Pyramid Gate artifacts for each video output directory:
 
@@ -569,6 +595,14 @@ Do not add decorative graphics that do not teach anything.
 
 Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
 
+For a new Kernel task, invoke compilation only through the Workflow CLI:
+
+```powershell
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py guarded-compile --run-dir "<run-dir>" --manifest "<compile-manifest>" --runtime-policy "<runtime-policy>"
+```
+
+The direct `compile_latex_ascii.py` reference below applies only to an existing Legacy directory. It must never compile a new Kernel task.
+
 Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
 
 ```powershell
@@ -615,7 +649,7 @@ After PDF rendering and PDF verification, run the Final Delivery Acceptance Gate
 
 Required evidence paths:
 
-- `docs/acceptance/acceptance_criteria.v1.json`
+- current Delivery Quality Rule Catalog and Role Projections
 - `review/acceptance/allowed_artifacts_manifest.json`
 - `review/acceptance/delivery_glossary.json` when the non-English teaching PDF Delivery Glossary workflow applies
 - `review/acceptance/acceptance_report.skeleton.json`
@@ -623,11 +657,15 @@ Required evidence paths:
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. When the non-English teaching PDF Delivery Glossary workflow applies, validate `review/acceptance/delivery_glossary.json` first and pass `--include-delivery-glossary` while creating the manifest. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
+Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged by acceptance. A new Kernel task retains its real Run and Control Store authority. An existing Legacy directory must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`; it must never create a synthetic Legacy Run. Both inputs then run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, and publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+The three precompile semantic owners retain their committed semantic decisions. `source-faithfulness-reviewer` owns source fidelity, `writing-quality-reviewer` owns full reader-facing text, formula, and Delivery Glossary semantic review, and `pyramid-reviewer` owns document structure. The Acceptance Reviewer handles only the `visual_quality` criteria in the provider-created Task Envelope. It reads only the exact path-and-SHA `authorized_read_set` and writes one Visual Quality Judgment Patch to `required_output.path`, the sole `declared_write_set` entry inside the provider-created Attempt directory. The Reviewer has no report-publication authority; after `acceptance-patch-commit`, the `acceptance-materialize` provider materializes the canonical Acceptance Report v2 without reinterpreting precompile decisions.
 
-If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, and dual authority are forbidden. Both Legacy and Kernel inputs use the same Acceptance Report v2 provider and active Guard.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, forbidden-context, or non-v2 report blocks final delivery.
+
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and any invalidated precompile owner evidence, then create a fresh provider Attempt and launch its Acceptance Reviewer from the new Task Envelope exact authorized read set.
 
 Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
 

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tests.project_test_runner._fixture_root import new_fixture_dir
+
 
 SCRIPT_PATH = Path(__file__).resolve().with_name("check_output_gate.py")
 
@@ -28,7 +30,10 @@ def load_checker_module() -> Any:
 
 class CheckOutputGateTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.run_dir = Path.cwd() / "待删除" / "pyramid-output-gate-test-runs" / uuid4().hex
+        self.run_dir = new_fixture_dir(
+            "pyramid-output-gate",
+            expected_suite="skill-tests",
+        )
         self.output_dir = self.run_dir / "video-output"
         self.review_dir = self.output_dir / "review" / "pyramid"
         self.review_dir.mkdir(parents=True, exist_ok=True)

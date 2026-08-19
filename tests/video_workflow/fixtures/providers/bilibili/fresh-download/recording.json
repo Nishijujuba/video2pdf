@@ -1,0 +1,67 @@
+{
+  "$schema": "https://video2pdf.local/schemas/video-workflow/v1/recorded-provider-package.v1.schema.json",
+  "schema_name": "recorded-provider-package",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "recording_id": "bilibili-fresh-download-v1",
+  "canonical_platform": "bilibili",
+  "adapter": {"id": "bilibili-yt-dlp.v1", "contract_version": "1.0.0"},
+  "commands": [
+    {
+      "operation": "subtitle_list",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--list-subs", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/subtitle-list.txt", "sha256": "52b484e038ee977f1d93e2d2b519e2f843f016f1af46223dadc98881efce861c"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    },
+    {
+      "operation": "metadata_probe",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--dump-single-json", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/metadata.json", "sha256": "fef33f3c488e59a99527e93f2638e4e6a27b5a3c82d554baca72c432e056f987"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    },
+    {
+      "operation": "subtitle_manual",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--write-subs", "--sub-langs", "en", "--sub-format", "srt/vtt/best", "--convert-subs", "srt", "--paths", "home:.", "--output", "candidate.%(language)s.%(ext)s", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "candidate.en.srt", "fixture": "outputs/subtitle.manual.en.srt", "sha256": "94c4a4a496faca096dfb3063e596a25ae134c354bd87580fd3d70bad28985997"}]
+    },
+    {
+      "operation": "subtitle_automatic",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", "ai-zh", "--sub-format", "srt/vtt/best", "--convert-subs", "srt", "--paths", "home:.", "--output", "candidate.%(language)s.%(ext)s", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "candidate.ai-zh.srt", "fixture": "outputs/subtitle.automatic.ai-zh.srt", "sha256": "add6224fc31509c49a412ee265d76319236e494d833e1cb51ecd434b79416e2e"}]
+    },
+    {
+      "operation": "thumbnail_download",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg", "--paths", "home:.", "--output", "cover.%(ext)s", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "cover.jpg", "fixture": "outputs/cover.jpg", "sha256": "77f026d6f1421398031a2688bba36842f36dbe82390bd2d1e041868859a921f4"}]
+    },
+    {
+      "operation": "media_download",
+      "argv": ["python", "-X", "utf8", "-B", "-m", "yt_dlp", "--ignore-config", "--no-cache-dir", "--no-part", "--no-playlist", "--no-progress", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3", "--ffmpeg-location", "ffmpeg-bin", "--cookies", "<localized-cookie-file>", "--format", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4", "--paths", "home:.", "--output", "video.%(ext)s", "--", "https://www.bilibili.com/video/BV1TEST00001/?p=1"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": [{"attempt_relative_path": "video.mp4", "fixture": "outputs/video.mp4", "sha256": "17081fd4ffc9736a97512a38d091f89fb303e5c5330421e4a63cc502dce2e315"}]
+    },
+    {
+      "operation": "media_probe",
+      "argv": ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", "video.mp4"],
+      "returncode": 0,
+      "stdout": {"path": "stdout/media-probe.json", "sha256": "23d56c192f5a93b46949efb38866ea1ab394e578bb3c737c13be10b88390cbf6"},
+      "stderr": {"path": "stderr/empty.txt", "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"},
+      "outputs": []
+    }
+  ]
+}

@@ -1,5 +1,11 @@
 # Bind final acceptance tasks to an explicit execution context
 
+Status: amended by ADRs 0063 and 0064. The Acceptance Execution Context,
+Reviewer Claim, Mutation Intent, fencing, and reconciliation decisions remain
+authoritative. The earlier two-final-Reviewer topology is superseded by three
+committed precompile owner reports plus one independent Visual Quality Judgment
+Patch.
+
 Acceptance Report v2 must review both Kernel and Legacy input tracks after the Global Gate Cutover. Kernel tasks can bind to `workflow/run.json`; Legacy directories intentionally have no synthesized Run Record. Final Acceptance also has two concurrent Reviewer Claims whose Judgment Patches must become durable evidence before one provider can materialize the combined report. A report-level promotion cannot safely act as the missing commit for two still-active Reviewer Claims.
 
 ## Considered Options

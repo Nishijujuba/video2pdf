@@ -8,6 +8,8 @@ import subprocess
 import sys
 import unittest
 import uuid
+
+from tests.project_test_runner._fixture_root import new_fixture_dir
 from copy import deepcopy
 from pathlib import Path
 
@@ -42,13 +44,10 @@ def load_criteria() -> dict[str, object]:
 
 class AcceptanceReportValidationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.video_dir = (
-            REPO_ROOT
-            / "待删除"
-            / "final-delivery-acceptance-report-tests"
-            / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.video_dir = new_fixture_dir(
+            "acceptance-report",
+            expected_suite="skill-tests",
         )
-        self.video_dir.mkdir(parents=True, exist_ok=True)
         self.acceptance_dir = self.video_dir / "review" / "acceptance"
         self.rendered_dir = self.acceptance_dir / "rendered_pages"
         self.rendered_dir.mkdir(parents=True, exist_ok=True)

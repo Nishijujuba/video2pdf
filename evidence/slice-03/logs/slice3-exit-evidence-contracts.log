@@ -1,0 +1,17 @@
+test_slice3_schema_requires_first_class_result_kinds (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_schema_requires_first_class_result_kinds) ... ok
+test_slice3_semantics_bind_exact_results_commands_and_fqn_targets (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_semantics_bind_exact_results_commands_and_fqn_targets) ... ok
+test_slice3_semantics_reject_unbound_result_fixture (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_semantics_reject_unbound_result_fixture) ... ok
+test_slice3_collector_registers_ten_closed_commands_and_correct_paths (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_registers_ten_closed_commands_and_correct_paths) ... ok
+test_slice3_collector_logs_include_exact_implementation_marker (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_logs_include_exact_implementation_marker) ... ok
+test_slice3_collector_refuses_dirty_implementation_head (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_collector_refuses_dirty_implementation_head) ... ok
+test_slice3_validator_rejects_missing_or_wrong_log_commit_marker (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_validator_rejects_missing_or_wrong_log_commit_marker) ... ok
+test_slice3_validator_binds_six_fault_points_to_admission_log (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_validator_binds_six_fault_points_to_admission_log) ... ok
+test_slice3_closed_test_targets_and_fixtures_resolve (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_closed_test_targets_and_fixtures_resolve) ... ok
+test_slice3_fixed_base_is_registered_exactly (tests.video_workflow.test_issue6_exit_evidence.Slice3ExitEvidenceTests.test_slice3_fixed_base_is_registered_exactly) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.637s
+
+OK
+
+EVIDENCE_IMPLEMENTATION_COMMIT: 27ce3c0164fda7818aeeccc0a650a11fbf4f4f07

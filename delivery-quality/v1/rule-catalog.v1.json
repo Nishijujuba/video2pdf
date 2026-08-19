@@ -1,0 +1,241 @@
+{
+  "schema_name": "delivery-quality-rule-catalog",
+  "schema_version": "1.0.0",
+  "authority": "target_only",
+  "catalog_id": "video2pdf.delivery-quality",
+  "catalog_version": "1.0.0",
+  "evaluation_policy": {
+    "blocking_only": true,
+    "fail_fast": false,
+    "report_all_failures": true
+  },
+  "language_profile_registry": [
+    {"profile_id": "zh-hans", "profile_semantic_sha256": "bdeaaf73b9a7d74c6ae6c6960a2eecf1b5ef764faa7e66e73df010f16f9b4105"},
+    {"profile_id": "en", "profile_semantic_sha256": "12d59ce450bf6fad9b78add6acd97a3d957dab73ff458576aef67f97be05a00c"},
+    {"profile_id": "zh-en-bilingual", "profile_semantic_sha256": "37b5b3a66633967ba0efc2de120ce9791b66f78fe5d514015ba1708716f7eecd"}
+  ],
+  "rules": [
+    {
+      "rule_id": "no_meta_writing_content",
+      "semantic_sha256": "e46a12f7b8465d2a6673bccef5417af32f23852271ce69805970175bfad9c4ca",
+      "scope": {
+        "artifact_kinds": ["integrated_text"],
+        "object_kinds": ["reader_facing_text"],
+        "reader_facing_regions": ["all_text_regions"],
+        "trigger_condition": null,
+        "excluded_contexts": ["A work whose subject is writing, prompting, editing, or review methods."]
+      },
+      "requirement": "Reader-facing content discusses the subject itself without exposing generation instructions, review strategy, rewriting rationale, or acceptance mechanics unless that process is the subject.",
+      "violations": [
+        {"violation_id": "generation_process_exposed", "observable_condition": "Reader-facing prose explains prompt constraints, agent settings, review strategy, acceptance criteria, or generation-driven rewriting choices."}
+      ],
+      "exceptions": [
+        {"exception_id": "process_is_subject", "condition": "The work explicitly teaches or analyzes writing, prompting, editing, or review methods.", "applies_to_violation_ids": ["generation_process_exposed"], "required_evidence": "A nearby title or thesis establishes the process as reader-facing subject matter."}
+      ],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "full_artifact",
+        "allowed_locator_types": ["text_span", "semantic_region"],
+        "pass_evidence": "A full-artifact style scan records the reviewed artifact fingerprint and coverage.",
+        "failure_evidence": "Every exposed process statement is located and classified."
+      }
+    },
+    {
+      "rule_id": "core_term_first_use_readability",
+      "semantic_sha256": "a3c9c0877cc962d16fa851fbc10d369b02848fd15833390c42fe64a40d4c9ed7",
+      "scope": {
+        "artifact_kinds": ["integrated_text"],
+        "object_kinds": ["term_first_use"],
+        "reader_facing_regions": ["title", "abstract", "chapter_opening", "body"],
+        "trigger_condition": "A core term first appears or receives its first definition.",
+        "excluded_contexts": ["Established audience vocabulary that introduces no new concept boundary."]
+      },
+      "requirement": "A core term first appears with enough natural-language context for the intended reader to understand its purpose, boundary, or use before compressed notation or unexplained shorthand carries the explanation.",
+      "violations": [
+        {"violation_id": "first_use_unreadable", "observable_condition": "An unexplained abstraction, literal translation, notation, or abbreviation carries the main explanatory load at first use."}
+      ],
+      "exceptions": [
+        {"exception_id": "established_audience_vocabulary", "condition": "The term is established vocabulary for the declared audience and introduces no new boundary.", "applies_to_violation_ids": ["first_use_unreadable"], "required_evidence": "The language profile or audience contract identifies the vocabulary as established."}
+      ],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_applicable_items",
+        "allowed_locator_types": ["text_span", "inventory_item"],
+        "pass_evidence": "Each core term has a first-use locator and readable local explanation.",
+        "failure_evidence": "The first-use locator shows the missing context or unexplained form."
+      }
+    },
+    {
+      "rule_id": "delivery_glossary_term_strategy",
+      "semantic_sha256": "4da2384dfa83e74614eeb2fd8705a4d1bd11f6b3681d0de4fe15b46e7e1282d6",
+      "scope": {
+        "artifact_kinds": ["integrated_text", "delivery_glossary"],
+        "object_kinds": ["glossary_term_use"],
+        "reader_facing_regions": ["all_text_regions"],
+        "trigger_condition": "A Delivery Glossary is bound to the artifact generation.",
+        "excluded_contexts": ["A run with no applicable Delivery Glossary."]
+      },
+      "requirement": "Every governed term follows its declared body display strategy and English-preservation location throughout the reader-facing artifact.",
+      "violations": [
+        {"violation_id": "glossary_strategy_mismatch", "observable_condition": "A governed term is displayed or preserves English in a way that conflicts with its Delivery Glossary entry."}
+      ],
+      "exceptions": [
+        {"exception_id": "no_applicable_glossary", "condition": "No Delivery Glossary is bound and the language profile does not require one.", "applies_to_violation_ids": ["glossary_strategy_mismatch"], "required_evidence": "The generation binding proves that no glossary applies."}
+      ],
+      "language_profiles": ["zh-hans", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_applicable_items",
+        "allowed_locator_types": ["text_span", "inventory_item"],
+        "pass_evidence": "Every glossary entry is mapped to all reader-facing uses and its preservation location.",
+        "failure_evidence": "The glossary entry and conflicting reader-facing use are both located."
+      }
+    },
+    {
+      "rule_id": "argument_chain_integrity",
+      "semantic_sha256": "4b5625da523290f5f3bd01f63de862875cf495b722908d77ecd2fd7896bc2d72",
+      "scope": {
+        "artifact_kinds": ["integrated_text"],
+        "object_kinds": ["proposition", "argument"],
+        "reader_facing_regions": ["body", "summary", "caption"],
+        "trigger_condition": "Reader-facing text makes an explanatory, causal, conditional, evidential, or normative claim.",
+        "excluded_contexts": ["Literal source quotations whose source wording is preserved and clearly attributed."]
+      },
+      "requirement": "Each material claim uses a predicate that fits its subject and semantic domain, preserves lifecycle stage and modifier dimensions, states modal strength supported by evidence, and exposes enough reasoning for the conclusion boundary to follow.",
+      "violations": [
+        {"violation_id": "predicate_object_mismatch", "observable_condition": "The predicate describes a property or action that cannot apply to the stated subject."},
+        {"violation_id": "semantic_domain_drift", "observable_condition": "A term or relation silently changes domain while the conclusion treats its meaning as stable."},
+        {"violation_id": "lifecycle_stage_confusion", "observable_condition": "Evidence or status from one lifecycle stage is presented as authority for another stage."},
+        {"violation_id": "modifier_dimension_missing", "observable_condition": "A comparison or claim omits a dimension required to determine what is being modified, measured, or bounded."},
+        {"violation_id": "modal_strength_unsupported", "observable_condition": "The claim uses stronger certainty, obligation, or causality than its cited evidence supports."},
+        {"violation_id": "reasoning_link_missing", "observable_condition": "The reader must supply a missing causal, conditional, referential, or evidential link to reach the conclusion."}
+      ],
+      "exceptions": [
+        {"exception_id": "attributed_source_quotation", "condition": "An exact source quotation is visibly attributed and is analyzed without adopting its wording as the document's own unsupported claim.", "applies_to_violation_ids": ["predicate_object_mismatch", "semantic_domain_drift", "lifecycle_stage_confusion", "modifier_dimension_missing", "modal_strength_unsupported", "reasoning_link_missing"], "required_evidence": "The quotation boundary, attribution, and adjacent analysis are all located."}
+      ],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_applicable_items",
+        "allowed_locator_types": ["text_span", "semantic_region", "inventory_item"],
+        "pass_evidence": "Coverage identifies every material proposition and its resolved predicate, domain, stage, modifiers, modality, and reasoning links.",
+        "failure_evidence": "The exact proposition and missing or conflicting relation are located."
+      }
+    },
+    {
+      "rule_id": "formula_information_gain",
+      "semantic_sha256": "34af3ebde7d1216ed489b50a60c9a4f47b7f07a08c7cdb43e4bd1091253f8981",
+      "scope": {
+        "artifact_kinds": ["integrated_text"],
+        "object_kinds": ["formula"],
+        "reader_facing_regions": ["body", "caption", "appendix"],
+        "trigger_condition": "A reader-facing formula or symbolic teaching model appears.",
+        "excluded_contexts": ["Source formulas preserved with attribution and necessary explanation."]
+      },
+      "requirement": "Every reader-facing formula adds usable quantitative, algorithmic, constraint, threshold, dependency, comparison, or decision value that justifies its cognitive cost.",
+      "violations": [
+        {"violation_id": "formula_has_no_information_gain", "observable_condition": "The formula merely renames nearby prose or lists variables without enabling new reasoning, estimation, comparison, or decision."}
+      ],
+      "exceptions": [
+        {"exception_id": "source_formula", "condition": "The source itself contains the formula and the artifact explains its source and meaning.", "applies_to_violation_ids": ["formula_has_no_information_gain"], "required_evidence": "The source locator and reader-facing explanation are both present."}
+      ],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_applicable_items",
+        "allowed_locator_types": ["text_span", "inventory_item"],
+        "pass_evidence": "Every formula has a locator, source type, information-gain explanation, and defined symbols.",
+        "failure_evidence": "The formula locator and missing reasoning capability are recorded."
+      }
+    },
+    {
+      "rule_id": "figure_visual_integrity",
+      "semantic_sha256": "8f97fb113f776bcd3388e5271a9d563bd68ca7bf5bf9313395ed58f20495068d",
+      "scope": {
+        "artifact_kinds": ["rendered_pdf"],
+        "object_kinds": ["figure"],
+        "reader_facing_regions": ["all_rendered_pages"],
+        "trigger_condition": "A figure appears in the final rendered PDF.",
+        "excluded_contexts": []
+      },
+      "requirement": "Every figure is legible, unclipped, non-overlapping, correctly associated with its caption, and visually supports the nearby explanation.",
+      "violations": [
+        {"violation_id": "figure_rendering_defect", "observable_condition": "A figure is illegible, clipped, overlapped, distorted, detached from its caption, or unusable in context."}
+      ],
+      "exceptions": [],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_rendered_pages",
+        "allowed_locator_types": ["page_region"],
+        "pass_evidence": "Every rendered page and every figure region is individually inspected.",
+        "failure_evidence": "The page and defective figure region are identified."
+      }
+    },
+    {
+      "rule_id": "table_layout_integrity",
+      "semantic_sha256": "d1cec9f2b8109a3d6b97a5f079b44ef0a7a4b39b289bd399ea27b0635f7c05c1",
+      "scope": {
+        "artifact_kinds": ["rendered_pdf"],
+        "object_kinds": ["table"],
+        "reader_facing_regions": ["all_rendered_pages"],
+        "trigger_condition": "A table appears in the final rendered PDF.",
+        "excluded_contexts": []
+      },
+      "requirement": "Every table preserves readable cells, headers, alignment, page boundaries, and association with its explanatory context.",
+      "violations": [
+        {"violation_id": "table_rendering_defect", "observable_condition": "A table has unreadable, clipped, overlapping, misaligned, detached, or misleading rendered content."}
+      ],
+      "exceptions": [],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_rendered_pages",
+        "allowed_locator_types": ["page_region"],
+        "pass_evidence": "Every rendered page and every table region is individually inspected.",
+        "failure_evidence": "The page, table region, and layout failure are identified."
+      }
+    },
+    {
+      "rule_id": "credibility_disclosure_content",
+      "semantic_sha256": "827e93de0504f906e6aff45ad25c5912706f592ad31b8837a89b0a8facb91777",
+      "scope": {
+        "artifact_kinds": ["integrated_text"],
+        "object_kinds": ["credibility_disclosure"],
+        "reader_facing_regions": ["body", "footnote", "appendix"],
+        "trigger_condition": "The artifact requires a disclosure of source, uncertainty, adaptation, or generation limits.",
+        "excluded_contexts": []
+      },
+      "requirement": "Required credibility disclosures state the material limitation accurately, concisely, and in reader-facing language without exposing irrelevant generation mechanics.",
+      "violations": [
+        {"violation_id": "disclosure_content_inadequate", "observable_condition": "A required disclosure is missing, inaccurate, vague, overlong, or framed as internal process commentary."}
+      ],
+      "exceptions": [],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_applicable_items",
+        "allowed_locator_types": ["text_span", "inventory_item"],
+        "pass_evidence": "Each disclosure trigger maps to accurate reader-facing disclosure text.",
+        "failure_evidence": "The trigger and missing or inadequate disclosure are identified."
+      }
+    },
+    {
+      "rule_id": "credibility_disclosure_rendered_placement",
+      "semantic_sha256": "976479fe15441c1d9a2e8fd2ff7e4f296b06fea20e718868e872768ba6d6f999",
+      "scope": {
+        "artifact_kinds": ["rendered_pdf"],
+        "object_kinds": ["credibility_disclosure"],
+        "reader_facing_regions": ["all_rendered_pages"],
+        "trigger_condition": "A required credibility disclosure has passed precompile content review.",
+        "excluded_contexts": []
+      },
+      "requirement": "Each required credibility disclosure is visible at a rendered location where the reader encounters it before relying on the affected claim and where it does not disrupt reading flow.",
+      "violations": [
+        {"violation_id": "disclosure_placement_inadequate", "observable_condition": "A required disclosure is hidden, detached, unreadable, too late, or placed where it materially disrupts reading flow."}
+      ],
+      "exceptions": [],
+      "language_profiles": ["zh-hans", "en", "zh-en-bilingual"],
+      "evidence_requirements": {
+        "coverage_mode": "all_rendered_pages",
+        "allowed_locator_types": ["page_region"],
+        "pass_evidence": "Every disclosure is mapped to a visible rendered page region and its affected claim.",
+        "failure_evidence": "The disclosure, affected claim, and placement defect are identified."
+      }
+    }
+  ]
+}

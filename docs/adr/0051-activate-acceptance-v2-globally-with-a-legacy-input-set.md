@@ -1,5 +1,10 @@
 # Activate Acceptance v2 globally with a legacy input set
 
+Status: implemented and activated by ADR 0064. Its Legacy input decision remains
+authoritative; its earlier two-final-Reviewer topology is amended by ADRs 0063
+and 0064 to reuse the three committed precompile owner reports plus one
+independent Visual Quality Judgment Patch.
+
 Acceptance Report v1 is selected for retirement, while Bilibili and YouTube Kernel ownership will cut over at different later times. Activating v2 separately at each platform cutover would leave two delivery-authorizing report versions active. Freezing every Legacy delivery until both platforms cut over would also make the staged implementation unnecessarily disruptive. Legacy final artifacts need a fresh v2 input binding that does not pretend their historical workflow had a Kernel Run Record.
 
 ## Considered Options

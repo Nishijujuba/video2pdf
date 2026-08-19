@@ -1,0 +1,17 @@
+{
+  "schema_name": "orphaned-filesystem-commit-report",
+  "schema_version": "1.0.0",
+  "kernel_version": "2.0.0",
+  "operation_id": "restore-00000000000000000000000000000000",
+  "selected_backup_id": "backup-a",
+  "classification": "orphaned_filesystem_commit",
+  "gaps": [
+    {
+      "classification": "orphaned_filesystem_commit",
+      "authority_kind": "kernel_run",
+      "authority_id": "11111111111111111111111111111111"
+    }
+  ],
+  "global_mutation_blocked": false,
+  "manual_recovery_required": false
+}

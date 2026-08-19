@@ -1,0 +1,6 @@
+{
+  "schema_name": "delivery-quality-waiver-ledger",
+  "schema_version": "1.0.0",
+  "ledger_version": "1.0.0",
+  "waivers": []
+}

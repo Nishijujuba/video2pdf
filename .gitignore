@@ -10,6 +10,7 @@ work/
 .codex/last_youtube_output.txt
 /magick_test.jpg
 /.claude/settings.json
+/.claude/2
 
 # LaTeX build junk
 *.aux
@@ -27,6 +28,10 @@ work/
 *.wav
 *.mp3
 
+# immutable recorded-provider media fixtures
+!tests/video_workflow/fixtures/providers/bilibili/fresh-download/outputs/video.mp4
+!tests/video_workflow/fixtures/providers/youtube/fresh-download/outputs/video.mp4
+
 # PDF tracking policy:
 # ignore PDFs by default, and track only PDFs under workspace/
 *.pdf
@@ -36,3 +41,4 @@ workspace/**
 !workspace/*.pdf
 !workspace/**/*.pdf
 workspace/**/待删除/
+

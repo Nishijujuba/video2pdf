@@ -1,0 +1,106 @@
+[stderr 159]
+test_bilibili_authority_change_rejected (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_authority_change_rejected) ... [stderr 4]
+ok
+[stderr 272]
+test_bilibili_guarded_qualification_accepts_missing_absolute_cwd (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_guarded_qualification_accepts_missing_absolute_cwd)
+Blocker 2: slice-12 published evidence qualifies when its cwd ... [stderr 4]
+ok
+[stderr 282]
+test_bilibili_guarded_qualification_rejects_syntactically_invalid_cwd (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_guarded_qualification_rejects_syntactically_invalid_cwd)
+Slice-12 qualification cwd must be a non-empty absolute path. ... [stderr 4]
+ok
+[stderr 188]
+test_bilibili_kernel_preserved (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_kernel_preserved)
+Real, recomputable Bilibili regression proof. ... [stderr 4]
+ok
+[stderr 250]
+test_bilibili_regression_fails_on_tampered_evidence (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_regression_fails_on_tampered_evidence)
+Slice-12 regression tamper proof on a temp copy of real evidence. ... [stderr 4]
+ok
+[stderr 267]
+test_bilibili_regression_fails_on_tampered_qualification_run (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_bilibili_regression_fails_on_tampered_qualification_run)
+Slice-12 qualification command record mutation must fail closed. ... [stderr 4]
+ok
+[stderr 272]
+test_collect_finalize_validate_round_trip_at_different_root (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_collect_finalize_validate_round_trip_at_different_root)
+R5: a slice-13-style manifest validates at a different repository root. ... [stderr 4]
+ok
+[stderr 257]
+test_collect_rejects_absolute_or_escape_artifact_paths (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_collect_rejects_absolute_or_escape_artifact_paths)
+R5: collection and manifest entries reject absolute and escaping paths.[stderr 5]
+ ... [stderr 4]
+ok
+[stderr 201]
+test_collect_rejects_missing_or_mismatched_qualification_run (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_collect_rejects_missing_or_mismatched_qualification_run) ... [stderr 4]
+ok
+[stderr 201]
+test_collect_rejects_nonpassing_acceptance_or_delivery_guard (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_collect_rejects_nonpassing_acceptance_or_delivery_guard) ... [stderr 4]
+ok
+[stderr 223]
+test_collect_rejects_succeeded_run_outside_closed_issue14_qualification (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_collect_rejects_succeeded_run_outside_closed_issue14_qualification) ... [stderr 4]
+ok
+[stderr 199]
+test_contract_and_collector_skeleton_close_fourteen_members (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_contract_and_collector_skeleton_close_fourteen_members) ... [stderr 4]
+ok
+[stderr 203]
+test_finalize_fingerprints_complete_implementation_change_set (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_finalize_fingerprints_complete_implementation_change_set) ... [stderr 4]
+ok
+[stderr 227]
+test_finalize_rejects_collect_time_log_drift (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_finalize_rejects_collect_time_log_drift)
+Blocker 3: finalize must reject a persisted log that drifted.[stderr 5]
+ ... [stderr 4]
+ok
+[stderr 245]
+test_finalize_rejects_dirty_non_evidence_worktree (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_finalize_rejects_dirty_non_evidence_worktree)
+R2: finalize must fail when non-evidence worktree changes exist. ... [stderr 4]
+ok
+[stderr 274]
+test_finalize_rejects_head_advanced_past_qualification_commit (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_finalize_rejects_head_advanced_past_qualification_commit)
+R2: finalize must fail when HEAD has moved past the runs' git_commit. ... [stderr 4]
+ok
+[stderr 207]
+test_platform_activation_rejects_self_declared_guarded_delivery (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_platform_activation_rejects_self_declared_guarded_delivery) ... [stderr 4]
+ok
+[stderr 203]
+test_platform_reconcile_rejects_evidence_or_global_gate_drift (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_platform_reconcile_rejects_evidence_or_global_gate_drift) ... [stderr 4]
+ok
+[stderr 239]
+test_public_cli_collects_real_delivered_run_and_finalizes_schema_valid_manifest (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_public_cli_collects_real_delivered_run_and_finalizes_schema_valid_manifest) ... [stderr 4]
+ok
+[stderr 302]
+test_published_slice13_evidence_validates_at_relocated_root_without_rebuild (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_published_slice13_evidence_validates_at_relocated_root_without_rebuild)
+Blocker 2: published slice-13 evidence validates at a relocated root. ... [stderr 4]
+ok
+[stderr 271]
+test_slice13_guarded_qualification_accepts_missing_absolute_cwd (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_slice13_guarded_qualification_accepts_missing_absolute_cwd)
+Blocker 2: a deleted-origin cwd still qualifies when absolute. ... [stderr 4]
+ok
+[stderr 225]
+test_slice13_guarded_qualification_pass (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_slice13_guarded_qualification_pass)
+R4: the shared helper accepts a valid slice-13 guarded manifest. ... [stderr 4]
+ok
+[stderr 236]
+test_slice13_guarded_qualification_tamper_gates (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_slice13_guarded_qualification_tamper_gates)
+R4: slice-13 guarded-delivery tamper scenarios fail closed. ... [stderr 4]
+ok
+[stderr 275]
+test_validate_bindings_ignores_persisted_run_metadata_string_fields (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_validate_bindings_ignores_persisted_run_metadata_string_fields)
+validate_bindings must not crash on real collector output. ... [stderr 4]
+ok
+[stderr 241]
+test_validator_rejects_broken_log_source_chain (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_validator_rejects_broken_log_source_chain)
+Blocker 3: the validator rejects a broken collect->finalize chain. ... [stderr 4]
+ok
+[stderr 145]
+test_youtube_kernel_cutover_pass (tests.video_workflow.test_issue14_exit_evidence.Issue14ExitEvidenceTests.test_youtube_kernel_cutover_pass) ... [stderr 4]
+ok
+[stderr 74]
+
+----------------------------------------------------------------------
+[stderr 26]
+Ran 26 tests in 220.775s
+[stderr 2]
+
+[stderr 4]
+OK
+EVIDENCE_IMPLEMENTATION_COMMIT: 4e43027e2d9c7936b412664c50b8e236e72f18c4

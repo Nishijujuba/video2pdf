@@ -1,0 +1,18 @@
+{
+  "schema_name": "artifact-plan",
+  "schema_version": "2.0.0",
+  "kernel_version": "2.0.0",
+  "run_id": "00000000000000000000000000000000",
+  "artifacts": [
+    {"logical_id":"run_record","path":"workflow/run.json","schema_name":"run-record","schema_version":"3.0.0","generator":"kernel:init-run","dependencies":[],"earliest_checkpoint":"run_initialized","condition":"always"},
+    {"logical_id":"artifact_plan","path":"workflow/artifact-plan.json","schema_name":"artifact-plan","schema_version":"2.0.0","generator":"kernel:init-run","dependencies":[],"earliest_checkpoint":"run_initialized","condition":"always"},
+    {"logical_id":"bootstrap_record","path":"待删除/bootstrap/probe.json","schema_name":"bootstrap-record","schema_version":"2.0.0","generator":"kernel:bootstrap","dependencies":[],"earliest_checkpoint":"run_initialized","condition":"always"},
+    {"logical_id":"scaffold_contract","path":"workflow/scaffold-contract.json","schema_name":"scaffold-contract","schema_version":"1.0.0","generator":"kernel:init-run","dependencies":[],"earliest_checkpoint":"run_initialized","condition":"always"},
+    {"logical_id":"scaffold_ledger","path":"workflow/scaffold-ledger.json","schema_name":"scaffold-ledger","schema_version":"1.0.0","generator":"kernel:init-run","dependencies":[],"earliest_checkpoint":"run_initialized","condition":"always"},
+    {"logical_id":"source_candidate_inventory","path":"work/source-acquisition/candidate-inventory.json","schema_name":"source-candidate-inventory","schema_version":"1.0.0","generator":"kernel:source-candidates","dependencies":[{"logical_id":"bootstrap_record","when":"always"}],"earliest_checkpoint":"source_candidates_ready","condition":"always"},
+    {"logical_id":"source_acquisition_decision_skeleton","path":"work/source-acquisition/decision.skeleton.json","schema_name":"source-acquisition-decision-skeleton","schema_version":"1.0.0","generator":"kernel:source-prepare","dependencies":[{"logical_id":"source_candidate_inventory","when":"always"}],"earliest_checkpoint":"source_candidates_ready","condition":"fresh_download"},
+    {"logical_id":"source_acquisition_decision","path":"workflow/source-acquisition-judgment-patch.json","schema_name":"source-acquisition-judgment-patch","schema_version":"2.0.0","generator":"task:source-acquisition","dependencies":[{"logical_id":"source_candidate_inventory","when":"always"},{"logical_id":"source_acquisition_decision_skeleton","when":"fresh_download"}],"earliest_checkpoint":"source_acquisition_decision_ready","condition":"fresh_download"},
+    {"logical_id":"source_transcription","path":"work/source-acquisition/transcription.srt","schema_name":"source-transcription-srt","schema_version":"1.0.0","generator":"task:whisper-transcription","dependencies":[{"logical_id":"source_candidate_inventory","when":"always"},{"logical_id":"source_acquisition_decision","when":"fresh_download"}],"earliest_checkpoint":"source_acquisition_decision_ready","condition":"whisper_requested"},
+    {"logical_id":"source_manifest","path":"source/manifest.json","schema_name":"source-manifest","schema_version":"2.0.0","generator":"kernel:source-finalize","dependencies":[{"logical_id":"source_candidate_inventory","when":"always"},{"logical_id":"source_acquisition_decision","when":"fresh_download"},{"logical_id":"source_transcription","when":"whisper_requested"}],"earliest_checkpoint":"source_ready","condition":"always"}
+  ]
+}

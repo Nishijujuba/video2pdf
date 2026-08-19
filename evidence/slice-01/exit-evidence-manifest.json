@@ -1,0 +1,601 @@
+{
+  "$schema": "https://video2pdf.local/schemas/exit-evidence-manifest.v2.schema.json",
+  "schema_version": 2,
+  "kind": "video-workflow-exit-evidence",
+  "fingerprint_algorithm": "sha256-raw-v1",
+  "slice": {
+    "number": 1,
+    "name": "offline-source-ready-tracer"
+  },
+  "slice_base_commit": "96089b99c9ae63fff61107e1920fc3481ffc0802",
+  "implementation_commit": "0739f8e04fe72595e38d7eff0a35470ba5161a7c",
+  "evidence_paths": [
+    "evidence/slice-01/exit-evidence-manifest.json",
+    "evidence/slice-01/logs/slice0-regression.log",
+    "evidence/slice-01/logs/slice1-contracts.log",
+    "evidence/slice-01/logs/slice1-public-deep-tests.log",
+    "evidence/slice-01/logs/slice1-review-hardening-tests.log",
+    "evidence/slice-01/logs/slice1-gate4-saga-containment-tests.log",
+    "evidence/slice-01/logs/slice1-gate7-review-repair-tests.log",
+    "evidence/slice-01/logs/slice0-exit-evidence.log",
+    "evidence/slice-01/logs/slice1-syntax.log",
+    "evidence/slice-01/logs/slice1-diff-check.log"
+  ],
+  "generated_at": "2026-07-15T05:14:22Z",
+  "activation_scope": {
+    "kind": "none",
+    "runtime_authority_change": false,
+    "components_activated": [],
+    "legacy_track_authority": "preserved"
+  },
+  "commands": [
+    {
+      "test_id": "slice0-regression",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_legacy_baseline"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice0-regression.log",
+        "sha256": "9b6b436eb0e117b198370f345c56daf0d13b5de08879f5cad14400000362b4ef"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-contracts",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/video_workflow.py",
+        "contracts-check"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-contracts.log",
+        "sha256": "12bc90bf6f92203365b2d0aa30c78c8d74bea345e52496b15554714b98495f96"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-public-deep-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_source_ready_tracer"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-public-deep-tests.log",
+        "sha256": "fb6343f556cf3e5af504be98e3ca53930321c790100f5b9dfe7b40a307a88c06"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-review-hardening-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_source_ready_hardening"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-review-hardening-tests.log",
+        "sha256": "4dd92257b42c78bd1cc65c75eefd4b2535496f710fc87c3d480214c14b37986f"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-gate4-saga-containment-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_issue4_gate4"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-gate4-saga-containment-tests.log",
+        "sha256": "413de32b998aebb5a718adfce2e6d413f4d7408821dc3ceb644dadf12b2f0efe"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-gate7-review-repair-tests",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "tests.video_workflow.test_issue4_gate7"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-gate7-review-repair-tests.log",
+        "sha256": "735abcfc9cf3e28ade74656afaeecfd01c4c8aeb8d1240053cad995da4c0c137"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice0-exit-evidence",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "scripts/validate_exit_evidence_manifest.py",
+        "evidence/slice-00/exit-evidence-manifest.json"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice0-exit-evidence.log",
+        "sha256": "ee909e12c1db1eb6e57a1b30969a4d1b4f468c2a6ed1502fe6e832d550c25fbb"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-syntax",
+      "command": [
+        "D:\\Project\\video2pdf\\kimi\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-c",
+        "import ast,pathlib;p=list(pathlib.Path('src/video2pdf_workflow_kernel').rglob('*.py'))+[pathlib.Path('scripts/video_workflow.py'),pathlib.Path('scripts/validate_slice_exit_evidence.py'),pathlib.Path('scripts/collect_slice1_exit_evidence.py')];[ast.parse(x.read_text(encoding='utf-8'),filename=str(x)) for x in p];print(f'AST_OK {len(p)}')"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-syntax.log",
+        "sha256": "d090a0f820d6c9520c747455e56324b44057a00753870191a4d09e570dc04a98"
+      },
+      "conforms": true
+    },
+    {
+      "test_id": "slice1-diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "96089b99c9ae63fff61107e1920fc3481ffc0802...HEAD"
+      ],
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "log": {
+        "role": "command_log",
+        "path": "evidence/slice-01/logs/slice1-diff-check.log",
+        "sha256": "9612ebaba063d5897a4536b611d8454992899b58312a25449d58b7ba4be1395c"
+      },
+      "conforms": true
+    }
+  ],
+  "expected_checkpoints": [
+    {
+      "name": "source_ready",
+      "status": "current"
+    }
+  ],
+  "fixtures": [
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/fixture.json",
+      "sha256": "8ccb6c25da07005e06c0d12fed74aa5ea07b6a927858209fc941c587c44d1c58"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/metadata/platform.json",
+      "sha256": "781453792ea3bbe5ffe175c8e10ae60727e4fd929792dbc43e469e640c2e4f2d"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/subtitles/subtitle.en.srt",
+      "sha256": "f1d7129dcc4d529697e478f9bce2b5faf4c1a54d33c73356dfdeb08708e03a81"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/media/video.fixture",
+      "sha256": "915fabd6ff048fbaf8a874b98b62bd2daf99c5d2aca3a169d322c66551d4d503"
+    },
+    {
+      "role": "immutable_offline_fixture",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/cover/cover.fixture",
+      "sha256": "c447f52ffa12c1a7673d412488db92f94a552532516b61eb6fa8de3f7fcd5d5f"
+    }
+  ],
+  "results": {
+    "positive": [
+      "registry_exact_canonical_set_and_locked_runtime_validated",
+      "bootstrap_initialization_verified_import_source_ready",
+      "artifact_plan_exact_six_bindings_generated",
+      "artifact_plan_builder_and_invariant_share_one_immutable_binding_source",
+      "fixture_schema_invariant_and_runtime_containment_validated",
+      "run_record_canonical_absolute_output_path_validated",
+      "utf16_239_and_240_pass",
+      "idempotent_rerun_and_collision_safe_same_second_run",
+      "fixture_adapter_deprived_of_production_capabilities",
+      "bootstrap_probe_schema_and_canonical_identity_exact_binding",
+      "control_store_external_anchor_marker_database_identity_validated",
+      "control_store_lock_and_same_volume_atomic_replace_probes_pass",
+      "initialization_intent_binds_expected_run_and_source_identity_before_publication",
+      "control_store_v1_intent_schema_migrates_safely_to_v3",
+      "workflow_entries_run_full_control_store_preflight_before_queries",
+      "registered_path_fingerprint_and_freshness_invariants",
+      "scaffold_contract_and_runtime_root_containment_validated",
+      "scaffold_contract_exact_registered_canonical_instance_validated",
+      "contract_registry_single_locked_preparation_path_validated",
+      "alternate_registry_exact_authority_metadata_and_file_completeness_validated",
+      "source_drift_run_state_mutation_saga_committed",
+      "run_record_authority_predecessor_checked_before_source_drift",
+      "locked_runtime_import_failure_returns_machine_envelope"
+    ],
+    "negative": [
+      "unknown_contract_and_run_versions_rejected",
+      "unknown_or_remote_schema_reference_rejected",
+      "partial_duplicate_or_extra_registry_rejected",
+      "same_version_weaker_or_retargeted_alternate_registry_rejected_before_validation",
+      "artifact_plan_missing_or_extra_binding_rejected",
+      "fixture_backslash_traversal_device_and_trailing_paths_rejected",
+      "relative_or_noncanonical_run_output_path_rejected",
+      "utf16_241_fails_before_binding_intent_or_run",
+      "run_identity_path_and_true_same_second_collision_fail_closed",
+      "imported_source_drift_invalidates_source_ready",
+      "unknown_control_store_migration_blocks_startup",
+      "full_or_partial_control_store_loss_never_auto_recreated",
+      "control_store_external_anchor_tamper_blocks_startup",
+      "published_or_committed_canonical_state_loss_blocks_retry",
+      "published_prepared_run_identity_tamper_blocks_recovery",
+      "committed_coordinated_run_rewrite_rejected_without_mutation",
+      "schema_valid_run_record_tamper_creates_zero_mutation_intents",
+      "schema_valid_scaffold_parent_escape_rejected_before_creation",
+      "live_anchor_or_store_displacement_returns_control_store_unavailable"
+    ],
+    "recovery": [
+      "every_initialization_persistence_boundary_converges_old_or_new_complete",
+      "public_reconcile_run_completes_published_initialization",
+      "prepublication_abort_can_retry_to_source_ready",
+      "initialization_intent_transitions_use_compare_and_swap",
+      "source_drift_mutation_faults_converge_to_committed_stale_state",
+      "run_record_current_hash_is_proven_by_committed_mutation_chain",
+      "prepared_drift_resume_revalidates_predecessor_revision_and_identity"
+    ]
+  },
+  "artifact_fingerprints": [
+    {
+      "role": "implementation_artifact",
+      "path": ".gitattributes",
+      "sha256": "afd52aeef091784cebb834edf23edd2a125a326cefe1e1d07af59638c4bacefc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "requirements/pylock.video-workflow-runtime.toml",
+      "sha256": "525fec63e20d1c5fb3be16a558151ca5f80b0ab925c6046a20f108b11df67a44"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "requirements/video-workflow-runtime.in",
+      "sha256": "1cf3ff36f2ba2c1ff4d915e4a39bb7bc927a717f073e99ffb55d04a06fa30fc7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/exit-evidence-manifest.v2.schema.json",
+      "sha256": "0641a59004f218382d980da2da3e66b5d6d97780d2eb50ba46a841773ef52c78"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/registry.v1.json",
+      "sha256": "1f161b45a3dff0039de45e06c1e05602b34b5016783d340cf1895f31196062a7"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/artifact-plan.v1.schema.json",
+      "sha256": "8c0081f96c3f00a5d684335795db618af36cb97cee0eb71f559799b7ef0c609d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/bootstrap-record.v1.schema.json",
+      "sha256": "4b9c3750ec5ae7416795a5b63704ee9efe12c5dc0625d49cc563bce9eac0b1e8"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/common.v1.schema.json",
+      "sha256": "90d96547d0f65c3ba981141cf9b7dcde36e534de5a6840962d8ece469ecc4f5b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/control-store-identity.v1.schema.json",
+      "sha256": "34dda36a5a255e2f6e068d4bab36ceed3c92fd3fe99d8ee0b1d53367e98646cd"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/fixture-package.v1.schema.json",
+      "sha256": "6cc8e900bf0409b628025d91fa6d14e0b04c9b010e68874ab47a88e00e6376cc"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/run-record.v1.schema.json",
+      "sha256": "c14de2347b9b99286d4728c1a577fe7d40bdba8199db522d67b8b6269d720c32"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/scaffold-contract.v1.schema.json",
+      "sha256": "39eb8497eca6e7e9f9a097edb01aaaa8e7f49f652ff143ac06cbec3e9ea22a83"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/scaffold-ledger.v1.schema.json",
+      "sha256": "61940f2688171e782f3c33b7d14826ec6621848040ab9519e518860a843bb7c2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/scaffold.v1.json",
+      "sha256": "26a6a9994c17e28da474c82caaa28e03fd1e3949694649a64b2278dfa567d1c2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/source-manifest.v1.schema.json",
+      "sha256": "2f3042a32974db14ea94dbed6d7c28e089f5662fee9dc316689d762c46e443ca"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "schemas/video-workflow/v1/workflow-result.v1.schema.json",
+      "sha256": "803a44103a6b4e57c8f8b392d867c67ac7fc96f3aa99438c837fada23d03644f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/collect_slice1_exit_evidence.py",
+      "sha256": "7b4eb36f4bda9cdda978448c583a7085a380c486fb89838b33d5a84a3cb86369"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/validate_slice_exit_evidence.py",
+      "sha256": "47db2ddd015d5b714e10e6ed7bdaab72e0fb888b0ab280662122cd9b9c3fed1e"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "scripts/video_workflow.py",
+      "sha256": "1393c329cbe7b407236f5f2b8b72b6ee6ff458ade506eeb80c835891eb23bcb6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/__init__.py",
+      "sha256": "c05a6393bce6f6ac02baab9a923abe69c558716ec734710f8a604ceb94f31a8a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/__init__.py",
+      "sha256": "496a2420e2b93e5a314227f329882ec27a03056caff6186d246d26e14da0e144"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/adapters/fixture.py",
+      "sha256": "02f305d3e4fbb8fe3abb1d7efed1dd3d037f73994ace4794f4d2a0c3a24c4125"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/artifact_plan.py",
+      "sha256": "7b6849f98ddb3baa3d5503f99ca6b51c32349ceb5c1a1b5ddc15d0c8ca8c09da"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/cli.py",
+      "sha256": "e258b8b63f58083f8d30106d5763007fcd4e5e7e21c486f24409453f303568e2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/contracts.py",
+      "sha256": "75cd9ee1d3b9dea280050af09c673424efa6d63d317779d750757eb6eb2145a2"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/control_store.py",
+      "sha256": "5b0626fb936a7684a3a7f8c76e8690b899ecbdbf88fff27f9e41c0ff241bbb1d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/errors.py",
+      "sha256": "5038cfbae2a91b4c7719feab8c40279ee34a59e9aacc16bed993501702d614b4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/evidence.py",
+      "sha256": "0efe003157b0d4c2629e0eddd534e83c59a724ca6200430b98949c90dab8fd2a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/kernel.py",
+      "sha256": "8211503f14f0e86333fb184cac85c027c0c4739b08fa2da4abffa740234a812f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/models.py",
+      "sha256": "9f41abc5a0fab22829841323735c504dcb6d9f494e2b4328e35b436527d5231b"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/scaffold.py",
+      "sha256": "20068407a9f06ad0b7f3a8251cc010f6613fa1e02b8e3b8600c179fdb23e4083"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "src/video2pdf_workflow_kernel/utils.py",
+      "sha256": "2a89e7cf935b3fe15078afe058f77afd0824cf43b455966ba1f3ef5d40a4efa5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/artifact-plan.invalid.json",
+      "sha256": "514defcf2be754c48c2c09cee86593f0a80d35d7557923ee7306f6efc5b85a01"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/artifact-plan.valid.json",
+      "sha256": "f0a187dbf0eeeaac07e988784df4707b131e54d36d593b97feac40a08cd3614c"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/bootstrap-record.invalid.json",
+      "sha256": "868634d47e77570c8e79ab72cf525654307480c5b98d37f7b3a8a60bc973cae3"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/bootstrap-record.valid.json",
+      "sha256": "c48122bad16db538e3f378b5f994f50585ed0750fa4867efe3458f1203ad7090"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-identity.invalid.json",
+      "sha256": "1ed64d3070fd9620f420a88172131faeb7e14ddb18680aa214f1a0a0fe32ddd6"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/control-store-identity.valid.json",
+      "sha256": "142783ea366acc01aa50643d6c15cd604799327e4226ba94a8cfd9a890620a7d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/fixture-package.invalid.json",
+      "sha256": "e63075bcbb7e2b5a81186cfac10fd9849a745898e8b9a99515cd23d8475ad1ab"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/fixture-package.valid.json",
+      "sha256": "f75d62361fbb92081ca766e5af115be29a71969c225f3e96c890eaae4df0cd24"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/run-record.invalid.json",
+      "sha256": "69a4b3f3cfd6f63fcae707db842709faf5a6eff29007e832f359eaa13d204592"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/run-record.valid.json",
+      "sha256": "ff1fd4855bbd2f984bc2e48154a09653df2c4c4006d667ea69eb2e99ce2eb9fe"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/scaffold-contract.invalid.json",
+      "sha256": "2908a83e2b5e00d1db6635d0b754f2b98ff619395bde7e7b6ffed764cfc2178f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/scaffold-ledger.invalid.json",
+      "sha256": "0a5120cf36fc3918f16cd40ee8155c553c02c51639a01c492e098a30d724e94a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/scaffold-ledger.valid.json",
+      "sha256": "6d809b78986d6be73da7a7a8392b5f48917215497907ba1267bcb1a15fdd16ef"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-manifest.invalid.json",
+      "sha256": "e7c2dc62dd887b2524b4981bf7570682c1782eea3caddc9413e32e19c054a8d0"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/source-manifest.valid.json",
+      "sha256": "cf6155a5abc3228b1371dc5eb81f0cf5d2752c9068832e3c2dc957cbbe7899d4"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/workflow-result.invalid.json",
+      "sha256": "89710a029e0c1fa00b7ca745a0285222e35ae01d9c34124deed53aba0b574b18"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/contracts/workflow-result.valid.json",
+      "sha256": "9070523c45696430f78f6f4c59922eff24f5f532cf3df90b85c507cec0e33484"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.invalid.json",
+      "sha256": "8655232d6ff05e25957430580e882f41d1bd2d94e1a237b84aafe8132bb83a14"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/exit_evidence_manifest.v2.valid.json",
+      "sha256": "4102899f8e7b3b5c8cbd9d62b88c4fcfcbde3bd2b0db28455eac6d54b20da6dd"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/cover/cover.fixture",
+      "sha256": "c447f52ffa12c1a7673d412488db92f94a552532516b61eb6fa8de3f7fcd5d5f"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/fixture.json",
+      "sha256": "8ccb6c25da07005e06c0d12fed74aa5ea07b6a927858209fc941c587c44d1c58"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/media/video.fixture",
+      "sha256": "915fabd6ff048fbaf8a874b98b62bd2daf99c5d2aca3a169d322c66551d4d503"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/metadata/platform.json",
+      "sha256": "781453792ea3bbe5ffe175c8e10ae60727e4fd929792dbc43e469e640c2e4f2d"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/fixtures/source-ready-tracer/subtitles/subtitle.en.srt",
+      "sha256": "f1d7129dcc4d529697e478f9bce2b5faf4c1a54d33c73356dfdeb08708e03a81"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate4.py",
+      "sha256": "42320155fe33536e5edede2bb3ac2fac1636f50b4a56eb22692250421d61f050"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_issue4_gate7.py",
+      "sha256": "e79a6831124ea53b09edf8e2725743e3ffb66a1b18774f1e705852d4a8edf4b5"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_hardening.py",
+      "sha256": "9a7b68410d7e8b2ee40dca320b309022da347f89f6da479a6380faeee3ad2c1a"
+    },
+    {
+      "role": "implementation_artifact",
+      "path": "tests/video_workflow/test_source_ready_tracer.py",
+      "sha256": "19f4531eb745325182fd1263339dcf9d63edc058347f3af2462d127c3e063a92"
+    }
+  ],
+  "unresolved_exceptions": [],
+  "overall_decision": "pass"
+}

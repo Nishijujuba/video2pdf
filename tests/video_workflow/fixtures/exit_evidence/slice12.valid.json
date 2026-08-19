@@ -1,0 +1,14 @@
+{
+  "scenario_id": "slice12_valid_authority",
+  "manifest_authority": {
+    "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
+    "slice_base_commit": "2e80c5d1d83bb40cf7ef47a9cc01685728cd615c",
+    "platform_statuses": {"bilibili": "active_kernel", "youtube": "active_legacy"},
+    "atomic_members": [
+      "bilibili_adapter", "kernel_run_authority", "task_ownership",
+      "delivery_contracts", "delivery_lifecycle", "acceptance_v2_binding",
+      "delivery_guard_binding", "hooks", "bilibili_skill", "project_instructions",
+      "validators", "tests", "activation_documentation", "guarded_delivery_evidence"
+    ]
+  }
+}

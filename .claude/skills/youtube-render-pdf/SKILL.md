@@ -21,6 +21,24 @@ The output must:
 - be a complete `.tex` document from `\documentclass` to `\end{document}`
 - be compiled successfully to PDF as part of the final delivery
 
+## Active Authority Boundary
+
+YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both Legacy and Kernel inputs.
+
+For every new YouTube task, run `workflow-policy-check` first. When YouTube reports current `active_kernel` authority, start the new task with ordinary `init-run`. If the Global Gate or platform authority is missing, stale, or unconfirmed, fail closed and repair authority before creating the task; never redirect a new task into a Legacy directory or a historical activation path.
+
+The skill owns teaching intent, YouTube-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
+
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+
+### Cold-start recovery only
+
+If `workflow-policy-check` reports that the formal YouTube authority is absent, stop new-task initialization and obtain repository-owner authorization for authority recovery. Historical cutover mechanics and evidence remain in the governing ADRs and published Slice 13 records; this active skill provides no executable cutover path.
+
+### Execution track partition
+
+For a new Kernel task, all filesystem creation, source acquisition, Whisper fallback, and compilation execute only through the public Workflow CLI and its provider-issued tasks. Direct `yt-dlp`, `whisper`, and `compile_latex_ascii.py` commands in this skill are Legacy recovery references for pre-existing directories only; they are forbidden for a new task. A request for a root-level or Legacy-shaped output path does not grant migration or Legacy creation authority.
+
 ## Local Environment On This Machine
 
 When running on this machine, prefer these exact binaries instead of relying on PATH lookup:
@@ -62,6 +80,18 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ## Source Acquisition
 
+For a new Kernel task, treat the requirements in this section as provider constraints and use `source-acquire`, `source-acquire-reconcile`, or `source-import` against the real `--run-dir`. Direct acquisition commands and binary examples in this skill apply only when recovering a pre-existing Legacy directory.
+
+Run source acquisition as a dedicated **Data Preparation agent** stage before the Outline agent starts. The Data Preparation agent must:
+
+- download the original video or the highest usable source required for frame extraction;
+- download and select usable subtitle tracks, preferring English subtitles when available and preserving timestamps;
+- collect the video title, chapters, duration, cover, subtitle-language availability, and acquisition provenance;
+- place source artifacts and disposable acquisition material in the assigned video output directory, with disposable material under `待删除`;
+- write a concise source-material handoff that identifies the selected video, subtitle files, cover, source language, missing assets, and limitations for Outline, Writer, Figure, and review agents.
+
+The Outline agent may start only after this handoff establishes a usable source package or records an explicit acquisition blocker.
+
 1. Inspect the video metadata first.
    Prefer title, chapters, duration, thumbnail availability, and subtitle availability before writing.
    Use the preferred YouTube extraction command shape above, including `--js-runtimes node`, for metadata inspection as well as later subtitle, thumbnail, format, and video downloads.
@@ -86,17 +116,29 @@ The notes must read like a strong human teacher is guiding the reader through th
 
 ## Output Naming
 
-Create the video output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original YouTube title plus the task start timestamp from the local machine timezone:
+For a new Kernel task, `init-run` creates the output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original YouTube title plus the task start timestamp from the local machine timezone:
 
 ```text
 D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}
 ```
 
-The `workspace` directory is the default parent for new YouTube PDF outputs. Do not create new video output directories directly under `D:\Project\video2pdf\newskill-kimi` unless the user explicitly asks for a legacy/root-level location.
+The `workspace` directory is the only authorized parent for new YouTube PDF outputs. Never manually create a new Legacy or root-level output directory. A pre-existing Legacy directory remains in its current location unless explicit migration authority is introduced.
 
 Normalize directory and final PDF names with the project whitelist: preserve Unicode letters and numbers, preserve only ASCII space and `_` as special characters, replace every other character with `_`, collapse repeated spaces and `_`, then trim leading or trailing spaces, `_`, and `.`. Shorten long titles while preserving the timestamp suffix for the output directory.
 
 The final delivered PDF basename must come from the PDF article title when one exists, or the original video title when no separate article title exists. Apply the same normalization before appending `.pdf`.
+
+## Multi-Agent Orchestration
+
+When subagents are available, the main agent spawns multiple subagents to isolate context and reduce master-agent context pressure:
+
+- **Data Preparation agent**: downloads the original video and usable subtitle tracks, collects metadata, cover, and source assets, preserves subtitle timestamps, and records the source-material handoff and any acquisition limitations for downstream agents.
+- **Outline agent**: defines the global table of contents, terminology, symbol table, chapter boundaries, writing contract, and cross-section conventions before chapter writing begins.
+- **Writer agents**: write complete, source-faithful `section_*.tex` drafts inside their declared task write sets.
+- **Figure agents**: select and explain high-value frames, crops, or teaching diagrams with timestamp provenance.
+- **Consistency agent**: checks terminology, notation, transitions, references, and Delivery Glossary conformance.
+- **Independent review agent**: compares the integrated teaching content with the validated source package and reports omissions or distortions.
+- **Acceptance Reviewer**: inspects the rendered pages and commits one bounded visual-quality Judgment Patch from the provider-created Task Envelope.
 
 ## Long Video Strategy
 
@@ -457,6 +499,14 @@ Do not add decorative graphics that do not teach anything.
 
 Always compile through the LaTeX Compile Guard, then inspect the rendered PDF visually before delivery.
 
+For a new Kernel task, invoke compilation only through the Workflow CLI:
+
+```powershell
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py guarded-compile --run-dir "<run-dir>" --manifest "<compile-manifest>" --runtime-policy "<runtime-policy>"
+```
+
+The direct `compile_latex_ascii.py` reference below applies only to an existing Legacy directory. It must never compile a new Kernel task.
+
 Discover the supported quick/final parameters, timeout options, report locations, and Windows long-path behavior without starting a compile:
 
 ```powershell
@@ -501,18 +551,22 @@ After the final PDF is rendered and visual verification is complete, run the Fin
 
 Required evidence paths:
 
-- `docs/acceptance/acceptance_criteria.v1.json`
+- current Delivery Quality Rule Catalog and Role Projections
 - `review/acceptance/allowed_artifacts_manifest.json`
 - `review/acceptance/acceptance_report.skeleton.json`
 - `review/acceptance/rendered_pages/`
 - `review/acceptance/acceptance_report.json`
 - optional `review/acceptance/acceptance_summary.md`
 
-Use `.agents/skills/final-delivery-acceptance/scripts/render_pdf_pages.py` to render every final PDF page into `review/acceptance/rendered_pages/`. Create or refresh the allowed artifact manifest before launching the Acceptance Reviewer. Then run `.agents/skills/final-delivery-acceptance/scripts/validate_acceptance_report.py skeleton` so the reviewer receives the fixed report shape, current fingerprints, and page slots. The Acceptance Reviewer is read-only and uses only final delivered artifacts, the criteria file, the allowed manifest, the fail-closed skeleton, and rendered page evidence.
+Global Gate status is `active_global_gate`; Platform Kernel authority remains unchanged by acceptance. A new Kernel task retains its real Run and Control Store authority. An existing Legacy directory must first create a fresh Run-record-free Legacy Acceptance Input Set through `legacy-acceptance-adopt`; it must never create a synthetic Legacy Run. Both inputs then run `acceptance-prepare`, launch the independent read-only Reviewer from the provider-created Task Envelope, commit its bounded Judgment Patch through `acceptance-patch-commit`, and publish through `acceptance-materialize`. Use `acceptance-reconcile` after interrupted Patch or report publication.
 
-`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, or forbidden-context report blocks final delivery.
+The three precompile semantic owners retain their committed semantic decisions. `source-faithfulness-reviewer` owns source fidelity, `writing-quality-reviewer` owns full reader-facing text, formula, and Delivery Glossary semantic review, and `pyramid-reviewer` owns document structure. The Acceptance Reviewer handles only the `visual_quality` criteria in the provider-created Task Envelope. It reads only the exact path-and-SHA `authorized_read_set` and writes one Visual Quality Judgment Patch to `required_output.path`, the sole `declared_write_set` entry inside the provider-created Attempt directory. The Reviewer has no report-publication authority; after `acceptance-patch-commit`, the `acceptance-materialize` provider materializes the canonical Acceptance Report v2 without reinterpreting precompile decisions.
 
-If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and stale upstream evidence, then run a fresh Acceptance Reviewer from the final-artifacts-only context.
+Acceptance Report v1 is rejected. Per-run fallback, v1-to-v2 translation, and dual authority are forbidden. Both Legacy and Kernel inputs use the same Acceptance Report v2 provider and active Guard.
+
+`acceptance_report.json is the only machine-readable delivery decision source`. A missing, failed, malformed, stale, forbidden-context, or non-v2 report blocks final delivery.
+
+If acceptance fails, use repair subagents to revise the affected TeX, figures, tables, or credibility caveat placement. Recompile or regenerate affected final artifacts, refresh rendered page evidence and any invalidated precompile owner evidence, then create a fresh provider Attempt and launch its Acceptance Reviewer from the new Task Envelope exact authorized read set.
 
 Pyramid Gate and independent content review remain separate. Their passes never imply Final Delivery Acceptance pass.
 

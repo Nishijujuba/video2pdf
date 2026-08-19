@@ -103,6 +103,25 @@ class Issue14PlatformCutoverTests(unittest.TestCase):
             "generation": 1,
         }
 
+    def test_current_slice13_refresh_evidence_is_postpublication_valid(self) -> None:
+        evidence = PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                "scripts/validate_slice_exit_evidence.py",
+                str(evidence),
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
     def _write_valid_cutover_manifest(
         self,
         *,
@@ -691,6 +710,23 @@ class Issue14PlatformCutoverTests(unittest.TestCase):
         return control_store_root, exit_evidence
 
     @staticmethod
+    def _write_refreshed_cutover_manifest(exit_evidence: Path) -> Path:
+        refreshed_evidence = exit_evidence.with_name("refreshed-exit-evidence.json")
+        refreshed_manifest = json.loads(exit_evidence.read_text(encoding="utf-8"))
+        refreshed_manifest["generated_at"] = "2026-08-19T12:00:00Z"
+        refreshed_evidence.write_text(
+            json.dumps(
+                refreshed_manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return refreshed_evidence
+
+    @staticmethod
     def _write_published_global_gate(
         control_store_root: Path,
     ) -> dict[str, object]:
@@ -991,6 +1027,254 @@ class Issue14PlatformCutoverTests(unittest.TestCase):
                     "generation": envelope.get("data", {}).get("generation"),
                     "idempotent": envelope.get("data", {}).get("idempotent"),
                 },
+            },
+        )
+
+    def test_confirmed_youtube_authority_refreshes_to_current_published_evidence(
+        self,
+    ) -> None:
+        control_store_root, exit_evidence = self._write_valid_cutover_manifest()
+        activated = _run_cli(
+            "platform-kernel-activate",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(exit_evidence),
+            "--activated-at",
+            "2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout)
+
+        refreshed_evidence = self._write_refreshed_cutover_manifest(exit_evidence)
+
+        refreshed = _run_cli(
+            "youtube-platform-authority-refresh",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(refreshed_evidence),
+            "--expected-generation",
+            "1",
+            "--refreshed-at",
+            "2026-08-19T12:01:00Z",
+        )
+        envelope = json.loads(refreshed.stdout)
+        replay = _run_cli(
+            "youtube-platform-authority-refresh",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(refreshed_evidence),
+            "--expected-generation",
+            "1",
+            "--refreshed-at",
+            "2026-08-19T12:01:00Z",
+        )
+        replay_envelope = json.loads(replay.stdout)
+
+        self.assertEqual(
+            {
+                "refresh_returncode": 0,
+                "classification": "platform_kernel_authority_refreshed",
+                "generation": 2,
+                "idempotent": False,
+                "replay_returncode": 0,
+                "replay_generation": 2,
+                "replay_idempotent": True,
+            },
+            {
+                "refresh_returncode": refreshed.returncode,
+                "classification": envelope.get("classification"),
+                "generation": envelope.get("data", {}).get("generation"),
+                "idempotent": envelope.get("data", {}).get("idempotent"),
+                "replay_returncode": replay.returncode,
+                "replay_generation": replay_envelope.get("data", {}).get(
+                    "generation"
+                ),
+                "replay_idempotent": replay_envelope.get("data", {}).get(
+                    "idempotent"
+                ),
+            },
+        )
+
+    def test_interrupted_youtube_authority_refresh_reconciles(self) -> None:
+        control_store_root, exit_evidence = self._write_valid_cutover_manifest()
+        activated = _run_cli(
+            "platform-kernel-activate",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(exit_evidence),
+            "--activated-at",
+            "2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout)
+        refreshed_evidence = self._write_refreshed_cutover_manifest(exit_evidence)
+        refresh_arguments = (
+            "youtube-platform-authority-refresh",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(refreshed_evidence),
+            "--expected-generation",
+            "1",
+            "--refreshed-at",
+            "2026-08-19T12:01:00Z",
+        )
+
+        interrupted = _run_cli(
+            *refresh_arguments,
+            "--fault-point",
+            "after_authority_write",
+        )
+        reconciled = _run_cli(
+            "platform-kernel-reconcile",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+        )
+        reconciliation = json.loads(reconciled.stdout)
+        replayed = _run_cli(*refresh_arguments)
+        replay = json.loads(replayed.stdout)
+
+        self.assertNotEqual(0, interrupted.returncode)
+        self.assertEqual(
+            {
+                "reconcile_returncode": 0,
+                "classification": "platform_kernel_reconciled",
+                "generation": 2,
+                "authority_status": "current",
+                "replay_returncode": 0,
+                "replay_idempotent": True,
+            },
+            {
+                "reconcile_returncode": reconciled.returncode,
+                "classification": reconciliation.get("classification"),
+                "generation": reconciliation.get("data", {}).get("generation"),
+                "authority_status": reconciliation.get("data", {}).get(
+                    "authority_status"
+                ),
+                "replay_returncode": replayed.returncode,
+                "replay_idempotent": replay.get("data", {}).get("idempotent"),
+            },
+        )
+
+    def test_youtube_authority_refresh_reconcile_observes_control_commit(self) -> None:
+        control_store_root, exit_evidence = self._write_valid_cutover_manifest()
+        activated = _run_cli(
+            "platform-kernel-activate",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(exit_evidence),
+            "--activated-at",
+            "2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout)
+        refreshed_evidence = self._write_refreshed_cutover_manifest(exit_evidence)
+
+        interrupted = _run_cli(
+            "youtube-platform-authority-refresh",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(refreshed_evidence),
+            "--expected-generation",
+            "1",
+            "--refreshed-at",
+            "2026-08-19T12:01:00Z",
+            "--fault-point",
+            "after_control_commit",
+        )
+        reconciled = _run_cli(
+            "platform-kernel-reconcile",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+        )
+        envelope = json.loads(reconciled.stdout)
+
+        self.assertNotEqual(0, interrupted.returncode)
+        self.assertEqual(
+            {
+                "returncode": 0,
+                "classification": "platform_kernel_reconciled",
+                "generation": 2,
+                "authority_status": "current",
+            },
+            {
+                "returncode": reconciled.returncode,
+                "classification": envelope.get("classification"),
+                "generation": envelope.get("data", {}).get("generation"),
+                "authority_status": envelope.get("data", {}).get(
+                    "authority_status"
+                ),
+            },
+        )
+
+    def test_youtube_authority_refresh_fences_wrong_expected_generation(self) -> None:
+        control_store_root, exit_evidence = self._write_valid_cutover_manifest()
+        activated = _run_cli(
+            "platform-kernel-activate",
+            "--platform",
+            "youtube",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(exit_evidence),
+            "--activated-at",
+            "2026-08-12T00:00:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout)
+        # scenario_class=single_contradiction
+        # target_invariant=expected_generation_equals_committed_generation
+        # mutation_seam=cli_expected_generation
+        # rematerialized_nodes=[refreshed_exit_evidence]
+        # intentionally_stale_nodes=[expected_generation]
+        # expected_first_gate=platform_kernel_authority
+        # expected_error_code=youtube_platform_authority_refresh_fenced
+        refreshed_evidence = self._write_refreshed_cutover_manifest(exit_evidence)
+
+        completed = _run_cli(
+            "youtube-platform-authority-refresh",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(refreshed_evidence),
+            "--expected-generation",
+            "2",
+            "--refreshed-at",
+            "2026-08-19T12:01:00Z",
+        )
+        envelope = json.loads(completed.stdout)
+        authority = json.loads(
+            (
+                control_store_root / "platform-authorities" / "youtube.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            {
+                "returncode": 30,
+                "first_failing_gate": "platform_kernel_authority",
+                "error_code": "youtube_platform_authority_refresh_fenced",
+                "generation": 1,
+            },
+            {
+                "returncode": completed.returncode,
+                "first_failing_gate": envelope.get("data", {}).get(
+                    "first_failing_gate"
+                ),
+                "error_code": envelope.get("data", {}).get("error_code"),
+                "generation": authority.get("generation"),
             },
         )
 

@@ -360,6 +360,23 @@ def _parser() -> argparse.ArgumentParser:
         "--control-store-root", required=True, type=Path
     )
 
+    youtube_platform_authority_refresh = commands.add_parser(
+        "youtube-platform-authority-refresh"
+    )
+    youtube_platform_authority_refresh.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    youtube_platform_authority_refresh.add_argument(
+        "--exit-evidence", required=True, type=Path
+    )
+    youtube_platform_authority_refresh.add_argument(
+        "--expected-generation", required=True, type=int
+    )
+    youtube_platform_authority_refresh.add_argument("--refreshed-at", required=True)
+    youtube_platform_authority_refresh.add_argument(
+        "--fault-point", choices=sorted(PLATFORM_ACTIVATION_FAULT_POINTS)
+    )
+
     delivery_transition = commands.add_parser("delivery-transition")
     delivery_transition.add_argument("--run-dir", required=True, type=Path)
     delivery_transition.add_argument("--from-stage", required=True)
@@ -1001,6 +1018,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         return _ok(
             command,
             "platform_kernel_reconciled",
+            result,
+            result["authority_path"],
+        )
+    if command == "youtube-platform-authority-refresh":
+        result = BilibiliPlatformCutoverPublisher().refresh_authority(
+            platform="youtube",
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            expected_generation=args.expected_generation,
+            refreshed_at=args.refreshed_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "platform_kernel_authority_refreshed",
             result,
             result["authority_path"],
         )

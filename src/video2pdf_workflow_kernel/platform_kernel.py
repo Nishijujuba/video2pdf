@@ -613,6 +613,13 @@ class BilibiliPlatformCutoverPublisher:
                 "candidate_snapshot_sha256 TEXT, "
                 "state TEXT NOT NULL CHECK(state IN ('PREPARED','COMMITTED')))"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS platform_authority_refresh_intents ("
+                "intent_id TEXT PRIMARY KEY, platform TEXT NOT NULL, "
+                "expected_generation INTEGER NOT NULL, "
+                "evidence_sha256 TEXT NOT NULL, authority_json TEXT NOT NULL, "
+                "state TEXT NOT NULL CHECK(state IN ('PREPARED','COMMITTED')))"
+            )
             intent_columns = {
                 str(column["name"])
                 for column in connection.execute(
@@ -3024,6 +3031,57 @@ class BilibiliPlatformCutoverPublisher:
         root = control_store_root.resolve()
         authority_path = root / PLATFORM_AUTHORITY_DIR / f"{platform}.json"
         with self._connect(root) as connection:
+            refresh_intents = connection.execute(
+                "SELECT * FROM platform_authority_refresh_intents "
+                "WHERE platform=? AND state='PREPARED'",
+                (platform,),
+            ).fetchall()
+            committed_refresh = connection.execute(
+                "SELECT * FROM platform_authority_refresh_intents "
+                "WHERE platform=? AND state='COMMITTED' "
+                "ORDER BY expected_generation DESC LIMIT 1",
+                (platform,),
+            ).fetchone()
+            current_authority = connection.execute(
+                "SELECT * FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+        if len(refresh_intents) > 1:
+            raise KernelConflict(
+                f"{display_name} authority refresh reconciliation is ambiguous"
+            )
+        if refresh_intents:
+            return self._reconcile_authority_refresh(
+                platform=platform,
+                control_store_root=root,
+                intent_id=refresh_intents[0]["intent_id"],
+            )
+        if (
+            committed_refresh is not None
+            and current_authority is not None
+            and int(current_authority["generation"])
+            == int(committed_refresh["expected_generation"]) + 1
+            and current_authority["evidence_sha256"]
+            == committed_refresh["evidence_sha256"]
+            and authority_path.is_file()
+            and sha256_file(authority_path) == current_authority["authority_sha256"]
+            and read_json(authority_path)
+            == json.loads(committed_refresh["authority_json"])
+        ):
+            current = self.require_current(
+                platform=platform, control_store_root=root
+            )
+            return {
+                "platform": platform,
+                "generation": current["generation"],
+                "authority_path": current["authority_path"],
+                "authority_sha256": current["authority_sha256"],
+                "authority_status": "current",
+                "cutover_state": "CONFIRMED",
+                "current": True,
+                "reconciled": True,
+            }
+        with self._connect(root) as connection:
             connection.execute("BEGIN IMMEDIATE")
             pending = connection.execute(
                 "SELECT * FROM platform_cutover_intents WHERE state='PREPARED'"
@@ -3185,6 +3243,366 @@ class BilibiliPlatformCutoverPublisher:
             "reconciled": True,
         }
 
+    def _reconcile_authority_refresh(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        intent_id: str,
+    ) -> dict[str, Any]:
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
+        root = control_store_root.resolve()
+        authority_path = root / PLATFORM_AUTHORITY_DIR / f"{platform}.json"
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            intent = connection.execute(
+                "SELECT * FROM platform_authority_refresh_intents "
+                "WHERE intent_id=? AND platform=? AND state='PREPARED'",
+                (intent_id, platform),
+            ).fetchone()
+            current = connection.execute(
+                "SELECT * FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT state,candidate_run_id FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            if (
+                intent is None
+                or current is None
+                or candidate is None
+                or candidate["state"] != "CONFIRMED"
+                or int(current["generation"]) != int(intent["expected_generation"])
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh lost its reconciliation fence"
+                )
+            authority = json.loads(intent["authority_json"])
+            evidence_path = Path(str(authority.get("exit_evidence_path", ""))).resolve()
+            if (
+                not evidence_path.is_relative_to(PROJECT_ROOT)
+                or not evidence_path.is_file()
+                or sha256_file(evidence_path) != intent["evidence_sha256"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"Interrupted {display_name} authority refresh evidence drifted"
+                )
+            evidence = _validate_evidence(
+                read_json(evidence_path), platform, evidence_path
+            )
+            if (
+                candidate["candidate_run_id"]
+                != evidence["guarded_delivery_evidence"]["run_id"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"Interrupted {display_name} authority refresh candidate drifted"
+                )
+            _require_formal_exit_evidence(evidence_path, platform)
+            global_gate = GlobalGatePublisher().require_current(control_store_root=root)
+            binding = authority.get("global_gate_binding")
+            if binding != {
+                "activation_status": "active_global_gate",
+                "authority_path": global_gate["path"],
+                "authority_sha256": global_gate["file_sha256"],
+                "generation": global_gate["generation"],
+            }:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"Interrupted {display_name} authority refresh Global Gate drifted"
+                )
+            if authority_path.is_file():
+                existing = read_json(authority_path)
+                if (
+                    existing != authority
+                    and sha256_file(authority_path) != current["authority_sha256"]
+                ):
+                    connection.execute("ROLLBACK")
+                    raise KernelConflict(
+                        f"Interrupted {display_name} authority refresh bytes conflict"
+                    )
+            if not authority_path.is_file() or read_json(authority_path) != authority:
+                authority_path.parent.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(authority_path, authority)
+            file_sha256 = sha256_file(authority_path)
+            generation = int(intent["expected_generation"]) + 1
+            changed = connection.execute(
+                "UPDATE platform_cutover_authority SET generation=?,"
+                "evidence_sha256=?,authority_sha256=? "
+                "WHERE platform=? AND generation=? AND authority_sha256=?",
+                (
+                    generation,
+                    intent["evidence_sha256"],
+                    file_sha256,
+                    platform,
+                    intent["expected_generation"],
+                    current["authority_sha256"],
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh lost its generation fence"
+                )
+            connection.execute(
+                "UPDATE platform_authority_refresh_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND state='PREPARED'",
+                (intent_id,),
+            )
+            connection.execute("COMMIT")
+        return {
+            "platform": platform,
+            "generation": generation,
+            "authority_path": str(authority_path),
+            "authority_sha256": file_sha256,
+            "authority_status": "current",
+            "cutover_state": "CONFIRMED",
+            "current": True,
+            "reconciled": True,
+        }
+
+    def refresh_authority(
+        self,
+        *,
+        platform: str,
+        control_store_root: Path,
+        exit_evidence: Path,
+        expected_generation: int,
+        refreshed_at: str,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance a confirmed platform authority to newer published evidence."""
+
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
+        root = control_store_root.resolve()
+        evidence_path = exit_evidence.resolve()
+        if not evidence_path.is_file():
+            raise ContractError(
+                f"{display_name} authority refresh Exit Evidence is unavailable"
+            )
+        evidence = _validate_evidence(read_json(evidence_path), platform, evidence_path)
+        _require_formal_exit_evidence(evidence_path, platform)
+        evidence_sha256 = sha256_file(evidence_path)
+        global_gate = GlobalGatePublisher().require_current(control_store_root=root)
+        authority_path = root / PLATFORM_AUTHORITY_DIR / f"{platform}.json"
+
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT * FROM platform_cutover_authority WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT state,candidate_run_id FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            pending = connection.execute(
+                "SELECT COUNT(*) FROM platform_authority_refresh_intents "
+                "WHERE platform=? AND state='PREPARED'",
+                (platform,),
+            ).fetchone()[0]
+            committed = connection.execute(
+                "SELECT authority_json FROM platform_authority_refresh_intents "
+                "WHERE platform=? AND expected_generation=? "
+                "AND evidence_sha256=? AND state='COMMITTED'",
+                (platform, expected_generation, evidence_sha256),
+            ).fetchone()
+            if (
+                current is None
+                or candidate is None
+                or candidate["state"] != "CONFIRMED"
+                or candidate["candidate_run_id"]
+                != evidence["guarded_delivery_evidence"]["run_id"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh requires a current confirmed authority"
+                )
+            if pending:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"Interrupted {display_name} authority refresh requires reconciliation"
+                )
+            if (
+                not authority_path.is_file()
+                or sha256_file(authority_path) != current["authority_sha256"]
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh requires current authority bytes"
+                )
+            current_authority = read_json(authority_path)
+            if (
+                current_authority.get("platform") != platform
+                or current_authority.get("generation") != current["generation"]
+                or current_authority.get("authority_sha256")
+                != _fingerprint(current_authority, "authority_sha256")
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh found conflicting authority bytes"
+                )
+            if (
+                committed is not None
+                and int(current["generation"]) == expected_generation + 1
+                and current["evidence_sha256"] == evidence_sha256
+                and read_json(authority_path) == json.loads(committed["authority_json"])
+            ):
+                connection.execute("COMMIT")
+                return {
+                    "platform": platform,
+                    "generation": int(current["generation"]),
+                    "authority_path": str(authority_path),
+                    "authority_sha256": current["authority_sha256"],
+                    "platform_statuses": spec["platform_statuses"],
+                    "cutover_state": "CONFIRMED",
+                    "idempotent": True,
+                }
+            if int(current["generation"]) != expected_generation:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh expected generation is stale",
+                    data={
+                        "first_failing_gate": "platform_kernel_authority",
+                        "error_code": (
+                            f"{spec['error_prefix']}_platform_authority_refresh_fenced"
+                        ),
+                    },
+                )
+            if current["evidence_sha256"] == evidence_sha256:
+                connection.execute("COMMIT")
+                return {
+                    "platform": platform,
+                    "generation": int(current["generation"]),
+                    "authority_path": str(authority_path),
+                    "authority_sha256": current["authority_sha256"],
+                    "platform_statuses": spec["platform_statuses"],
+                    "cutover_state": "CONFIRMED",
+                    "idempotent": True,
+                }
+            generation = expected_generation + 1
+            authority = dict(current_authority)
+            authority.update(
+                {
+                    "generation": generation,
+                    "global_gate_binding": {
+                        "activation_status": "active_global_gate",
+                        "authority_path": global_gate["path"],
+                        "authority_sha256": global_gate["file_sha256"],
+                        "generation": global_gate["generation"],
+                    },
+                    "exit_evidence_path": str(evidence_path),
+                    "exit_evidence_sha256": evidence_sha256,
+                    "refreshed_at": refreshed_at,
+                }
+            )
+            authority["authority_sha256"] = _fingerprint(
+                authority, "authority_sha256"
+            )
+            intent_id = hashlib.sha256(
+                (platform + "\0" + str(generation) + "\0" + evidence_sha256).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO platform_authority_refresh_intents("
+                "intent_id,platform,expected_generation,evidence_sha256,"
+                "authority_json,state) VALUES(?,?,?,?,?,'PREPARED')",
+                (
+                    intent_id,
+                    platform,
+                    int(current["generation"]),
+                    evidence_sha256,
+                    json.dumps(authority, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+            connection.execute("COMMIT")
+
+        if fault_point == "after_intent":
+            raise PlatformKernelFault(fault_point)
+        _require_formal_exit_evidence(evidence_path, platform)
+        write_json_atomic(authority_path, authority)
+        if fault_point == "after_authority_write":
+            raise PlatformKernelFault(fault_point)
+        file_sha256 = sha256_file(authority_path)
+        with self._connect(root) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            intent = connection.execute(
+                "SELECT * FROM platform_authority_refresh_intents "
+                "WHERE intent_id=? AND platform=? AND state='PREPARED'",
+                (intent_id, platform),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT state,candidate_run_id FROM platform_cutover_candidates "
+                "WHERE platform=?",
+                (platform,),
+            ).fetchone()
+            current_global_gate = GlobalGatePublisher().require_current(
+                control_store_root=root
+            )
+            if (
+                intent is None
+                or candidate is None
+                or candidate["state"] != "CONFIRMED"
+                or candidate["candidate_run_id"]
+                != evidence["guarded_delivery_evidence"]["run_id"]
+                or sha256_file(evidence_path) != evidence_sha256
+                or authority["global_gate_binding"]
+                != {
+                    "activation_status": "active_global_gate",
+                    "authority_path": current_global_gate["path"],
+                    "authority_sha256": current_global_gate["file_sha256"],
+                    "generation": current_global_gate["generation"],
+                }
+            ):
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh inputs drifted before commit"
+                )
+            _require_formal_exit_evidence(evidence_path, platform)
+            changed = connection.execute(
+                "UPDATE platform_cutover_authority SET generation=?,"
+                "evidence_sha256=?,authority_sha256=? "
+                "WHERE platform=? AND generation=? AND authority_sha256=?",
+                (
+                    generation,
+                    evidence_sha256,
+                    file_sha256,
+                    platform,
+                    generation - 1,
+                    current["authority_sha256"],
+                ),
+            ).rowcount
+            if changed != 1:
+                connection.execute("ROLLBACK")
+                raise KernelConflict(
+                    f"{display_name} authority refresh lost its generation fence"
+                )
+            connection.execute(
+                "UPDATE platform_authority_refresh_intents SET state='COMMITTED' "
+                "WHERE intent_id=? AND state='PREPARED'",
+                (intent_id,),
+            )
+            connection.execute("COMMIT")
+        if fault_point == "after_control_commit":
+            raise PlatformKernelFault(fault_point)
+        return {
+            "platform": platform,
+            "generation": generation,
+            "authority_path": str(authority_path),
+            "authority_sha256": file_sha256,
+            "platform_statuses": evidence["platform_statuses"],
+            "cutover_state": "CONFIRMED",
+            "idempotent": False,
+        }
+
     def require_current(
         self, *, platform: str, control_store_root: Path
     ) -> dict[str, Any]:
@@ -3205,6 +3623,11 @@ class BilibiliPlatformCutoverPublisher:
             pending = connection.execute(
                 "SELECT COUNT(*) FROM platform_cutover_intents WHERE state='PREPARED'"
             ).fetchone()[0]
+            pending_refresh = connection.execute(
+                "SELECT COUNT(*) FROM platform_authority_refresh_intents "
+                "WHERE platform=? AND state='PREPARED'",
+                (platform,),
+            ).fetchone()[0]
         if current is None and candidate is not None and candidate["state"] != "CONFIRMED":
             raise KernelConflict(
                 f"{display_name} Platform Kernel candidate awaits confirmation",
@@ -3216,6 +3639,7 @@ class BilibiliPlatformCutoverPublisher:
         if (
             current is None
             or pending
+            or pending_refresh
             or not authority_path.is_file()
             or sha256_file(authority_path) != current["authority_sha256"]
         ):

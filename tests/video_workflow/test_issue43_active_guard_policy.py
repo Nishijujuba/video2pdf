@@ -17,7 +17,6 @@ class Issue43ActiveGuardPolicyTests(unittest.TestCase):
             "translation",
             "dual authority",
             "synthetic Legacy Run",
-            "Platform Kernel authority remains unchanged",
         )
         for name in ("final-delivery-acceptance", "bilibili-render-pdf", "youtube-render-pdf"):
             authority = (PROJECT_ROOT / ".agents/skills" / name / "SKILL.md").read_text(encoding="utf-8")
@@ -30,10 +29,18 @@ class Issue43ActiveGuardPolicyTests(unittest.TestCase):
             instructions = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
             for phrase in required:
                 self.assertIn(phrase, instructions)
+            self.assertIn("Bilibili is `active_kernel` for all new tasks", instructions)
+            self.assertIn("YouTube is `active_kernel` for all new tasks", instructions)
+            self.assertIn("Batch is `active_batch` for all new batches", instructions)
 
         decision_map = (PROJECT_ROOT / "docs/adr/video-workflow-kernel-2.0-decision-map.md").read_text(encoding="utf-8")
         self.assertIn("The shared final-quality gate has `active_global_gate` status.", decision_map)
-        self.assertIn("No component has `active_kernel` status.", decision_map)
+        self.assertIn(
+            "Bilibili and YouTube have `active_kernel` status for new Runs, and Batch "
+            "has `active_batch` status for new batches.",
+            decision_map,
+        )
+        self.assertIn("Existing Bilibili and YouTube directories retain Legacy", decision_map)
 
 
 if __name__ == "__main__":

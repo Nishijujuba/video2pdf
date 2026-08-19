@@ -1222,7 +1222,7 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
                 ["evidence/manifest.json", "evidence/result.log"],
             )
 
-    def test_repository_definition_covers_legacy_authority_without_cutover(self) -> None:
+    def test_repository_definition_preserves_existing_legacy_authority_after_cutover(self) -> None:
         definition_path = PROJECT_ROOT / "config" / "legacy-baseline.v1.json"
         definition = json.loads(definition_path.read_text(encoding="utf-8"))
 
@@ -1236,9 +1236,11 @@ class LegacyBaselineContractFixtureTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "The shared final-quality gate has `active_global_gate` status. No component has `active_kernel` status.",
+            "Existing Bilibili and YouTube directories retain Legacy platform coordination "
+            "unless explicit migration authority is introduced.",
             decision_map,
         )
+        self.assertIn("Bilibili and YouTube have `active_kernel` status for new Runs", decision_map)
 
 
 if __name__ == "__main__":

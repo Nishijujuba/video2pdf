@@ -385,6 +385,29 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
             "result_binding_public_tracer_missing",
         )
 
+    def test_direct_validator_resolves_repository_unittest_targets(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(PROJECT_ROOT / "scripts/validate_slice_exit_evidence.py"),
+                str(
+                    PROJECT_ROOT
+                    / "tests/video_workflow/fixtures/exit_evidence/slice14.valid.json"
+                ),
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotIn(
+            "error_code=result_binding_public_tracer_missing",
+            completed.stdout + completed.stderr,
+        )
+
     def _collection_inputs(self) -> tuple[Path, Path, Path, dict[str, Path]]:
         scratch = new_case_dir(self.id(), label="issue15-collection")
         batch_record = json.loads(

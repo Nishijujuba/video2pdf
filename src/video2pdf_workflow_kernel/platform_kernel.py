@@ -409,19 +409,28 @@ def _validate_guarded_delivery(
                 allow_absolute=True,
             ).read_text(encoding="utf-8").strip()
         )
+        expected_qualification_argv = [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-B",
+            "-m",
+            "unittest",
+            "-v",
+            spec["qualification_test_module"],
+        ]
+        qualification_argv = command.get("argv")
+        qualification_command_matches = (
+            isinstance(qualification_argv, list)
+            and len(qualification_argv) == len(expected_qualification_argv)
+            and isinstance(qualification_argv[0], str)
+            and Path(qualification_argv[0]).resolve()
+            == Path(expected_qualification_argv[0]).resolve()
+            and qualification_argv[1:] == expected_qualification_argv[1:]
+        )
         if (
             command.get("run_id") != manifest_qualification.get("run_id")
-            or command.get("argv")
-            != [
-                sys.executable,
-                "-X",
-                "utf8",
-                "-B",
-                "-m",
-                "unittest",
-                "-v",
-                spec["qualification_test_module"],
-            ]
+            or not qualification_command_matches
             or command.get("cwd") != str(PROJECT_ROOT.resolve())
             or command.get("accepted_exit_codes") != [0]
             or status.get("run_id") != manifest_qualification.get("run_id")

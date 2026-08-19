@@ -428,12 +428,14 @@ class Issue14PlatformCutoverTests(unittest.TestCase):
         )
         role_files["final_pdf"] = write_bound("final.pdf", b"%PDF-1.7\n")
         qualification_id = "14141414-1414-4414-8414-141414141414"
+        qualification_argv = list(issue14_contract.COMMANDS[1][1])
+        qualification_argv[0] = Path(qualification_argv[0]).as_posix()
         command_path, command_binding = write_bound(
             "command.json",
             json.dumps(
                 {
                     "run_id": qualification_id,
-                    "argv": list(issue14_contract.COMMANDS[1][1]),
+                    "argv": qualification_argv,
                     "cwd": str(PROJECT_ROOT.resolve()),
                     "accepted_exit_codes": [0],
                 },

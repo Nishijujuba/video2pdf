@@ -1156,6 +1156,9 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                     }
                 ],
             ),
+            mock.patch.object(
+                collector, "implementation_change_tombstones", return_value=[]
+            ),
         ):
             self.assertEqual(collector.finalize(collection_path), 0)
 
@@ -1255,6 +1258,9 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             mock.patch.object(collector, "git", side_effect=git_proxy),
             mock.patch.object(
                 collector, "fingerprint_implementation_changes", return_value=[]
+            ),
+            mock.patch.object(
+                collector, "implementation_change_tombstones", return_value=[]
             ),
         ):
             self.assertEqual(0, collector.finalize(collection_path))

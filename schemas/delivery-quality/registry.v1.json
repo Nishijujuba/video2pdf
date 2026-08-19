@@ -49,7 +49,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/delivery-quality-migration-ledger.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/delivery-quality-migration-ledger.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/migration-ledger.v1.json",
-      "canonical_sha256": "f1e230f532aa7c2bae78fb887610c4e2c292df303fda634b64eaa47bac2e3355",
+      "canonical_sha256": "f7a413e4380955c427e29f07ca166ed89d484c26b8b63c37f1e6291a31f9b557",
       "positive_example": "delivery-quality/v1/migration-ledger.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/migration-ledger.invalid.json"
     },

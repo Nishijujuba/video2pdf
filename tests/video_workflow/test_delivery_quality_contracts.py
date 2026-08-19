@@ -153,6 +153,35 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             catalog,
         )
 
+    def test_migration_source_fingerprint_uses_canonical_lf_bytes(self) -> None:
+        source_relative_path = "docs/acceptance/acceptance_criteria.v1.json"
+        attributes = subprocess.run(
+            ["git", "check-attr", "eol", "--", source_relative_path],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, attributes.returncode, attributes.stderr)
+        self.assertEqual(
+            f"{source_relative_path}: eol: lf",
+            attributes.stdout.strip(),
+        )
+
+        ledger = json.loads(
+            (
+                PROJECT_ROOT / "delivery-quality/v1/migration-ledger.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(source_relative_path, ledger["source_contract"]["path"])
+        source_bytes = (PROJECT_ROOT / source_relative_path).read_bytes()
+        self.assertNotIn(b"\r\n", source_bytes)
+        self.assertEqual(
+            hashlib.sha256(source_bytes).hexdigest(),
+            ledger["source_contract"]["sha256"],
+        )
+
     def test_public_contract_check_proves_closed_target_only_policy_surface(
         self,
     ) -> None:

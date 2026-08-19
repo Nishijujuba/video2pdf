@@ -4,6 +4,7 @@ requirements/pylock.video-workflow-runtime.toml text eol=lf
 prompts/video-workflow/** text eol=lf
 prompts/delivery-quality/** text eol=lf
 delivery-quality/** text eol=lf
+docs/acceptance/acceptance_criteria.v1.json text eol=lf
 schemas/delivery-quality/** text eol=lf
 schemas/exit-evidence-manifest.v2.schema.json text eol=lf
 schemas/video-workflow/** text eol=lf

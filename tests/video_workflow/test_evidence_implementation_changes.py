@@ -80,6 +80,31 @@ class ImplementationChangeEvidenceTests(unittest.TestCase):
             ],
         )
 
+    def test_archive_fingerprints_are_stable_across_autocrlf_config(self) -> None:
+        repository, base = self._repository()
+        _git(repository, "config", "core.autocrlf", "false")
+        (repository / "keep.txt").write_bytes(b"changed authority\n")
+        _git(repository, "add", "keep.txt")
+        _git(repository, "commit", "-m", "change text authority")
+        implementation = _git(repository, "rev-parse", "HEAD")
+        expected = [
+            {
+                "role": "implementation_artifact",
+                "path": "keep.txt",
+                "sha256": hashlib.sha256(b"changed authority\r\n").hexdigest(),
+            }
+        ]
+
+        for autocrlf in ("false", "true"):
+            with self.subTest(core_autocrlf=autocrlf):
+                _git(repository, "config", "core.autocrlf", autocrlf)
+                self.assertEqual(
+                    expected,
+                    fingerprint_implementation_changes(
+                        repository, base, implementation
+                    ),
+                )
+
     def test_real_deletion_has_tombstone_and_no_deleted_artifact_fingerprint(self) -> None:
         repository, base = self._repository()
         _git(repository, "read-tree", base)

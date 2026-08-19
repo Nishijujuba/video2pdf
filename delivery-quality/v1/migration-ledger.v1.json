@@ -5,7 +5,7 @@
   "activation_status": "target_only",
   "source_contract": {
     "path": "docs/acceptance/acceptance_criteria.v1.json",
-    "sha256": "4b01b69e554340697822aba9e03f307870c172134c78b89a2d32cd5a834c33a5",
+    "sha256": "97037378976fe01e2b88eb35ee44022d014fd885e2298655beb2cc04bc05e1ae",
     "schema_version": "1.0"
   },
   "entries": [

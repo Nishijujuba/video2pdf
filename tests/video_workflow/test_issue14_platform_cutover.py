@@ -23,6 +23,7 @@ from tests.video_workflow.test_issue13_delivery_lifecycle import (
     _guard_report,
 )
 from scripts import issue14_exit_evidence_contract as issue14_contract
+from scripts import issue43_exit_evidence_contract as global_gate_contract
 from video2pdf_workflow_kernel import cli as kernel_cli
 from video2pdf_workflow_kernel.errors import KernelError
 import video2pdf_workflow_kernel.platform_kernel as platform_kernel_module
@@ -695,16 +696,40 @@ class Issue14PlatformCutoverTests(unittest.TestCase):
     ) -> dict[str, object]:
         """Seed a current Global Gate authority from the committed Slice 11 evidence.
 
-        The Global Gate requires current post-publication Exit Evidence. The
-        committed ``evidence/global-gate/exit-evidence-manifest.json`` passes the
-        schema and mirror checks while the currently published authority and its
-        CLI mirror are byte-equal, so it is a stable authority for both platforms
-        without depending on the issue43 fixture builder.
+        The Global Gate requires current post-publication Exit Evidence. This
+        builder preserves the committed qualification result while rematerializing
+        its live mirror checks against the current repository root.
         """
         control_store_root = control_store_root.resolve()
         evidence_path = control_store_root / "global-gate-exit-evidence.json"
-        evidence_path.write_bytes(
-            (PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json").read_bytes()
+        evidence = json.loads(
+            (
+                PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        evidence["mirror_checks"] = [
+            {
+                "source_path": source,
+                "mirror_path": mirror,
+                "source_sha256": hashlib.sha256(
+                    (PROJECT_ROOT / source).read_bytes()
+                ).hexdigest(),
+                "mirror_sha256": hashlib.sha256(
+                    (PROJECT_ROOT / mirror).read_bytes()
+                ).hexdigest(),
+                "status": (
+                    "equal"
+                    if (PROJECT_ROOT / source).read_bytes()
+                    == (PROJECT_ROOT / mirror).read_bytes()
+                    else "stale"
+                ),
+            }
+            for source, mirror in global_gate_contract.MIRROR_SPECS
+        ]
+        evidence_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n",
+            encoding="utf-8",
         )
         evidence_sha = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
         authority_path = control_store_root / "active_global_gate.json"

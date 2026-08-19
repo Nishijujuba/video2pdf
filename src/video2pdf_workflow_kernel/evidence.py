@@ -15,6 +15,9 @@ class EvidenceSupportError(RuntimeError):
     """Low-level evidence operation failure for caller-specific classification."""
 
 
+_CANONICAL_ARCHIVE_CONFIG = ("-c", "core.autocrlf=true")
+
+
 def _trusted_git_executable() -> Path:
     if os.name == "nt":
         approved_roots = (
@@ -269,16 +272,21 @@ def implementation_change_tombstones(
 def sha256_git_archive(project_root: Path, commit: str, path: str) -> str:
     """Hash a committed file exactly as the evidence collector fingerprints it.
 
-    ``fingerprint_implementation_changes`` hashes files from ``git archive``,
-    which applies repository text conversion (CRLF) to files without an
-    explicit ``eol=lf`` attribute.  The activation authority must verify the
-    same bytes, so it re-archives each declared path instead of reading the
-    raw blob.
+    Historical manifests bind Git archive bytes produced with CRLF conversion
+    for text files without an explicit ``eol=lf`` attribute.  Pin that archive
+    policy so repository-local ``core.autocrlf`` cannot change verification.
     """
 
     raw = _run_git(
         project_root,
-        ("archive", "--format=tar", commit, "--", path),
+        (
+            *_CANONICAL_ARCHIVE_CONFIG,
+            "archive",
+            "--format=tar",
+            commit,
+            "--",
+            path,
+        ),
     )
     try:
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as handle:
@@ -347,7 +355,14 @@ def fingerprint_implementation_changes(
             tree_entries[tree_path] = (mode, object_type, object_id)
         archive = _run_git(
             project_root,
-            ("archive", "--format=tar", implementation_commit, "--", *selected),
+            (
+                *_CANONICAL_ARCHIVE_CONFIG,
+                "archive",
+                "--format=tar",
+                implementation_commit,
+                "--",
+                *selected,
+            ),
         )
         try:
             with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:

@@ -336,10 +336,11 @@ test_rebuild_and_status_examples_supply_only_control_store_root (tests.video_wor
 ok
 [stderr 2]
 
-[stderr 101]
+[stderr 99]
 ----------------------------------------------------------------------
-Ran 112 tests in 191.690s
+Ran 112 tests in 175.994s
+[stderr 2]
 
 [stderr 4]
 OK
-EVIDENCE_IMPLEMENTATION_COMMIT: 2945e8d01f3786725d81374a75a51d6827455380
+EVIDENCE_IMPLEMENTATION_COMMIT: f6189dba8949f431c8bc682060aea7a891682977

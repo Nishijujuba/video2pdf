@@ -1,5 +1,7 @@
-[stderr 360]
-test_batch_artifacts_are_mandatory_evidence_paths (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_artifacts_are_mandatory_evidence_paths) ... ok
+[stderr 179]
+test_batch_artifacts_are_mandatory_evidence_paths (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_artifacts_are_mandatory_evidence_paths) ... [stderr 4]
+ok
+[stderr 177]
 test_batch_collection_tampering_breaks_bound_sha (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_batch_collection_tampering_breaks_bound_sha) ... [stderr 4]
 ok
 [stderr 197]
@@ -28,11 +30,11 @@ ok
 [stderr 193]
 test_finalize_binds_collection_and_closes_evidence_paths (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_finalize_binds_collection_and_closes_evidence_paths) ... [stderr 4]
 ok
-[stderr 457]
-test_slice14_contract_constants_are_pinned (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_contract_constants_are_pinned) ... ok
+[stderr 165]
+test_slice14_contract_constants_are_pinned (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_contract_constants_are_pinned) ... [stderr 297]
+ok
 test_slice14_fixture_cannot_bypass_common_binding_and_lineage_gates (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_fixture_cannot_bypass_common_binding_and_lineage_gates)
-A schema fixture carries no materialized files or Git publication authority.[stderr 5]
- ... [stderr 4]
+A schema fixture carries no materialized files or Git publication authority. ... [stderr 4]
 ok
 [stderr 167]
 test_slice14_invalid_fixture_fails_dispatch (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_invalid_fixture_fails_dispatch) ... [stderr 4]
@@ -67,10 +69,14 @@ ok
 [stderr 245]
 test_slice14_validates_each_persisted_qualification_without_guarded_delivery_block (tests.video_workflow.test_issue15_exit_evidence.Issue15ExitEvidenceTests.test_slice14_validates_each_persisted_qualification_without_guarded_delivery_block) ... [stderr 4]
 ok
-[stderr 106]
+[stderr 2]
 
+[stderr 72]
 ----------------------------------------------------------------------
-Ran 24 tests in 100.346s
+[stderr 26]
+Ran 24 tests in 204.750s
+[stderr 2]
 
+[stderr 4]
 OK
-EVIDENCE_IMPLEMENTATION_COMMIT: 2945e8d01f3786725d81374a75a51d6827455380
+EVIDENCE_IMPLEMENTATION_COMMIT: f6189dba8949f431c8bc682060aea7a891682977

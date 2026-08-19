@@ -255,8 +255,12 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         })
         _write_json(manifest_path, value)
         projection_path.write_bytes(projection_path.read_bytes() + b"\n")
-        with self.assertRaisesRegex(validator.EvidenceError, "fingerprint mismatch"):
+        with self.assertRaisesRegex(
+            validator.EvidenceError, "fingerprint mismatch"
+        ) as raised:
             validator.validate_bindings(value, manifest_path)
+        self.assertEqual("bindings", raised.exception.first_failing_gate)
+        self.assertEqual("artifact_sha_mismatch", raised.exception.error_code)
 
     def test_batch_collection_tampering_breaks_bound_sha(self) -> None:
         # scenario_id=collection_bytes_tampered; target_invariant=collection SHA binding;
@@ -275,8 +279,12 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         _write_json(manifest_path, value)
         collection_path = PROJECT_ROOT / batch["collection"]["path"]
         collection_path.write_bytes(collection_path.read_bytes() + b"\n")
-        with self.assertRaisesRegex(validator.EvidenceError, "fingerprint mismatch"):
+        with self.assertRaisesRegex(
+            validator.EvidenceError, "fingerprint mismatch"
+        ) as raised:
             validator.validate_bindings(value, manifest_path)
+        self.assertEqual("bindings", raised.exception.first_failing_gate)
+        self.assertEqual("artifact_sha_mismatch", raised.exception.error_code)
 
     def test_batch_validator_rejects_collection_from_another_batch(self) -> None:
         # scenario_id=collection_batch_mismatch; target_invariant=collection ownership;
@@ -356,6 +364,25 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         self.assertEqual(
             validated["mirror_checks"][0]["source_path"],
             ".agents/skills/bilibili-batch-render-pdf/SKILL.md",
+        )
+
+    def test_slice14_rejects_a_nonexistent_bound_unittest_target(self) -> None:
+        value = self._batch_semantic_fixture()
+        value["result_bindings"][0]["test_target"] += ".does_not_exist"
+
+        with self.assertRaises(validator.EvidenceError) as raised:
+            validator.validate_batch_exit_evidence(
+                value,
+                project_root=PROJECT_ROOT,
+            )
+
+        self.assertEqual(
+            raised.exception.first_failing_gate,
+            "qualification_result_binding",
+        )
+        self.assertEqual(
+            raised.exception.error_code,
+            "result_binding_public_tracer_missing",
         )
 
     def _collection_inputs(self) -> tuple[Path, Path, Path, dict[str, Path]]:
@@ -490,9 +517,14 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
             contract.PLATFORM_STATUSES,
             {"bilibili": "active_kernel", "youtube": "active_kernel"},
         )
-        self.assertEqual(len(contract.ATOMIC_MEMBERS), 14)
+        self.assertEqual(len(contract.ATOMIC_MEMBERS), 15)
+        self.assertIn("batch_cutover_authority", contract.ATOMIC_MEMBERS)
         self.assertEqual(contract.ACTIVATION_SCOPE["kind"], "batch_cutover")
         self.assertTrue(contract.ACTIVATION_SCOPE["runtime_authority_change"])
+        self.assertIn(
+            "batch_cutover_authority",
+            contract.ACTIVATION_SCOPE["components_activated"],
+        )
         kinds = {spec[1] for spec in contract.RESULT_SPECS}
         self.assertEqual(
             kinds, {"positive", "negative", "recovery", "fencing", "fairness"}
@@ -509,8 +541,10 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
             command_targets,
             {
                 "tests.video_workflow.test_issue15_batch_authority",
+                "tests.video_workflow.test_issue15_batch_activation_integration",
                 "tests.video_workflow.test_issue15_batch_cli",
                 "tests.video_workflow.test_issue15_batch_contracts",
+                "tests.video_workflow.test_issue15_batch_cutover",
                 "tests.video_workflow.test_issue15_batch_policy_docs",
                 "tests.video_workflow.test_issue15_batch_projection",
                 "tests.video_workflow.test_issue15_control_store_batch",
@@ -520,11 +554,49 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         bindings = {item[0]: item for item in contract.RESULT_SPECS}
         self.assertEqual(
             bindings["fairness_group_is_batch_id"][2],
-            "tests.video_workflow.test_issue15_batch_authority.test_fairness_group_id_is_batch_id",
+            "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_fairness_group_id_is_batch_id",
         )
         self.assertEqual(
             bindings["auth_breaker_uses_resource_admission"][2],
-            "tests.video_workflow.test_issue15_batch_authority.test_auth_breaker_flows_through_resource_admission",
+            "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_auth_breaker_flows_through_resource_admission",
+        )
+        self.assertEqual(
+            {
+                result_id: binding[2]
+                for result_id, binding in bindings.items()
+                if result_id
+                in {
+                    "batch_cutover_activation_publishes_current_authority",
+                    "batch_cutover_current_authority_is_verified",
+                    "batch_cutover_reconcile_completes_publication",
+                    "batch_plan_preactivation_closure",
+                    "batch_run_preactivation_closure",
+                }
+            },
+            {
+                "batch_cutover_activation_publishes_current_authority": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests.test_activate_publishes_current_batch_authority"
+                ),
+                "batch_cutover_current_authority_is_verified": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests.test_current_authority_rejects_authority_evidence_and_database_tamper"
+                ),
+                "batch_cutover_reconcile_completes_publication": (
+                    "tests.video_workflow.test_issue15_batch_cutover."
+                    "Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_publication"
+                ),
+                "batch_plan_preactivation_closure": (
+                    "tests.video_workflow.test_issue15_batch_activation_integration."
+                    "Issue15BatchActivationIntegrationTests."
+                    "test_plan_requires_authority_before_enumeration_or_mutation"
+                ),
+                "batch_run_preactivation_closure": (
+                    "tests.video_workflow.test_issue15_batch_activation_integration."
+                    "Issue15BatchActivationIntegrationTests."
+                    "test_run_rejects_missing_or_stale_binding_before_any_mutation"
+                ),
+            },
         )
 
     def test_slice14_positive_fixture_validates_against_schema(self) -> None:
@@ -542,6 +614,10 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         Draft202012Validator(schema).validate(fixture)
         self.assertEqual(fixture["slice"]["number"], 14)
         self.assertEqual(fixture["overall_decision"], "pass")
+        self.assertEqual(
+            fixture["activation_scope"]["qualification_contract_sha256"],
+            contract.QUALIFICATION_CONTRACT_SHA256,
+        )
 
     def test_slice14_schema_requires_batch_evidence(self) -> None:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -579,6 +655,15 @@ class Issue15ExitEvidenceTests(unittest.TestCase):
         )
         errors = list(Draft202012Validator(schema).iter_errors(fixture))
         self.assertTrue(errors)
+        positive = json.loads(
+            (
+                PROJECT_ROOT
+                / "tests/video_workflow/fixtures/exit_evidence/slice14.valid.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(fixture["overall_decision"], "invalid")
+        fixture["overall_decision"] = "pass"
+        self.assertEqual(fixture, positive)
 
     def test_slice14_fixture_cannot_bypass_common_binding_and_lineage_gates(self) -> None:
         """A schema fixture carries no materialized files or Git publication authority."""

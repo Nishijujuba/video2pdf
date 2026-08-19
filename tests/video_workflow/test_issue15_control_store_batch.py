@@ -42,6 +42,7 @@ def _record(batch_id: str = "a" * 32, stage: str = "planned") -> dict:
         "batch_dir": "D:/workspace/batch/batch-control",
         "control_dir": "D:/workspace/.workflow-control/batches/batch",
         "batch_stage": stage,
+        "batch_authority_binding": None,
         "run_task_start": None,
         "item_order": [
             {

@@ -69,14 +69,14 @@
     "atomic_members": {
       "type": "array",
       "minItems": 12,
-      "maxItems": 14,
+      "maxItems": 15,
       "uniqueItems": true,
       "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$"}
     },
     "atomic_member_status": {
       "type": "object",
       "minProperties": 12,
-      "maxProperties": 14,
+      "maxProperties": 15,
       "additionalProperties": {"enum": ["active", "failed"]}
     },
     "mirror_checks": {
@@ -397,8 +397,8 @@
         "slice": {"properties": {"number": {"const": 14}, "name": {"const": "batch-projection-cutover"}}},
         "slice_base_commit": {"const": "bb50b1ce8a0f91961d9c7077e8e130ac8eaa955f"},
         "activation_scope": {"$ref": "#/$defs/batchActivationScope"},
-        "atomic_members": {"minItems": 14, "maxItems": 14},
-        "atomic_member_status": {"minProperties": 14, "maxProperties": 14},
+        "atomic_members": {"minItems": 15, "maxItems": 15},
+        "atomic_member_status": {"minProperties": 15, "maxProperties": 15},
         "commands": {
           "items": {
             "allOf": [

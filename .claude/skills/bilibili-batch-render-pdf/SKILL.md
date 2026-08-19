@@ -13,6 +13,8 @@ This skill is a Kernel-supervisor skill. It does not replace `bilibili-render-pd
 
 Batch remains `target_only` until runtime authority activation; the Batch Supervisor, Batch Record, and Batch Item Projections are implemented and the `batch-*` CLI is available, but new-batch authority begins only with a published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
 
+Publishing Slice 14 and activating Batch authority are separate governed steps. Before any new `batch-plan`, publish the schema-valid Slice 14 Exit Evidence Manifest, run `batch-activate` against the intended control-store root, use `batch-reconcile` if activation was interrupted, and require `batch-authority-check` to report the current authority. A published manifest without a current `active_batch.json` authority leaves Batch `target_only` and new planning closed.
+
 ## Fit
 
 Use this skill when:
@@ -26,26 +28,40 @@ For one Bilibili video without batch orchestration, use `bilibili-render-pdf` di
 
 ## Batch Flow (pinned)
 
-Invoke Kernel batch mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. The pinned batch flow is `batch-plan` -> `batch-run` -> `batch-recover`/`batch-status`:
+Invoke Kernel batch mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. The pinned governed flow is `batch-activate` -> `batch-authority-check` -> `batch-plan` -> `batch-run` -> `batch-recover`/`batch-status`. Use `batch-reconcile` after an interrupted activation:
 
-1. `batch-plan` — deterministically enumerate the source items and write the planned Batch Record (no Runs are created).
-2. `batch-run` — create one independent Video Workflow Run per selected item through the kernel's guarded initialization path and submit only currently admitted work through Resource Admission.
-3. `batch-recover` — reconcile referenced runs and rebuild every item projection from authoritative Run state after interruption.
-4. `batch-status` — report the read-only batch status and per-item projection summaries.
-5. `batch-rebuild-projections` — rebuild every item projection from authoritative Run state without touching Run state.
+1. `batch-activate` — publish current Batch authority from the published Slice 14 Exit Evidence Manifest into the chosen control-store root.
+2. `batch-reconcile` — converge an interrupted activation intent without creating a second authority generation.
+3. `batch-authority-check` — fail closed unless the active Batch authority, Exit Evidence, Global Gate, and platform bindings remain current.
+4. `batch-plan` — deterministically enumerate the source items and write the planned Batch Record (no Runs are created).
+5. `batch-run` — create one independent Video Workflow Run per selected item through the kernel's guarded initialization path and submit only currently admitted work through Resource Admission.
+6. `batch-recover` — reconcile referenced runs and rebuild every item projection from authoritative Run state after interruption.
+7. `batch-status` — report the read-only batch status and per-item projection summaries.
+8. `batch-rebuild-projections` — rebuild every item projection from authoritative Run state without touching Run state.
 
 ## Command Reference (pinned)
 
 Use the Workflow CLI launcher with the skill virtual environment:
 
+Activate the published Slice 14 authority (`--control-store-root --exit-evidence --activated-at [--fault-point]`), reconcile an interrupted activation, then verify the current authority before planning:
+
 ```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan --platform bilibili --source-url <url> --task-start <iso> --request-id <id>
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-activate --control-store-root "<control-store-root>" --exit-evidence "<published-slice14-manifest>" --activated-at "<iso>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-reconcile --control-store-root "<control-store-root>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-authority-check --control-store-root "<control-store-root>"
 ```
 
-Plan a batch (`--platform (--source-url | --url-set) --task-start --request-id [--selection] [--workspace-root]`). When `--workspace-root` is omitted, the Workflow CLI uses the repository root:
+`batch-reconcile` is required only after an interrupted or fault-injected activation. `batch-authority-check` is required before `batch-plan` and after any authority repair or control-root relocation.
+
+```powershell
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan --control-store-root <control-store-root> --platform bilibili --source-url <url> --task-start <iso> --request-id <id>
+```
+
+Plan a batch (`--control-store-root --platform (--source-url | --url-set) --task-start --request-id [--selection] [--workspace-root]`). `--control-store-root` owns the Batch Record and supervisor state. `--workspace-root` is the output root for the independent Runs. When `--workspace-root` is omitted, the Workflow CLI uses the repository `workspace` directory. The planned Batch Record binds this output root, so every later command resolves it from the record and accepts only the control-store root:
 
 ```powershell
 D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan `
+  --control-store-root "<control-store-root>" `
   --platform bilibili `
   --source-url "https://www.bilibili.com/video/BV..." `
   --task-start "2026-08-16T09:30:00+08:00" `
@@ -75,16 +91,16 @@ D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_work
   --control-store-root "<control-store-root>"
 ```
 
-Rebuild every item projection (`--batch-id`):
+Rebuild every item projection (`--batch-id --control-store-root`):
 
 ```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-rebuild-projections --batch-id "<batch-id>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-rebuild-projections --batch-id "<batch-id>" --control-store-root "<control-store-root>"
 ```
 
-Report read-only batch status (`--batch-id`):
+Report read-only batch status (`--batch-id --control-store-root`):
 
 ```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-status --batch-id "<batch-id>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-status --batch-id "<batch-id>" --control-store-root "<control-store-root>"
 ```
 
 The `batch-plan`, `batch-rebuild-projections`, and `batch-status` commands are read-only with respect to Run state. `batch-run` creates Runs through the kernel's own guarded initialization path and `batch-recover` only calls the kernel's own reconcile functions.
@@ -151,7 +167,7 @@ The legacy `--mode plan`, `--mode manual`, and `--mode reconcile` flows remain d
 After creating or changing this skill, validate with the Workflow CLI and the batch status command:
 
 ```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-status --batch-id "<batch-id>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-status --batch-id "<batch-id>" --control-store-root "<control-store-root>"
 D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-recover --batch-id "<batch-id>" --control-store-root "<control-store-root>"
 ```
 

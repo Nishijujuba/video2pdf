@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -14,10 +15,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_workflow_workspace
+from tests.video_workflow._batch_authority import CurrentBatchAuthorityPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
-from video2pdf_workflow_kernel.errors import ContractError, KernelConflict
+from video2pdf_workflow_kernel.errors import (
+    ContractError,
+    InitializationFault,
+    KernelConflict,
+)
 
 
 TASK_START = "2026-08-16T09:05:00+08:00"
@@ -41,7 +47,25 @@ def _write_json(path: Path, value: dict) -> None:
     )
 
 
-def _guard_report() -> dict:
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _artifact_fingerprint(path: Path, relative_path: str) -> dict:
+    raw = path.read_bytes()
+    try:
+        size_chars = len(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        size_chars = None
+    return {
+        "path": relative_path,
+        "sha256": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+        "size_bytes": len(raw),
+        "size_chars": size_chars,
+    }
+
+
+def _guard_report(run_dir: Path, artifact_paths: list[Path]) -> dict:
     required_conditions = (
         "target_resolved",
         "allowed_artifacts_manifest_loaded",
@@ -58,18 +82,34 @@ def _guard_report() -> dict:
         "validated_by": "delivery_guard.py",
         "acceptance_report_status": "pass",
         "artifact_fingerprints": [
-            {
-                "path": "main.tex",
-                "sha256": f"sha256:{'a' * 64}",
-                "size_bytes": 1,
-                "size_chars": 1,
-            }
+            _artifact_fingerprint(path, path.relative_to(run_dir).as_posix())
+            for path in artifact_paths
         ],
         "checked_conditions": [
             {"condition": condition, "status": "pass"}
             for condition in required_conditions
         ],
     }
+
+
+def _guard_fingerprints(target, manifest: dict) -> list[dict]:
+    paths = [
+        target.main_tex,
+        target.final_pdf,
+        target.manifest_path,
+        target.acceptance_report_path,
+        target.compile_report_path,
+        *(
+            target.video_output_dir / item["path"]
+            for item in manifest["final_artifacts"]
+        ),
+    ]
+    seen: set[Path] = set()
+    return [
+        _artifact_fingerprint(path, path.relative_to(target.video_output_dir).as_posix())
+        for path in paths
+        if not (path in seen or seen.add(path))
+    ]
 
 
 def _run_record(
@@ -130,8 +170,56 @@ class Issue15BatchProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workspace = new_workflow_workspace(self.id(), label="batch")
         self.contracts = ContractRegistry(PROJECT_ROOT)
-        self.provider = BatchProjectionProvider()
+        self.provider = BatchProjectionProvider(
+            batch_authority_publisher=CurrentBatchAuthorityPublisher()
+        )
         self.store = ControlStore.initialize(self.workspace, self.contracts)
+        guard_loader = patch(
+            "video2pdf_workflow_kernel.guarded_delivery._load_active_delivery_guard",
+            return_value=SimpleNamespace(
+                resolve_delivery_target=self._resolve_delivered_target,
+                guard_report_is_fresh=lambda _target: False,
+                compute_artifact_fingerprint=_artifact_fingerprint,
+                guard_fingerprints=_guard_fingerprints,
+            ),
+        )
+        guard_loader.start()
+        self.addCleanup(guard_loader.stop)
+
+    @staticmethod
+    def _resolve_delivered_target(*, project_root, current_target_path, **_kwargs):
+        del project_root
+        session = json.loads(current_target_path.read_text(encoding="utf-8"))
+        video_path = Path(session["video_target"]["path"]).resolve()
+        video = json.loads(video_path.read_text(encoding="utf-8"))
+        run_dir = Path(video["video_output_dir"]).resolve()
+        artifacts = video["artifacts"]
+        resolved = {
+            role: Path(artifacts[role]["path"]).resolve()
+            for role in (
+                "final_pdf",
+                "main_tex",
+                "final_compile_report",
+                "acceptance_report",
+                "delivery_guard_report",
+            )
+        }
+        return SimpleNamespace(
+            video_output_dir=run_dir,
+            current_target_path=current_target_path.resolve(),
+            target_file=video_path,
+            stage=video["stage"],
+            final_pdf=resolved["final_pdf"],
+            main_tex=resolved["main_tex"],
+            compile_report_path=resolved["final_compile_report"],
+            acceptance_report_path=resolved["acceptance_report"],
+            guard_report_path=resolved["delivery_guard_report"],
+            final_pdf_relative=resolved["final_pdf"].relative_to(run_dir).as_posix(),
+            main_tex_relative=resolved["main_tex"].relative_to(run_dir).as_posix(),
+            compile_report_relative=resolved["final_compile_report"].relative_to(run_dir).as_posix(),
+            acceptance_report_relative=resolved["acceptance_report"].relative_to(run_dir).as_posix(),
+            manifest_path=run_dir / "review" / "acceptance" / "allowed_artifacts_manifest.json",
+        )
 
     def _plan(self, selection: list[object] | None = None) -> dict:
         return self.provider.plan(
@@ -145,6 +233,7 @@ class Issue15BatchProjectionTests(unittest.TestCase):
             ),
             task_start=TASK_START,
             request_id=REQUEST_ID,
+            control_store_root=self.workspace,
             selection=selection,
         )
 
@@ -162,10 +251,120 @@ class Issue15BatchProjectionTests(unittest.TestCase):
         run_id = self._expected_run_id(batch_id, item_index)
         run_dir = self.workspace / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
-        _write_json(run_dir / "workflow" / "run.json", _run_record(run_id, run_dir, f"session-{item_index}"))
+        record = _run_record(run_id, run_dir, f"session-{item_index}")
         if with_guard:
-            _write_json(run_dir / "review" / "acceptance" / "delivery_guard_report.json", _guard_report())
-            _write_json(run_dir / "review" / "acceptance" / "acceptance_report.json", {"report": "stub"})
+            record["last_mutation_intent_id"] = "1" * 64
+            guard_path = run_dir / "review" / "acceptance" / "delivery_guard_report.json"
+            acceptance_path = run_dir / "review" / "acceptance" / "acceptance_report.json"
+            _write_json(acceptance_path, {"report": "stub"})
+            final_pdf = run_dir / "article.pdf"
+            final_pdf.write_bytes(b"%PDF-1.7\n")
+            main_tex = run_dir / "main.tex"
+            main_tex.write_text("\\documentclass{article}\n", encoding="utf-8")
+            compile_report = run_dir / "build" / "final-compile-report.json"
+            _write_json(compile_report, {"status": "pass"})
+            rendered_page = (
+                run_dir
+                / "review"
+                / "acceptance"
+                / "rendered_pages"
+                / "page_0001.png"
+            )
+            rendered_page.parent.mkdir(parents=True, exist_ok=True)
+            rendered_page.write_bytes(b"rendered-page-before-guard")
+            allowed_manifest = (
+                run_dir
+                / "review"
+                / "acceptance"
+                / "allowed_artifacts_manifest.json"
+            )
+            _write_json(
+                allowed_manifest,
+                {
+                    "final_artifacts": [
+                        {"path": "article.pdf"},
+                        {
+                            "path": "review/acceptance/rendered_pages/page_0001.png"
+                        },
+                    ]
+                },
+            )
+            _write_json(
+                guard_path,
+                _guard_report(
+                    run_dir,
+                    [
+                        main_tex,
+                        final_pdf,
+                        allowed_manifest,
+                        acceptance_path,
+                        compile_report,
+                        rendered_page,
+                    ],
+                ),
+            )
+            target_path = run_dir / "review" / "acceptance" / "delivery_target.json"
+            target = {
+                "schema_name": "kernel-delivery-target",
+                "schema_version": "1.0.0",
+                "projection_kind": "video_target",
+                "projection_revision": 1,
+                "run_id": run_id,
+                "run_revision": record["coordination_revision"],
+                "lifecycle_intent_id": record["last_mutation_intent_id"],
+                "video_output_dir": str(run_dir.resolve()),
+                "stage": "delivered",
+                "ownership": record["delivery"]["ownership"],
+                "artifacts": {
+                    "final_pdf": {"path": str(final_pdf.resolve()), "sha256": _sha256(final_pdf)},
+                    "main_tex": {"path": str(main_tex.resolve()), "sha256": _sha256(main_tex)},
+                    "final_compile_report": {"path": str(compile_report.resolve()), "sha256": _sha256(compile_report)},
+                    "acceptance_report": {"path": str(acceptance_path.resolve()), "sha256": _sha256(acceptance_path)},
+                    "delivery_guard_report": {"path": str(guard_path.resolve()), "sha256": _sha256(guard_path)},
+                },
+                "global_gate_authority": {
+                    "path": str((self.workspace / "active-global-gate.json").resolve()),
+                    "generation": 1,
+                    "sha256": "2" * 64,
+                },
+            }
+            self.contracts.validate("kernel-delivery-target", target)
+            _write_json(target_path, target)
+            record["delivery"]["projections"]["video_target"] = {
+                "path": "review/acceptance/delivery_target.json",
+                "projection_revision": target["projection_revision"],
+                "sha256": _sha256(target_path),
+            }
+            session_path = Path(
+                record["delivery"]["projections"]["session_target"]["path"]
+            )
+            session_target = {
+                "schema_name": "kernel-session-delivery-target",
+                "schema_version": "1.0.0",
+                "projection_kind": "session_target",
+                "projection_revision": 1,
+                "projection_path": str(session_path.resolve()),
+                "session_id": f"session-{item_index}",
+                "run_id": run_id,
+                "run_revision": record["coordination_revision"],
+                "lifecycle_intent_id": record["last_mutation_intent_id"],
+                "stage": "delivered",
+                "ownership_generation": 1,
+                "owner_status": "active",
+                "video_output_dir": str(run_dir.resolve()),
+                "video_target": {
+                    "path": str(target_path.resolve()),
+                    "projection_revision": target["projection_revision"],
+                    "sha256": _sha256(target_path),
+                },
+            }
+            _write_json(session_path, session_target)
+            record["delivery"]["projections"]["session_target"] = {
+                "path": str(session_path.resolve()),
+                "projection_revision": 1,
+                "sha256": _sha256(session_path),
+            }
+        _write_json(run_dir / "workflow" / "run.json", record)
         self.store.bind_run(
             run_id=run_id,
             output_path=run_dir,
@@ -208,6 +407,80 @@ class Issue15BatchProjectionTests(unittest.TestCase):
         self.assertEqual(record["batch_stage"], "planned")
         self.assertEqual(record["run_mappings"], [])
 
+    def test_batch_source_identity_covers_unselected_items_and_source_order(self) -> None:
+        left_root = new_workflow_workspace(self.id(), label="batch-source-left")
+        right_root = new_workflow_workspace(self.id(), label="batch-source-right")
+        provider = BatchProjectionProvider(
+            batch_authority_publisher=CurrentBatchAuthorityPublisher()
+        )
+        common = {
+            "platform": PLATFORM,
+            "source_url": None,
+            "task_start": TASK_START,
+            "request_id": f"{REQUEST_ID}-source-identity",
+            "selection": [1],
+        }
+        left = provider.plan(
+            left_root,
+            self.contracts,
+            url_set=(
+                "https://www.bilibili.com/video/BV1xx411c7mD/?p=1,"
+                "https://www.bilibili.com/video/BV1xx411c7mD/?p=2"
+            ),
+            control_store_root=left_root,
+            **common,
+        )
+        right = provider.plan(
+            right_root,
+            self.contracts,
+            url_set=(
+                "https://www.bilibili.com/video/BV1xx411c7mD/?p=1,"
+                "https://www.bilibili.com/video/BV1xx411c7mE/?p=2"
+            ),
+            control_store_root=right_root,
+            **common,
+        )
+        left_record = ControlStore(left_root, self.contracts).get_batch_record(
+            left["batch_id"]
+        )
+        right_record = ControlStore(right_root, self.contracts).get_batch_record(
+            right["batch_id"]
+        )
+
+        self.assertNotEqual(
+            left_record["batch_identity"]["batch_source_identity"],
+            right_record["batch_identity"]["batch_source_identity"],
+        )
+
+    def test_plan_replay_rejects_changed_authoritative_item_order(self) -> None:
+        first = self._plan(selection=[1])
+        first_record = self.store.get_batch_record(first["batch_id"])
+        changed_items = [dict(item) for item in first_record["item_order"]]
+        changed_items[0]["title"] = "Changed title from a later enumeration"
+
+        with patch.object(self.provider, "_enumerate_items", return_value=changed_items):
+            with self.assertRaisesRegex(KernelConflict, "replay"):
+                self._plan(selection=[1])
+
+    def test_plan_replay_rematerializes_record_file_from_database_authority(self) -> None:
+        with patch(
+            "video2pdf_workflow_kernel.batch_projection.write_json_atomic",
+            side_effect=OSError("injected DB-before-file interruption"),
+        ):
+            with self.assertRaisesRegex(OSError, "DB-before-file"):
+                self._plan(selection=[1])
+
+        stored = self.store.list_batch_records()[0]
+        record_path = Path(stored["batch_dir"]) / "batch-record.json"
+        self.assertFalse(record_path.exists())
+
+        replayed = self._plan(selection=[1])
+
+        self.assertEqual("REPLAY", replayed["created_or_replayed"])
+        self.assertEqual(stored["batch_dir"], replayed["batch_dir"])
+        self.assertEqual(stored["item_order"], replayed["item_order"])
+        self.assertEqual(stored, json.loads(record_path.read_text(encoding="utf-8")))
+
     def test_source_enumeration_failure_does_not_create_batch_record(self) -> None:
         with patch(
             "video2pdf_workflow_kernel.batch_projection._flat_playlist",
@@ -224,6 +497,7 @@ class Issue15BatchProjectionTests(unittest.TestCase):
                     url_set=None,
                     task_start=TASK_START,
                     request_id=f"{REQUEST_ID}-enumeration-failure",
+                    control_store_root=self.workspace,
                 )
         self.assertEqual(self.store.list_batch_records(), [])
 
@@ -239,6 +513,7 @@ class Issue15BatchProjectionTests(unittest.TestCase):
                 url_set="https://example.com/not-bilibili",
                 task_start=TASK_START,
                 request_id=f"{REQUEST_ID}-invalid-url-set",
+                control_store_root=self.workspace,
             )
         self.assertEqual(self.store.list_batch_records(), [])
 
@@ -252,8 +527,8 @@ class Issue15BatchProjectionTests(unittest.TestCase):
 
         The real ``initialize_production_source`` writes ``workflow/run.json``
         and binds the run in the Control Store; the stub mirrors exactly those
-        two side effects so ``record_run_mapping`` and projection rebuilds see
-        authoritative Run state.
+        two side effects so the atomic Batch mapping commit and projection
+        rebuilds see authoritative Run state.
         """
 
         store = self.store
@@ -342,10 +617,6 @@ class Issue15BatchProjectionTests(unittest.TestCase):
             return_value=kernel,
         ), patch.object(
             self.provider,
-            "_require_platform_authority",
-            return_value={"authority_path": str(self.workspace / "authority.json")},
-        ), patch.object(
-            self.provider,
             "_bootstrap_probe",
             side_effect=lambda kernel, platform, url, selector, title, task_start, request_id: (
                 self._probe_for(
@@ -360,13 +631,9 @@ class Issue15BatchProjectionTests(unittest.TestCase):
             self.provider,
             "_submit_first_admitted_task",
             return_value=type(
-                "Claim",
+                "Admission",
                 (),
-                {
-                    "resource_admission": type(
-                        "Admission", (), {"queue_state": "admitted"}
-                    )()
-                },
+                {"queue_state": "admitted"},
             )(),
         ):
             return self.provider.run(
@@ -375,7 +642,6 @@ class Issue15BatchProjectionTests(unittest.TestCase):
                 batch_id=batch_id,
                 control_store_root=self.workspace,
                 session_id="session-batch-0001",
-                global_gate_binding={"generation": 1},
                 run_task_start=run_task_start,
             )
 
@@ -472,6 +738,135 @@ class Issue15BatchProjectionTests(unittest.TestCase):
             )
         self.assertEqual(len(recovered["reconciled"]), 2)
         self.assertEqual(len(recovered["projections"]), 2)
+
+    def test_new_session_recovers_claimed_run_before_mapping_commit(self) -> None:
+        planned = self._plan(selection=[1])
+        batch_id = planned["batch_id"]
+        run_id = self._expected_run_id(batch_id, 1)
+        gate_path = self.workspace / "active-global-gate.json"
+        _write_json(gate_path, {"generation": 1, "status": "active"})
+        gate_binding = {
+            "authority_path": str(gate_path.resolve()),
+            "authority_sha256": _sha256(gate_path),
+            "generation": 1,
+        }
+        self.provider.batch_authority_publisher = CurrentBatchAuthorityPublisher(
+            global_gate_binding=gate_binding
+        )
+
+        with self.assertRaises(InitializationFault):
+            self.provider.run(
+                self.workspace,
+                self.contracts,
+                batch_id=batch_id,
+                control_store_root=self.workspace,
+                session_id="session-original",
+                run_task_start=RUN_TASK_START,
+                fault_point="after_first_task_claim_before_mapping_commit",
+            )
+
+        interrupted = self.store.get_batch_record(batch_id)
+        claims_before = self.store.active_task_claims()
+        self.assertEqual([], interrupted["run_mappings"])
+        self.assertEqual(1, len(claims_before))
+        self.assertEqual(run_id, claims_before[0]["authority_id"])
+        self.assertEqual("session-original-1", claims_before[0]["coordinator_session_id"])
+
+        recovered = self.provider.run(
+            self.workspace,
+            self.contracts,
+            batch_id=batch_id,
+            control_store_root=self.workspace,
+            session_id="session-recovery",
+            run_task_start=RUN_TASK_START,
+        )
+
+        mappings = self.store.list_run_mappings(batch_id)
+        claims_after = self.store.active_task_claims()
+        self.assertEqual([run_id], [item["run_id"] for item in recovered["items"]])
+        self.assertEqual([run_id], [item["run_id"] for item in mappings])
+        self.assertEqual(1, len(claims_after))
+        self.assertEqual(claims_before[0]["attempt_id"], claims_after[0]["attempt_id"])
+        self.assertEqual(
+            "session-original-1", claims_after[0]["coordinator_session_id"]
+        )
+
+    def test_batch_recover_discovers_claimed_run_before_mapping_commit(self) -> None:
+        planned = self._plan(selection=[1])
+        batch_id = planned["batch_id"]
+        run_id = self._expected_run_id(batch_id, 1)
+        gate_path = self.workspace / "active-global-gate.json"
+        _write_json(gate_path, {"generation": 1, "status": "active"})
+        self.provider.batch_authority_publisher = CurrentBatchAuthorityPublisher(
+            global_gate_binding={
+                "authority_path": str(gate_path.resolve()),
+                "authority_sha256": _sha256(gate_path),
+                "generation": 1,
+            }
+        )
+
+        with self.assertRaises(InitializationFault):
+            self.provider.run(
+                self.workspace,
+                self.contracts,
+                batch_id=batch_id,
+                control_store_root=self.workspace,
+                session_id="session-original",
+                run_task_start=RUN_TASK_START,
+                fault_point="after_first_task_claim_before_mapping_commit",
+            )
+
+        recovered = self.provider.recover(
+            self.workspace,
+            self.contracts,
+            batch_id=batch_id,
+            control_store_root=self.workspace,
+        )
+
+        self.assertEqual([run_id], [item["run_id"] for item in recovered["reconciled"]])
+        self.assertEqual(
+            [run_id],
+            [item["run_id"] for item in self.store.list_run_mappings(batch_id)],
+        )
+
+    def test_batch_recover_does_not_commit_partial_discovered_mappings(self) -> None:
+        planned = self._plan()
+        batch_id = planned["batch_id"]
+        first_run_id = self._expected_run_id(batch_id, 1)
+        gate_path = self.workspace / "active-global-gate.json"
+        _write_json(gate_path, {"generation": 1, "status": "active"})
+        self.provider.batch_authority_publisher = CurrentBatchAuthorityPublisher(
+            global_gate_binding={
+                "authority_path": str(gate_path.resolve()),
+                "authority_sha256": _sha256(gate_path),
+                "generation": 1,
+            }
+        )
+
+        with self.assertRaises(InitializationFault):
+            self.provider.run(
+                self.workspace,
+                self.contracts,
+                batch_id=batch_id,
+                control_store_root=self.workspace,
+                session_id="session-original",
+                run_task_start=RUN_TASK_START,
+                fault_point="after_first_task_claim_before_mapping_commit",
+            )
+
+        recovered = self.provider.recover(
+            self.workspace,
+            self.contracts,
+            batch_id=batch_id,
+            control_store_root=self.workspace,
+        )
+
+        self.assertEqual(
+            [first_run_id], [item["run_id"] for item in recovered["reconciled"]]
+        )
+        self.assertEqual([2], recovered["missing_item_indexes"])
+        self.assertEqual([], self.store.list_run_mappings(batch_id))
+        self.assertEqual([], recovered["projections"])
 
     def test_second_item_initialization_interruption_keeps_batch_record_valid(self) -> None:
         planned = self._plan()

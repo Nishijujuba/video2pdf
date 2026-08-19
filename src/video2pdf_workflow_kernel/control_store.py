@@ -8919,59 +8919,6 @@ class ControlStore:
                 )
             return new_stage
 
-    def record_run_mapping(
-        self, batch_id: str, item_index: int, run_id: str, request_id: str
-    ) -> str:
-        mapping = {
-            "item_index": item_index,
-            "run_id": run_id,
-            "request_id": request_id,
-        }
-
-        def plan_mapping(connection: sqlite3.Connection) -> tuple[str, object]:
-            row = connection.execute(
-                "SELECT batch_record_json FROM batch_records WHERE batch_id=?",
-                (batch_id,),
-            ).fetchone()
-            if row is None:
-                raise KernelConflict("batch record not found")
-            try:
-                record = json.loads(str(row["batch_record_json"]))
-            except json.JSONDecodeError as exc:
-                raise ControlStoreUnavailable(
-                    "Batch Record JSON is invalid"
-                ) from exc
-            if not isinstance(record, dict):
-                raise ControlStoreUnavailable("Batch Record JSON is invalid")
-            for existing in record.get("run_mappings", []):
-                if (
-                    existing.get("item_index") == item_index
-                    and existing.get("run_id") == run_id
-                    and existing.get("request_id") == request_id
-                ):
-                    return "REPLAY", None
-            updated_at = _utc_now()
-            updated = dict(record)
-            updated["run_mappings"] = [*record.get("run_mappings", []), mapping]
-            updated["updated_at"] = updated_at
-            updated_json = canonical_json_bytes(updated).decode("utf-8")
-            updated_sha256 = hashlib.sha256(
-                updated_json.encode("utf-8")
-            ).hexdigest()
-            return "RECORDED", (updated_json, updated_sha256, updated_at)
-
-        with self._planned_immediate(plan_mapping) as (connection, plan):
-            action, payload = plan
-            if action == "REPLAY":
-                return "REPLAY"
-            updated_json, updated_sha256, updated_at = payload
-            connection.execute(
-                "UPDATE batch_records SET batch_record_json=?, "
-                "batch_record_sha256=?, updated_at=? WHERE batch_id=?",
-                (updated_json, updated_sha256, updated_at, batch_id),
-            )
-            return "RECORDED"
-
     def put_item_projection(
         self, batch_id: str, item_index: int, run_id: str, projection: dict
     ) -> int:

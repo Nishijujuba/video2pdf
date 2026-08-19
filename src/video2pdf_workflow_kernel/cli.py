@@ -49,7 +49,11 @@ from .acceptance_v2 import (
     PREPARE_FAULT_POINTS as ACCEPTANCE_PREPARE_FAULT_POINTS,
     AcceptanceV2Provider,
 )
-from .batch_projection import BatchProjectionProvider
+from .batch_projection import BATCH_RUN_FAULT_POINTS, BatchProjectionProvider
+from .batch_authority import (
+    ACTIVATION_FAULT_POINTS as BATCH_ACTIVATION_FAULT_POINTS,
+    BatchCutoverPublisher,
+)
 from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcceptanceProvider
 from .platform_kernel import (
     ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
@@ -293,6 +297,22 @@ def _parser() -> argparse.ArgumentParser:
 
     global_gate_reconcile = commands.add_parser("global-gate-reconcile")
     global_gate_reconcile.add_argument("--control-store-root", required=True, type=Path)
+
+    batch_activate = commands.add_parser("batch-activate")
+    batch_activate.add_argument("--control-store-root", required=True, type=Path)
+    batch_activate.add_argument("--exit-evidence", required=True, type=Path)
+    batch_activate.add_argument("--activated-at", required=True)
+    batch_activate.add_argument(
+        "--fault-point", choices=sorted(BATCH_ACTIVATION_FAULT_POINTS)
+    )
+
+    batch_reconcile = commands.add_parser("batch-reconcile")
+    batch_reconcile.add_argument("--control-store-root", required=True, type=Path)
+
+    batch_authority_check = commands.add_parser("batch-authority-check")
+    batch_authority_check.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
 
     workflow_policy_check = commands.add_parser("workflow-policy-check")
     workflow_policy_check.add_argument("--control-store-root", required=True, type=Path)
@@ -658,6 +678,7 @@ def _parser() -> argparse.ArgumentParser:
 
     batch_plan = commands.add_parser("batch-plan")
     batch_plan.add_argument("--workspace-root", type=Path)
+    batch_plan.add_argument("--control-store-root", required=True, type=Path)
     batch_plan.add_argument("--platform", required=True, choices=("bilibili", "youtube"))
     batch_plan.add_argument("--source-url")
     batch_plan.add_argument("--task-start", required=True)
@@ -670,7 +691,10 @@ def _parser() -> argparse.ArgumentParser:
     batch_run.add_argument("--control-store-root", required=True, type=Path)
     batch_run.add_argument("--session-id", required=True)
     batch_run.add_argument("--run-task-start")
-    batch_run.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
+    batch_run.add_argument(
+        "--fault-point",
+        choices=sorted(BATCH_RUN_FAULT_POINTS),
+    )
 
     batch_recover = commands.add_parser("batch-recover")
     batch_recover.add_argument("--batch-id", required=True)
@@ -678,11 +702,11 @@ def _parser() -> argparse.ArgumentParser:
 
     batch_rebuild = commands.add_parser("batch-rebuild-projections")
     batch_rebuild.add_argument("--batch-id", required=True)
-    batch_rebuild.add_argument("--workspace-root", required=True, type=Path)
+    batch_rebuild.add_argument("--control-store-root", required=True, type=Path)
 
     batch_status = commands.add_parser("batch-status")
     batch_status.add_argument("--batch-id", required=True)
-    batch_status.add_argument("--workspace-root", required=True, type=Path)
+    batch_status.add_argument("--control-store-root", required=True, type=Path)
     return parser
 
 
@@ -754,6 +778,23 @@ def _parse_batch_selection(raw: str | None) -> list | None:
         else:
             values.append(token)
     return values
+
+
+def _load_batch_record(
+    *,
+    batch_id: str,
+    control_store_root: Path,
+    contracts: ContractRegistry,
+) -> tuple[Path, dict[str, Any]]:
+    control_root = Path(control_store_root).resolve()
+    if not ControlStore.identity_evidence_exists(control_root):
+        raise KernelConflict("batch record not found", data={"batch_id": batch_id})
+    store = ControlStore(control_root, contracts)
+    record = store.get_batch_record(batch_id)
+    if record is None:
+        raise KernelConflict("batch record not found", data={"batch_id": batch_id})
+    contracts.validate("batch-record", record)
+    return control_root, record
 
 
 def _ok(command: str, classification: str, data: dict[str, Any], evidence_path: str | None = None) -> dict:
@@ -861,6 +902,39 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command == "global-gate-reconcile":
         result = GlobalGatePublisher().reconcile(control_store_root=args.control_store_root)
         return _ok(command, "global_gate_reconciled", result, result["authority_path"])
+    if command == "batch-activate":
+        result = BatchCutoverPublisher().activate(
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            activated_at=args.activated_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "batch_authority_activated",
+            result,
+            result["authority_path"],
+        )
+    if command == "batch-reconcile":
+        result = BatchCutoverPublisher().reconcile(
+            control_store_root=args.control_store_root
+        )
+        return _ok(
+            command,
+            "batch_authority_reconciled",
+            result,
+            result["authority_path"],
+        )
+    if command == "batch-authority-check":
+        result = BatchCutoverPublisher().require_current(
+            control_store_root=args.control_store_root
+        )
+        return _ok(
+            command,
+            "batch_authority_current",
+            result,
+            result["authority_path"],
+        )
     if command == "workflow-policy-check":
         result = GlobalGatePublisher().check_policy(control_store_root=args.control_store_root)
         platform_db = args.control_store_root.resolve() / "platform-kernel-control.sqlite3"
@@ -2073,12 +2147,13 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "batch-plan requires exactly one of --source-url or --url-set"
             )
         result = BatchProjectionProvider().plan(
-            workspace_root=args.workspace_root or project_root,
+            workspace_root=args.workspace_root or project_root / "workspace",
             contracts=contracts,
             platform=args.platform,
             source_url=args.source_url,
             task_start=args.task_start,
             request_id=args.request_id,
+            control_store_root=args.control_store_root,
             selection=_parse_batch_selection(args.selection),
             url_set=args.url_set,
         )
@@ -2095,29 +2170,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "batch-run":
         contracts = ContractRegistry(project_root)
-        store = ControlStore.initialize(args.control_store_root, contracts)
-        record = store.get_batch_record(args.batch_id)
-        if record is None:
-            raise KernelConflict(
-                "batch record not found", data={"batch_id": args.batch_id}
-            )
-        contracts.validate("batch-record", record)
-        platform = record["batch_identity"]["canonical_platform"]
-        authority = BilibiliPlatformCutoverPublisher().require_current(
-            platform=platform, control_store_root=args.control_store_root
+        control_root, record = _load_batch_record(
+            batch_id=args.batch_id,
+            control_store_root=args.control_store_root,
+            contracts=contracts,
         )
-        platform_authority = read_json(Path(authority["authority_path"]))
+        output_root = Path(record["output_root"]).resolve()
         run_task_start = args.run_task_start or record.get("run_task_start")
         if run_task_start is None:
             run_task_start = datetime.now(timezone.utc).isoformat()
-        store.bind_batch_run_task_start(args.batch_id, run_task_start)
         result = BatchProjectionProvider().run(
-            workspace_root=args.control_store_root,
+            workspace_root=output_root,
             contracts=contracts,
             batch_id=args.batch_id,
-            control_store_root=args.control_store_root,
+            control_store_root=control_root,
             session_id=args.session_id,
-            global_gate_binding=platform_authority["global_gate_binding"],
             run_task_start=run_task_start,
             fault_point=args.fault_point,
         )
@@ -2129,17 +2196,16 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "batch-recover":
         contracts = ContractRegistry(project_root)
-        store = ControlStore.initialize(args.control_store_root, contracts)
-        record = store.get_batch_record(args.batch_id)
-        if record is None:
-            raise KernelConflict(
-                "batch record not found", data={"batch_id": args.batch_id}
-            )
-        result = BatchProjectionProvider().recover(
-            workspace_root=args.control_store_root,
-            contracts=contracts,
+        control_root, record = _load_batch_record(
             batch_id=args.batch_id,
             control_store_root=args.control_store_root,
+            contracts=contracts,
+        )
+        result = BatchProjectionProvider().recover(
+            workspace_root=Path(record["output_root"]).resolve(),
+            contracts=contracts,
+            batch_id=args.batch_id,
+            control_store_root=control_root,
         )
         return _ok(
             command,
@@ -2149,10 +2215,16 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "batch-rebuild-projections":
         contracts = ContractRegistry(project_root)
+        control_root, record = _load_batch_record(
+            batch_id=args.batch_id,
+            control_store_root=args.control_store_root,
+            contracts=contracts,
+        )
         result = BatchProjectionProvider().rebuild_projections(
-            workspace_root=args.workspace_root,
+            workspace_root=Path(record["output_root"]).resolve(),
             contracts=contracts,
             batch_id=args.batch_id,
+            control_store_root=control_root,
         )
         return _ok(
             command,
@@ -2161,10 +2233,16 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
     if command == "batch-status":
         contracts = ContractRegistry(project_root)
+        control_root, record = _load_batch_record(
+            batch_id=args.batch_id,
+            control_store_root=args.control_store_root,
+            contracts=contracts,
+        )
         result = BatchProjectionProvider().status(
-            workspace_root=args.workspace_root,
+            workspace_root=Path(record["output_root"]).resolve(),
             contracts=contracts,
             batch_id=args.batch_id,
+            control_store_root=control_root,
         )
         return _ok(
             command,

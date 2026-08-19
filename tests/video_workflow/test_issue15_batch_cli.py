@@ -14,12 +14,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_workflow_workspace
+from tests.video_workflow._batch_authority import BATCH_AUTHORITY
 from video2pdf_workflow_kernel import cli as kernel_cli
+from video2pdf_workflow_kernel.batch_authority import BatchCutoverPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.errors import KernelError
-from video2pdf_workflow_kernel.platform_kernel import BilibiliPlatformCutoverPublisher
 
 
 def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -43,6 +44,10 @@ def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
                 "title": "Part Two",
             },
         ],
+    ), patch.object(
+        BatchCutoverPublisher,
+        "require_current",
+        return_value=BATCH_AUTHORITY,
     ):
         try:
             parsed = kernel_cli._parser().parse_args(list(arguments))
@@ -74,10 +79,16 @@ class Issue15BatchCliTests(unittest.TestCase):
 
     def test_batch_plan_returns_envelope(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-plan")
+        output_root = workspace / "outputs"
+        control_root = workspace / "control"
+        output_root.mkdir()
+        control_root.mkdir()
         completed = _run_cli(
             "batch-plan",
             "--workspace-root",
-            str(workspace),
+            str(output_root),
+            "--control-store-root",
+            str(control_root),
             "--platform",
             "bilibili",
             "--source-url",
@@ -94,12 +105,20 @@ class Issue15BatchCliTests(unittest.TestCase):
         self.assertIn("batch_id", envelope["data"])
         self.assertIn("batch_dir", envelope["data"])
         self.assertEqual(len(envelope["data"]["item_order"]), 2)
+        record = ControlStore(
+            control_root, ContractRegistry(PROJECT_ROOT)
+        ).get_batch_record(envelope["data"]["batch_id"])
+        self.assertIsNotNone(record)
+        self.assertEqual(Path(record["output_root"]), output_root)
+        self.assertTrue(Path(record["batch_dir"]).is_relative_to(output_root))
 
-    def test_batch_plan_workspace_defaults_to_project_root(self) -> None:
+    def test_batch_plan_workspace_defaults_to_project_workspace(self) -> None:
         result = {
             "batch_id": "a" * 32,
-            "batch_dir": str(PROJECT_ROOT / "batch"),
-            "batch_record_path": str(PROJECT_ROOT / "batch" / "batch-record.json"),
+            "batch_dir": str(PROJECT_ROOT / "workspace" / "batch"),
+            "batch_record_path": str(
+                PROJECT_ROOT / "workspace" / "batch" / "batch-record.json"
+            ),
             "item_order": [],
             "created_or_replayed": "CREATED",
         }
@@ -107,6 +126,8 @@ class Issue15BatchCliTests(unittest.TestCase):
             args = kernel_cli._parser().parse_args(
                 [
                     "batch-plan",
+                    "--control-store-root",
+                    str(PROJECT_ROOT / "workspace"),
                     "--platform",
                     "bilibili",
                     "--source-url",
@@ -118,12 +139,18 @@ class Issue15BatchCliTests(unittest.TestCase):
                 ]
             )
             kernel_cli._execute(args, PROJECT_ROOT)
-        self.assertEqual(plan.call_args.kwargs["workspace_root"], PROJECT_ROOT)
+        self.assertEqual(
+            plan.call_args.kwargs["workspace_root"], PROJECT_ROOT / "workspace"
+        )
 
-    def test_batch_run_omitted_start_binds_once_and_reuses_it(self) -> None:
+    def test_batch_run_delegates_start_binding_to_provider(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-run-start")
+        output_root = workspace / "outputs"
+        control_root = workspace / "control"
+        output_root.mkdir()
+        control_root.mkdir()
         contracts = ContractRegistry(PROJECT_ROOT)
-        store = ControlStore.initialize(workspace, contracts)
+        store = ControlStore.initialize(control_root, contracts)
         record = {
             "schema_name": "batch-record",
             "schema_version": "1.0.0",
@@ -138,10 +165,11 @@ class Issue15BatchCliTests(unittest.TestCase):
                 "task_start": "2026-08-16T09:05:00+08:00",
                 "request_id": "cli-run",
             },
-            "output_root": str(workspace),
-            "batch_dir": str(workspace / "batch" / "batch-control"),
-            "control_dir": str(workspace / ".workflow-control" / "batches"),
+            "output_root": str(output_root),
+            "batch_dir": str(output_root / "batch" / "batch-control"),
+            "control_dir": str(control_root / ".workflow-control" / "batches"),
             "batch_stage": "planned",
+            "batch_authority_binding": None,
             "run_task_start": None,
             "item_order": [
                 {
@@ -159,38 +187,45 @@ class Issue15BatchCliTests(unittest.TestCase):
             "updated_at": "2026-08-16T09:05:00+08:00",
         }
         store.create_batch_record(record, record["batch_identity"])
-        authority_path = workspace / "authority.json"
-        authority_path.write_text(
-            json.dumps({"global_gate_binding": {"generation": 1}}),
-            encoding="utf-8",
-        )
         argv = [
             "batch-run",
             "--batch-id",
             record["batch_id"],
             "--control-store-root",
-            str(workspace),
+            str(control_root),
             "--session-id",
             "session-cli-run",
         ]
         with patch.object(
-            BilibiliPlatformCutoverPublisher,
-            "require_current",
-            return_value={"authority_path": str(authority_path)},
-        ), patch.object(
             BatchProjectionProvider,
             "run",
             return_value={"batch_id": record["batch_id"], "items": []},
         ) as run:
             kernel_cli._execute(kernel_cli._parser().parse_args(argv), PROJECT_ROOT)
-            first_start = run.call_args.kwargs["run_task_start"]
-            kernel_cli._execute(kernel_cli._parser().parse_args(argv), PROJECT_ROOT)
-            second_start = run.call_args.kwargs["run_task_start"]
-        self.assertEqual(first_start, second_start)
+        self.assertEqual(run.call_args.kwargs["workspace_root"], output_root)
+        self.assertEqual(run.call_args.kwargs["control_store_root"], control_root)
+        self.assertIsNotNone(run.call_args.kwargs["run_task_start"])
+        self.assertIsNone(
+            ControlStore(control_root, contracts)
+            .get_batch_record(record["batch_id"])["run_task_start"]
+        )
+
+    def test_batch_run_accepts_claim_before_mapping_fault_point(self) -> None:
+        args = kernel_cli._parser().parse_args(
+            [
+                "batch-run",
+                "--batch-id",
+                "a" * 32,
+                "--control-store-root",
+                str(PROJECT_ROOT / "workspace"),
+                "--session-id",
+                "session-cli-fault",
+                "--fault-point",
+                "after_first_task_claim_before_mapping_commit",
+            ]
+        )
         self.assertEqual(
-            ControlStore(workspace, contracts)
-            .get_batch_record(record["batch_id"])["run_task_start"],
-            first_start,
+            args.fault_point, "after_first_task_claim_before_mapping_commit"
         )
 
     def test_batch_plan_requires_task_start(self) -> None:
@@ -198,6 +233,8 @@ class Issue15BatchCliTests(unittest.TestCase):
         completed = _run_cli(
             "batch-plan",
             "--workspace-root",
+            str(workspace),
+            "--control-store-root",
             str(workspace),
             "--platform",
             "bilibili",
@@ -215,7 +252,7 @@ class Issue15BatchCliTests(unittest.TestCase):
         workspace = new_workflow_workspace(self.id(), label="cli-status-unknown")
         completed = _run_cli(
             "batch-status",
-            "--workspace-root",
+            "--control-store-root",
             str(workspace),
             "--batch-id",
             "f" * 32,
@@ -229,8 +266,6 @@ class Issue15BatchCliTests(unittest.TestCase):
         workspace = new_workflow_workspace(self.id(), label="cli-recover-unknown")
         completed = _run_cli(
             "batch-recover",
-            "--workspace-root",
-            str(workspace),
             "--batch-id",
             "f" * 32,
             "--control-store-root",
@@ -239,6 +274,75 @@ class Issue15BatchCliTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         envelope = json.loads(completed.stdout)
         self.assertEqual(envelope["status"], "error")
+
+    def test_recover_rebuild_and_status_derive_output_root_from_batch_record(self) -> None:
+        workspace = new_workflow_workspace(self.id(), label="cli-read-record")
+        output_root = workspace / "outputs"
+        control_root = workspace / "control"
+        output_root.mkdir()
+        control_root.mkdir()
+        contracts = ContractRegistry(PROJECT_ROOT)
+        record = {
+            "schema_name": "batch-record",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "batch_id": "b" * 32,
+            "batch_identity": {
+                "kind": "url_set",
+                "canonical_platform": "bilibili",
+                "batch_source_identity": "c" * 64,
+                "source_url": "https://www.bilibili.com/video/BV1xx411c7mD/",
+                "original_title": "Batch",
+                "task_start": "2026-08-16T09:05:00+08:00",
+                "request_id": "cli-record-roots",
+            },
+            "output_root": str(output_root),
+            "batch_dir": str(output_root / "batch" / "batch-control"),
+            "control_dir": str(control_root / ".workflow-control" / "batches"),
+            "batch_stage": "planned",
+            "batch_authority_binding": None,
+            "run_task_start": None,
+            "item_order": [
+                {
+                    "item_index": 1,
+                    "part_id": "p1",
+                    "canonical_item_id": "BV1xx411c7mD:p1",
+                    "canonical_url": "https://www.bilibili.com/video/BV1xx411c7mD/?p=1",
+                    "title": "Part One",
+                    "selected": True,
+                }
+            ],
+            "run_mappings": [],
+            "projections": [],
+            "created_at": "2026-08-16T09:05:00+08:00",
+            "updated_at": "2026-08-16T09:05:00+08:00",
+        }
+        ControlStore.initialize(control_root, contracts).create_batch_record(
+            record, record["batch_identity"]
+        )
+        cases = (
+            ("batch-recover", "recover", {"batch_id": record["batch_id"]}),
+            ("batch-rebuild-projections", "rebuild_projections", []),
+            ("batch-status", "status", {"batch_id": record["batch_id"]}),
+        )
+        for command, method_name, result in cases:
+            with self.subTest(command=command), patch.object(
+                BatchProjectionProvider, method_name, return_value=result
+            ) as method:
+                args = kernel_cli._parser().parse_args(
+                    [
+                        command,
+                        "--batch-id",
+                        record["batch_id"],
+                        "--control-store-root",
+                        str(control_root),
+                    ]
+                )
+                kernel_cli._execute(args, PROJECT_ROOT)
+                self.assertEqual(method.call_args.kwargs["workspace_root"], output_root)
+                self.assertEqual(
+                    method.call_args.kwargs["control_store_root"], control_root
+                )
 
 
 if __name__ == "__main__":

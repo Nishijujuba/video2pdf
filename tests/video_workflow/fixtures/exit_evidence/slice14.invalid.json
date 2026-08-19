@@ -23,12 +23,13 @@
       "batch_item_projection_contract",
       "control_store_batch_persistence",
       "batch_projection_provider",
+      "batch_cutover_authority",
       "batch_cli",
       "batch_skill"
     ],
     "global_gate_authority": "unchanged",
     "platform_kernel_authority": "unchanged",
-    "qualification_contract_sha256": "ee5d124c949bc33f61b8c47718dcbaa1a4990ab97cd990549457ba117c0694c3"
+    "qualification_contract_sha256": "0402799ec3a21064fe777ecee37cbee6615c8f8a929f3fdb2a5f979096651f02"
   },
   "platform_statuses": {
     "bilibili": "active_kernel",
@@ -79,6 +80,7 @@
     "batch_item_projection_contract",
     "control_store_batch_persistence",
     "batch_projection_provider",
+    "batch_cutover_authority",
     "batch_cli",
     "legacy_batch_retirement",
     "batch_skill",
@@ -95,6 +97,7 @@
     "batch_item_projection_contract": "active",
     "control_store_batch_persistence": "active",
     "batch_projection_provider": "active",
+    "batch_cutover_authority": "active",
     "batch_cli": "active",
     "legacy_batch_retirement": "active",
     "batch_skill": "active",
@@ -129,6 +132,8 @@
         "-v",
         "tests.video_workflow.test_issue15_batch_projection",
         "tests.video_workflow.test_issue15_batch_authority",
+        "tests.video_workflow.test_issue15_batch_cutover",
+        "tests.video_workflow.test_issue15_batch_activation_integration",
         "tests.video_workflow.test_issue15_batch_contracts",
         "tests.video_workflow.test_issue15_control_store_batch",
         "tests.video_workflow.test_issue15_batch_cli",
@@ -270,8 +275,11 @@
     "positive": [
       "batch_record_contract_pass",
       "projection_rebuild_pass",
-      "guarded_delivered_only_success"
-      ,"auth_breaker_uses_resource_admission"
+      "guarded_delivered_only_success",
+      "auth_breaker_uses_resource_admission",
+      "batch_cutover_activation_publishes_current_authority",
+      "batch_plan_preactivation_closure",
+      "batch_run_preactivation_closure"
     ],
     "negative": [
       "duplicate_run_rejected",
@@ -279,10 +287,12 @@
       "per_video_mutation_rejected"
     ],
     "recovery": [
-      "reconcile_interrupted_item_creation"
+      "reconcile_interrupted_item_creation",
+      "batch_cutover_reconcile_completes_publication"
     ],
     "fencing": [
-      "projection_revision_fencing"
+      "projection_revision_fencing",
+      "batch_cutover_current_authority_is_verified"
     ],
     "fairness": [
       "fairness_group_is_batch_id"
@@ -293,25 +303,25 @@
       "result_id": "batch_record_contract_pass",
       "result_kind": "positive",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_batch_record_contract_pass"
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_batch_record_contract_pass"
     },
     {
       "result_id": "projection_rebuild_pass",
       "result_kind": "positive",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_projection_rebuild_pass"
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_projection_rebuild_pass"
     },
     {
       "result_id": "guarded_delivered_only_success",
       "result_kind": "positive",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_guarded_delivered_only_success"
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_guarded_delivered_only_success"
     },
     {
       "result_id": "duplicate_run_rejected",
       "result_kind": "negative",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_duplicate_run_rejected",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_duplicate_run_rejected",
       "expected_first_failing_gate": "batch_authority",
       "expected_error_code": "duplicate_run_rejected"
     },
@@ -319,7 +329,7 @@
       "result_id": "pdf_existence_success_rejected",
       "result_kind": "negative",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_pdf_existence_success_rejected",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_pdf_existence_success_rejected",
       "expected_first_failing_gate": "batch_authority",
       "expected_error_code": "pdf_existence_success_rejected"
     },
@@ -327,7 +337,7 @@
       "result_id": "per_video_mutation_rejected",
       "result_kind": "negative",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_per_video_mutation_rejected",
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_per_video_mutation_rejected",
       "expected_first_failing_gate": "batch_authority",
       "expected_error_code": "per_video_mutation_rejected"
     },
@@ -335,25 +345,55 @@
       "result_id": "reconcile_interrupted_item_creation",
       "result_kind": "recovery",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_reconcile_interrupted_item_creation"
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_reconcile_interrupted_item_creation"
     },
     {
       "result_id": "projection_revision_fencing",
       "result_kind": "fencing",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_projection.test_projection_revision_fencing"
+      "test_target": "tests.video_workflow.test_issue15_batch_projection.Issue15BatchProjectionTests.test_projection_revision_fencing"
     },
     {
       "result_id": "fairness_group_is_batch_id",
       "result_kind": "fairness",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_fairness_group_id_is_batch_id"
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_fairness_group_id_is_batch_id"
     },
     {
       "result_id": "auth_breaker_uses_resource_admission",
       "result_kind": "positive",
       "command_id": "issue15-batch-projection-tests",
-      "test_target": "tests.video_workflow.test_issue15_batch_authority.test_auth_breaker_flows_through_resource_admission"
+      "test_target": "tests.video_workflow.test_issue15_batch_authority.Issue15BatchAuthorityTests.test_auth_breaker_flows_through_resource_admission"
+    },
+    {
+      "result_id": "batch_cutover_activation_publishes_current_authority",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_activate_publishes_current_batch_authority"
+    },
+    {
+      "result_id": "batch_cutover_current_authority_is_verified",
+      "result_kind": "fencing",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_current_authority_rejects_authority_evidence_and_database_tamper"
+    },
+    {
+      "result_id": "batch_cutover_reconcile_completes_publication",
+      "result_kind": "recovery",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_cutover.Issue15BatchCutoverTests.test_reconcile_completes_interrupted_authority_publication"
+    },
+    {
+      "result_id": "batch_plan_preactivation_closure",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_plan_requires_authority_before_enumeration_or_mutation"
+    },
+    {
+      "result_id": "batch_run_preactivation_closure",
+      "result_kind": "positive",
+      "command_id": "issue15-batch-projection-tests",
+      "test_target": "tests.video_workflow.test_issue15_batch_activation_integration.Issue15BatchActivationIntegrationTests.test_run_rejects_missing_or_stale_binding_before_any_mutation"
     }
   ],
   "artifact_fingerprints": [

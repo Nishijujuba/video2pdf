@@ -49,6 +49,7 @@ def _planned_record(**overrides: object) -> dict:
         "batch_dir": "D:/workspace/batch/batch-control",
         "control_dir": "D:/workspace/.workflow-control/batches/batch",
         "batch_stage": "planned",
+        "batch_authority_binding": None,
         "run_task_start": None,
         "item_order": [
             {
@@ -145,6 +146,12 @@ class Issue15BatchContractTests(unittest.TestCase):
         self.assertIn("batch-item-projection", entries)
         self.assertEqual(entries["batch-item-projection"].schema_version, "1.0.0")
         self.assertEqual(entries["batch-item-projection"].kind, "contract")
+
+    def test_batch_record_requires_explicit_authority_binding_field(self) -> None:
+        record = _planned_record()
+        del record["batch_authority_binding"]
+        with self.assertRaises(ContractError):
+            REGISTRY.validate("batch-record", record)
 
     def test_committed_positive_fixtures_validate(self) -> None:
         for name in ("batch-record", "batch-item-projection"):

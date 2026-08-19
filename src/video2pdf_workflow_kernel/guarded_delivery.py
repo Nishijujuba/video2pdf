@@ -142,7 +142,11 @@ def _load_active_delivery_guard(project_root: Path) -> Any:
                 sys.path.remove(guard_script_dir)
             except ValueError:
                 pass
-    for name in ("resolve_delivery_target", "guard_report_is_fresh"):
+    for name in (
+        "resolve_delivery_target",
+        "guard_report_is_fresh",
+        "guard_fingerprints",
+    ):
         if not callable(getattr(module, name, None)):
             raise ContractError("Active Delivery Guard read-only API is incomplete")
     return module
@@ -172,20 +176,13 @@ def _bound_file(
     return path
 
 
-def require_current_kernel_guarded_decision(
-    *,
-    project_root: Path,
-    run_dir: Path,
+def _require_kernel_projection_graph(
+    *, project_root: Path, run_dir: Path, expected_stage: str
 ) -> dict[str, Any]:
-    """Require the provider-committed Acceptance and fresh Guard for an accepted Run.
-
-    This is the read-only accepted-to-delivered authority boundary.  Candidate
-    activation at ``ready_for_delivery`` requires the Acceptance provider only;
-    a Guard cannot be current until the accepted projection exists.
-    """
-
     project = project_root.resolve()
     run_root = run_dir.resolve()
+    if expected_stage not in {"accepted", "delivered"}:
+        raise ContractError("Kernel guarded decision stage is unsupported")
     if not run_root.is_relative_to(project):
         raise ContractError("Kernel guarded decision Run escapes the project root")
     run_path = run_root / "workflow" / "run.json"
@@ -200,9 +197,11 @@ def require_current_kernel_guarded_decision(
         or run.get("platform_adapter") not in ("bilibili", "youtube")
         or Path(str(run.get("output_path", ""))).resolve() != run_root
         or not isinstance(delivery, dict)
-        or delivery.get("stage") != "accepted"
+        or delivery.get("stage") != expected_stage
     ):
-        raise ContractError("Kernel guarded decision requires an accepted Bilibili Run v4")
+        raise ContractError(
+            f"Kernel guarded decision requires a {expected_stage} platform Run v4"
+        )
     projections = delivery.get("projections")
     if not isinstance(projections, dict):
         raise ContractError("Kernel guarded decision projections are absent")
@@ -227,8 +226,8 @@ def require_current_kernel_guarded_decision(
         not isinstance(run_id, str)
         or video.get("run_id") != run_id
         or session.get("run_id") != run_id
-        or video.get("stage") != "accepted"
-        or session.get("stage") != "accepted"
+        or video.get("stage") != expected_stage
+        or session.get("stage") != expected_stage
         or video.get("run_revision") != run_revision
         or session.get("run_revision") != run_revision
         or video.get("ownership") != ownership
@@ -250,6 +249,39 @@ def require_current_kernel_guarded_decision(
     artifacts = video.get("artifacts")
     if not isinstance(artifacts, dict):
         raise ContractError("Kernel guarded decision artifact bindings are absent")
+    return {
+        "project": project,
+        "run_root": run_root,
+        "run": run,
+        "delivery": delivery,
+        "run_id": run_id,
+        "video_path": video_path,
+        "session_path": session_path,
+        "artifacts": artifacts,
+    }
+
+
+def require_current_kernel_guarded_decision(
+    *,
+    project_root: Path,
+    run_dir: Path,
+) -> dict[str, Any]:
+    """Require the provider-committed Acceptance and fresh Guard for an accepted Run.
+
+    This is the read-only accepted-to-delivered authority boundary.  Candidate
+    activation at ``ready_for_delivery`` requires the Acceptance provider only;
+    a Guard cannot be current until the accepted projection exists.
+    """
+
+    graph = _require_kernel_projection_graph(
+        project_root=project_root, run_dir=run_dir, expected_stage="accepted"
+    )
+    project = graph["project"]
+    run_root = graph["run_root"]
+    run_id = graph["run_id"]
+    video_path = graph["video_path"]
+    session_path = graph["session_path"]
+    artifacts = graph["artifacts"]
     acceptance_path = _bound_file(
         artifacts.get("acceptance_report"),
         base=run_root,
@@ -326,6 +358,144 @@ def require_current_kernel_guarded_decision(
         "delivery_guard_report": {
             "path": str(guard_path),
             "sha256": sha256_file(guard_path),
+        },
+        "video_target": {
+            "path": str(video_path),
+            "sha256": sha256_file(video_path),
+        },
+        "session_target": {
+            "path": str(session_path),
+            "sha256": sha256_file(session_path),
+        },
+    }
+
+
+def _fingerprints_by_path(fingerprints: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(fingerprints, list):
+        raise ContractError("Kernel delivered decision Guard fingerprints are invalid")
+    indexed: dict[str, dict[str, Any]] = {}
+    for fingerprint in fingerprints:
+        if not isinstance(fingerprint, dict):
+            raise ContractError(
+                "Kernel delivered decision Guard fingerprints are invalid"
+            )
+        path = fingerprint.get("path")
+        if not isinstance(path, str) or not path or path in indexed:
+            raise ContractError(
+                "Kernel delivered decision Guard fingerprints are invalid"
+            )
+        indexed[path] = fingerprint
+    return indexed
+
+
+def require_current_kernel_delivered_decision(
+    *, project_root: Path, run_dir: Path
+) -> dict[str, Any]:
+    """Require current delivered projections and current guarded artifacts.
+
+    The accepted Guard report necessarily fingerprints the accepted projection
+    predecessor.  A delivered lifecycle transition advances the Run, video,
+    and session projections.  The active resolver proves that successor, while
+    this seam revalidates every delivery artifact that must remain byte-current.
+    """
+
+    graph = _require_kernel_projection_graph(
+        project_root=project_root, run_dir=run_dir, expected_stage="delivered"
+    )
+    project = graph["project"]
+    run_root = graph["run_root"]
+    video_path = graph["video_path"]
+    session_path = graph["session_path"]
+    artifacts = graph["artifacts"]
+    bound = {
+        role: _bound_file(
+            artifacts.get(role),
+            base=run_root,
+            allowed_root=run_root,
+            label=role.replace("_", " "),
+        )
+        for role in (
+            "final_pdf",
+            "main_tex",
+            "final_compile_report",
+            "acceptance_report",
+            "delivery_guard_report",
+        )
+    }
+    active_guard = _load_active_delivery_guard(project)
+    try:
+        target = active_guard.resolve_delivery_target(
+            project_root=project,
+            current_target_path=session_path,
+            require_session_scope=True,
+        )
+        guard_fresh = active_guard.guard_report_is_fresh(target)
+    except Exception as exc:
+        raise ContractError(
+            "Kernel delivered decision cannot resolve active Guard authority"
+        ) from exc
+    expected_target_paths = {
+        "final_pdf": target.final_pdf.resolve(),
+        "main_tex": target.main_tex.resolve(),
+        "final_compile_report": target.compile_report_path.resolve(),
+        "acceptance_report": target.acceptance_report_path.resolve(),
+        "delivery_guard_report": target.guard_report_path.resolve(),
+    }
+    if (
+        target.video_output_dir.resolve() != run_root
+        or target.current_target_path.resolve() != session_path
+        or target.target_file.resolve() != video_path
+        or target.stage != "delivered"
+        or any(bound[role] != path for role, path in expected_target_paths.items())
+    ):
+        raise ContractError("Kernel delivered decision authority is stale")
+    report = validate_delivery_guard_report(
+        report_path=bound["delivery_guard_report"], expected_stage="accepted"
+    )
+    if guard_fresh is not True:
+        try:
+            manifest = read_json(target.manifest_path)
+            current_fingerprints = active_guard.guard_fingerprints(target, manifest)
+            guarded = _fingerprints_by_path(report.get("artifact_fingerprints"))
+            current = _fingerprints_by_path(current_fingerprints)
+        except ContractError:
+            raise
+        except Exception as exc:
+            raise ContractError(
+                "Kernel delivered decision cannot revalidate Guard artifacts"
+            ) from exc
+
+        # The delivered transition advances the two lifecycle projections after
+        # the accepted Guard report is written.  Every other Guard-managed member
+        # remains immutable and must match the active Guard's complete evidence
+        # closure, including the allowed-artifact manifest, rendered pages, the
+        # Global Gate authority, and any future manifest members.
+        mutable_projection_paths = {
+            target.current_target_path.resolve()
+            .relative_to(project)
+            .as_posix(),
+            target.target_file.resolve().relative_to(run_root).as_posix(),
+        }
+        guarded = {
+            path: fingerprint
+            for path, fingerprint in guarded.items()
+            if path not in mutable_projection_paths
+        }
+        current = {
+            path: fingerprint
+            for path, fingerprint in current.items()
+            if path not in mutable_projection_paths
+        }
+        if guarded != current:
+            raise ContractError(
+                "Kernel delivered decision Delivery Guard artifacts are stale"
+            )
+    return {
+        "run_id": graph["run_id"],
+        "stage": "delivered",
+        **{
+            role: {"path": str(path), "sha256": sha256_file(path)}
+            for role, path in bound.items()
         },
         "video_target": {
             "path": str(video_path),

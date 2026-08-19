@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import re
 import sys
+import unittest
 from typing import Any
 
 
@@ -426,6 +428,37 @@ class EvidenceError(ValueError):
         super().__init__(message)
         self.first_failing_gate = first_failing_gate
         self.error_code = error_code
+
+
+def _require_executed_unittest_target(
+    test_target: Any, command_arguments: Any
+) -> None:
+    try:
+        if not isinstance(test_target, str):
+            raise TypeError("test target is not a string")
+        module_name, class_name, method_name = test_target.rsplit(".", 2)
+        if not isinstance(command_arguments, list):
+            raise TypeError("command arguments are not a list")
+        if (
+            test_target not in command_arguments
+            and module_name not in command_arguments
+        ):
+            raise ValueError("the command does not execute the target module")
+        module = importlib.import_module(module_name)
+        test_case = getattr(module, class_name)
+        test_method = getattr(test_case, method_name)
+        if not isinstance(test_case, type) or not issubclass(
+            test_case, unittest.TestCase
+        ):
+            raise TypeError("target class is not a unittest TestCase")
+        if not method_name.startswith("test_") or not callable(test_method):
+            raise TypeError("target method is not a unittest test method")
+    except Exception as exc:
+        raise EvidenceError(
+            f"Slice 14 result binding does not resolve to an executed unittest target: {test_target}",
+            first_failing_gate="qualification_result_binding",
+            error_code="result_binding_public_tracer_missing",
+        ) from exc
 
 
 def git(*arguments: str) -> str:
@@ -997,31 +1030,16 @@ def validate_batch_exit_evidence(
     for binding in bindings:
         command = command_by_id.get(binding.get("command_id"))
         test_target = binding.get("test_target")
-        module_prefix = (
-            test_target.rsplit(".", 1)[0]
-            if isinstance(test_target, str) and "." in test_target
-            else None
-        )
         if command is None:
             raise EvidenceError(
                 "Batch result binding names an unknown command",
                 first_failing_gate="qualification_result_binding",
                 error_code="result_binding_command_unknown",
             )
-        # The pinned result target may name the exact test method or the test
-        # module the command executes; either proves an executed public tracer.
-        if not (
-            test_target in command.get("command", [])
-            or (
-                isinstance(module_prefix, str)
-                and module_prefix in command.get("command", [])
-            )
-        ):
-            raise EvidenceError(
-                "Batch result lacks an explicitly executed public tracer",
-                first_failing_gate="qualification_result_binding",
-                error_code="result_binding_public_tracer_missing",
-            )
+        _require_executed_unittest_target(
+            test_target,
+            command.get("command"),
+        )
     failed_commands = [
         command.get("test_id", "<unknown>")
         for command in value.get("commands", [])
@@ -1338,14 +1356,12 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
                     error_code="result_binding_command_unknown",
                 )
             test_target = binding["test_target"]
-            module_prefix = test_target.rsplit(".", 1)[0]
-            if (
-                test_target not in command["command"]
-                and not (
-                    manifest.get("slice", {}).get("number") == 14
-                    and module_prefix in command["command"]
+            if manifest.get("slice", {}).get("number") == 14:
+                _require_executed_unittest_target(
+                    test_target,
+                    command["command"],
                 )
-            ):
+            elif test_target not in command["command"]:
                 raise EvidenceError(
                     "Slice Exit Evidence result binding lacks an explicitly executed test target",
                     first_failing_gate="qualification_result_binding",
@@ -1954,12 +1970,16 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                             f"fingerprinted path does not exist: {item['path']}"
                         )
                     raise EvidenceError(
-                        f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"
+                        f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}",
+                        first_failing_gate="bindings",
+                        error_code="artifact_sha_mismatch",
                     )
             continue
         if actual != item["sha256"]:
             raise EvidenceError(
-                f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}"
+                f"fingerprint mismatch for {item['path']}: expected {item['sha256']}, got {actual}",
+                first_failing_gate="bindings",
+                error_code="artifact_sha_mismatch",
             )
     if manifest.get("slice", {}).get("number") == 11:
         for command in manifest["commands"]:

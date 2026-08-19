@@ -13,6 +13,7 @@
     "batch_dir",
     "control_dir",
     "batch_stage",
+    "batch_authority_binding",
     "run_task_start",
     "item_order",
     "run_mappings",
@@ -30,6 +31,12 @@
     "batch_dir": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
     "control_dir": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
     "batch_stage": {"enum": ["planned", "running", "completed", "blocked"]},
+    "batch_authority_binding": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/batchAuthorityBinding"}
+      ]
+    },
     "run_task_start": {
       "anyOf": [
         {"type": "null"},
@@ -53,6 +60,18 @@
     "updated_at": {"type": "string", "format": "date-time"}
   },
   "$defs": {
+    "batchAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority_path", "authority_sha256", "exit_evidence_sha256", "generation", "publication_commit"],
+      "properties": {
+        "authority_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "authority_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "exit_evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "generation": {"type": "integer", "minimum": 1},
+        "publication_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
     "batchIdentity": {
       "type": "object",
       "additionalProperties": false,

@@ -58,6 +58,9 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
         for command in (
+            "batch-activate",
+            "batch-reconcile",
+            "batch-authority-check",
             "batch-plan",
             "batch-run",
             "batch-recover",
@@ -66,14 +69,46 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(command, text)
 
+    def test_batch_skill_documents_governed_activation_sequence(self) -> None:
+        text = (
+            ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Publishing Slice 14 and activating Batch authority are separate", text)
+        self.assertIn("published-slice14-manifest", text)
+        self.assertIn("active_batch.json", text)
+        self.assertIn("leaves Batch `target_only`", text)
+        self.assertIn("`batch-reconcile` is required only after an interrupted", text)
+        self.assertIn("`batch-authority-check` is required before `batch-plan`", text)
+
     def test_batch_skill_documents_cli_default_bindings(self) -> None:
         text = (
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("When `--workspace-root` is omitted", text)
+        self.assertIn("`--control-store-root` owns the Batch Record", text)
+        self.assertIn("every later command resolves it from the record", text)
         self.assertIn("`--run-task-start` is optional", text)
         self.assertIn("reuses that exact bound value", text)
         self.assertIn("Supplying a different value after binding fails closed", text)
+
+    def test_rebuild_and_status_examples_supply_only_control_store_root(self) -> None:
+        text = (
+            ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
+        ).read_text(encoding="utf-8")
+        for command in ("batch-rebuild-projections", "batch-status"):
+            examples = [
+                line
+                for line in text.splitlines()
+                if f"video_workflow.py {command}" in line
+            ]
+            with self.subTest(command=command):
+                self.assertTrue(examples)
+                self.assertTrue(
+                    all("--control-store-root" in line for line in examples), examples
+                )
+                self.assertTrue(
+                    all("--workspace-root" not in line for line in examples), examples
+                )
 
     def test_batch_skill_retires_legacy_authorities(self) -> None:
         text = (

@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
-from .errors import ContractError, KernelConflict, KernelError
+from .errors import (
+    ContractError,
+    ControlStoreUnavailable,
+    InitializationFault,
+    KernelConflict,
+    KernelError,
+)
+from .kernel import FAULT_POINTS as KERNEL_INITIALIZATION_FAULT_POINTS
 from .utils import (
     canonical_json_bytes,
     read_json,
@@ -27,6 +34,15 @@ _CHECKPOINT_ORDER = (
     "source_candidates_ready",
     "source_acquisition_decision_ready",
     "source_ready",
+)
+_AFTER_FIRST_TASK_CLAIM_BEFORE_MAPPING_COMMIT = (
+    "after_first_task_claim_before_mapping_commit"
+)
+BATCH_RUN_FAULT_POINTS = frozenset(
+    {
+        *KERNEL_INITIALIZATION_FAULT_POINTS,
+        _AFTER_FIRST_TASK_CLAIM_BEFORE_MAPPING_COMMIT,
+    }
 )
 
 
@@ -148,6 +164,28 @@ class BatchProjectionProvider:
     batch-owned records and projections in the Control Store.
     """
 
+    def __init__(self, *, batch_authority_publisher: Any | None = None) -> None:
+        if batch_authority_publisher is None:
+            from .batch_authority import BatchCutoverPublisher
+
+            batch_authority_publisher = BatchCutoverPublisher()
+        self.batch_authority_publisher = batch_authority_publisher
+
+    @staticmethod
+    def _batch_authority_binding(authority: dict[str, Any]) -> dict[str, Any]:
+        required = (
+            "authority_path",
+            "authority_sha256",
+            "exit_evidence_sha256",
+            "generation",
+            "publication_commit",
+        )
+        if not isinstance(authority, dict) or any(
+            key not in authority for key in required
+        ):
+            raise ContractError("current Batch authority has an incomplete binding")
+        return {key: authority[key] for key in required}
+
     # ------------------------------------------------------------------
     # plan
     # ------------------------------------------------------------------
@@ -160,6 +198,7 @@ class BatchProjectionProvider:
         source_url: str | None,
         task_start: str,
         request_id: str,
+        control_store_root: Path,
         selection: list[Any] | None = None,
         url_set: str | None = None,
     ) -> dict[str, Any]:
@@ -173,18 +212,48 @@ class BatchProjectionProvider:
                 "batch plan requires exactly one of source_url or url_set"
             )
         workspace = Path(workspace_root).resolve()
+        control_root = Path(control_store_root).resolve()
+
+        authority_before = self.batch_authority_publisher.require_current(
+            control_store_root=Path(control_store_root)
+        )
+        binding = self._batch_authority_binding(authority_before)
 
         items = self._enumerate_items(platform, source_url, url_set)
+        authority_after = self.batch_authority_publisher.require_current(
+            control_store_root=Path(control_store_root)
+        )
+        if self._batch_authority_binding(authority_after) != binding:
+            raise KernelConflict("Batch authority changed during Batch planning")
         selected_indexes = self._resolve_selection(items, selection)
         if not selected_indexes:
             raise ContractError("batch selection produced no selected items")
         selected_items = [
             item for item in items if item["item_index"] in selected_indexes
         ]
-        selected_ids = [
-            item["canonical_item_id"] for item in sorted(selected_items, key=lambda i: i["item_index"])
+        item_order: list[dict[str, Any]] = []
+        for item in items:
+            item_order.append(
+                {
+                    "item_index": item["item_index"],
+                    "part_id": item["part_id"],
+                    "canonical_item_id": item["canonical_item_id"],
+                    "canonical_url": item["canonical_url"],
+                    "title": item["title"],
+                    "selected": item["item_index"] in selected_indexes,
+                }
+            )
+        source_order_identity = [
+            {
+                "item_index": item["item_index"],
+                "canonical_item_id": item["canonical_item_id"],
+                "selected": item["selected"],
+            }
+            for item in item_order
         ]
-        batch_source_identity = sha256_bytes(canonical_json_bytes(selected_ids))
+        batch_source_identity = sha256_bytes(
+            canonical_json_bytes(source_order_identity)
+        )
         identity_source_url = (
             source_url
             if source_url is not None
@@ -207,21 +276,9 @@ class BatchProjectionProvider:
             workspace / f"{_normalize_title(original_title)}_{compact}" / "batch-control"
         )
         control_dir = (
-            workspace / ".workflow-control" / "batches" / batch_id
+            control_root / ".workflow-control" / "batches" / batch_id
         )
         now = _utc_now_iso()
-        item_order: list[dict[str, Any]] = []
-        for item in items:
-            item_order.append(
-                {
-                    "item_index": item["item_index"],
-                    "part_id": item["part_id"],
-                    "canonical_item_id": item["canonical_item_id"],
-                    "canonical_url": item["canonical_url"],
-                    "title": item["title"],
-                    "selected": item["item_index"] in selected_indexes,
-                }
-            )
         record = {
             "schema_name": "batch-record",
             "schema_version": "1.0.0",
@@ -240,6 +297,7 @@ class BatchProjectionProvider:
             "batch_dir": str(batch_dir),
             "control_dir": str(control_dir),
             "batch_stage": "planned",
+            "batch_authority_binding": binding,
             "run_task_start": None,
             "item_order": item_order,
             "run_mappings": [],
@@ -248,10 +306,10 @@ class BatchProjectionProvider:
             "updated_at": now,
         }
         self._validate_planned_record(contracts, record)
-        store = self._open_store(workspace, contracts)
+        store = self._open_store(control_root, contracts)
         try:
             stored_id, outcome = store.create_batch_record(record, record["batch_identity"])
-        except KernelConflict as conflict:
+        except KernelConflict:
             # A deterministic replay may differ only in plan timestamps; the
             # existing planned record is authoritative.  Reuse it so repeated
             # plan calls stay idempotent and never create a second record.
@@ -259,13 +317,30 @@ class BatchProjectionProvider:
             if existing is None:
                 raise
             self._validate_loaded_record(contracts, existing)
-            if existing["batch_stage"] != "planned":
-                raise
+            expected_replay = dict(record)
+            authoritative_replay = dict(existing)
+            for volatile_key in ("created_at", "updated_at"):
+                expected_replay.pop(volatile_key, None)
+                authoritative_replay.pop(volatile_key, None)
+            if authoritative_replay != expected_replay:
+                raise KernelConflict(
+                    "batch plan replay differs from the authoritative Batch Record",
+                    data={
+                        "batch_id": batch_id,
+                        "first_failing_gate": "batch_record_replay_identity",
+                        "error_code": "batch_record_replay_conflict",
+                    },
+                )
+            authoritative_record_path = (
+                Path(existing["batch_dir"]) / "batch-record.json"
+            )
+            if not authoritative_record_path.is_file():
+                self._persist_record_file(existing)
             return {
                 "batch_id": batch_id,
-                "batch_dir": str(batch_dir),
-                "batch_record_path": str(batch_dir / "batch-record.json"),
-                "item_order": item_order,
+                "batch_dir": str(existing["batch_dir"]),
+                "batch_record_path": str(authoritative_record_path),
+                "item_order": existing["item_order"],
                 "created_or_replayed": "REPLAY",
             }
         if stored_id != batch_id:
@@ -407,7 +482,6 @@ class BatchProjectionProvider:
         batch_id: str,
         control_store_root: Path,
         session_id: str,
-        global_gate_binding: dict[str, Any],
         run_task_start: str,
         fault_point: str | None = None,
     ) -> dict[str, Any]:
@@ -420,16 +494,30 @@ class BatchProjectionProvider:
             raise ContractError(
                 "batch-run requires a valid Kernel delivery session identity"
             )
-        if not isinstance(global_gate_binding, dict) or not global_gate_binding:
-            raise ContractError(
-                "batch-run requires a current Global Gate binding"
-            )
-        workspace = Path(workspace_root).resolve()
-        store = self._open_store(workspace, contracts)
+        current_authority = self.batch_authority_publisher.require_current(
+            control_store_root=Path(control_store_root)
+        )
+        current_binding = self._batch_authority_binding(current_authority)
+        del workspace_root
+        control_root = Path(control_store_root).resolve()
+        store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
+        workspace = Path(record["output_root"]).resolve()
+        if record.get("batch_authority_binding") != current_binding:
+            raise KernelConflict(
+                "Batch Record authority binding is missing or stale",
+                data={
+                    "batch_id": batch_id,
+                    "first_failing_gate": "batch_authority_binding",
+                    "error_code": "batch_authority_binding_stale",
+                },
+            )
+        global_gate_binding = current_authority.get("global_gate_binding")
+        if not isinstance(global_gate_binding, dict) or not global_gate_binding:
+            raise ContractError("current Batch authority lacks its Global Gate binding")
         stage = str(record["batch_stage"])
         if stage not in {"planned", "running"}:
             raise KernelConflict(
@@ -442,8 +530,6 @@ class BatchProjectionProvider:
             raise KernelConflict("batch record disappeared after run start binding")
         self._validate_loaded_record(contracts, record)
         platform = str(record["batch_identity"]["canonical_platform"])
-        # Existing platform authority seam: a non-current authority raises.
-        self._require_platform_authority(platform, control_store_root)
         mapped_indexes = {
             int(mapping["item_index"]) for mapping in record.get("run_mappings", [])
         }
@@ -490,16 +576,27 @@ class BatchProjectionProvider:
                 probe,
                 session_id=item_session_id,
                 global_gate_binding=global_gate_binding,
-                fault_point=fault_point,
+                fault_point=(
+                    None
+                    if fault_point == _AFTER_FIRST_TASK_CLAIM_BEFORE_MAPPING_COMMIT
+                    else fault_point
+                ),
             )
             run_dir = initialized.run_dir
-            claim = self._submit_first_admitted_task(
+            admission = self._submit_first_admitted_task(
                 kernel,
                 run_dir,
                 batch_id,
                 run_task_start,
                 coordinator_session_id=item_session_id,
             )
+            if (
+                fault_point == _AFTER_FIRST_TASK_CLAIM_BEFORE_MAPPING_COMMIT
+                and not mappings_to_commit
+            ):
+                raise InitializationFault(
+                    _AFTER_FIRST_TASK_CLAIM_BEFORE_MAPPING_COMMIT
+                )
             mappings_to_commit.append(
                 {
                     "item_index": item_index,
@@ -507,7 +604,6 @@ class BatchProjectionProvider:
                     "request_id": request_id,
                 }
             )
-            admission = claim.resource_admission
             items.append(
                 {
                     "item_index": item_index,
@@ -529,15 +625,6 @@ class BatchProjectionProvider:
         suffix = f"-{item_index}"
         base = session_id[: 128 - len(suffix)]
         return f"{base}{suffix}"
-
-    def _require_platform_authority(
-        self, platform: str, control_store_root: Path
-    ) -> dict[str, Any]:
-        from .platform_kernel import BilibiliPlatformCutoverPublisher
-
-        return BilibiliPlatformCutoverPublisher().require_current(
-            platform=platform, control_store_root=Path(control_store_root)
-        )
 
     def _item_bootstrap_binding(
         self,
@@ -637,12 +724,36 @@ class BatchProjectionProvider:
             prepared_at=run_task_start,
             batch_id=batch_id,
         )
-        return kernel.claim_task(
+        existing = kernel.control_store.task_claim_for_task(prepared.task_id)
+        if existing is not None:
+            if (
+                str(existing["authority_id"]) != str(record["run_id"])
+                or str(existing["envelope_sha256"])
+                != sha256_file(prepared.envelope_path)
+            ):
+                raise KernelConflict(
+                    "existing Batch Task Claim differs from the current Task Envelope"
+                )
+            admission = kernel.resource_status(
+                prepared.task_id, str(existing["attempt_id"])
+            )
+            if (
+                admission.batch_id != batch_id
+                or admission.fairness_group_id != batch_id
+            ):
+                raise KernelConflict(
+                    "existing Batch Task Claim has conflicting Resource Admission authority"
+                )
+            return admission
+        claim = kernel.claim_task(
             run_dir,
             prepared.task_id,
             coordinator_session_id=coordinator_session_id,
             worker_id=f"batch-provider-{record['run_id']}",
         )
+        if claim.resource_admission is None:
+            raise KernelConflict("Batch Task Claim lacks Resource Admission authority")
+        return claim.resource_admission
 
     # ------------------------------------------------------------------
     # recover
@@ -655,18 +766,77 @@ class BatchProjectionProvider:
         batch_id: str,
         control_store_root: Path,
     ) -> dict[str, Any]:
-        del control_store_root
-        workspace = Path(workspace_root).resolve()
-        store = self._open_store(workspace, contracts)
+        control_root = Path(control_store_root).resolve()
+        current_authority = self.batch_authority_publisher.require_current(
+            control_store_root=control_root
+        )
+        current_binding = self._batch_authority_binding(current_authority)
+        del workspace_root
+        store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
-        kernel = self._kernel(workspace, contracts)
+        if record.get("batch_authority_binding") != current_binding:
+            raise KernelConflict(
+                "Batch Record authority binding is missing or stale",
+                data={
+                    "batch_id": batch_id,
+                    "first_failing_gate": "batch_authority_binding",
+                    "error_code": "batch_authority_binding_stale",
+                },
+            )
+        workspace = Path(record["output_root"]).resolve()
         reconciled: list[dict[str, Any]] = []
-        for mapping in record.get("run_mappings", []):
+        mappings = list(record.get("run_mappings", []))
+        missing_item_indexes: list[int] = []
+        run_task_start = record.get("run_task_start")
+        run_store = None
+        kernel = None
+        if mappings or isinstance(run_task_start, str):
+            run_store = self._open_existing_store(workspace, contracts)
+            from .kernel import VideoWorkflowKernel
+
+            kernel = VideoWorkflowKernel(workspace)
+            kernel.control_store = run_store
+        if not mappings and isinstance(run_task_start, str):
+            expected: list[dict[str, Any]] = []
+            present: list[dict[str, Any]] = []
+            platform = str(record["batch_identity"]["canonical_platform"])
+            for item in record["item_order"]:
+                if not item["selected"]:
+                    continue
+                item_index = int(item["item_index"])
+                request_id = f"{batch_id}:{item_index}"
+                run_id = self._derive_run_id(
+                    platform,
+                    str(item["canonical_item_id"]),
+                    run_task_start,
+                    request_id,
+                )
+                mapping = {
+                    "item_index": item_index,
+                    "run_id": run_id,
+                    "request_id": request_id,
+                }
+                expected.append(mapping)
+                if (
+                    run_store.binding_for_run(run_id) is not None
+                    or run_store.intent_for_run(run_id) is not None
+                ):
+                    present.append(mapping)
+                else:
+                    missing_item_indexes.append(item_index)
+            if expected and len(present) == len(expected):
+                store.commit_batch_run_mappings(batch_id, expected)
+                mappings = expected
+            else:
+                mappings = present
+        for mapping in mappings:
+            if run_store is None or kernel is None:
+                raise KernelConflict("batch Run authority is unavailable")
             run_id = str(mapping["run_id"])
-            result = self._reconcile_one(kernel, store, run_id)
+            result = self._reconcile_one(kernel, run_store, run_id)
             reconciled.append(
                 {
                     "item_index": int(mapping["item_index"]),
@@ -675,11 +845,17 @@ class BatchProjectionProvider:
                     "outcome": result.outcome,
                 }
             )
-        projections = self.rebuild_projections(workspace, contracts, batch_id=batch_id)
+        projections = self.rebuild_projections(
+            workspace,
+            contracts,
+            batch_id=batch_id,
+            control_store_root=control_root,
+        )
         return {
             "batch_id": batch_id,
             "reconciled": reconciled,
             "projections": projections,
+            "missing_item_indexes": missing_item_indexes,
         }
 
     def _reconcile_one(self, kernel: Any, store: Any, run_id: str) -> Any:
@@ -708,9 +884,15 @@ class BatchProjectionProvider:
         contracts: Any,
         *,
         batch_id: str,
+        control_store_root: Path | None = None,
     ) -> list[dict[str, Any]]:
         workspace = Path(workspace_root).resolve()
-        store = self._open_store(workspace, contracts)
+        control_root = (
+            workspace
+            if control_store_root is None
+            else Path(control_store_root).resolve()
+        )
+        store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
@@ -719,6 +901,9 @@ class BatchProjectionProvider:
             int(mapping["item_index"]): mapping
             for mapping in record.get("run_mappings", [])
         }
+        if not mapped_by_index:
+            return []
+        run_store = self._open_existing_store(Path(record["output_root"]), contracts)
         projections: list[dict[str, Any]] = []
         for item in record["item_order"]:
             if not item["selected"]:
@@ -728,7 +913,7 @@ class BatchProjectionProvider:
             if mapping is None:
                 continue
             run_id = str(mapping["run_id"])
-            binding = store.binding_for_run(run_id)
+            binding = run_store.binding_for_run(run_id)
             if binding is None:
                 raise KernelConflict(
                     f"batch run mapping has no Control Store binding: {run_id}"
@@ -749,7 +934,13 @@ class BatchProjectionProvider:
                 ) from None
             contracts.validate_run_record(run_record)
             projection = self._derive_projection(
-                batch_id, item_index, run_id, run_record, run_dir, run_path
+                contracts,
+                batch_id,
+                item_index,
+                run_id,
+                run_record,
+                run_dir,
+                run_path,
             )
             existing = store.get_item_projection(batch_id, item_index)
             if existing is not None:
@@ -778,6 +969,7 @@ class BatchProjectionProvider:
 
     def _derive_projection(
         self,
+        contracts: Any,
         batch_id: str,
         item_index: int,
         run_id: str,
@@ -789,7 +981,7 @@ class BatchProjectionProvider:
         delivery_stage = str(delivery.get("stage") or "generating")
         ownership = delivery.get("ownership") or {}
         blocker = self._blocker_string(run_record.get("source_blocker"))
-        guard_sha, guard_valid = self._guard_report(run_dir)
+        guard_sha, guard_valid = self._guard_report(contracts, run_record, run_dir)
         guarded_delivered = delivery_stage == "delivered" and guard_valid
         now = _utc_now_iso()
         return {
@@ -869,20 +1061,28 @@ class BatchProjectionProvider:
         return {"name": "run_initialized", "status": "stale"}
 
     @staticmethod
-    def _guard_report(run_dir: Path) -> tuple[str | None, bool]:
-        from .guarded_delivery import validate_delivery_guard_report
+    def _guard_report(
+        contracts: Any, run_record: dict[str, Any], run_dir: Path
+    ) -> tuple[str | None, bool]:
+        from .guarded_delivery import require_current_kernel_delivered_decision
 
-        guard_path = run_dir / "review" / "acceptance" / "delivery_guard_report.json"
-        if not guard_path.is_file():
-            return None, False
-        file_sha = sha256_file(guard_path)
         try:
-            validate_delivery_guard_report(
-                report_path=guard_path, expected_stage="accepted"
+            authority = require_current_kernel_delivered_decision(
+                project_root=contracts.project_root,
+                run_dir=run_dir,
             )
-        except (KernelError, OSError, UnicodeError, ValueError, TypeError):
+            if authority["run_id"] != run_record["run_id"]:
+                return None, False
+            return authority["delivery_guard_report"]["sha256"], True
+        except (
+            KernelError,
+            KeyError,
+            OSError,
+            UnicodeError,
+            ValueError,
+            TypeError,
+        ):
             return None, False
-        return file_sha, True
 
     @staticmethod
     def _acceptance_report_sha(run_dir: Path) -> str | None:
@@ -946,13 +1146,25 @@ class BatchProjectionProvider:
         contracts: Any,
         *,
         batch_id: str,
+        control_store_root: Path | None = None,
     ) -> dict[str, Any]:
         workspace = Path(workspace_root).resolve()
-        store = self._open_store(workspace, contracts)
+        control_root = (
+            workspace
+            if control_store_root is None
+            else Path(control_store_root).resolve()
+        )
+        store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
+        mappings = list(record.get("run_mappings", []))
+        run_store = (
+            None
+            if not mappings
+            else self._open_existing_store(Path(record["output_root"]), contracts)
+        )
         items: list[dict[str, Any]] = []
         for item in record["item_order"]:
             if not item["selected"]:
@@ -961,7 +1173,7 @@ class BatchProjectionProvider:
             mapping = next(
                 (
                     candidate
-                    for candidate in record.get("run_mappings", [])
+                    for candidate in mappings
                     if int(candidate["item_index"]) == item_index
                 ),
                 None,
@@ -975,8 +1187,10 @@ class BatchProjectionProvider:
                 "blocker": None,
             }
             if mapping is not None:
+                if run_store is None:
+                    raise KernelConflict("batch Run authority is unavailable")
                 run_id = str(mapping["run_id"])
-                binding = store.binding_for_run(run_id)
+                binding = run_store.binding_for_run(run_id)
                 run_path = (
                     None
                     if binding is None
@@ -986,6 +1200,7 @@ class BatchProjectionProvider:
                     run_record = read_json(run_path)
                     contracts.validate_run_record(run_record)
                     projection = self._derive_projection(
+                        contracts,
                         batch_id,
                         item_index,
                         run_id,
@@ -1026,6 +1241,19 @@ class BatchProjectionProvider:
             store.check()
             return store
         return ControlStore.initialize(workspace, contracts)
+
+    @staticmethod
+    def _open_existing_store(workspace_root: Path, contracts: Any) -> Any:
+        from .control_store import ControlStore
+
+        workspace = Path(workspace_root).resolve()
+        if not ControlStore.identity_evidence_exists(workspace):
+            raise ControlStoreUnavailable(
+                f"Run Control Store is unavailable: {workspace}"
+            )
+        store = ControlStore(workspace, contracts)
+        store.check()
+        return store
 
     @staticmethod
     def _kernel(workspace_root: Path, contracts: Any) -> Any:

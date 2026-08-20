@@ -301,8 +301,14 @@ def render_and_extract(
                             objects.append(item)
                 actual_images: list[tuple[fitz.Rect, tuple[int, int, str]]] = []
                 for image in page.get_images(full=True):
-                    xref = image[0]
-                    identity = _pixmap_identity(fitz.Pixmap(document, xref))
+                    xref, soft_mask_xref = image[0], image[1]
+                    base = fitz.Pixmap(document, xref)
+                    embedded = (
+                        fitz.Pixmap(base, fitz.Pixmap(document, soft_mask_xref))
+                        if soft_mask_xref
+                        else base
+                    )
+                    identity = _pixmap_identity(embedded)
                     actual_images.extend((rect, identity) for rect in page.get_image_rects(xref))
                 for declared in [item for item in raster_plan if item.get("page") == page_number]:
                     source_identity = (

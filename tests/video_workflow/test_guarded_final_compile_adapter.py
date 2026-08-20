@@ -179,11 +179,19 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         request["compile_manifest_sha256"] = manifest["manifest_sha256"]
         self.request.write_bytes(canonical_bytes(request))
 
-    def _declare_raster(self, bbox: list[float], *, include_source: bool = True) -> None:
+    def _declare_raster(
+        self,
+        bbox: list[float],
+        *,
+        include_source: bool = True,
+        alpha: bool = False,
+    ) -> None:
         source_sha = "9" * 64
         if include_source:
-            image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
+            image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), alpha)
             image.clear_with(0x88CCFF)
+            if alpha:
+                image.set_alpha(bytes([128]) * (image.width * image.height))
             source = self.source.parent / "figure.png"
             image.save(source)
             source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -376,6 +384,11 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         inventory = json.loads((self.output / "rendered-text-object-inventory.json").read_text(encoding="utf-8"))
         raster = [item for item in inventory["objects"] if item["object_kind"] == "declared_raster_text"]
         self.assertEqual("Raster words", raster[0]["exact_utf8_text"])
+
+    def test_public_adapter_matches_alpha_raster_with_embedded_soft_mask(self) -> None:
+        self._declare_raster([200.0, 100.0, 300.0, 200.0], alpha=True)
+        completed = self._run()
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
 
     def test_public_adapter_rejects_unbound_declared_raster(self) -> None:
         self._declare_raster([200.0, 100.0, 300.0, 200.0], include_source=False)

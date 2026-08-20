@@ -346,6 +346,8 @@ def reconcile_bilibili_source_acquire(*, run_dir: Path) -> dict[str, object]:
         run_dir.parent,
         resource_provider_verifiers={"source-acquire": proofs.verify},
     )
+    kernel.contracts.validate_run_record(run)
+    coordinator_id = f"source-acquire-{run['canonical_platform']}"
     released = 0
     advanced = 0
     for proof in proofs.records():
@@ -376,8 +378,8 @@ def reconcile_bilibili_source_acquire(*, run_dir: Path) -> dict[str, object]:
                 task_id=proof["task_id"],
                 expected_attempt_id=proof["attempt_id"],
                 expected_claim_generation=proof["claim_generation"],
-                coordinator_session_id="source-acquire-bilibili",
-                worker_id=f"source-acquire-bilibili-{proof['stage']}",
+                coordinator_session_id=coordinator_id,
+                worker_id=f"{coordinator_id}-{proof['stage']}",
                 reason="durable terminal proof requires a fresh provider generation",
             )
             advanced += 1

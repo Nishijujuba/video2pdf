@@ -72,6 +72,69 @@ class MetadataProbeRunner:
         )
 
 
+class CookieHidesPublicCaptionsRunner:
+    """Model YouTube exposing captions only to an unauthenticated yt-dlp probe."""
+
+    def __init__(
+        self,
+        *,
+        authenticated_language: str | None = None,
+        public_captions: bool = True,
+        public_metadata_returncode: int = 0,
+    ) -> None:
+        self.authenticated_language = authenticated_language
+        self.public_captions = public_captions
+        self.public_metadata_returncode = public_metadata_returncode
+        self.commands: list[CommandSpec] = []
+
+    def run(self, command: CommandSpec) -> CommandResult:
+        self.commands.append(command)
+        returncode = (
+            self.public_metadata_returncode
+            if command.operation == "public_metadata_probe"
+            else 0
+        )
+        evidence = CommandEvidence(
+            operation=command.operation,
+            argv=command.evidence_argv(),
+            argv_sha256="0" * 64,
+            returncode=returncode,
+            stdout_sha256="0" * 64,
+            stderr_sha256="0" * 64,
+        )
+        metadata = {
+            "id": "ytcapgap001",
+            "title": "Cookie caption visibility fixture",
+            "duration": 12.5,
+            "webpage_url": "https://www.youtube.com/watch?v=ytcapgap001",
+            "subtitles": {},
+            "automatic_captions": {},
+            "formats": [],
+        }
+        if command.operation in ("subtitle_list", "public_subtitle_list"):
+            stdout = b""
+        elif command.operation == "metadata_probe":
+            if self.authenticated_language is not None:
+                metadata["automatic_captions"] = {
+                    self.authenticated_language: [{"ext": "vtt"}]
+                }
+            stdout = json.dumps(metadata).encode("utf-8")
+        elif command.operation == "public_metadata_probe":
+            if self.public_captions:
+                metadata["automatic_captions"] = {
+                    "en-orig": [{"ext": "vtt"}, {"ext": "srt"}]
+                }
+            stdout = json.dumps(metadata).encode("utf-8")
+        else:
+            raise AssertionError(f"unexpected command: {command.operation}")
+        return CommandResult(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=b"",
+            evidence=evidence,
+        )
+
+
 class BilibiliP2ProbeThenCaptureRunner:
     def __init__(self) -> None:
         self.commands: list[CommandSpec] = []
@@ -465,6 +528,115 @@ class PlatformAdapterTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.classification, "contract_invalid")
         self.assertEqual(len(runner.evidence), evidence_count)
+
+    def test_youtube_probe_uses_public_caption_inventory_when_cookie_hides_it(
+        self,
+    ) -> None:
+        root = new_test_root("youtube-public-caption-fallback")
+        runner = CookieHidesPublicCaptionsRunner()
+
+        probe = YouTubePlatformAdapter(runtime()).probe(
+            PlatformProbeRequest(
+                source_url="https://www.youtube.com/watch?v=ytcapgap001",
+                localized_cookie_file=localized_cookie(root),
+                staging_root=root / "attempt",
+            ),
+            runner=runner,
+        )
+
+        self.assertEqual(
+            [command.operation for command in runner.commands],
+            [
+                "subtitle_list",
+                "metadata_probe",
+                "public_subtitle_list",
+                "public_metadata_probe",
+            ],
+        )
+        self.assertEqual(
+            tuple(
+                (track.origin, track.provider_language)
+                for track in probe.subtitle_tracks
+            ),
+            (("automatic", "en-orig"),),
+        )
+        public_commands = runner.commands[2:]
+        for command in public_commands:
+            self.assertNotIn("--cookies", command.execution_argv())
+
+    def test_youtube_probe_exhausts_public_inventory_before_returning_no_tracks(
+        self,
+    ) -> None:
+        root = new_test_root("youtube-public-caption-empty")
+        runner = CookieHidesPublicCaptionsRunner(public_captions=False)
+
+        probe = YouTubePlatformAdapter(runtime()).probe(
+            PlatformProbeRequest(
+                source_url="https://www.youtube.com/watch?v=ytcapgap001",
+                localized_cookie_file=localized_cookie(root),
+                staging_root=root / "attempt",
+            ),
+            runner=runner,
+        )
+
+        self.assertEqual(probe.subtitle_tracks, ())
+        self.assertEqual(
+            [command.operation for command in runner.commands],
+            [
+                "subtitle_list",
+                "metadata_probe",
+                "public_subtitle_list",
+                "public_metadata_probe",
+            ],
+        )
+
+    def test_youtube_probe_uses_public_inventory_when_cookie_tracks_are_unusable(
+        self,
+    ) -> None:
+        root = new_test_root("youtube-public-caption-priority")
+        runner = CookieHidesPublicCaptionsRunner(authenticated_language="de")
+
+        probe = YouTubePlatformAdapter(runtime()).probe(
+            PlatformProbeRequest(
+                source_url="https://www.youtube.com/watch?v=ytcapgap001",
+                localized_cookie_file=localized_cookie(root),
+                staging_root=root / "attempt",
+                subtitle_language_priority=("en",),
+            ),
+            runner=runner,
+        )
+
+        self.assertEqual(
+            tuple(
+                (track.origin, track.provider_language)
+                for track in probe.subtitle_tracks
+            ),
+            (("automatic", "de"), ("automatic", "en-orig")),
+        )
+        self.assertEqual(len(runner.commands), 4)
+
+    def test_youtube_probe_does_not_return_no_tracks_when_public_probe_fails(
+        self,
+    ) -> None:
+        root = new_test_root("youtube-public-caption-failure")
+        runner = CookieHidesPublicCaptionsRunner(public_metadata_returncode=1)
+
+        with self.assertRaises(PlatformAdapterError) as raised:
+            YouTubePlatformAdapter(runtime()).probe(
+                PlatformProbeRequest(
+                    source_url="https://www.youtube.com/watch?v=ytcapgap001",
+                    localized_cookie_file=localized_cookie(root),
+                    staging_root=root / "attempt",
+                    subtitle_language_priority=("en",),
+                ),
+                runner=runner,
+            )
+
+        self.assertEqual(
+            raised.exception.classification,
+            "source_provider_command_failed",
+        )
+        self.assertEqual(len(runner.commands), 4)
 
     def test_bilibili_acquire_accepts_an_equivalent_url_and_uses_probe_canonical_url(self) -> None:
         staging, cookie, runner, adapter, probe = self._recorded_probe("bilibili")

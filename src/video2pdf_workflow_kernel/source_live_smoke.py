@@ -1370,6 +1370,7 @@ def acquire_source_for_initialized_run(
                     localized_cookie_file=credential.localized_cookie_file,
                     staging_root=staging,
                     explicit_item_selector=case.explicit_item_selector,
+                    subtitle_language_priority=case.subtitle_language_priority,
                 ),
                 runner=runner,
             )

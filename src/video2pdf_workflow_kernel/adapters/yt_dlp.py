@@ -382,11 +382,17 @@ class YtDlpPlatformAdapter:
     canonical_platform = "unknown"
     download_resource_class = "unknown_download"
     _platform_yt_dlp_flags: tuple[str, ...] = ()
+    _public_subtitle_discovery = False
 
     def __init__(self, runtime: YtDlpRuntime) -> None:
         self.runtime = runtime
 
-    def _base_argv(self, cookie_file: Path) -> tuple[str | SecretArgument, ...]:
+    def _base_argv(
+        self, cookie_file: Path | None
+    ) -> tuple[str | SecretArgument, ...]:
+        cookie_arguments: tuple[str | SecretArgument, ...] = ()
+        if cookie_file is not None:
+            cookie_arguments = ("--cookies", SecretArgument(str(cookie_file)))
         return (
             str(self.runtime.python_executable),
             "-X",
@@ -407,15 +413,14 @@ class YtDlpPlatformAdapter:
             str(self.runtime.retries),
             "--ffmpeg-location",
             str(self.runtime.ffmpeg_dir),
-            "--cookies",
-            SecretArgument(str(cookie_file)),
+            *cookie_arguments,
             *self._platform_yt_dlp_flags,
         )
 
     def _command(
         self,
         operation: str,
-        cookie_file: Path,
+        cookie_file: Path | None,
         cwd: Path,
         arguments: Iterable[str],
     ) -> CommandSpec:
@@ -504,6 +509,75 @@ class YtDlpPlatformAdapter:
         canonical_item_id = self._canonical_item_id(metadata, request)
         canonical_url = self._canonical_url(metadata, request)
         tracks = _subtitle_tracks(metadata)
+        priorities = {
+            language.casefold() for language in request.subtitle_language_priority
+        }
+        authenticated_tracks_usable = bool(tracks)
+        if priorities:
+            authenticated_tracks_usable = any(
+                track.normalized_language.casefold() in priorities
+                or track.normalized_language.casefold().split("-", 1)[0]
+                in priorities
+                for track in tracks
+            )
+        if self._public_subtitle_discovery and not authenticated_tracks_usable:
+            public_subtitle_result = runner.run(
+                self._command(
+                    "public_subtitle_list",
+                    None,
+                    probe_root / "public",
+                    ("--skip-download", "--list-subs", "--", provider_probe_url),
+                )
+            )
+            evidence.append(public_subtitle_result.evidence)
+            _require_success(
+                public_subtitle_result,
+                adapter_id=self.adapter_id,
+                operation="public_subtitle_list",
+            )
+            public_metadata_result = runner.run(
+                self._command(
+                    "public_metadata_probe",
+                    None,
+                    metadata_root / "public",
+                    (
+                        "--skip-download",
+                        "--dump-single-json",
+                        "--",
+                        provider_probe_url,
+                    ),
+                )
+            )
+            evidence.append(public_metadata_result.evidence)
+            _require_success(
+                public_metadata_result,
+                adapter_id=self.adapter_id,
+                operation="public_metadata_probe",
+            )
+            public_metadata = _parse_json(
+                public_metadata_result, operation="public_metadata_probe"
+            )
+            self._validate_item_selection(public_metadata, request)
+            if self._canonical_item_id(public_metadata, request) != canonical_item_id:
+                raise PlatformAdapterError(
+                    "public subtitle metadata conflicts with authenticated identity",
+                    classification="source_provider_output_invalid",
+                    exit_code=70,
+                    data={"adapter_id": self.adapter_id},
+                )
+            public_tracks = _subtitle_tracks(public_metadata)
+            tracks_by_id = {track.track_id: track for track in tracks}
+            tracks_by_id.update({track.track_id: track for track in public_tracks})
+            tracks = tuple(
+                sorted(
+                    tracks_by_id.values(),
+                    key=lambda item: (
+                        0 if item.origin == "manual" else 1,
+                        item.normalized_language,
+                        item.provider_language,
+                    ),
+                )
+            )
         formats = _safe_formats(metadata)
         title = metadata.get("title")
         if not isinstance(title, str) or not title.strip():

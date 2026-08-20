@@ -54,7 +54,9 @@ _SRT_TIMESTAMP = re.compile(
 )
 _PURPOSE_BY_OPERATION = {
     "subtitle_list": "subtitle_inventory",
+    "public_subtitle_list": "subtitle_inventory",
     "metadata_probe": "metadata_probe",
+    "public_metadata_probe": "metadata_probe",
     "format_list": "format_inventory",
     "format_inventory": "format_inventory",
     "subtitle_manual": "download",

@@ -166,6 +166,7 @@ class PlatformProbeRequest:
     localized_cookie_file: Path
     staging_root: Path
     explicit_item_selector: str | None = None
+    subtitle_language_priority: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

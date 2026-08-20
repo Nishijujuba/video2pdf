@@ -59,6 +59,7 @@ class YouTubePlatformAdapter(YtDlpPlatformAdapter):
     canonical_platform = "youtube"
     download_resource_class = "youtube_download"
     _platform_yt_dlp_flags = ("--js-runtimes", "node")
+    _public_subtitle_discovery = True
 
     def _canonical_item_id(
         self, metadata: dict[str, Any], request: PlatformProbeRequest

@@ -67,16 +67,27 @@ class MultiSectionProductionTests(unittest.TestCase):
         return self.kernel.production_plan(self.run_dir)["runnable_tasks"]
 
     @staticmethod
-    def _writer_outputs(section_id: str, slots: list[str], candidates: list[dict] | None = None) -> dict[str, bytes]:
-        body = f"\\section{{{section_id}}}\n" + "\n".join(f"% FIGURE_SLOT:{slot}" for slot in slots)
+    def _writer_outputs(
+        section_id: str,
+        slots: list[str],
+        candidates: list[dict] | None = None,
+        body_suffix: str = "",
+    ) -> dict[str, bytes]:
+        body = (
+            f"\\section{{{section_id}}}\n"
+            + "\n".join(f"% FIGURE_SLOT:{slot}" for slot in slots)
+            + body_suffix
+        )
         result = {"schema_name":"writer-result","schema_version":"1.0.0","section_id":section_id,"new_figure_candidates":candidates or []}
         return {f"{section_id}.tex":body.encode(), "writer-result.json":json.dumps(result, sort_keys=True).encode()}
 
     @staticmethod
-    def _figure_outputs(section_id: str, slot_id: str) -> dict[str, bytes]:
-        asset = f"png-{slot_id}".encode()
+    def _figure_outputs(
+        section_id: str, slot_id: str, content_suffix: str = ""
+    ) -> dict[str, bytes]:
+        asset = f"png-{slot_id}{content_suffix}".encode()
         manifest = {"schema_name":"figure-manifest","schema_version":"2.0.0","kernel_version":"2.0.0","slot_id":slot_id,"section_id":section_id,"asset_path":f"figures/{slot_id}.png","asset_sha256":hashlib.sha256(asset).hexdigest(),"caption":f"Caption {slot_id}","source":{"kind":"source_timestamp","value":"00:01"},"slot_contribution_path":f"work/figures/{slot_id}.tex"}
-        contribution = (f"\\begin{{figure}}\n\\centering\n\\includegraphics{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source_timestamp): 00:01\n\\end{{figure}}\n").encode()
+        contribution = (f"\\begin{{figure}}\n\\centering\n\\includegraphics{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source\\_timestamp): 00:01\n\\end{{figure}}\n").encode()
         manifest["slot_contribution_sha256"] = hashlib.sha256(contribution).hexdigest()
         return {f"{slot_id}.png":asset,"figure-manifest.json":json.dumps(manifest, sort_keys=True).encode(),f"{slot_id}.tex":contribution}
 
@@ -385,6 +396,44 @@ class MultiSectionProductionTests(unittest.TestCase):
         self.assertIn("integrated_section_02", changed["artifacts"])
         self.assertIn("pyramid_section_02_report", changed["artifacts"])
 
+    def test_writer_repair_advances_task_and_integrated_section_generations(self) -> None:
+        self._complete_to_main_integration()
+        before = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        claim = before["claims"]["writer-section-01"]
+        plan = self.kernel.production_plan(
+            self.run_dir,
+            supersede_task_id=claim["task_id"],
+            expected_claim_generation=claim["claim_generation"],
+        )
+        replacement = plan["runnable_tasks"][0]
+        self.kernel.production_advance(
+            self.run_dir,
+            replacement["task_id"],
+            self._attempt(
+                replacement,
+                self._writer_outputs(
+                    "section_01", ["figure_01"], body_suffix="\nRepaired body."
+                ),
+            ),
+        )
+        repaired = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(2, repaired["artifacts"]["writer_section_01"]["generation"])
+        self.assertEqual(
+            2, repaired["artifacts"]["integrated_section_01"]["generation"]
+        )
+        self.assertNotEqual(
+            before["artifacts"]["integrated_section_01"]["sha256"],
+            repaired["artifacts"]["integrated_section_01"]["sha256"],
+        )
+
     def test_writer_supersede_invalidates_incremental_figure_bound_to_old_result(self) -> None:
         tasks = self._release_parallel_tasks()
         writer = next(task for task in tasks if task["logical_task_key"] == "writer-section-01")
@@ -556,6 +605,26 @@ class MultiSectionProductionTests(unittest.TestCase):
             "figure_contribution_figure_01",
         ):
             self.assertNotIn(logical_id, changed["artifacts"])
+
+        self.kernel.production_advance(
+            self.run_dir,
+            replacement["task_id"],
+            self._attempt(
+                replacement,
+                self._figure_outputs("section_01", "figure_01", "-repair"),
+            ),
+        )
+        repaired = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for logical_id in (
+            "figure_asset_figure_01",
+            "figure_manifest_figure_01",
+            "figure_contribution_figure_01",
+        ):
+            self.assertEqual(2, repaired["artifacts"][logical_id]["generation"])
 
     def test_late_worker_cannot_overwrite_advanced_section_generation(self) -> None:
         from video2pdf_workflow_kernel.errors import KernelConflict

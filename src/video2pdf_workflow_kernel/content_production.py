@@ -543,10 +543,18 @@ class ContentProduction:
 
     @staticmethod
     def _record_artifact(
-        state: dict[str, Any], logical_id: str, path: str, source: Path, producer: str
+        state: dict[str, Any],
+        logical_id: str,
+        path: str,
+        source: Path,
+        producer: str,
+        *,
+        minimum_generation: int | None = None,
     ) -> dict[str, Any]:
         prior = state["artifacts"].get(logical_id)
         generation = 1 if prior is None else prior["generation"] + 1
+        if minimum_generation is not None:
+            generation = max(generation, minimum_generation)
         value = {
             "path": path,
             "generation": generation,
@@ -1166,6 +1174,15 @@ class ContentProduction:
         self._record_artifact(
             state, logical_id, f"work/integration/{section_id}.tex",
             target, "kernel:section-integration",
+            minimum_generation=max(
+                self._artifact(state, f"writer_{section_id}")["generation"],
+                *(
+                    self._artifact(
+                        state, f"figure_contribution_{slot['slot_id']}"
+                    )["generation"]
+                    for slot in section["figure_slots"]
+                ),
+            ),
         )
         state["sections"][section_id]["status"] = "integrated"
 
@@ -1411,6 +1428,7 @@ class ContentProduction:
             self._record_artifact(
                 state, "outline_contract", "work/outline/outline.json",
                 target, f"task:{task_id}:{attempt_id}",
+                minimum_generation=envelope["claim_generation"],
             )
             state["sections"] = {
                 section["section_id"]: {
@@ -1444,6 +1462,7 @@ class ContentProduction:
             self._record_artifact(
                 state, pyramid_logical_id, relative, target,
                 f"provider:{task_id}:{attempt_id}",
+                minimum_generation=envelope["claim_generation"],
             )
         elif role == "writer":
             assert prepared_sections is not None
@@ -1465,6 +1484,7 @@ class ContentProduction:
                 self._record_artifact(
                     state, logical_id, relative, target,
                     f"task:{task_id}:{attempt_id}",
+                    minimum_generation=envelope["claim_generation"],
                 )
         elif role == "figure":
             manifest = json.loads(outputs["figure-manifest.json"].read_text(encoding="utf-8"))
@@ -1502,6 +1522,7 @@ class ContentProduction:
                 self._record_artifact(
                     state, logical_id, relative, target,
                     f"task:{task_id}:{attempt_id}",
+                    minimum_generation=envelope["claim_generation"],
                 )
             if any(
                 slot["slot_id"] == slot_id and slot["wave"] == "incremental"

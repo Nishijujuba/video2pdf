@@ -11,6 +11,7 @@
     "run_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/run_id"},
     "source_binding": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactBinding"},
     "artifacts": {"type": "object", "additionalProperties": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactGeneration"}},
+    "invalidated_artifacts": {"type": "object", "additionalProperties": {"$ref": "https://video2pdf.local/schemas/video-workflow/v4/production-common.v1.schema.json#/$defs/artifactGeneration"}},
     "completed_tasks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "completed_roles": {"type": "array", "uniqueItems": true, "items": {"enum": ["outline", "pyramid_outline", "writer", "figure", "pyramid_section", "pyramid_main"]}},
     "claims": {"type": "object", "additionalProperties": {"$ref": "#/$defs/claim"}},

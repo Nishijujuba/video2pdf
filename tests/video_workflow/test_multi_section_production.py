@@ -635,12 +635,50 @@ class MultiSectionProductionTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
+        self.assertEqual(
+            2, repaired["artifacts"]["figure_asset_figure_01"]["generation"]
+        )
+        self.assertEqual(
+            2, repaired["artifacts"]["figure_manifest_figure_01"]["generation"]
+        )
+        self.assertEqual(
+            1,
+            repaired["artifacts"]["figure_contribution_figure_01"]["generation"],
+        )
+
+    def test_unchanged_figure_repair_preserves_artifact_generations(self) -> None:
+        tasks = self._release_parallel_tasks()
+        required = next(
+            task
+            for task in tasks
+            if task["logical_task_key"] == "figure-required-figure-01"
+        )
+        outputs = self._figure_outputs("section_01", "figure_01")
+        self.kernel.production_advance(
+            self.run_dir, required["task_id"], self._attempt(required, outputs)
+        )
+        replacement = self.kernel.production_plan(
+            self.run_dir,
+            supersede_task_id=required["task_id"],
+            expected_claim_generation=required["claim_generation"],
+        )["runnable_tasks"][0]
+        self.kernel.production_advance(
+            self.run_dir,
+            replacement["task_id"],
+            self._attempt(replacement, outputs),
+        )
+        repaired = json.loads(
+            (self.run_dir / "workflow/production-state.json").read_text(
+                encoding="utf-8"
+            )
+        )
         for logical_id in (
             "figure_asset_figure_01",
             "figure_manifest_figure_01",
             "figure_contribution_figure_01",
         ):
-            self.assertEqual(2, repaired["artifacts"][logical_id]["generation"])
+            self.assertEqual(1, repaired["artifacts"][logical_id]["generation"])
+            self.assertNotIn(logical_id, repaired["invalidated_artifacts"])
 
     def test_late_worker_cannot_overwrite_advanced_section_generation(self) -> None:
         from video2pdf_workflow_kernel.errors import KernelConflict

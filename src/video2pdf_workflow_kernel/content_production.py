@@ -128,6 +128,7 @@ class ContentProduction:
             "run_id": record["run_id"],
             "source_binding": current_source_binding,
             "artifacts": {},
+            "invalidated_artifacts": {},
             "completed_tasks": [],
             "completed_roles": [],
             "claims": {},
@@ -548,21 +549,26 @@ class ContentProduction:
         path: str,
         source: Path,
         producer: str,
-        *,
-        minimum_generation: int | None = None,
     ) -> dict[str, Any]:
-        prior = state["artifacts"].get(logical_id)
-        generation = 1 if prior is None else prior["generation"] + 1
-        if minimum_generation is not None:
-            generation = max(generation, minimum_generation)
+        invalidated = state.setdefault("invalidated_artifacts", {})
+        prior = state["artifacts"].get(logical_id) or invalidated.get(logical_id)
+        digest = sha256_file(source)
+        generation = 1
+        if prior is not None:
+            generation = (
+                prior["generation"]
+                if prior["sha256"] == digest
+                else prior["generation"] + 1
+            )
         value = {
             "path": path,
             "generation": generation,
-            "sha256": sha256_file(source),
+            "sha256": digest,
             "size": source.stat().st_size,
             "producer": producer,
         }
         state["artifacts"][logical_id] = value
+        invalidated.pop(logical_id, None)
         return value
 
     @staticmethod
@@ -868,7 +874,9 @@ class ContentProduction:
                 }
             )
         for artifact in stale_artifacts:
-            state["artifacts"].pop(artifact, None)
+            prior = state["artifacts"].pop(artifact, None)
+            if prior is not None:
+                state.setdefault("invalidated_artifacts", {})[artifact] = prior
         state["checkpoints"]["draft_compile_ready"] = "pending"
 
     def plan(
@@ -1175,15 +1183,6 @@ class ContentProduction:
         self._record_artifact(
             state, logical_id, f"work/integration/{section_id}.tex",
             target, "kernel:section-integration",
-            minimum_generation=max(
-                self._artifact(state, f"writer_{section_id}")["generation"],
-                *(
-                    self._artifact(
-                        state, f"figure_contribution_{slot['slot_id']}"
-                    )["generation"]
-                    for slot in section["figure_slots"]
-                ),
-            ),
         )
         state["sections"][section_id]["status"] = "integrated"
 
@@ -1429,7 +1428,6 @@ class ContentProduction:
             self._record_artifact(
                 state, "outline_contract", "work/outline/outline.json",
                 target, f"task:{task_id}:{attempt_id}",
-                minimum_generation=envelope["claim_generation"],
             )
             state["sections"] = {
                 section["section_id"]: {
@@ -1463,7 +1461,6 @@ class ContentProduction:
             self._record_artifact(
                 state, pyramid_logical_id, relative, target,
                 f"provider:{task_id}:{attempt_id}",
-                minimum_generation=envelope["claim_generation"],
             )
         elif role == "writer":
             assert prepared_sections is not None
@@ -1485,7 +1482,6 @@ class ContentProduction:
                 self._record_artifact(
                     state, logical_id, relative, target,
                     f"task:{task_id}:{attempt_id}",
-                    minimum_generation=envelope["claim_generation"],
                 )
         elif role == "figure":
             manifest = json.loads(outputs["figure-manifest.json"].read_text(encoding="utf-8"))
@@ -1523,7 +1519,6 @@ class ContentProduction:
                 self._record_artifact(
                     state, logical_id, relative, target,
                     f"task:{task_id}:{attempt_id}",
-                    minimum_generation=envelope["claim_generation"],
                 )
             if any(
                 slot["slot_id"] == slot_id and slot["wave"] == "incremental"

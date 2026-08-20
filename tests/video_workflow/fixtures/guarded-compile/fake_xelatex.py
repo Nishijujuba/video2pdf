@@ -55,9 +55,11 @@ with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
 document = fitz.open()
 page = document.new_page()
 page.insert_text((72, 72), "Core claim")
-figure = cwd / "figure.png"
-if figure.is_file():
-    page.insert_image(fitz.Rect(200, 100, 300, 200), filename=figure)
+for figure_name in ("figure.png", "figure.jpg"):
+    figure = cwd / figure_name
+    if figure.is_file():
+        page.insert_image(fitz.Rect(200, 100, 300, 200), filename=figure)
+        break
 for name, rect in (("figure_a.png", fitz.Rect(200, 100, 300, 200)),
                    ("figure_b.png", fitz.Rect(320, 100, 420, 200))):
     figure = cwd / name

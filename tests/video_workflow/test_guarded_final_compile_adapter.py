@@ -185,6 +185,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         *,
         include_source: bool = True,
         alpha: bool = False,
+        extension: str = ".png",
     ) -> None:
         source_sha = "9" * 64
         if include_source:
@@ -192,13 +193,13 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             image.clear_with(0x88CCFF)
             if alpha:
                 image.set_alpha(bytes([128]) * (image.width * image.height))
-            source = self.source.parent / "figure.png"
+            source = self.source.parent / f"figure{extension}"
             image.save(source)
             source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
             manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
             manifest["entries"].append({"logical_id": "figure_asset", "generation": 1,
                 "sha256": source_sha, "source_path": str(source),
-                "staging_path": "figure.png"})
+                "staging_path": f"figure{extension}"})
             manifest["manifest_sha256"] = fingerprint(manifest, "manifest_sha256")
             self.manifest.write_bytes(canonical_bytes(manifest))
             request = json.loads(self.request.read_text(encoding="utf-8"))
@@ -213,7 +214,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "extractor_id": "declared-raster-v1", "evidence_locator": "page:1/image:1"})
         plan["rendered_objects"][-1].update({"source_artifact_logical_id": "figure_asset",
             "source_generation": 1, "source_sha256": source_sha,
-            "source_path": "figure.png"})
+            "source_path": f"figure{extension}"})
         plan["edges"].append({"edge_id": "figure-origin", "disposition": "sealed_origin",
             "sealed_item_id": "figure", "sealed_text_utf8": "Raster words",
             "rendered_object_ids": ["page-1-raster-1"], "recipe": "exact_utf8"})
@@ -387,6 +388,11 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
 
     def test_public_adapter_matches_alpha_raster_with_embedded_soft_mask(self) -> None:
         self._declare_raster([200.0, 100.0, 300.0, 200.0], alpha=True)
+        completed = self._run()
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+
+    def test_public_adapter_accepts_declared_jpeg_raster(self) -> None:
+        self._declare_raster([200.0, 100.0, 300.0, 200.0], extension=".jpg")
         completed = self._run()
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
 

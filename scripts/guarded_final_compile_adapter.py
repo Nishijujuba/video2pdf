@@ -104,7 +104,7 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
         result.append({k: entry.get(k) for k in ("logical_id", "generation", "sha256")})
         if relative.as_posix().casefold() == "main.tex":
             entry_tex = destination
-        if relative.suffix.casefold() == ".png":
+        if relative.suffix.casefold() in {".png", ".jpg", ".jpeg"}:
             identity = (entry.get("logical_id"), entry.get("generation"), entry.get("sha256"))
             if not isinstance(identity[0], str) or not isinstance(identity[1], int):
                 raise AdapterError("declared raster source identity is incomplete")

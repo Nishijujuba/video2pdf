@@ -17,6 +17,21 @@ if str(SRC_DIR) not in sys.path:
 
 
 class MultiSectionProductionTests(unittest.TestCase):
+    def test_figure_contribution_bounds_reader_facing_asset_to_page(self) -> None:
+        from video2pdf_workflow_kernel.content_production import ContentProduction
+
+        contribution = ContentProduction(self.kernel)._figure_contribution(
+            {
+                "slot_id": "figure_01",
+                "caption": "Caption figure_01",
+                "source": {"kind": "source_timestamp", "value": "00:01"},
+            }
+        ).decode("utf-8")
+        self.assertIn(
+            r"\includegraphics[width=0.76\linewidth,height=0.34\textheight,keepaspectratio]{figures/figure_01}",
+            contribution,
+        )
+
     def setUp(self) -> None:
         from tests.video_workflow.test_source_publication_integration import (
             build_decision_ready_authority,
@@ -87,7 +102,7 @@ class MultiSectionProductionTests(unittest.TestCase):
     ) -> dict[str, bytes]:
         asset = f"png-{slot_id}{content_suffix}".encode()
         manifest = {"schema_name":"figure-manifest","schema_version":"2.0.0","kernel_version":"2.0.0","slot_id":slot_id,"section_id":section_id,"asset_path":f"figures/{slot_id}.png","asset_sha256":hashlib.sha256(asset).hexdigest(),"caption":f"Caption {slot_id}","source":{"kind":"source_timestamp","value":"00:01"},"slot_contribution_path":f"work/figures/{slot_id}.tex"}
-        contribution = (f"\\begin{{figure}}\n\\centering\n\\includegraphics{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source\\_timestamp): 00:01\n\\end{{figure}}\n").encode()
+        contribution = (f"\\begin{{figure}}\n\\centering\n\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source\\_timestamp): 00:01\n\\end{{figure}}\n").encode()
         manifest["slot_contribution_sha256"] = hashlib.sha256(contribution).hexdigest()
         return {f"{slot_id}.png":asset,"figure-manifest.json":json.dumps(manifest, sort_keys=True).encode(),f"{slot_id}.tex":contribution}
 

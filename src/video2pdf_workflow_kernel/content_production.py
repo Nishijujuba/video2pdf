@@ -953,7 +953,8 @@ class ContentProduction:
         return (
             "\\begin{figure}\n"
             "\\centering\n"
-            f"\\includegraphics{{figures/{manifest['slot_id']}}}\n"
+            "\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,"
+            f"keepaspectratio]{{figures/{manifest['slot_id']}}}\n"
             f"\\caption{{{caption}}}\n"
             f"\\par\\small Source ({source_kind}): {source['value']}\n"
             "\\end{figure}\n"

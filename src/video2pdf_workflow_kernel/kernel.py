@@ -644,7 +644,10 @@ class VideoWorkflowKernel:
             if intent is None:
                 raise KernelConflict("production Run binding lacks initialization intent")
             if intent["state"] != "COMMITTED":
-                self.reconcile_initialization(probe.run_id)
+                self.reconcile_initialization(
+                    probe.run_id,
+                    _delivery_lock_held=_delivery_lock_held,
+                )
             run_dir = Path(existing["output_path"])
             self._verify_production_run_identity(run_dir)
             return ProductionInitializationResult(probe.run_id, run_dir)

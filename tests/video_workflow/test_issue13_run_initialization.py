@@ -489,6 +489,85 @@ class Issue13RunInitializationTests(unittest.TestCase):
         self.assertEqual(_sha256(video_target_path), task_entry["video_target"]["sha256"])
         self.assertEqual(_sha256(session_target_path), task_entry["session_target"]["sha256"])
 
+    def test_active_init_retry_recovers_without_reacquiring_delivery_lock(
+        self,
+    ) -> None:
+        from tests.video_workflow.test_issue13_platform_cutover import (
+            Issue13PlatformCutoverTests,
+        )
+
+        authority_fixture = Issue13PlatformCutoverTests(
+            "test_bilibili_activation_publishes_single_platform_authority"
+        )
+        control_store_root, exit_evidence = (
+            authority_fixture._write_valid_cutover_manifest()
+        )
+        activated = _run_platform_cli(
+            "platform-kernel-activate",
+            "--platform",
+            "bilibili",
+            "--control-store-root",
+            str(control_store_root),
+            "--exit-evidence",
+            str(exit_evidence),
+            "--activated-at",
+            "2026-08-09T00:00:00Z",
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
+
+        case_root = new_case_dir(self.id(), label="issue13-init-direct-retry")
+        project_root = case_root / "project"
+        workspace_root = project_root / "workspace"
+        run_id = "00000000000000000000000000000000"
+        session_id = "session-issue13-direct-retry"
+        probe_path = (
+            workspace_root
+            / "待删除"
+            / "pipeline-bootstrap"
+            / run_id
+            / "probe.json"
+        )
+        probe_path.parent.mkdir(parents=True)
+        probe_path.write_bytes(
+            (
+                PROJECT_ROOT
+                / "tests"
+                / "video_workflow"
+                / "fixtures"
+                / "contracts"
+                / "bootstrap-record.v2.valid.json"
+            ).read_bytes()
+        )
+        command = (
+            "init-run",
+            "--workspace-root",
+            str(workspace_root),
+            "--control-store-root",
+            str(control_store_root),
+            "--probe",
+            str(probe_path),
+            "--session-id",
+            session_id,
+        )
+
+        interrupted, fault = _run_cli(
+            *command,
+            "--fault-point",
+            "after_output_dir_publish",
+        )
+        self.assertEqual(60, interrupted.returncode, interrupted.stdout)
+        self.assertEqual("injected_initialization_fault", fault["classification"])
+
+        recovered, recovery = _run_cli(*command)
+        self.assertEqual(0, recovered.returncode, recovered.stdout + recovered.stderr)
+        self.assertEqual("run_initialized", recovery["classification"])
+        self.assertEqual(run_id, recovery["data"]["run_id"])
+
+        completed, envelope = _run_cli(*command)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("run_initialized", envelope["classification"])
+        self.assertEqual(run_id, envelope["data"]["run_id"])
+
     def test_concurrent_active_bilibili_init_preserves_both_runs_in_shared_task_index(
         self,
     ) -> None:

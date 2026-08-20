@@ -13,7 +13,11 @@ import fitz
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from video2pdf_workflow_kernel.guarded_compile import GuardedCompileProvider  # noqa: E402
+from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
+    GuardedCompileProvider,
+    _MIKTEX_DURABLE_DIRECTORIES,
+    _MIKTEX_RUNTIME_ROOTS,
+)
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
     require_contained_path,
@@ -126,8 +130,14 @@ def compile_pdf(
     policy: dict[str, Any],
 ) -> tuple[Path, Path, dict[str, str], dict[str, int | str]]:
     engine = policy["engine"]
+    miktex_process_guards = (
+        ["--miktex-disable-maintenance", "--miktex-disable-diagnose"]
+        if policy["policy_id"] == "miktex-xelatex-runtime"
+        else []
+    )
     command = [str(Path(engine["executable"]).resolve()), *map(str, engine.get("prefix_args", [])),
-               "--disable-installer", "-no-shell-escape", "-recorder", "-interaction=nonstopmode", entry.name]
+               *miktex_process_guards, "--disable-installer", "-no-shell-escape", "-recorder",
+               "-interaction=nonstopmode", entry.name]
     engine_temp = require_contained_path(
         staging / "engine-temp",
         staging,
@@ -147,10 +157,32 @@ def compile_pdf(
         error_type=AdapterError,
         leaf_kind="directory",
     )
+    profile_root = require_contained_path(
+        staging / "engine-profile",
+        staging,
+        purpose="Final Compile engine profile",
+        error_type=AdapterError,
+        leaf_kind="directory",
+        allow_missing=True,
+    )
+    try:
+        profile_root.mkdir()
+    except OSError as exc:
+        raise AdapterError("Final Compile engine profile is unavailable") from exc
+    profile_root = require_contained_path(
+        profile_root,
+        staging,
+        purpose="Final Compile engine profile",
+        error_type=AdapterError,
+        leaf_kind="directory",
+    )
     environment = {
         "PYTHONUTF8": "1",
+        "MIKTEX_ENABLE_INSTALLER": "0",
         "TEMP": str(engine_temp),
         "TMP": str(engine_temp),
+        "USERNAME": "video2pdf",
+        "USERDOMAIN": "LOCAL",
     }
     environment["VIDEO2PDF_FIXTURE_FONTS"] = os.pathsep.join(str(Path(item["path"]).resolve()) for item in policy["system_fonts"])
     for key, value in os.environ.items():
@@ -165,37 +197,29 @@ def compile_pdf(
         paths = [Path(item).resolve() for item in value.split(os.pathsep) if item]
         if paths and all(any(path == root or root in path.parents for root in runtime_roots) for path in paths):
             environment[normalized_key] = value
-    governed_userdata = environment.get("MIKTEX_USERDATA")
-    if governed_userdata and len(governed_userdata.split(os.pathsep)) == 1:
-        profile_root = Path(governed_userdata).resolve()
+    if policy["policy_id"] == "miktex-xelatex-runtime":
+        environment.update({name: str(path) for name, path in _MIKTEX_DURABLE_DIRECTORIES.items()})
+        environment["MIKTEX_COMMONINSTALL"] = str(_MIKTEX_RUNTIME_ROOTS[0])
+        environment["MIKTEX_USERLOGDIRECTORY"] = str(profile_root)
+        identity_profile = _MIKTEX_DURABLE_DIRECTORIES["MIKTEX_USERDATA"]
     else:
-        profile_root = require_contained_path(
-            staging / "engine-profile",
-            staging,
-            purpose="Final Compile synthetic engine profile",
-            error_type=AdapterError,
-            leaf_kind="directory",
-            allow_missing=True,
-        )
-        try:
-            profile_root.mkdir()
-        except OSError as exc:
-            raise AdapterError("Final Compile synthetic engine profile is unavailable") from exc
-        profile_root = require_contained_path(
-            profile_root,
-            staging,
-            purpose="Final Compile synthetic engine profile",
-            error_type=AdapterError,
-            leaf_kind="directory",
-        )
-    profile_drive = profile_root.drive
+        governed_userdata = environment.get("MIKTEX_USERDATA")
+        if governed_userdata and len(governed_userdata.split(os.pathsep)) == 1:
+            identity_profile = Path(governed_userdata).resolve()
+        else:
+            environment.update({
+                "MIKTEX_USERDATA": str(profile_root),
+                "MIKTEX_USERCONFIG": str(profile_root),
+                "MIKTEX_USERINSTALL": str(profile_root),
+                "MIKTEX_USERLOGDIRECTORY": str(profile_root),
+            })
+            identity_profile = profile_root
+    profile_drive = identity_profile.drive
     environment.update({
-        "USERPROFILE": str(profile_root),
-        "HOME": str(profile_root),
+        "USERPROFILE": str(identity_profile),
+        "HOME": str(identity_profile),
         "HOMEDRIVE": profile_drive,
-        "HOMEPATH": str(profile_root)[len(profile_drive):],
-        "USERNAME": "video2pdf",
-        "USERDOMAIN": "LOCAL",
+        "HOMEPATH": str(identity_profile)[len(profile_drive):],
         "SYSTEMDRIVE": Path(environment["SYSTEMROOT"]).drive,
     })
     completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,

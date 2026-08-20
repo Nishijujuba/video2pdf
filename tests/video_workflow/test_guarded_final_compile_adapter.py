@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -257,6 +258,50 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         self.assertNotEqual(0, completed.returncode)
         self.assertIn("guarded compile omitted required output", completed.stderr)
         self.assertFalse((self.output / "compile-provenance.json").exists())
+
+    def test_registered_miktex_uses_the_diagnostic_runtime_identity(self) -> None:
+        spec = importlib.util.spec_from_file_location("guarded_final_compile_adapter", ADAPTER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        staging = self.root / "registered-miktex-staging"
+        staging.mkdir()
+        entry = staging / "main.tex"
+        entry.write_text("fixture", encoding="utf-8")
+        captured_command: list[str] = []
+        captured_environment: dict[str, str] = {}
+
+        def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            captured_command.extend(command)
+            captured_environment.update(kwargs["env"])
+            (staging / "main.pdf").write_bytes(b"fixture-pdf")
+            (staging / "main.fls").write_text(f"INPUT {entry}\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        policy = {
+            "policy_id": "miktex-xelatex-runtime",
+            "engine": {"executable": str(Path(sys.executable)), "prefix_args": []},
+            "allowed_runtime_roots": [r"D:\kits\MiKTex"],
+            "system_fonts": [],
+        }
+        with mock.patch.object(adapter.subprocess, "run", side_effect=complete):
+            adapter.compile_pdf(staging, entry, policy)
+
+        installer_index = captured_command.index("--disable-installer")
+        self.assertEqual(
+            ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],
+            captured_command[installer_index - 2:installer_index],
+        )
+        configured = Path(r"D:\kits\MiKTex\video2pdf-runtime-v2")
+        self.assertEqual(str(configured / "common-config"), captured_environment["MIKTEX_COMMONCONFIG"])
+        self.assertEqual(str(configured / "common-data"), captured_environment["MIKTEX_COMMONDATA"])
+        self.assertEqual(str(configured / "user-config"), captured_environment["MIKTEX_USERCONFIG"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["MIKTEX_USERDATA"])
+        self.assertEqual(str(configured / "user-install"), captured_environment["MIKTEX_USERINSTALL"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["USERPROFILE"])
+        self.assertEqual(str(configured / "user-data"), captured_environment["HOME"])
+        self.assertEqual(str(staging / "engine-profile"), captured_environment["MIKTEX_USERLOGDIRECTORY"])
 
     def test_public_adapter_rejects_manifest_drift_and_incomplete_pages(self) -> None:
         request = json.loads(self.request.read_text(encoding="utf-8"))

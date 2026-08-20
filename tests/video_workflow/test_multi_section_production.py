@@ -27,6 +27,7 @@ class MultiSectionProductionTests(unittest.TestCase):
                 "source": {"kind": "source_timestamp", "value": "00:01"},
             }
         ).decode("utf-8")
+        self.assertTrue(contribution.startswith(r"\begin{figure}[H]"))
         self.assertIn(
             r"\includegraphics[width=0.76\linewidth,height=0.34\textheight,keepaspectratio]{figures/figure_01}",
             contribution,
@@ -102,7 +103,7 @@ class MultiSectionProductionTests(unittest.TestCase):
     ) -> dict[str, bytes]:
         asset = f"png-{slot_id}{content_suffix}".encode()
         manifest = {"schema_name":"figure-manifest","schema_version":"2.0.0","kernel_version":"2.0.0","slot_id":slot_id,"section_id":section_id,"asset_path":f"figures/{slot_id}.png","asset_sha256":hashlib.sha256(asset).hexdigest(),"caption":f"Caption {slot_id}","source":{"kind":"source_timestamp","value":"00:01"},"slot_contribution_path":f"work/figures/{slot_id}.tex"}
-        contribution = (f"\\begin{{figure}}\n\\centering\n\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source\\_timestamp): 00:01\n\\end{{figure}}\n").encode()
+        contribution = (f"\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{{figures/{slot_id}}}\n\\caption{{Caption {slot_id}}}\n\\par\\small Source (source\\_timestamp): 00:01\n\\end{{figure}}\n").encode()
         manifest["slot_contribution_sha256"] = hashlib.sha256(contribution).hexdigest()
         return {f"{slot_id}.png":asset,"figure-manifest.json":json.dumps(manifest, sort_keys=True).encode(),f"{slot_id}.tex":contribution}
 

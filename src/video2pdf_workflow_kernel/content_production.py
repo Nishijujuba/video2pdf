@@ -951,7 +951,7 @@ class ContentProduction:
         source = manifest["source"]
         source_kind = source["kind"].replace("_", r"\_")
         return (
-            "\\begin{figure}\n"
+            "\\begin{figure}[H]\n"
             "\\centering\n"
             "\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,"
             f"keepaspectratio]{{figures/{manifest['slot_id']}}}\n"

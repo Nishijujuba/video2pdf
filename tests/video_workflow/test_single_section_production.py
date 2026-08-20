@@ -312,7 +312,7 @@ class SingleSectionProductionTests(unittest.TestCase):
         self.kernel.production_advance(self.run_dir, writer["task_id"], attempt)
 
         figure_contribution = (
-            b"\\begin{figure}\n\\centering\n"
+            b"\\begin{figure}[H]\n\\centering\n"
             b"\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{figures/figure_01}\n"
             b"\\caption{Declared and observed compile inputs.}\n"
             b"\\par\\small Source (source\\_timestamp): 00:00:01\n"
@@ -1054,7 +1054,7 @@ class SingleSectionProductionTests(unittest.TestCase):
             },
         )
         contribution = (
-            b"\\begin{figure}\n\\centering\n"
+            b"\\begin{figure}[H]\n\\centering\n"
             b"\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{figures/figure_01}\n"
             b"\\caption{Concurrent figure.}\n"
             b"\\par\\small Source (generated\\_diagram): concurrency fixture\n"
@@ -1114,7 +1114,7 @@ class SingleSectionProductionTests(unittest.TestCase):
 
         figure = next(task for task in self._parallel_tasks() if task["role"] == "figure")
         contribution = (
-            b"\\begin{figure}\n\\centering\n"
+            b"\\begin{figure}[H]\n\\centering\n"
             b"\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{figures/figure_01}\n"
             b"\\caption{Recovered caption.}\n"
             b"\\par\\small Source (generated\\_diagram): fixture\n"

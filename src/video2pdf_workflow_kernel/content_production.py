@@ -436,6 +436,9 @@ class ContentProduction:
                         "required": True,
                     }
                 )
+            source_cover_entry = self._source_cover_compile_entry(run_dir, state)
+            if source_cover_entry is not None:
+                expected_compile_entries.append(source_cover_entry)
             if compile_manifest.get("entries") != expected_compile_entries:
                 raise ContractError(
                     "Final Compile requires the current Diagnostic Compile Manifest closure"
@@ -496,6 +499,47 @@ class ContentProduction:
             return state["artifacts"][logical_id]
         except KeyError as exc:
             raise KernelConflict(f"required Production artifact is missing: {logical_id}") from exc
+
+    def _source_cover_compile_entry(
+        self, run_dir: Path, state: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        manifest_path = run_dir / "source/manifest.json"
+        if sha256_file(manifest_path) != state["source_binding"]["sha256"]:
+            raise ArtifactDrift("Source Manifest drifted before compile")
+        manifest = read_json(manifest_path)
+        self.kernel.contracts.validate("source-manifest", manifest)
+        cover = next(
+            (artifact for artifact in manifest["artifacts"] if artifact["role"] == "cover"),
+            None,
+        )
+        if cover is None:
+            return None
+        cover_path = run_dir / cover["path"]
+        require_contained_path(
+            cover_path,
+            run_dir / "source",
+            purpose="Source cover compile input",
+            error_type=ArtifactDrift,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if (
+            cover_path.stat().st_size != cover["size_bytes"]
+            or sha256_file(cover_path) != cover["sha256"]
+        ):
+            raise ArtifactDrift("Source cover drifted before compile")
+        return {
+            "logical_id": "source_cover",
+            "generation": state["source_binding"]["generation"],
+            "sha256": cover["sha256"],
+            "size": cover["size_bytes"],
+            "producer": "provider:source-publication",
+            "source_path": cover["path"],
+            "staging_path": "cover.jpg",
+            "role": "support",
+            "media_type": cover["media_type"],
+            "required": True,
+        }
 
     @staticmethod
     def _record_artifact(
@@ -897,12 +941,13 @@ class ContentProduction:
     def _figure_contribution(manifest: dict[str, Any]) -> bytes:
         caption = manifest["caption"]
         source = manifest["source"]
+        source_kind = source["kind"].replace("_", r"\_")
         return (
             "\\begin{figure}\n"
             "\\centering\n"
             f"\\includegraphics{{figures/{manifest['slot_id']}}}\n"
             f"\\caption{{{caption}}}\n"
-            f"\\par\\small Source ({source['kind']}): {source['value']}\n"
+            f"\\par\\small Source ({source_kind}): {source['value']}\n"
             "\\end{figure}\n"
         ).encode("utf-8")
 
@@ -1227,6 +1272,9 @@ class ContentProduction:
                     "required": True,
                 }
             )
+        source_cover_entry = self._source_cover_compile_entry(run_dir, state)
+        if source_cover_entry is not None:
+            entries.append(source_cover_entry)
         integration = self._artifact(state, "integration_manifest")
         manifest = {
             "schema_name": "compile-manifest",

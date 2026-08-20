@@ -315,7 +315,7 @@ class SingleSectionProductionTests(unittest.TestCase):
             b"\\begin{figure}\n\\centering\n"
             b"\\includegraphics{figures/figure_01}\n"
             b"\\caption{Declared and observed compile inputs.}\n"
-            b"\\par\\small Source (source_timestamp): 00:00:01\n"
+            b"\\par\\small Source (source\\_timestamp): 00:00:01\n"
             b"\\end{figure}\n"
         )
         figure_manifest = json.dumps(
@@ -394,6 +394,7 @@ class SingleSectionProductionTests(unittest.TestCase):
                 "local.sty",
                 "refs.bib",
                 "figure_01.png",
+                "cover.jpg",
                 "main.aux",
                 "arial.ttf",
             }.issubset(
@@ -416,11 +417,11 @@ class SingleSectionProductionTests(unittest.TestCase):
             (self.run_dir / "workflow/compile-manifest.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            {"bibliography", "entry_tex", "figure", "local_class", "local_style", "section_tex"},
+            {"bibliography", "entry_tex", "figure", "local_class", "local_style", "section_tex", "support"},
             {item["role"] for item in manifest["entries"]},
         )
         self.assertEqual(
-            {"application/x-bibtex", "application/x-tex", "image/png"},
+            {"application/x-bibtex", "application/x-tex", "image/jpeg", "image/png"},
             {item["media_type"] for item in manifest["entries"]},
         )
         self.assertEqual(
@@ -1056,7 +1057,7 @@ class SingleSectionProductionTests(unittest.TestCase):
             b"\\begin{figure}\n\\centering\n"
             b"\\includegraphics{figures/figure_01}\n"
             b"\\caption{Concurrent figure.}\n"
-            b"\\par\\small Source (generated_diagram): concurrency fixture\n"
+            b"\\par\\small Source (generated\\_diagram): concurrency fixture\n"
             b"\\end{figure}\n"
         )
         figure_attempt = self._attempt(
@@ -1116,7 +1117,7 @@ class SingleSectionProductionTests(unittest.TestCase):
             b"\\begin{figure}\n\\centering\n"
             b"\\includegraphics{figures/figure_01}\n"
             b"\\caption{Recovered caption.}\n"
-            b"\\par\\small Source (generated_diagram): fixture\n"
+            b"\\par\\small Source (generated\\_diagram): fixture\n"
             b"\\end{figure}\n"
         )
         manifest = json.dumps(

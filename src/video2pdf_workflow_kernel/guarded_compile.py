@@ -352,17 +352,43 @@ class GuardedCompileProvider:
             raise CompileDependencyGap("Production State binds a stale Source Manifest")
         if integration_value["source_binding"] != state["source_binding"]:
             raise CompileDependencyGap("Integration Manifest binds a stale Source Manifest")
+        source_manifest_path = self.run_dir / "source/manifest.json"
+        if (
+            not source_manifest_path.is_file()
+            or not isinstance(source, dict)
+            or _sha256_path(source_manifest_path) != source.get("sha256")
+        ):
+            raise CompileDependencyGap("authoritative Source Manifest drifted")
+        source_manifest = read_json(source_manifest_path)
+        contracts.validate("source-manifest", source_manifest)
+        source_cover = next(
+            (
+                artifact
+                for artifact in source_manifest["artifacts"]
+                if artifact["role"] == "cover"
+            ),
+            None,
+        )
         logical_ids: set[str] = set()
         for entry in manifest["entries"]:
             logical_id = entry["logical_id"]
             if logical_id in logical_ids:
                 raise ContractError("Compile Manifest repeats a logical Artifact Generation")
             logical_ids.add(logical_id)
-            authoritative = state.get("artifacts", {}).get(logical_id)
-            expected = {
-                key: authoritative.get(key) if isinstance(authoritative, dict) else None
-                for key in ("generation", "sha256", "size", "producer", "path")
-            }
+            if logical_id == "source_cover" and source_cover is not None:
+                expected = {
+                    "generation": state["source_binding"]["generation"],
+                    "sha256": source_cover["sha256"],
+                    "size": source_cover["size_bytes"],
+                    "producer": "provider:source-publication",
+                    "path": source_cover["path"],
+                }
+            else:
+                authoritative = state.get("artifacts", {}).get(logical_id)
+                expected = {
+                    key: authoritative.get(key) if isinstance(authoritative, dict) else None
+                    for key in ("generation", "sha256", "size", "producer", "path")
+                }
             actual = {
                 "generation": entry["generation"],
                 "sha256": entry["sha256"],

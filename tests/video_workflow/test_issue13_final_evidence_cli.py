@@ -305,7 +305,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             b"\\begin{figure}\n\\centering\n"
             b"\\includegraphics{figures/figure_01}\n"
             b"\\caption{Bound evidence.}\n"
-            b"\\par\\small Source (source_timestamp): 00:00:01\n\\end{figure}\n"
+            b"\\par\\small Source (source\\_timestamp): 00:00:01\n\\end{figure}\n"
         )
         figure_manifest = json.dumps(
             {

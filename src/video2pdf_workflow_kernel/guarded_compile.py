@@ -583,20 +583,29 @@ class GuardedCompileProvider:
         environment["VIDEO2PDF_FIXTURE_FONTS"] = os.pathsep.join(
             item["path"] for item in runtime_policy["system_fonts"]
         )
-        completed = subprocess.run(
-            command, cwd=staging, env=environment, text=True, encoding="utf-8",
-            errors="replace", capture_output=True, check=False, timeout=120,
-        )
-        if completed.returncode != 0:
-            raise CompileDependencyGap(
-                "guarded diagnostic compile failed",
-                data={"exit_code": completed.returncode},
-            )
         stem = PurePosixPath(entry["staging_path"]).stem
         recorder = staging / f"{stem}.fls"
         pdf = staging / f"{stem}.pdf"
-        if not recorder.is_file() or not pdf.is_file():
-            raise CompileDependencyGap("compile provider omitted recorder or PDF evidence")
+        executed_passes: list[dict[str, Any]] = []
+        for pass_number in (1, 2):
+            completed = subprocess.run(
+                command, cwd=staging, env=environment, text=True, encoding="utf-8",
+                errors="replace", capture_output=True, check=False, timeout=120,
+            )
+            if completed.returncode != 0:
+                raise CompileDependencyGap(
+                    "guarded diagnostic compile failed",
+                    data={"exit_code": completed.returncode, "pass": pass_number},
+                )
+            if not recorder.is_file() or not pdf.is_file():
+                raise CompileDependencyGap("compile provider omitted recorder or PDF evidence")
+            executed_passes.append(
+                {
+                    "pass": pass_number,
+                    "exit_code": 0,
+                    "recorder_sha256": _sha256_path(recorder),
+                }
+            )
 
         allowed_fonts = {
             str(Path(item["path"]).resolve()).casefold(): item
@@ -679,9 +688,7 @@ class GuardedCompileProvider:
                 "recorder": True,
                 "argv": command,
             },
-            "executed_passes": [
-                {"pass": 1, "exit_code": 0, "recorder_sha256": _sha256_path(recorder)}
-            ],
+            "executed_passes": executed_passes,
             "generated_outputs": generated_outputs,
             "dependency_closure": {
                 "complete": True,

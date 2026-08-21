@@ -27,6 +27,7 @@ inputs = sorted(
     for path in cwd.rglob("*")
     if (
         path.is_file()
+        and path.name not in {f"{stem}.pdf", f"{stem}.fls", "engine-environment.json"}
         and path.suffix != ".unread"
         and not (
             "VIDEO2PDF_FIXTURE_OMIT_ENTRYPOINT_INPUT" in source

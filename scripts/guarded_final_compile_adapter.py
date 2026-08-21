@@ -222,13 +222,17 @@ def compile_pdf(
         "HOMEPATH": str(identity_profile)[len(profile_drive):],
         "SYSTEMDRIVE": Path(environment["SYSTEMROOT"]).drive,
     })
-    completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
-    if completed.returncode != 0:
-        raise AdapterError("guarded compile engine failed")
+    stderr_parts: list[bytes] = []
+    for _ in range(2):
+        completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+        stderr_parts.append(completed.stderr)
+        if completed.returncode != 0:
+            raise AdapterError("guarded compile engine failed")
+    combined_stderr = b"".join(stderr_parts)
     stderr_summary = {
-        "byte_length": len(completed.stderr),
-        "sha256": hashlib.sha256(completed.stderr).hexdigest(),
+        "byte_length": len(combined_stderr),
+        "sha256": hashlib.sha256(combined_stderr).hexdigest(),
     }
     pdf, recorder = staging / f"{entry.stem}.pdf", staging / f"{entry.stem}.fls"
     if not pdf.is_file() or not recorder.is_file():

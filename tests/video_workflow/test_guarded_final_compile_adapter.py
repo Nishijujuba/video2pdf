@@ -247,9 +247,10 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         provenance_path = self.output / "compile-provenance.json"
         provenance_bytes = provenance_path.read_bytes()
         provenance = json.loads(provenance_bytes)
+        combined_warning = warning * 2
         self.assertEqual({
-            "byte_length": len(warning),
-            "sha256": hashlib.sha256(warning).hexdigest(),
+            "byte_length": len(combined_warning),
+            "sha256": hashlib.sha256(combined_warning).hexdigest(),
         }, provenance["engine_stderr"])
         self.assertNotIn(warning, provenance_bytes)
         self.assertNotIn(warning.decode("ascii"), completed.stdout + completed.stderr)
@@ -280,8 +281,11 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         entry.write_text("fixture", encoding="utf-8")
         captured_command: list[str] = []
         captured_environment: dict[str, str] = {}
+        invocation_count = 0
 
         def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            nonlocal invocation_count
+            invocation_count += 1
             captured_command.extend(command)
             captured_environment.update(kwargs["env"])
             (staging / "main.pdf").write_bytes(b"fixture-pdf")
@@ -297,6 +301,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         with mock.patch.object(adapter.subprocess, "run", side_effect=complete):
             adapter.compile_pdf(staging, entry, policy)
 
+        self.assertEqual(2, invocation_count)
         installer_index = captured_command.index("--disable-installer")
         self.assertEqual(
             ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],

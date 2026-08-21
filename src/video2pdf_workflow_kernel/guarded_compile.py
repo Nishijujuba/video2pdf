@@ -587,7 +587,7 @@ class GuardedCompileProvider:
         recorder = staging / f"{stem}.fls"
         pdf = staging / f"{stem}.pdf"
         executed_passes: list[dict[str, Any]] = []
-        for pass_number in (1, 2):
+        for pass_number in (1, 2, 3):
             completed = subprocess.run(
                 command, cwd=staging, env=environment, text=True, encoding="utf-8",
                 errors="replace", capture_output=True, check=False, timeout=120,

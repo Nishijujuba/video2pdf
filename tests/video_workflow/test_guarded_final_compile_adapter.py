@@ -247,7 +247,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         provenance_path = self.output / "compile-provenance.json"
         provenance_bytes = provenance_path.read_bytes()
         provenance = json.loads(provenance_bytes)
-        combined_warning = warning * 2
+        combined_warning = warning * 3
         self.assertEqual({
             "byte_length": len(combined_warning),
             "sha256": hashlib.sha256(combined_warning).hexdigest(),
@@ -301,7 +301,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         with mock.patch.object(adapter.subprocess, "run", side_effect=complete):
             adapter.compile_pdf(staging, entry, policy)
 
-        self.assertEqual(2, invocation_count)
+        self.assertEqual(3, invocation_count)
         installer_index = captured_command.index("--disable-installer")
         self.assertEqual(
             ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],

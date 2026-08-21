@@ -223,7 +223,7 @@ def compile_pdf(
         "SYSTEMDRIVE": Path(environment["SYSTEMROOT"]).drive,
     })
     stderr_parts: list[bytes] = []
-    for _ in range(2):
+    for _ in range(3):
         completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
         stderr_parts.append(completed.stderr)

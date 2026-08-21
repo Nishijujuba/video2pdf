@@ -407,7 +407,7 @@ class SingleSectionProductionTests(unittest.TestCase):
         )
         self.assertIn("--disable-installer", report["invocation"]["argv"])
         self.assertIn("-no-shell-escape", report["invocation"]["argv"])
-        self.assertEqual(2, len(report["executed_passes"]))
+        self.assertEqual(3, len(report["executed_passes"]))
         self.assertTrue(
             {"main.aux", "main.fls", "main.pdf"}.issubset(
                 {item["path"] for item in report["generated_outputs"]}

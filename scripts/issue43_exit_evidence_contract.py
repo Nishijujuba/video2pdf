@@ -39,7 +39,7 @@ MIRROR_SPECS += ((
     ".claude/skills/final-delivery-acceptance/scripts/delivery_guard.py",
 ),)
 POLICY_STATUS = "active_global_gate"
-QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
+QUALIFICATION_CONTRACT_SHA256 = "0e24ee82c2ff68124523546e5891c39227fe4268dbc581b74a319cdde22ef411"
 
 ACTIVATION_SCOPE = {
     "kind": "active_global_gate",
@@ -66,6 +66,10 @@ SPEC_GAP_TESTS = (
 ACTIVATION_FENCING_TESTS = (
     "tests.video_workflow.test_issue43_activation_fencing."
     "Issue43ActivationFencingTests"
+)
+POLICY_AUTHORITY_REFRESH_TESTS = (
+    "tests.video_workflow.test_global_gate_policy_authority_refresh."
+    "GlobalGatePolicyAuthorityRefreshTests"
 )
 
 RESULT_SPECS = (
@@ -103,6 +107,48 @@ RESULT_SPECS = (
     ("patch_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
     ("report_writers_fenced", "fencing", f"{ACCEPTANCE_TESTS}.test_two_writers_are_fenced_at_patch_and_report_publication", None, None),
     ("activation_writers_fenced", "fencing", f"{ACTIVATION_FENCING_TESTS}.test_distinct_valid_activation_authorities_reach_the_cas_fence", None, None),
+    (
+        "policy_authority_refresh_preserves_base_global_gate",
+        "positive",
+        f"{POLICY_AUTHORITY_REFRESH_TESTS}.test_refresh_publishes_current_policy_and_preserves_base_authority",
+        None,
+        None,
+    ),
+    (
+        "policy_authority_refresh_recovered_with_stable_base",
+        "recovery",
+        f"{POLICY_AUTHORITY_REFRESH_TESTS}.test_reconcile_finishes_interrupted_refresh_and_preserves_base",
+        None,
+        None,
+    ),
+    (
+        "modern_legacy_adoption_pass",
+        "positive",
+        f"{GLOBAL_GATE_TESTS}.test_legacy_adoption_accepts_relationally_current_final_compile_report",
+        None,
+        None,
+    ),
+    (
+        "modern_legacy_adoption_schema_rejected",
+        "negative",
+        f"{GLOBAL_GATE_TESTS}.test_legacy_adoption_rejects_invalid_final_compile_report_schema",
+        "compile_provenance",
+        "legacy_compile_provenance_invalid",
+    ),
+    (
+        "modern_legacy_guard_pass",
+        "positive",
+        f"{GUARD_TESTS}.test_public_guard_accepts_registry_valid_modern_legacy_report",
+        None,
+        None,
+    ),
+    (
+        "modern_legacy_guard_schema_rejected",
+        "negative",
+        f"{GUARD_TESTS}.test_public_guard_rejects_single_modern_schema_contradiction",
+        "delivery_guard",
+        "delivery_guard_failed",
+    ),
 )
 QUALIFICATION_TEST_TARGETS = tuple(dict.fromkeys(target for _, _, target, _, _ in RESULT_SPECS))
 
@@ -124,6 +170,42 @@ COMPLETE_MODULE_RESULT_SPECS = (
         "positive",
         "issue43-complete-delivery-guard",
         "test_delivery_guard.py",
+    ),
+    (
+        "complete_policy_authority_refresh_module",
+        "positive",
+        "issue43-complete-policy-authority-refresh",
+        "tests.video_workflow.test_global_gate_policy_authority_refresh",
+    ),
+    (
+        "complete_issue41_legacy_final_compile_module",
+        "positive",
+        "issue43-complete-issue41-legacy-final-compile",
+        "tests.video_workflow.test_issue41_legacy_final_compile",
+    ),
+    (
+        "complete_issue43_global_gate_module",
+        "positive",
+        "issue43-complete-global-gate",
+        "tests.video_workflow.test_issue43_global_gate",
+    ),
+    (
+        "complete_guarded_final_compile_adapter_module",
+        "positive",
+        "issue43-complete-guarded-final-compile-adapter",
+        "tests.video_workflow.test_guarded_final_compile_adapter",
+    ),
+    (
+        "complete_rendered_text_reconciliation_module",
+        "positive",
+        "issue43-complete-rendered-text-reconciliation",
+        "tests.video_workflow.test_rendered_text_reconciliation",
+    ),
+    (
+        "complete_issue13_final_evidence_module",
+        "positive",
+        "issue43-complete-issue13-final-evidence",
+        "tests.video_workflow.test_issue13_final_evidence_cli",
     ),
 )
 
@@ -171,7 +253,8 @@ COMMANDS = (
             ),
             0,
         )
-        for _, _, command_id, test_target in COMPLETE_MODULE_RESULT_SPECS[:2]
+        for _, _, command_id, test_target in COMPLETE_MODULE_RESULT_SPECS
+        if test_target != "test_delivery_guard.py"
     ),
     (
         "issue43-complete-delivery-guard",

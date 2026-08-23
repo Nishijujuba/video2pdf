@@ -302,6 +302,23 @@ def _parser() -> argparse.ArgumentParser:
     global_gate_reconcile = commands.add_parser("global-gate-reconcile")
     global_gate_reconcile.add_argument("--control-store-root", required=True, type=Path)
 
+    global_gate_policy_refresh = commands.add_parser(
+        "global-gate-policy-authority-refresh"
+    )
+    global_gate_policy_refresh.add_argument(
+        "--control-store-root", required=True, type=Path
+    )
+    global_gate_policy_refresh.add_argument(
+        "--exit-evidence", required=True, type=Path
+    )
+    global_gate_policy_refresh.add_argument(
+        "--expected-generation", required=True, type=int
+    )
+    global_gate_policy_refresh.add_argument("--refreshed-at", required=True)
+    global_gate_policy_refresh.add_argument(
+        "--fault-point", choices=sorted(ACTIVATION_FAULT_POINTS)
+    )
+
     batch_activate = commands.add_parser("batch-activate")
     batch_activate.add_argument("--control-store-root", required=True, type=Path)
     batch_activate.add_argument("--exit-evidence", required=True, type=Path)
@@ -938,6 +955,20 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     if command == "global-gate-reconcile":
         result = GlobalGatePublisher().reconcile(control_store_root=args.control_store_root)
         return _ok(command, "global_gate_reconciled", result, result["authority_path"])
+    if command == "global-gate-policy-authority-refresh":
+        result = GlobalGatePublisher().refresh_policy_authority(
+            control_store_root=args.control_store_root,
+            exit_evidence=args.exit_evidence,
+            expected_generation=args.expected_generation,
+            refreshed_at=args.refreshed_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            "global_gate_policy_authority_refreshed",
+            result,
+            result["authority_path"],
+        )
     if command == "batch-activate":
         result = BatchCutoverPublisher().activate(
             control_store_root=args.control_store_root,

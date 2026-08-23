@@ -25,6 +25,32 @@ from video2pdf_workflow_kernel.global_gate_exit_evidence import (
 )
 
 class Issue43SpecGapContractTests(unittest.TestCase):
+    def test_refresh_qualification_closes_issue41_and_affected_modules(self) -> None:
+        complete_targets = {
+            test_target
+            for _, _, _, test_target in contract.COMPLETE_MODULE_RESULT_SPECS
+        }
+        self.assertTrue({
+            "tests.video_workflow.test_global_gate_policy_authority_refresh",
+            "tests.video_workflow.test_issue41_legacy_final_compile",
+            "tests.video_workflow.test_issue43_global_gate",
+            "tests.video_workflow.test_issue43_active_guard",
+            "tests.video_workflow.test_guarded_final_compile_adapter",
+            "tests.video_workflow.test_rendered_text_reconciliation",
+            "tests.video_workflow.test_issue13_final_evidence_cli",
+            "test_delivery_guard.py",
+        } <= complete_targets)
+
+    def test_manifest_finalizer_fingerprints_complete_implementation_diff(self) -> None:
+        source = (
+            PROJECT_ROOT / "scripts/collect_issue43_exit_evidence.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "fingerprint_implementation_changes(\n            PROJECT_ROOT,\n            SLICE_BASE_COMMIT,\n            implementation_commit,",
+            source,
+        )
+        self.assertIn("excluded_prefixes=(EVIDENCE_PREFIX,)", source)
+
     def test_exit_evidence_binds_delivery_guard_runtime_script_mirrors(self) -> None:
         required = {
             (

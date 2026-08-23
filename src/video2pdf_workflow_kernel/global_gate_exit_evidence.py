@@ -22,7 +22,7 @@ from .evidence import (
 SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
 SLICE_BASE_COMMIT = "64f3fb1638f601b533cb0ee4dec908203c1bef71"
 EVIDENCE_PREFIX = "evidence/global-gate/"
-QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
+QUALIFICATION_CONTRACT_SHA256 = "0e24ee82c2ff68124523546e5891c39227fe4268dbc581b74a319cdde22ef411"
 ATOMIC_MEMBERS = (
     "catalogs", "projections", "criteria_migration", "schemas", "providers",
     "validators", "hooks", "skills", "project_instructions", "mirrors", "tests",

@@ -175,6 +175,18 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             "complete_acceptance_v2_module",
             "complete_issue43_active_guard_module",
             "complete_delivery_guard_module",
+            "policy_authority_refresh_preserves_base_global_gate",
+            "policy_authority_refresh_recovered_with_stable_base",
+            "modern_legacy_adoption_pass",
+            "modern_legacy_adoption_schema_rejected",
+            "modern_legacy_guard_pass",
+            "modern_legacy_guard_schema_rejected",
+            "complete_policy_authority_refresh_module",
+            "complete_issue41_legacy_final_compile_module",
+            "complete_issue43_global_gate_module",
+            "complete_guarded_final_compile_adapter_module",
+            "complete_rendered_text_reconciliation_module",
+            "complete_issue13_final_evidence_module",
         }
         actual_results = {
             result_id for values in contract.RESULTS.values() for result_id in values
@@ -189,7 +201,7 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             | {item[3] for item in contract.COMPLETE_MODULE_RESULT_SPECS},
             {binding["test_target"] for binding in contract.RESULT_BINDINGS},
         )
-        self.assertEqual(37, len(contract.RESULT_BINDINGS))
+        self.assertEqual(49, len(contract.RESULT_BINDINGS))
         self.assertGreaterEqual(
             len(contract.QUALIFICATION_TEST_TARGETS),
             12,
@@ -208,6 +220,46 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
                 ) + "\n"
             ).encode("utf-8")).hexdigest(),
         )
+
+    def test_refresh_contract_covers_modern_legacy_and_stable_base_authority(self) -> None:
+        bindings = {item["result_id"]: item for item in contract.RESULT_BINDINGS}
+        self.assertEqual(
+            "tests.video_workflow.test_global_gate_policy_authority_refresh",
+            bindings["complete_policy_authority_refresh_module"]["test_target"],
+        )
+        self.assertEqual(
+            "tests.video_workflow.test_issue41_legacy_final_compile",
+            bindings["complete_issue41_legacy_final_compile_module"]["test_target"],
+        )
+        for result_id in (
+            "modern_legacy_adoption_pass",
+            "modern_legacy_adoption_schema_rejected",
+            "modern_legacy_guard_pass",
+            "modern_legacy_guard_schema_rejected",
+        ):
+            self.assertIn(bindings[result_id]["test_target"], contract.QUALIFICATION_TEST_TARGETS)
+        self.assertEqual(
+            ("compile_provenance", "legacy_compile_provenance_invalid"),
+            (
+                bindings["modern_legacy_adoption_schema_rejected"]["expected_first_failing_gate"],
+                bindings["modern_legacy_adoption_schema_rejected"]["expected_error_code"],
+            ),
+        )
+        self.assertEqual(
+            ("delivery_guard", "delivery_guard_failed"),
+            (
+                bindings["modern_legacy_guard_schema_rejected"]["expected_first_failing_gate"],
+                bindings["modern_legacy_guard_schema_rejected"]["expected_error_code"],
+            ),
+        )
+        self.assertEqual("active_global_gate", contract.ACTIVATION_SCOPE["kind"])
+        self.assertEqual("unchanged", contract.ACTIVATION_SCOPE["platform_kernel_authority"])
+
+    def test_each_complete_module_has_one_dedicated_command(self) -> None:
+        commands = {command_id: command for command_id, command, _ in contract.COMMANDS}
+        for _, _, command_id, test_target in contract.COMPLETE_MODULE_RESULT_SPECS:
+            self.assertIn(command_id, commands)
+            self.assertIn(test_target, commands[command_id])
 
     def _synthetic_terminal_collection(
         self, root: Path, *, run_id_prefix: str = "00000000-0000-4000-8000"

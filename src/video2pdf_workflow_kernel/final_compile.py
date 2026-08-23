@@ -371,10 +371,10 @@ class GuardedFinalCompileProvider:
             )
             from .global_gate import GlobalGatePublisher
 
-            gate = GlobalGatePublisher(project_root=self.project_root).require_current(
-                control_store_root=self.project_root / "workspace"
-            )
-            return root, gate
+            policy = GlobalGatePublisher(
+                project_root=self.project_root
+            ).check_policy(control_store_root=self.project_root / "workspace")
+            return root, policy["global_gate_authority"]
 
         if input_track != "kernel":
             raise ContractError(
@@ -943,9 +943,19 @@ class GuardedFinalCompileProvider:
         if legacy_gate is not None:
             from .global_gate import GlobalGatePublisher
 
-            current_gate = GlobalGatePublisher(
+            legacy_root = video_root.resolve() if video_root is not None else None
+            if legacy_root is None or (legacy_root / "workflow/run.json").exists():
+                raise ContractError(
+                    "Legacy Final Compile forbids a synthetic Workflow Run",
+                    data={
+                        "first_failing_gate": "legacy_run_record_absence",
+                        "error_code": "legacy_synthetic_run_record_forbidden",
+                    },
+                )
+            current_policy = GlobalGatePublisher(
                 project_root=self.project_root
-            ).require_current(control_store_root=self.project_root / "workspace")
+            ).check_policy(control_store_root=self.project_root / "workspace")
+            current_gate = current_policy["global_gate_authority"]
             if current_gate != legacy_gate:
                 raise ContractError(
                     "Global Gate changed during Legacy Final Compile",

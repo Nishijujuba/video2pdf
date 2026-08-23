@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from unittest import mock
 import uuid
@@ -283,12 +285,20 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         captured_environment: dict[str, str] = {}
         invocation_count = 0
 
+        document = fitz.open()
+        document.new_page()
+        fixture_pdf = document.tobytes()
+        document.close()
+
         def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
             nonlocal invocation_count
             invocation_count += 1
             captured_command.extend(command)
             captured_environment.update(kwargs["env"])
-            (staging / "main.pdf").write_bytes(b"fixture-pdf")
+            (staging / "main.pdf").write_bytes(fixture_pdf)
+            (staging / "main.log").write_text(
+                "Output written on main.pdf (1 page).\n", encoding="utf-8"
+            )
             (staging / "main.fls").write_text(f"INPUT {entry}\n", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, b"", b"")
 
@@ -316,6 +326,96 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         self.assertEqual(str(configured / "user-data"), captured_environment["USERPROFILE"])
         self.assertEqual(str(configured / "user-data"), captured_environment["HOME"])
         self.assertEqual(str(staging / "engine-profile"), captured_environment["MIKTEX_USERLOGDIRECTORY"])
+
+    def test_compile_waits_when_engine_returns_before_outputs_stabilize(self) -> None:
+        spec = importlib.util.spec_from_file_location("guarded_final_compile_adapter_delayed", ADAPTER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        staging = self.root / "delayed-output-staging"
+        staging.mkdir()
+        entry = staging / "main.tex"
+        entry.write_text("fixture", encoding="utf-8")
+        document = fitz.open()
+        document.new_page()
+        fixture_pdf = document.tobytes()
+        document.close()
+        writers: list[threading.Thread] = []
+
+        def return_before_output_is_complete(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[bytes]:
+            (staging / "main.pdf").write_bytes(b"%PDF-partial")
+            (staging / "main.log").write_text("compile still running\n", encoding="utf-8")
+            (staging / "main.fls").write_text("INPUT partial\n", encoding="utf-8")
+
+            def finish_output() -> None:
+                time.sleep(0.02)
+                (staging / "main.pdf").write_bytes(fixture_pdf)
+                (staging / "main.fls").write_text(f"INPUT {entry}\n", encoding="utf-8")
+                (staging / "main.log").write_text(
+                    "Output written on main.pdf (1 page).\n", encoding="utf-8"
+                )
+
+            writer = threading.Thread(target=finish_output)
+            writer.start()
+            writers.append(writer)
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        policy = {
+            "policy_id": "fixture-runtime",
+            "engine": {"executable": str(Path(sys.executable)), "prefix_args": []},
+            "allowed_runtime_roots": [str(Path(sys.executable).resolve().parent)],
+            "system_fonts": [],
+        }
+        with (
+            mock.patch.object(adapter.subprocess, "run", side_effect=return_before_output_is_complete),
+            mock.patch.object(adapter, "COMPILE_OUTPUT_TIMEOUT_SECONDS", 1.0),
+            mock.patch.object(adapter, "COMPILE_OUTPUT_POLL_SECONDS", 0.005),
+        ):
+            pdf, recorder, _, _ = adapter.compile_pdf(staging, entry, policy)
+
+        for writer in writers:
+            writer.join()
+        self.assertEqual(fixture_pdf, pdf.read_bytes())
+        self.assertIn(f"INPUT {entry}", recorder.read_text(encoding="utf-8"))
+
+    def test_compile_fails_when_returned_outputs_never_stabilize(self) -> None:
+        spec = importlib.util.spec_from_file_location("guarded_final_compile_adapter_unstable", ADAPTER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        staging = self.root / "unstable-output-staging"
+        staging.mkdir()
+        entry = staging / "main.tex"
+        entry.write_text("fixture", encoding="utf-8")
+
+        def return_with_incomplete_output(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[bytes]:
+            (staging / "main.pdf").write_bytes(b"%PDF-partial")
+            (staging / "main.log").write_text("compile still running\n", encoding="utf-8")
+            (staging / "main.fls").write_text("INPUT partial\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+        policy = {
+            "policy_id": "fixture-runtime",
+            "engine": {"executable": str(Path(sys.executable)), "prefix_args": []},
+            "allowed_runtime_roots": [str(Path(sys.executable).resolve().parent)],
+            "system_fonts": [],
+        }
+        with (
+            mock.patch.object(adapter.subprocess, "run", side_effect=return_with_incomplete_output),
+            mock.patch.object(adapter, "COMPILE_OUTPUT_TIMEOUT_SECONDS", 0.05),
+            mock.patch.object(adapter, "COMPILE_OUTPUT_POLL_SECONDS", 0.005),
+        ):
+            with self.assertRaisesRegex(
+                adapter.AdapterError,
+                "guarded compile output did not stabilize before timeout: LaTeX log has no normal completion marker",
+            ):
+                adapter.compile_pdf(staging, entry, policy)
 
     def test_public_adapter_rejects_manifest_drift_and_incomplete_pages(self) -> None:
         request = json.loads(self.request.read_text(encoding="utf-8"))

@@ -10,7 +10,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .delivery_quality import DeliveryQualityRegistry
-from .evidence import EvidenceSupportError, git_output
+from .evidence import EvidenceSupportError, git_output, sha256_git_blob
 from .errors import AcceptanceV2Rejected, ContractError, ControlStoreUnavailable, GlobalGateFault
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
@@ -28,7 +28,7 @@ ATOMIC_MEMBERS = frozenset({
 })
 EXIT_EVIDENCE_SCHEMA = Path(__file__).resolve().parents[2] / "schemas/exit-evidence-manifest.v2.schema.json"
 GLOBAL_GATE_SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
-QUALIFICATION_CONTRACT_SHA256 = "96800f8c08dc5d1a48bbe7a5d64da6e78630677695eb0e692faa527cb319b701"
+QUALIFICATION_CONTRACT_SHA256 = "0e24ee82c2ff68124523546e5891c39227fe4268dbc581b74a319cdde22ef411"
 ACTIVATION_FAULT_POINTS = frozenset({"after_intent", "after_authority_write", "after_control_commit"})
 REQUIRED_ACCEPTANCE_QUALITY_INPUTS = frozenset({
     "precompile_quality_report", "precompile_text_seal", "rendered_text_reconciliation",
@@ -262,6 +262,7 @@ class LegacyAcceptanceProvider:
         if modern_compile:
             pdf = compile_value["pdf"]
             report_pdf = (local["compile_report"].parent / pdf["path"]).resolve()
+            report_root = local["compile_report"].parent.resolve()
             compile_manifest = quality_values["final_compile_manifest"]
             final_seal = quality_values["final_artifact_seal"]
             render_evidence = quality_values["render_evidence_manifest"]
@@ -279,6 +280,61 @@ class LegacyAcceptanceProvider:
                 (entry["logical_id"], entry["generation"], entry["sha256"])
                 for entry in compile_value["dependency_closure"]["inputs"]
             }
+            dependency_closure = compile_value["dependency_closure"]
+            registered_adapter = (
+                self.project_root / "scripts/guarded_final_compile_adapter.py"
+            ).resolve()
+            adapter_identity = compile_value["compile_adapter"]
+            try:
+                head = git_output(self.project_root, "rev-parse", "HEAD")
+                adapter_head_sha256 = sha256_git_blob(
+                    self.project_root,
+                    head,
+                    "scripts/guarded_final_compile_adapter.py",
+                )
+            except EvidenceSupportError:
+                adapter_head_sha256 = None
+            adapter_is_current = (
+                Path(adapter_identity["adapter_path"]).resolve() == registered_adapter
+                and registered_adapter.is_file()
+                and adapter_head_sha256 is not None
+                and sha256_file(registered_adapter) == adapter_head_sha256
+                and adapter_identity["adapter_sha256"] == adapter_head_sha256
+                and adapter_identity["protocol_version"]
+                == "guarded-final-compile-v1"
+            )
+            recorder_path_value = dependency_closure["recorder_path"]
+            recorder_is_current = False
+            if "\\" not in recorder_path_value and not Path(recorder_path_value).is_absolute():
+                recorder_path = (report_root / recorder_path_value).resolve()
+                recorder_is_current = (
+                    recorder_path.is_relative_to(report_root)
+                    and recorder_path.is_file()
+                    and sha256_file(recorder_path)
+                    == dependency_closure["recorder_sha256"]
+                )
+            approved_runtime_inputs = compile_manifest["approved_runtime_inputs"]
+            reported_runtime_inputs = dependency_closure["runtime_inputs"]
+            runtime_inputs_are_current = (
+                reported_runtime_inputs == approved_runtime_inputs
+                and all(
+                    Path(item["path"]).is_absolute()
+                    and Path(item["path"]).resolve().is_file()
+                    and sha256_file(Path(item["path"]).resolve()) == item["sha256"]
+                    for item in reported_runtime_inputs
+                )
+            )
+            generated_inputs_are_current = True
+            for item in dependency_closure["generated_inputs"]:
+                generated_path = Path(item["path"]).resolve()
+                if (
+                    not Path(item["path"]).is_absolute()
+                    or not generated_path.is_relative_to(report_root)
+                    or not generated_path.is_file()
+                    or sha256_file(generated_path) != item["sha256"]
+                ):
+                    generated_inputs_are_current = False
+                    break
             report_fingerprint_is_stale = (
                 compile_value["report_sha256"] != _fingerprint(compile_value, "report_sha256")
             )
@@ -325,6 +381,10 @@ class LegacyAcceptanceProvider:
             )
             relational_checks = {
                 "report_fingerprint": not report_fingerprint_is_stale,
+                "compile_adapter": adapter_is_current,
+                "compile_recorder": recorder_is_current,
+                "runtime_inputs": runtime_inputs_are_current,
+                "generated_inputs": generated_inputs_are_current,
                 "pdf": pdf_is_current,
                 "main_tex": main_tex_is_current,
                 "compile_manifest": compile_manifest_is_current,
@@ -399,6 +459,20 @@ class GlobalGatePublisher:
             connection.execute(f"PRAGMA user_version={GLOBAL_GATE_SCHEMA_VERSION}")
             connection.execute("CREATE TABLE IF NOT EXISTS gate_authority (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS gate_intents (intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL, authority_sha256 TEXT, authority_json TEXT, evidence_path TEXT, project_root TEXT, publication_commit TEXT)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS gate_policy_authority ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
+                "generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, "
+                "authority_sha256 TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS gate_policy_refresh_intents ("
+                "intent_id TEXT PRIMARY KEY, expected_generation INTEGER NOT NULL, "
+                "evidence_sha256 TEXT NOT NULL, state TEXT NOT NULL "
+                "CHECK(state IN ('PREPARED','COMMITTED')), authority_json TEXT NOT NULL, "
+                "evidence_path TEXT NOT NULL, project_root TEXT NOT NULL, "
+                "publication_commit TEXT NOT NULL)"
+            )
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(gate_intents)")}
             migrations = {
                 "authority_json": "TEXT",
@@ -567,6 +641,39 @@ class GlobalGatePublisher:
         root = control_store_root.resolve()
         authority_path = root / "active_global_gate.json"
         with self._connect(root) as control:
+            policy_pending = control.execute(
+                "SELECT intent_id FROM gate_policy_refresh_intents "
+                "WHERE state='PREPARED'"
+            ).fetchall()
+            committed_policy = control.execute(
+                "SELECT * FROM gate_policy_authority WHERE singleton=1"
+            ).fetchone()
+        if len(policy_pending) > 1:
+            _reject(
+                "Multiple Global Gate policy refreshes require operator disposition",
+                "policy_authority_reconcile",
+                "global_gate_policy_refresh_ambiguous",
+            )
+        if policy_pending:
+            return self._reconcile_policy_authority_refresh(
+                control_store_root=root,
+                intent_id=policy_pending[0]["intent_id"],
+            )
+        if committed_policy is not None:
+            current = self.require_current(control_store_root=root)
+            _, _ = self._validate_policy_authority(
+                root=root,
+                current=current,
+                row=committed_policy,
+            )
+            return {
+                "authority_path": str(root / "active_global_gate_policy.json"),
+                "authority_sha256": committed_policy["authority_sha256"],
+                "generation": committed_policy["generation"],
+                "base_global_gate": current,
+                "reconciled": True,
+            }
+        with self._connect(root) as control:
             control.execute("BEGIN IMMEDIATE")
             current = control.execute("SELECT * FROM gate_authority WHERE singleton=1").fetchone()
             pending = control.execute("SELECT * FROM gate_intents WHERE state='PREPARED'").fetchall()
@@ -609,18 +716,458 @@ class GlobalGatePublisher:
         current_value = self.require_current(control_store_root=root)
         return {"authority_path": current_value["path"], "authority_sha256": current_value["file_sha256"], "generation": current_value["generation"], "reconciled": True}
 
+    @staticmethod
+    def _policy_binding(current: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "path": current["path"],
+            "file_sha256": current["file_sha256"],
+            "authority_sha256": current["authority_sha256"],
+            "generation": current["generation"],
+        }
+
+    def _policy_authority_matches_committed_state(
+        self,
+        *,
+        authority: dict[str, Any],
+        current: dict[str, Any],
+        row: sqlite3.Row,
+    ) -> bool:
+        return (
+            authority.get("schema_name") == "global-gate-policy-authority"
+            and authority.get("schema_version") == "1.0.0"
+            and authority.get("generation") == row["generation"]
+            and authority.get("exit_evidence_sha256") == row["evidence_sha256"]
+            and authority.get("base_global_gate") == self._policy_binding(current)
+            and authority.get("authority_sha256")
+            == _fingerprint(authority, "authority_sha256")
+        )
+
+    def _validate_policy_authority(
+        self,
+        *,
+        root: Path,
+        current: dict[str, Any],
+        row: sqlite3.Row,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        authority_path = root / "active_global_gate_policy.json"
+        if not authority_path.is_file() or sha256_file(authority_path) != row["authority_sha256"]:
+            _reject(
+                "Global Gate policy authority bytes are absent or stale",
+                "policy_authority",
+                "global_gate_policy_authority_stale",
+            )
+        authority = read_json(authority_path)
+        if not self._policy_authority_matches_committed_state(
+            authority=authority,
+            current=current,
+            row=row,
+        ):
+            _reject(
+                "Global Gate policy authority conflicts with committed control state",
+                "policy_authority",
+                "global_gate_policy_authority_conflict",
+            )
+        evidence_path = Path(str(authority.get("exit_evidence_path", ""))).resolve()
+        validated, publication_commit = self._validate_publication_identity(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+            expected_sha256=row["evidence_sha256"],
+            expected_publication_commit=authority.get("publication_commit"),
+        )
+        if publication_commit != authority.get("publication_commit"):
+            _reject(
+                "Global Gate policy evidence publication is stale",
+                "policy_authority",
+                "global_gate_policy_exit_evidence_stale",
+            )
+        return authority, validated.value
+
+    def refresh_policy_authority(
+        self,
+        *,
+        control_store_root: Path,
+        exit_evidence: Path,
+        expected_generation: int,
+        refreshed_at: str,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance policy evidence while preserving the stable delivery authority."""
+
+        root = control_store_root.resolve()
+        current = self.require_current(control_store_root=root)
+        stable_authority_path = Path(current["path"])
+        stable_bytes = stable_authority_path.read_bytes()
+        evidence_path = exit_evidence.resolve()
+        validated, publication_commit = self._validate_publication_identity(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+        )
+        evidence_sha256 = validated.sha256
+        policy_path = root / "active_global_gate_policy.json"
+
+        with self._connect(root) as control:
+            try:
+                control.execute("BEGIN IMMEDIATE")
+                row = control.execute(
+                    "SELECT * FROM gate_policy_authority WHERE singleton=1"
+                ).fetchone()
+                pending = control.execute(
+                    "SELECT COUNT(*) FROM gate_policy_refresh_intents WHERE state='PREPARED'"
+                ).fetchone()[0]
+                committed = control.execute(
+                    "SELECT authority_json FROM gate_policy_refresh_intents "
+                    "WHERE expected_generation=? AND evidence_sha256=? AND state='COMMITTED'",
+                    (expected_generation, evidence_sha256),
+                ).fetchone()
+                if pending:
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Interrupted Global Gate policy refresh requires reconciliation",
+                        "policy_authority_reconcile",
+                        "global_gate_policy_reconcile_required",
+                    )
+                actual_generation = 0 if row is None else int(row["generation"])
+                if (
+                    committed is not None
+                    and row is not None
+                    and actual_generation == expected_generation + 1
+                    and row["evidence_sha256"] == evidence_sha256
+                    and policy_path.is_file()
+                    and sha256_file(policy_path) == row["authority_sha256"]
+                    and read_json(policy_path) == json.loads(committed["authority_json"])
+                ):
+                    control.execute("COMMIT")
+                    return {
+                        "authority_path": str(policy_path),
+                        "authority_sha256": row["authority_sha256"],
+                        "generation": actual_generation,
+                        "base_global_gate": current,
+                        "idempotent": True,
+                    }
+                if actual_generation != expected_generation:
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Global Gate policy refresh expected generation is stale",
+                        "policy_authority",
+                        "global_gate_policy_refresh_fenced",
+                        expected_generation=expected_generation,
+                        actual_generation=actual_generation,
+                    )
+                if row is not None and row["evidence_sha256"] == evidence_sha256:
+                    control.execute("COMMIT")
+                    return {
+                        "authority_path": str(policy_path),
+                        "authority_sha256": row["authority_sha256"],
+                        "generation": actual_generation,
+                        "base_global_gate": current,
+                        "idempotent": True,
+                    }
+                generation = actual_generation + 1
+                authority = {
+                    "schema_name": "global-gate-policy-authority",
+                    "schema_version": "1.0.0",
+                    "generation": generation,
+                    "base_global_gate": self._policy_binding(current),
+                    "exit_evidence_path": str(evidence_path),
+                    "exit_evidence_sha256": evidence_sha256,
+                    "publication_commit": publication_commit,
+                    "implementation_commit": validated.value["implementation_commit"],
+                    "refreshed_at": refreshed_at,
+                }
+                authority["authority_sha256"] = _fingerprint(authority, "authority_sha256")
+                intent_id = hashlib.sha256(
+                    f"{generation}\0{evidence_sha256}\0global_gate_policy".encode("utf-8")
+                ).hexdigest()
+                control.execute(
+                    "INSERT INTO gate_policy_refresh_intents("
+                    "intent_id,expected_generation,evidence_sha256,state,authority_json,"
+                    "evidence_path,project_root,publication_commit) "
+                    "VALUES(?,?,?,'PREPARED',?,?,?,?)",
+                    (
+                        intent_id,
+                        actual_generation,
+                        evidence_sha256,
+                        json.dumps(authority, sort_keys=True, separators=(",", ":")),
+                        str(evidence_path),
+                        str(self.project_root),
+                        publication_commit,
+                    ),
+                )
+                control.execute("COMMIT")
+            except sqlite3.OperationalError as exc:
+                try:
+                    control.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise ControlStoreUnavailable(
+                    "Global Gate control store is unavailable or locked",
+                    data={
+                        "first_failing_gate": "control_store",
+                        "error_code": "global_gate_control_store_locked",
+                    },
+                ) from exc
+
+        if fault_point == "after_intent":
+            raise GlobalGateFault(fault_point)
+        self._validate_publication_identity(
+            evidence_path=evidence_path,
+            project_root=self.project_root,
+            expected_sha256=evidence_sha256,
+            expected_publication_commit=publication_commit,
+        )
+        if stable_authority_path.read_bytes() != stable_bytes:
+            _reject(
+                "Stable Global Gate authority changed during policy refresh",
+                "policy_authority",
+                "global_gate_base_authority_drift",
+            )
+        write_json_atomic(policy_path, authority)
+        if fault_point == "after_authority_write":
+            raise GlobalGateFault(fault_point)
+        result = self._commit_policy_authority_refresh(
+            root=root,
+            intent_id=intent_id,
+            stable_bytes=stable_bytes,
+        )
+        if fault_point == "after_control_commit":
+            raise GlobalGateFault(fault_point)
+        result["idempotent"] = False
+        return result
+
+    def _commit_policy_authority_refresh(
+        self, *, root: Path, intent_id: str, stable_bytes: bytes
+    ) -> dict[str, Any]:
+        policy_path = root / "active_global_gate_policy.json"
+        with self._connect(root) as control:
+            try:
+                control.execute("BEGIN IMMEDIATE")
+                intent = control.execute(
+                    "SELECT * FROM gate_policy_refresh_intents "
+                    "WHERE intent_id=? AND state='PREPARED'",
+                    (intent_id,),
+                ).fetchone()
+                row = control.execute(
+                    "SELECT * FROM gate_policy_authority WHERE singleton=1"
+                ).fetchone()
+                if intent is None or (0 if row is None else int(row["generation"])) != int(intent["expected_generation"]):
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Global Gate policy refresh lost its generation fence",
+                        "policy_authority",
+                        "global_gate_policy_refresh_fenced",
+                    )
+                stable_authority_path = root / "active_global_gate.json"
+                stable_row = control.execute(
+                    "SELECT * FROM gate_authority WHERE singleton=1"
+                ).fetchone()
+                pending_activation = control.execute(
+                    "SELECT COUNT(*) FROM gate_intents WHERE state!='COMMITTED'"
+                ).fetchone()[0]
+                if (
+                    stable_row is None
+                    or pending_activation
+                    or not stable_authority_path.is_file()
+                    or sha256_file(stable_authority_path) != stable_row["authority_sha256"]
+                    or stable_authority_path.read_bytes() != stable_bytes
+                ):
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Stable Global Gate authority changed during policy refresh",
+                        "policy_authority",
+                        "global_gate_base_authority_drift",
+                    )
+                stable_authority = read_json(stable_authority_path)
+                if (
+                    stable_authority.get("active_global_gate") != "acceptance_report_v2"
+                    or stable_authority.get("platform_kernel_authority") != "unchanged"
+                    or stable_authority.get("generation") != stable_row["generation"]
+                    or stable_authority.get("exit_evidence_sha256") != stable_row["evidence_sha256"]
+                    or stable_authority.get("authority_sha256")
+                    != _fingerprint(stable_authority, "authority_sha256")
+                ):
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Stable Global Gate authority conflicts with committed control state",
+                        "policy_authority",
+                        "global_gate_base_authority_drift",
+                    )
+                current = {
+                    "control_store_root": str(root),
+                    "path": str(stable_authority_path),
+                    "file_sha256": stable_row["authority_sha256"],
+                    "authority_sha256": stable_authority["authority_sha256"],
+                    "exit_evidence_sha256": stable_row["evidence_sha256"],
+                    "generation": stable_row["generation"],
+                }
+                self._validate_publication_identity(
+                    evidence_path=Path(intent["evidence_path"]),
+                    project_root=Path(intent["project_root"]),
+                    expected_sha256=intent["evidence_sha256"],
+                    expected_publication_commit=intent["publication_commit"],
+                )
+                authority = json.loads(intent["authority_json"])
+                if not policy_path.is_file() or read_json(policy_path) != authority:
+                    control.execute("ROLLBACK")
+                    _reject(
+                        "Global Gate policy authority bytes conflict with prepared intent",
+                        "policy_authority_reconcile",
+                        "global_gate_policy_authority_stale",
+                    )
+                file_sha256 = sha256_file(policy_path)
+                generation = int(intent["expected_generation"]) + 1
+                if row is None:
+                    control.execute(
+                        "INSERT INTO gate_policy_authority(singleton,generation,evidence_sha256,authority_sha256) VALUES(1,?,?,?)",
+                        (generation, intent["evidence_sha256"], file_sha256),
+                    )
+                else:
+                    changed = control.execute(
+                        "UPDATE gate_policy_authority SET generation=?,evidence_sha256=?,authority_sha256=? "
+                        "WHERE singleton=1 AND generation=? AND authority_sha256=?",
+                        (
+                            generation,
+                            intent["evidence_sha256"],
+                            file_sha256,
+                            intent["expected_generation"],
+                            row["authority_sha256"],
+                        ),
+                    ).rowcount
+                    if changed != 1:
+                        control.execute("ROLLBACK")
+                        _reject(
+                            "Global Gate policy refresh lost its generation fence",
+                            "policy_authority",
+                            "global_gate_policy_refresh_fenced",
+                        )
+                control.execute(
+                    "UPDATE gate_policy_refresh_intents SET state='COMMITTED' "
+                    "WHERE intent_id=? AND state='PREPARED'",
+                    (intent_id,),
+                )
+                control.execute("COMMIT")
+            except sqlite3.OperationalError as exc:
+                try:
+                    control.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise ControlStoreUnavailable(
+                    "Global Gate control store is unavailable or locked",
+                    data={
+                        "first_failing_gate": "control_store",
+                        "error_code": "global_gate_control_store_locked",
+                    },
+                ) from exc
+        return {
+            "authority_path": str(policy_path),
+            "authority_sha256": file_sha256,
+            "generation": generation,
+            "base_global_gate": current,
+            "reconciled": True,
+        }
+
+    def _reconcile_policy_authority_refresh(
+        self, *, control_store_root: Path, intent_id: str
+    ) -> dict[str, Any]:
+        root = control_store_root.resolve()
+        current = self.require_current(control_store_root=root)
+        stable_bytes = Path(current["path"]).read_bytes()
+        with self._connect(root) as control:
+            intent = control.execute(
+                "SELECT * FROM gate_policy_refresh_intents "
+                "WHERE intent_id=? AND state='PREPARED'",
+                (intent_id,),
+            ).fetchone()
+            committed = control.execute(
+                "SELECT * FROM gate_policy_authority WHERE singleton=1"
+            ).fetchone()
+        if intent is None:
+            _reject(
+                "Global Gate policy refresh intent is unavailable",
+                "policy_authority_reconcile",
+                "global_gate_policy_refresh_ambiguous",
+            )
+        self._validate_publication_identity(
+            evidence_path=Path(intent["evidence_path"]),
+            project_root=Path(intent["project_root"]),
+            expected_sha256=intent["evidence_sha256"],
+            expected_publication_commit=intent["publication_commit"],
+        )
+        policy_path = root / "active_global_gate_policy.json"
+        authority = json.loads(intent["authority_json"])
+        if not policy_path.is_file():
+            write_json_atomic(policy_path, authority)
+        else:
+            existing_authority = read_json(policy_path)
+            if existing_authority != authority:
+                previous_is_exact_committed_authority = (
+                    committed is not None
+                    and int(committed["generation"])
+                    == int(intent["expected_generation"])
+                    and sha256_file(policy_path) == committed["authority_sha256"]
+                    and self._policy_authority_matches_committed_state(
+                        authority=existing_authority,
+                        current=current,
+                        row=committed,
+                    )
+                )
+                if not previous_is_exact_committed_authority:
+                    _reject(
+                        "Interrupted Global Gate policy authority bytes conflict",
+                        "policy_authority_reconcile",
+                        "global_gate_policy_authority_stale",
+                    )
+                write_json_atomic(policy_path, authority)
+        result = self._commit_policy_authority_refresh(
+            root=root,
+            intent_id=intent_id,
+            stable_bytes=stable_bytes,
+        )
+        result["reconciled"] = True
+        return result
+
     def check_policy(self, *, control_store_root: Path) -> dict[str, Any]:
-        current = self.require_current(control_store_root=control_store_root)
-        authority = read_json(Path(current["path"]))
-        evidence_path = Path(authority["exit_evidence_path"])
-        if not evidence_path.is_file() or sha256_file(evidence_path) != current["exit_evidence_sha256"]:
-            _reject("Current Global Gate Exit Evidence is stale", "global_gate_authority", "global_gate_exit_evidence_stale")
-        evidence = _validate_policy_evidence(read_json(evidence_path))
+        root = control_store_root.resolve()
+        current = self.require_current(control_store_root=root)
+        with self._connect(root) as control:
+            policy = control.execute(
+                "SELECT * FROM gate_policy_authority WHERE singleton=1"
+            ).fetchone()
+            pending = control.execute(
+                "SELECT COUNT(*) FROM gate_policy_refresh_intents WHERE state='PREPARED'"
+            ).fetchone()[0]
+        if pending:
+            _reject(
+                "Global Gate policy authority has an incomplete publication",
+                "policy_authority_reconcile",
+                "global_gate_policy_reconcile_required",
+            )
+        if policy is not None:
+            policy_authority, evidence = self._validate_policy_authority(
+                root=root,
+                current=current,
+                row=policy,
+            )
+            policy_binding = {
+                "path": str(root / "active_global_gate_policy.json"),
+                "file_sha256": policy["authority_sha256"],
+                "authority_sha256": policy_authority["authority_sha256"],
+                "exit_evidence_sha256": policy["evidence_sha256"],
+                "generation": policy["generation"],
+            }
+        else:
+            policy_authority = None
+            policy_binding = None
+            authority = read_json(Path(current["path"]))
+            evidence_path = Path(authority["exit_evidence_path"])
+            if not evidence_path.is_file() or sha256_file(evidence_path) != current["exit_evidence_sha256"]:
+                _reject("Current Global Gate Exit Evidence is stale", "global_gate_authority", "global_gate_exit_evidence_stale")
+            evidence = _validate_policy_evidence(read_json(evidence_path))
         return {
             "current": True,
             "policy_status": evidence["policy_status"],
             "active_atomic_members": sorted(evidence["atomic_member_status"]),
             "mirror_checks": evidence["mirror_checks"],
             "global_gate_authority": current,
+            "policy_authority": policy_binding,
             "results": evidence["results"],
         }

@@ -137,12 +137,33 @@ class Issue43GlobalGateTests(unittest.TestCase):
         rendered_inventory = quality["rendered_text_object_inventory"]
         text_origin = quality["text_origin_manifest"]
         reconciliation = quality["rendered_text_reconciliation"]
-        adapter = PROJECT_ROOT / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"
+        adapter = PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"
+        runtime_input = _write(root / "runtime/registered-runtime.dat", b"runtime\n")
+        generated_input = _write(
+            root / "adapter-output/compiler-staging/main.aux", b"generated\n"
+        )
+        recorder = _write(
+            root / "adapter-output/main.fls",
+            (
+                f"INPUT {runtime_input.resolve()}\n"
+                f"INPUT {generated_input.resolve()}\n"
+            ).encode("utf-8"),
+        )
+        manifest["approved_runtime_inputs"] = [{
+            "path": str(runtime_input.resolve()),
+            "sha256": _sha(runtime_input),
+            "classification": "registered_runtime_dependency",
+        }]
+        _refingerprint(manifest, "manifest_sha256")
+        manifest_path = Path(quality_bindings["final_compile_manifest"]["path"])
+        _write(manifest_path, manifest)
+        quality_bindings["final_compile_manifest"]["sha256"] = _sha(manifest_path)
         pdf = {
             "path": paths["pdf"].relative_to(root).as_posix(),
             "sha256": _sha(paths["pdf"]), "size": paths["pdf"].stat().st_size,
         }
         final_seal["final_pdf"] = pdf
+        final_seal["compile_manifest_sha256"] = manifest["manifest_sha256"]
         _refingerprint(final_seal, "seal_sha256")
         text_origin["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
         _refingerprint(text_origin, "manifest_sha256")
@@ -166,8 +187,14 @@ class Issue43GlobalGateTests(unittest.TestCase):
                     "logical_id": entry["logical_id"], "generation": entry["generation"],
                     "sha256": entry["sha256"],
                 } for entry in manifest["entries"]],
-                "runtime_inputs": [], "generated_inputs": [],
-                "recorder_sha256": "a" * 64, "recorder_path": "adapter-output/main.fls",
+                "runtime_inputs": manifest["approved_runtime_inputs"],
+                "generated_inputs": [{
+                    "path": str(generated_input.resolve()),
+                    "sha256": _sha(generated_input),
+                    "classification": "attempt_generated_auxiliary",
+                }],
+                "recorder_sha256": _sha(recorder),
+                "recorder_path": recorder.relative_to(root).as_posix(),
             },
             "pdf": pdf,
             "compiler_provider": final_seal["compile_provider"],
@@ -196,6 +223,51 @@ class Issue43GlobalGateTests(unittest.TestCase):
         root, paths = self.legacy_graph_with_current_gate()
         self.modernize_compile_provenance(root, paths)
         return root, paths
+
+    def rematerialize_modern_compile_downstream(self, paths: dict[str, Path]) -> None:
+        """Republish every fingerprint downstream of a changed compile manifest."""
+        quality_manifest = json.loads(paths["quality_inputs"].read_text(encoding="utf-8"))
+        bindings = quality_manifest["quality_inputs"]
+        manifest_path = Path(bindings["final_compile_manifest"]["path"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        _refingerprint(manifest, "manifest_sha256")
+        _write(manifest_path, manifest)
+        bindings["final_compile_manifest"]["sha256"] = _sha(manifest_path)
+
+        final_seal_path = Path(bindings["final_artifact_seal"]["path"])
+        final_seal = json.loads(final_seal_path.read_text(encoding="utf-8"))
+        final_seal["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        _refingerprint(final_seal, "seal_sha256")
+        _write(final_seal_path, final_seal)
+        bindings["final_artifact_seal"]["sha256"] = _sha(final_seal_path)
+
+        text_origin_path = Path(bindings["text_origin_manifest"]["path"])
+        text_origin = json.loads(text_origin_path.read_text(encoding="utf-8"))
+        text_origin["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        _refingerprint(text_origin, "manifest_sha256")
+        _write(text_origin_path, text_origin)
+        bindings["text_origin_manifest"]["sha256"] = _sha(text_origin_path)
+
+        reconciliation_path = Path(bindings["rendered_text_reconciliation"]["path"])
+        reconciliation = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+        reconciliation["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        reconciliation["text_origin_manifest_sha256"] = text_origin["manifest_sha256"]
+        _refingerprint(reconciliation, "report_sha256")
+        _write(reconciliation_path, reconciliation)
+        bindings["rendered_text_reconciliation"]["sha256"] = _sha(reconciliation_path)
+        _write(paths["quality_inputs"], quality_manifest)
+
+        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        report["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        report["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        report["text_origin_manifest_sha256"] = text_origin["manifest_sha256"]
+        report["dependency_closure"]["inputs"] = [{
+            "logical_id": entry["logical_id"],
+            "generation": entry["generation"],
+            "sha256": entry["sha256"],
+        } for entry in manifest["entries"]]
+        _refingerprint(report, "report_sha256")
+        _write(paths["compile"], report)
 
     def adopt_with_current_gate(self, root: Path, paths: dict[str, Path]) -> dict:
         with mock.patch.object(
@@ -270,41 +342,103 @@ class Issue43GlobalGateTests(unittest.TestCase):
                 self.assertEqual("legacy_compile_provenance_invalid", raised.exception.data["error_code"])
 
     def test_legacy_adoption_rejects_final_compile_manifest_bound_to_another_main_tex(self) -> None:
+        # scenario_id: legacy_modern_main_tex_binding; the alternate path has
+        # identical bytes and every dependent fingerprint is rematerialized, so
+        # the main.tex source-path binding is the only contradiction.
         root, paths = self.modern_legacy_graph()
         quality_manifest = json.loads(paths["quality_inputs"].read_text(encoding="utf-8"))
         bindings = quality_manifest["quality_inputs"]
         manifest_path = Path(bindings["final_compile_manifest"]["path"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["entries"][0]["source_path"] = str(paths["pdf"])
-        _refingerprint(manifest, "manifest_sha256")
+        alternate_main = _write(root / "alternate/main.tex", paths["tex"].read_bytes())
+        main_entry = next(
+            entry for entry in manifest["entries"]
+            if Path(entry["staging_path"]).name.casefold() == "main.tex"
+        )
+        main_entry["source_path"] = str(alternate_main.resolve())
         _write(manifest_path, manifest)
-        bindings["final_compile_manifest"]["sha256"] = _sha(manifest_path)
-
-        final_seal_path = Path(bindings["final_artifact_seal"]["path"])
-        final_seal = json.loads(final_seal_path.read_text(encoding="utf-8"))
-        final_seal["compile_manifest_sha256"] = manifest["manifest_sha256"]
-        _refingerprint(final_seal, "seal_sha256")
-        _write(final_seal_path, final_seal)
-        bindings["final_artifact_seal"]["sha256"] = _sha(final_seal_path)
-
-        text_origin_path = Path(bindings["text_origin_manifest"]["path"])
-        text_origin = json.loads(text_origin_path.read_text(encoding="utf-8"))
-        text_origin["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
-        _refingerprint(text_origin, "manifest_sha256")
-        _write(text_origin_path, text_origin)
-        bindings["text_origin_manifest"]["sha256"] = _sha(text_origin_path)
-        _write(paths["quality_inputs"], quality_manifest)
-
-        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
-        report["compile_manifest_sha256"] = manifest["manifest_sha256"]
-        report["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
-        report["text_origin_manifest_sha256"] = text_origin["manifest_sha256"]
-        _refingerprint(report, "report_sha256")
-        _write(paths["compile"], report)
+        self.rematerialize_modern_compile_downstream(paths)
         with self.assertRaises(AcceptanceV2Rejected) as raised:
             self.adopt_with_current_gate(root, paths)
         self.assertEqual("compile_provenance", raised.exception.data["first_failing_gate"])
         self.assertEqual("legacy_compile_provenance_invalid", raised.exception.data["error_code"])
+
+    def test_legacy_adoption_rejects_stale_or_unregistered_compile_adapter(self) -> None:
+        # scenario_id: legacy_modern_adapter_authority; each subtest changes one
+        # adapter identity field and republishes only the report fingerprint.
+        for variant in ("stale_sha", "wrong_path", "wrong_protocol"):
+            with self.subTest(variant=variant):
+                root, paths = self.modern_legacy_graph()
+                report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+                if variant == "stale_sha":
+                    report["compile_adapter"]["adapter_sha256"] = "0" * 64
+                elif variant == "wrong_path":
+                    alternate = _write(
+                        root / "adapter-output/alternate-adapter.py",
+                        (PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py").read_bytes(),
+                    )
+                    report["compile_adapter"]["adapter_path"] = str(alternate.resolve())
+                else:
+                    report["compile_adapter"]["protocol_version"] = "obsolete-protocol"
+                _refingerprint(report, "report_sha256")
+                _write(paths["compile"], report)
+                with self.assertRaises(AcceptanceV2Rejected) as raised:
+                    self.adopt_with_current_gate(root, paths)
+                self.assertEqual(
+                    "legacy_compile_provenance_invalid",
+                    raised.exception.data["error_code"],
+                )
+                if variant != "wrong_protocol":
+                    self.assertEqual(
+                        ["compile_adapter"], raised.exception.data["failed_relations"]
+                    )
+
+    def test_legacy_adoption_rejects_missing_compile_recorder(self) -> None:
+        # scenario_id: legacy_modern_recorder_identity; each subtest isolates
+        # one of existence, fingerprint, or report-root containment.
+        for variant in ("missing", "stale_sha", "escape"):
+            with self.subTest(variant=variant):
+                root, paths = self.modern_legacy_graph()
+                report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+                if variant == "missing":
+                    report["dependency_closure"]["recorder_path"] = "adapter-output/missing.fls"
+                elif variant == "stale_sha":
+                    report["dependency_closure"]["recorder_sha256"] = "0" * 64
+                else:
+                    outside = _write(
+                        root.parent / f"{root.name}-outside.fls", b"outside recorder\n"
+                    )
+                    report["dependency_closure"]["recorder_path"] = (
+                        Path("..") / outside.name
+                    ).as_posix()
+                    report["dependency_closure"]["recorder_sha256"] = _sha(outside)
+                _refingerprint(report, "report_sha256")
+                _write(paths["compile"], report)
+                with self.assertRaises(AcceptanceV2Rejected) as raised:
+                    self.adopt_with_current_gate(root, paths)
+                self.assertEqual(["compile_recorder"], raised.exception.data["failed_relations"])
+
+    def test_legacy_adoption_rejects_runtime_input_fingerprint_drift(self) -> None:
+        # scenario_id: legacy_modern_runtime_stale; the registered file changes
+        # after publication while manifest and report remain mutually exact.
+        root, paths = self.modern_legacy_graph()
+        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        runtime_path = Path(report["dependency_closure"]["runtime_inputs"][0]["path"])
+        _write(runtime_path, b"runtime drift\n")
+        with self.assertRaises(AcceptanceV2Rejected) as raised:
+            self.adopt_with_current_gate(root, paths)
+        self.assertEqual(["runtime_inputs"], raised.exception.data["failed_relations"])
+
+    def test_legacy_adoption_rejects_generated_input_fingerprint_drift(self) -> None:
+        # scenario_id: legacy_modern_generated_stale; only one generated file
+        # changes after report publication.
+        root, paths = self.modern_legacy_graph()
+        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        generated_path = Path(report["dependency_closure"]["generated_inputs"][0]["path"])
+        _write(generated_path, b"generated drift\n")
+        with self.assertRaises(AcceptanceV2Rejected) as raised:
+            self.adopt_with_current_gate(root, paths)
+        self.assertEqual(["generated_inputs"], raised.exception.data["failed_relations"])
 
     def test_legacy_adoption_rejects_stale_page_fingerprint_at_the_freshness_gate(self) -> None:
         # scenario_id: legacy_page_stale; single contradiction after page-manifest publication.

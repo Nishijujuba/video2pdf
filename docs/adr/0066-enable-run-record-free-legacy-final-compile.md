@@ -28,8 +28,10 @@ and require an explicit `--input-track` selection.
   the same target-only `final-compile-report/1.0.0` evidence. The report grants
   no delivery authority.
 - Legacy compile admission rechecks the Global Gate before publishing the
-  report. An authority change during compilation leaves attempt artifacts and
-  withholds the report.
+  report, reruns the complete Global Gate policy-currentness check, and
+  rechecks that the canonical Run Record remains absent. Authority, policy, or
+  input-track drift during compilation leaves attempt artifacts and withholds
+  the report.
 - `legacy-acceptance-adopt` accepts a closed provenance set: historical
   `latex_compile_report.v1` for already compiled directories and relationally
   current `final-compile-report/1.0.0` for newly guarded compiles.
@@ -49,9 +51,45 @@ Delivery Guard without acquiring Kernel lifecycle authority. Existing Legacy
 compile reports remain valid for their historical directories.
 
 The public seam adds authority-root, synthetic-Run, path-escape, relational
-provenance, and schema-dispatch tests. The Global Gate remains the shared
-provider admission authority; platform Kernel authority and track migration
-status remain unchanged.
+provenance, adapter-currentness, recorder-closure, and schema-dispatch tests.
+The capability becomes active only after a governed Global Gate policy
+authority refresh publishes a current Exit Evidence Manifest. That refresh
+preserves the stable Global Gate delivery-authority binding used by platform
+and Batch authorities. Platform Kernel authority and track migration status
+remain unchanged.
+
+The refresh is published through
+`global-gate-policy-authority-refresh`. It advances the independent
+`active_global_gate_policy.json` generation with a SQLite compare-and-swap and
+leaves `active_global_gate.json` byte-for-byte stable. Policy checks prefer the
+committed policy authority when present and retain the original activation
+evidence as the compatibility authority before the first refresh. An
+interrupted refresh is completed only through `global-gate-reconcile` after
+the prepared evidence and stable base authority are revalidated.
+
+## Validator fixture migration impact
+
+The ordered fail-closed gates changed in three validator families:
+
+- `tests.video_workflow.test_issue41_legacy_final_compile` owns the public
+  Legacy Final Compile positive builder and isolated authority-root,
+  synthetic-Run, compile-time Run creation, and workspace-containment
+  contradictions. Every negative scenario declares `single_contradiction` and
+  asserts the first public error code.
+- `tests.video_workflow.test_issue43_global_gate` owns the modern Legacy
+  adoption lifecycle builder. Mutations to main TeX, adapter, recorder,
+  runtime closure, or schema rematerialize every dependent seal,
+  reconciliation, quality-manifest, and report binding except the one target
+  contradiction.
+- `tests.video_workflow.test_issue43_active_guard` owns the complete public
+  `delivery_guard.py check` seam for modern Legacy provenance. Private helper
+  calls remain diagnostic support and do not qualify the behavior.
+
+The focused suites and their complete affected modules must finish with
+terminal persisted-command evidence before the refreshed Exit Evidence
+Manifest is published. The manifest, rather than this ADR, records the exact
+run directories, commands, exit codes, logs, implementation commit, and
+artifact fingerprints.
 
 This decision amends ADR 0064's Legacy operational path and preserves ADR
 0062's shared final-evidence contracts.

@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 
 import fitz
@@ -26,6 +27,10 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 class AdapterError(RuntimeError):
     pass
+
+
+COMPILE_OUTPUT_TIMEOUT_SECONDS = 300.0
+COMPILE_OUTPUT_POLL_SECONDS = 0.25
 
 
 def sha(path: Path) -> str:
@@ -122,6 +127,68 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
             except Exception as exc:
                 raise AdapterError(str(exc)) from exc
     return result, entry_tex, raster_sources
+
+
+def _compile_output_state(paths: tuple[Path, ...]) -> tuple[tuple[int, int], ...] | None:
+    try:
+        return tuple((path.stat().st_size, path.stat().st_mtime_ns) for path in paths)
+    except OSError:
+        return None
+
+
+def _wait_for_completed_compile_output(
+    pdf: Path,
+    log: Path,
+    recorder: Path,
+    previous_state: tuple[tuple[int, int], ...] | None,
+) -> None:
+    paths = (pdf, log, recorder)
+    deadline = time.monotonic() + COMPILE_OUTPUT_TIMEOUT_SECONDS
+    stable_state: tuple[tuple[int, int], ...] | None = None
+    stable_observations = 0
+    last_reason = "required output is missing"
+    completion_marker = f"Output written on {pdf.name} ("
+
+    while time.monotonic() < deadline:
+        state = _compile_output_state(paths)
+        if state is None:
+            last_reason = "required output is missing"
+        elif state == previous_state:
+            last_reason = "outputs were not refreshed for this compile round"
+        else:
+            try:
+                pdf_bytes = pdf.read_bytes()
+                log_text = log.read_text(encoding="utf-8", errors="replace")
+                recorder.read_bytes()
+            except OSError:
+                last_reason = "outputs are still being written"
+            else:
+                after_read_state = _compile_output_state(paths)
+                if after_read_state != state:
+                    last_reason = "outputs changed while being read"
+                elif completion_marker not in log_text:
+                    last_reason = "LaTeX log has no normal completion marker"
+                else:
+                    try:
+                        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+                            page_count = document.page_count
+                    except Exception:
+                        last_reason = "compiled PDF is not yet readable"
+                    else:
+                        if page_count < 1:
+                            last_reason = "compiled PDF has no pages"
+                        elif state == stable_state:
+                            stable_observations += 1
+                            if stable_observations >= 2:
+                                return
+                        else:
+                            stable_state = state
+                            stable_observations = 1
+        time.sleep(COMPILE_OUTPUT_POLL_SECONDS)
+
+    raise AdapterError(
+        "guarded compile output did not stabilize before timeout: " + last_reason
+    )
 
 
 def compile_pdf(
@@ -223,20 +290,26 @@ def compile_pdf(
         "SYSTEMDRIVE": Path(environment["SYSTEMROOT"]).drive,
     })
     stderr_parts: list[bytes] = []
+    pdf, log, recorder = (
+        staging / f"{entry.stem}.pdf",
+        staging / f"{entry.stem}.log",
+        staging / f"{entry.stem}.fls",
+    )
     for _ in range(3):
+        previous_state = _compile_output_state((pdf, log, recorder))
         completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
         stderr_parts.append(completed.stderr)
         if completed.returncode != 0:
             raise AdapterError("guarded compile engine failed")
+        if not all(path.is_file() for path in (pdf, log, recorder)):
+            raise AdapterError("guarded compile omitted required output")
+        _wait_for_completed_compile_output(pdf, log, recorder, previous_state)
     combined_stderr = b"".join(stderr_parts)
     stderr_summary = {
         "byte_length": len(combined_stderr),
         "sha256": hashlib.sha256(combined_stderr).hexdigest(),
     }
-    pdf, recorder = staging / f"{entry.stem}.pdf", staging / f"{entry.stem}.fls"
-    if not pdf.is_file() or not recorder.is_file():
-        raise AdapterError("guarded compile omitted required output")
     return pdf, recorder, environment, stderr_summary
 
 

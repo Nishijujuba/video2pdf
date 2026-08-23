@@ -69,3 +69,7 @@ for name, rect in (("figure_a.png", fitz.Rect(200, 100, 300, 200)),
 if "VIDEO2PDF_FIXTURE_OMIT_PDF" not in source:
     document.save(cwd / f"{stem}.pdf")
 document.close()
+(cwd / f"{stem}.log").write_text(
+    f"Output written on {stem}.pdf (1 page).\n",
+    encoding="utf-8",
+)

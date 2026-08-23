@@ -20,7 +20,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
+from video2pdf_workflow_kernel.delivery_quality import DeliveryQualityRegistry
 from video2pdf_workflow_kernel.errors import KernelError
+from video2pdf_workflow_kernel.evidence import (
+    EvidenceSupportError,
+    git_output,
+    sha256_git_blob,
+)
+from video2pdf_workflow_kernel.final_compile import GENERATED_RECORDER_SUFFIXES
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
     normalized_physical_path,
@@ -862,6 +869,204 @@ def _ensure_compile_report_producer(report: dict[str, Any], target: DeliveryTarg
         raise GuardError("final compile report argv must include --mode final")
 
 
+def _load_bound_final_compile_manifest(
+    target: DeliveryTarget, report: dict[str, Any]
+) -> dict[str, Any]:
+    binding_path = target.acceptance_report_path.parent / "input-binding.json"
+    binding = _require_object(
+        _load_json(binding_path, "Acceptance v2 input binding"),
+        "Acceptance v2 input binding",
+    )
+    quality_inputs = _require_object(
+        binding.get("quality_inputs"), "Acceptance v2 input binding.quality_inputs"
+    )
+    manifest_binding = _require_object(
+        quality_inputs.get("final_compile_manifest"),
+        "Acceptance v2 input binding final_compile_manifest",
+    )
+    manifest_path = Path(
+        _require_string(
+            manifest_binding.get("path"),
+            "Acceptance v2 input binding final_compile_manifest.path",
+        )
+    ).resolve()
+    if not _path_under(target.video_output_dir, manifest_path):
+        raise GuardError("Final Compile Manifest path escapes the video output directory")
+    if (
+        not manifest_path.is_file()
+        or _file_sha256(manifest_path)
+        != _require_string(
+            manifest_binding.get("sha256"),
+            "Acceptance v2 input binding final_compile_manifest.sha256",
+        )
+    ):
+        raise GuardError("Acceptance-bound Final Compile Manifest is stale")
+    manifest = _require_object(
+        _load_json(manifest_path, "Final Compile Manifest"),
+        "Final Compile Manifest",
+    )
+    try:
+        registry = DeliveryQualityRegistry(REPO_ROOT)
+        registry.validate("final-compile-manifest", manifest)
+    except KernelError as exc:
+        raise GuardError(f"Final Compile Manifest is invalid: {exc}") from exc
+    expected_manifest_sha = hashlib.sha256(
+        canonical_json_bytes(
+            {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+        )
+    ).hexdigest()
+    if (
+        manifest.get("manifest_sha256") != expected_manifest_sha
+        or report.get("compile_manifest_sha256") != expected_manifest_sha
+    ):
+        raise GuardError("final compile report does not bind the current Final Compile Manifest")
+    return manifest
+
+
+def _ensure_legacy_modern_compile_closure(
+    target: DeliveryTarget, report: dict[str, Any]
+) -> None:
+    manifest = _load_bound_final_compile_manifest(target, report)
+    entries = manifest["entries"]
+    expected_inputs = [
+        {
+            "logical_id": entry["logical_id"],
+            "generation": entry["generation"],
+            "sha256": entry["sha256"],
+        }
+        for entry in entries
+    ]
+    closure = report["dependency_closure"]
+    if sorted(closure["inputs"], key=lambda item: item["logical_id"]) != sorted(
+        expected_inputs, key=lambda item: item["logical_id"]
+    ):
+        raise GuardError("final compile report input closure differs from the Final Compile Manifest")
+
+    entrypoints = [
+        entry
+        for entry in entries
+        if Path(entry["staging_path"]).name.casefold() == "main.tex"
+    ]
+    if len(entrypoints) != 1:
+        raise GuardError("Final Compile Manifest main.tex entrypoint is missing or ambiguous")
+    entrypoint = entrypoints[0]
+    if (
+        Path(entrypoint["source_path"]).resolve() != target.main_tex.resolve()
+        or entrypoint["sha256"] != _file_sha256(target.main_tex)
+    ):
+        raise GuardError("Final Compile Manifest main.tex entrypoint does not match delivery_target.main_tex")
+
+    adapter = _require_object(
+        report.get("compile_adapter"), "final compile report.compile_adapter"
+    )
+    expected_adapter = (REPO_ROOT / "scripts/guarded_final_compile_adapter.py").resolve()
+    adapter_path = Path(
+        _require_string(
+            adapter.get("adapter_path"), "final compile report.compile_adapter.adapter_path"
+        )
+    ).resolve()
+    try:
+        head = git_output(REPO_ROOT, "rev-parse", "HEAD")
+        head_adapter_sha = sha256_git_blob(
+            REPO_ROOT, head, "scripts/guarded_final_compile_adapter.py"
+        )
+    except EvidenceSupportError as exc:
+        raise GuardError("registered Final Compile adapter is absent from current Git HEAD") from exc
+    worktree_adapter_sha = _file_sha256(expected_adapter)
+    if (
+        adapter_path != expected_adapter
+        or adapter.get("protocol_version") != "guarded-final-compile-v1"
+        or worktree_adapter_sha != head_adapter_sha
+        or adapter.get("adapter_sha256") != head_adapter_sha
+    ):
+        raise GuardError("final compile report compile_adapter does not match current HEAD")
+
+    runtime_inputs = manifest["approved_runtime_inputs"]
+    if closure["runtime_inputs"] != runtime_inputs:
+        raise GuardError("final compile report runtime closure differs from the Final Compile Manifest")
+    approved_runtime_paths: dict[str, dict[str, Any]] = {}
+    for item in runtime_inputs:
+        runtime_path = Path(item["path"]).resolve()
+        identity = str(runtime_path).casefold()
+        if (
+            not runtime_path.is_file()
+            or _file_sha256(runtime_path) != item["sha256"]
+            or identity in approved_runtime_paths
+        ):
+            raise GuardError("final compile report runtime closure is stale")
+        approved_runtime_paths[identity] = item
+
+    recorder_relative = _require_relative_path(
+        closure.get("recorder_path"), "final compile report dependency_closure.recorder_path"
+    )
+    recorder_path = (target.compile_report_path.parent / recorder_relative).resolve()
+    if not _path_under(target.video_output_dir, recorder_path):
+        raise GuardError("final compile report recorder path escapes the video output directory")
+    if (
+        not recorder_path.is_file()
+        or _file_sha256(recorder_path) != closure["recorder_sha256"]
+    ):
+        raise GuardError("final compile report recorder identity is stale")
+    recorder_root = recorder_path.parent / "compiler-staging"
+
+    declared_entries: dict[str, dict[str, Any]] = {}
+    entrypoint_identity: str | None = None
+    for entry in entries:
+        staging_relative = _require_relative_path(
+            entry["staging_path"], "Final Compile Manifest entry.staging_path"
+        )
+        staged_path = (recorder_root / staging_relative).resolve()
+        if not _path_under(recorder_root, staged_path):
+            raise GuardError("Final Compile Manifest staging path escapes the recorder root")
+        identity = str(staged_path).casefold()
+        if (
+            not staged_path.is_file()
+            or _file_sha256(staged_path) != entry["sha256"]
+            or identity in declared_entries
+            or identity in approved_runtime_paths
+        ):
+            raise GuardError("final compile report staged input closure is stale")
+        declared_entries[identity] = entry
+        if entry is entrypoint:
+            entrypoint_identity = identity
+
+    observed_declared: set[str] = set()
+    generated_inputs: list[dict[str, Any]] = []
+    for line in recorder_path.read_text(encoding="utf-8", errors="strict").splitlines():
+        if not line.startswith("INPUT "):
+            continue
+        observed = Path(line[6:])
+        if not observed.is_absolute():
+            observed = recorder_root / observed
+        observed = observed.resolve()
+        identity = str(observed).casefold()
+        if identity in declared_entries or identity in approved_runtime_paths:
+            observed_declared.add(identity)
+            continue
+        suffix = "".join(observed.suffixes[-2:]).casefold()
+        if suffix not in GENERATED_RECORDER_SUFFIXES:
+            suffix = observed.suffix.casefold()
+        if (
+            not _path_under(recorder_root, observed)
+            or suffix not in GENERATED_RECORDER_SUFFIXES
+            or not observed.is_file()
+        ):
+            raise GuardError("final compile report recorder contains an undeclared input")
+        generated_inputs.append(
+            {
+                "path": str(observed),
+                "sha256": _file_sha256(observed),
+                "classification": "attempt_generated_auxiliary",
+            }
+        )
+    if (
+        entrypoint_identity not in observed_declared
+        or not set(approved_runtime_paths).issubset(observed_declared)
+        or closure["generated_inputs"] != generated_inputs
+    ):
+        raise GuardError("final compile report recorder/runtime/generated closure is stale")
+
+
 def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
     """Prove the registered final-compile-report/1.0.0 contract."""
 
@@ -869,6 +1074,10 @@ def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
         _load_json(target.compile_report_path, "final compile report"),
         "final compile report",
     )
+    try:
+        DeliveryQualityRegistry(REPO_ROOT).validate("final-compile-report", report)
+    except KernelError as exc:
+        raise GuardError(f"final compile report schema is invalid: {exc}") from exc
     schema_name = _require_string(
         report.get("schema_name"), "final compile report.schema_name"
     )
@@ -948,18 +1157,17 @@ def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
     inputs = closure.get("inputs")
     if not isinstance(inputs, list):
         raise GuardError("malformed final compile report: dependency_closure.inputs must be a list")
-    main_tex_sha = _file_sha256(target.main_tex)
-    bound_tex = any(
-        isinstance(item, dict)
-        and item.get("logical_id") == "integrated_main"
-        and _require_string(
-            item.get("sha256"), "final compile report dependency input sha256"
-        )
-        == main_tex_sha
-        for item in inputs
-    )
-    if not bound_tex:
-        raise GuardError("final compile report source_tex does not match delivery_target.main_tex")
+    if target.kernel_authority:
+        main_tex_sha = _file_sha256(target.main_tex)
+        if not any(
+            isinstance(item, dict)
+            and item.get("logical_id") == "integrated_main"
+            and item.get("sha256") == main_tex_sha
+            for item in inputs
+        ):
+            raise GuardError("final compile report source_tex does not match delivery_target.main_tex")
+    else:
+        _ensure_legacy_modern_compile_closure(target, report)
 
 
 def _ensure_compile_provenance(target: DeliveryTarget) -> None:

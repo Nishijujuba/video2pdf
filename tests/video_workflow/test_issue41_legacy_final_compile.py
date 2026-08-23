@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import threading
 import unittest
 import uuid
 
@@ -118,7 +119,7 @@ class Issue41LegacyFinalCompileTests(unittest.TestCase):
         # intentionally_stale_nodes: []
         # expected_first_gate: global_gate_authority
         # expected_error_code: legacy_global_gate_root_forbidden
-        # scenario_class: authority-root-confusion
+        # scenario_class: single_contradiction
         with self.subTest("wrong Global Gate root"):
             completed, envelope = self._run_legacy_compile(
                 fixture,
@@ -140,7 +141,7 @@ class Issue41LegacyFinalCompileTests(unittest.TestCase):
         # intentionally_stale_nodes: []
         # expected_first_gate: legacy_run_record_absence
         # expected_error_code: legacy_synthetic_run_record_forbidden
-        # scenario_class: forbidden-authority-artifact
+        # scenario_class: single_contradiction
         with self.subTest("canonical synthetic Workflow Run"):
             synthetic_run = issue13_fixture._write_json(
                 video_root / "workflow" / "run.json",
@@ -163,6 +164,70 @@ class Issue41LegacyFinalCompileTests(unittest.TestCase):
             parked = video_root / "待删除" / "synthetic-workflow"
             synthetic_run.parent.rename(parked)
 
+        # scenario_id: legacy_final_compile_adapter_creates_canonical_run_record
+        # target_invariant: a Legacy root remains Run-record-free across adapter
+        #   execution and before Final Compile report publication.
+        # mutation_seam: create only <video-root>/workflow/run.json after the
+        #   registered adapter process returns successfully.
+        # rematerialized_nodes: adapter outputs
+        # intentionally_stale_nodes: []
+        # expected_first_gate: legacy_run_record_absence
+        # expected_error_code: legacy_synthetic_run_record_forbidden
+        # scenario_class: single_contradiction
+        with self.subTest("adapter creates canonical synthetic Workflow Run"):
+            workspace_root = (
+                video_root
+                / "review"
+                / "acceptance"
+                / "adapter-created-synthetic-run"
+            )
+            adapter_marker = workspace_root / "adapter-output" / "final.pdf"
+            synthetic_run_created = threading.Event()
+            stop_observer = threading.Event()
+
+            def create_synthetic_run_during_adapter() -> None:
+                while not stop_observer.wait(0.005):
+                    if adapter_marker.is_file():
+                        issue13_fixture._write_json(
+                            video_root / "workflow" / "run.json",
+                            {
+                                "schema_name": "workflow-run",
+                                "schema_version": "4.0.0",
+                            },
+                        )
+                        synthetic_run_created.set()
+                        return
+
+            observer = threading.Thread(
+                target=create_synthetic_run_during_adapter,
+                name="issue41-create-synthetic-run-during-adapter",
+            )
+            observer.start()
+            try:
+                completed, envelope = self._run_legacy_compile(
+                    fixture,
+                    video_root=video_root,
+                    workspace_root=workspace_root,
+                )
+            finally:
+                stop_observer.set()
+                observer.join(timeout=5)
+            self.assertTrue(
+                synthetic_run_created.is_set(),
+                "adapter completion marker was not observed before CLI return",
+            )
+            self.assertNotEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            self.assertEqual("error", envelope["status"])
+            self.assertEqual(
+                "legacy_run_record_absence", envelope["data"]["first_failing_gate"]
+            )
+            self.assertEqual(
+                "legacy_synthetic_run_record_forbidden",
+                envelope["data"]["error_code"],
+            )
+            parked = video_root / "待删除" / "adapter-created-synthetic-workflow"
+            (video_root / "workflow").rename(parked)
+
         # scenario_id: legacy_final_compile_workspace_escape
         # target_invariant: every Final Compile output remains inside the named
         #   Legacy video root.
@@ -171,7 +236,7 @@ class Issue41LegacyFinalCompileTests(unittest.TestCase):
         # intentionally_stale_nodes: []
         # expected_first_gate: legacy_final_compile_workspace_boundary
         # expected_error_code: legacy_final_compile_path_out_of_bounds
-        # scenario_class: path-boundary-escape
+        # scenario_class: single_contradiction
         with self.subTest("Final Compile workspace escape"):
             completed, envelope = self._run_legacy_compile(
                 fixture,

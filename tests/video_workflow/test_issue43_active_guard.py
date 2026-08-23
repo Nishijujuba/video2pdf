@@ -1402,17 +1402,46 @@ class Issue43ActiveGuardTests(unittest.TestCase):
 class Issue43LegacyModernCompileProvenanceTests(unittest.TestCase):
     """Legacy delivery targets admit the registered modern compile contract."""
 
-    def test_legacy_target_accepts_modern_final_compile_report(self) -> None:
-        guard = _load_active_delivery_guard(PROJECT_ROOT)
-        root = new_case_dir(self.id(), label="issue43-legacy-modern-compile")
-        video_root = root / "video"
-        final_pdf = video_root / "review/final-compile/adapter-output/final.pdf"
-        main_tex = video_root / "main.tex"
+    def setUp(self) -> None:
+        self.harness = Issue43ActiveGuardTests(
+            "test_active_guard_accepts_current_passing_v2_authority"
+        )
+        self.harness.setUp()
+
+    def _install_modern_compile_report(self) -> Path:
+        video_root = self.harness.video_root
+        final_pdf = self.harness.final_pdf
+        main_tex = self.harness.main_tex
         compile_report = video_root / "review/final-compile/final-compile-report.json"
-        final_pdf.parent.mkdir(parents=True)
-        main_tex.parent.mkdir(parents=True, exist_ok=True)
-        final_pdf.write_bytes(b"%PDF-1.7\nlegacy guarded final\n")
-        main_tex.write_text("\\documentclass{article}\n", encoding="utf-8")
+        adapter_output = compile_report.parent / "adapter-output"
+        staging = adapter_output / "compiler-staging"
+        staging.mkdir(parents=True)
+
+        binding = json.loads(
+            (self.harness.workspace / "input-binding.json").read_text(encoding="utf-8")
+        )
+        manifest_path = Path(
+            binding["quality_inputs"]["final_compile_manifest"]["path"]
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for entry in manifest["entries"]:
+            destination = staging / entry["staging_path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(entry["source_path"], destination)
+
+        generated = staging / "main.aux"
+        generated.write_text("generated auxiliary\n", encoding="utf-8")
+        recorder = adapter_output / "compile-recorder.fls"
+        recorder.write_text(
+            "".join(
+                [
+                    *(f"INPUT {staging / entry['staging_path']}\n" for entry in manifest["entries"]),
+                    *(f"INPUT {item['path']}\n" for item in manifest["approved_runtime_inputs"]),
+                    f"INPUT {generated}\n",
+                ]
+            ),
+            encoding="utf-8",
+        )
         report = {
             "schema_name": "final-compile-report",
             "schema_version": "1.0.0",
@@ -1426,8 +1455,11 @@ class Issue43LegacyModernCompileProvenanceTests(unittest.TestCase):
                     / "src/video2pdf_workflow_kernel/final_compile.py"
                 ),
             },
+            "precompile_text_seal_sha256": "1" * 64,
+            "final_artifact_seal_sha256": "2" * 64,
+            "compile_manifest_sha256": manifest["manifest_sha256"],
             "pdf": {
-                "path": "adapter-output/final.pdf",
+                "path": str(final_pdf.resolve()),
                 "sha256": file_sha(final_pdf),
                 "size": final_pdf.stat().st_size,
             },
@@ -1435,47 +1467,90 @@ class Issue43LegacyModernCompileProvenanceTests(unittest.TestCase):
                 "complete": True,
                 "inputs": [
                     {
-                        "logical_id": "integrated_main",
-                        "sha256": file_sha(main_tex),
+                        "logical_id": entry["logical_id"],
+                        "generation": entry["generation"],
+                        "sha256": entry["sha256"],
+                    }
+                    for entry in manifest["entries"]
+                ],
+                "runtime_inputs": manifest["approved_runtime_inputs"],
+                "generated_inputs": [
+                    {
+                        "path": str(generated.resolve()),
+                        "sha256": file_sha(generated),
+                        "classification": "attempt_generated_auxiliary",
                     }
                 ],
+                "recorder_sha256": file_sha(recorder),
+                "recorder_path": "adapter-output/compile-recorder.fls",
             },
+            "compile_adapter": {
+                "adapter_path": str(
+                    (PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py").resolve()
+                ),
+                "adapter_sha256": file_sha(
+                    PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"
+                ),
+                "protocol_version": "guarded-final-compile-v1",
+            },
+            "text_origin_plan_sha256": "3" * 64,
+            "render_evidence_manifest_sha256": "4" * 64,
+            "rendered_text_inventory_sha256": "5" * 64,
+            "text_origin_manifest_sha256": "6" * 64,
         }
         report["report_sha256"] = hashlib.sha256(
             canonical_json_bytes(report)
         ).hexdigest()
         write_json(compile_report, report)
-        target = guard.DeliveryTarget(
-            project_root=PROJECT_ROOT,
-            current_target_path=root / "current.json",
-            current_target={"schema_name": "legacy-session-delivery-target"},
-            video_target={"schema_name": "legacy-delivery-target"},
-            video_output_dir=video_root,
-            target_file=video_root / "review/acceptance/delivery_target.json",
-            final_pdf=final_pdf,
-            main_tex=main_tex,
-            manifest_path=video_root / "review/acceptance/allowed_artifacts_manifest.json",
-            acceptance_report_path=video_root / "review/acceptance/acceptance_report.json",
-            guard_report_path=video_root / "review/acceptance/delivery_guard_report.json",
-            compile_report_path=compile_report,
-            global_gate_authority_path=root / "active_global_gate.json",
-            global_gate_authority_sha256="0" * 64,
-            attempt_limit=3,
-            stage="accepted",
-            final_pdf_relative="review/final-compile/adapter-output/final.pdf",
-            main_tex_relative="main.tex",
-            manifest_relative="review/acceptance/allowed_artifacts_manifest.json",
-            acceptance_report_relative="review/acceptance/acceptance_report.json",
-            guard_report_relative="review/acceptance/delivery_guard_report.json",
-            compile_report_relative="review/final-compile/final-compile-report.json",
-            target_file_relative="review/acceptance/delivery_target.json",
-            compile_provenance_required=True,
-            legacy_existing_pdf=False,
-            recompiled=True,
-            kernel_authority=False,
+        target = json.loads(self.harness.target.read_text(encoding="utf-8"))
+        target["compile_report"] = compile_report.relative_to(video_root).as_posix()
+        write_json(self.harness.target, target)
+        return compile_report
+
+    def test_public_guard_accepts_registry_valid_modern_legacy_report(self) -> None:
+        self._install_modern_compile_report()
+
+        completed = self.harness.run_guard()
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        guard_report = json.loads(
+            (self.harness.workspace / "delivery_guard_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual("pass", guard_report["status"])
+        self.assertIn(
+            "final_compile_provenance_current",
+            {item["condition"] for item in guard_report["checked_conditions"]},
         )
 
-        guard._ensure_compile_provenance(target)
+    def test_public_guard_rejects_single_modern_schema_contradiction(self) -> None:
+        compile_report = self._install_modern_compile_report()
+        report = json.loads(compile_report.read_text(encoding="utf-8"))
+        # scenario_id: legacy_modern_compile_schema_version_invalid
+        # target_invariant: the modern report is Registry-valid at 1.0.0
+        # mutation_seam: schema_version only
+        # rematerialized_nodes: report_sha256
+        # intentionally_stale_nodes: schema_version only
+        # expected_first_gate/code: delivery_guard/delivery_guard_failed
+        report["schema_version"] = "1.0"
+        report["report_sha256"] = hashlib.sha256(
+            canonical_json_bytes(
+                {key: value for key, value in report.items() if key != "report_sha256"}
+            )
+        ).hexdigest()
+        write_json(compile_report, report)
+
+        completed = self.harness.run_guard()
+
+        self.assertEqual(2, completed.returncode, completed.stdout + completed.stderr)
+        guard_report = json.loads(
+            (self.harness.workspace / "delivery_guard_report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual("fail", guard_report["status"])
+        self.assertIn("schema", guard_report["blocking_message"])
 
 
 if __name__ == "__main__":

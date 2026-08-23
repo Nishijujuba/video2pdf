@@ -338,8 +338,8 @@
         "atomic_members": {"minItems": 12, "maxItems": 12},
         "atomic_member_status": {"minProperties": 12, "maxProperties": 12},
         "result_bindings": {
-          "minItems": 37,
-          "maxItems": 37,
+          "minItems": 49,
+          "maxItems": 49,
           "items": {"$ref": "#/$defs/globalGateResultBinding"}
         },
         "commands": {

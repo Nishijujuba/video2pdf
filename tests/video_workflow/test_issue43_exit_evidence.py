@@ -202,6 +202,29 @@ class Issue43ExitEvidenceContractTests(unittest.TestCase):
             {binding["test_target"] for binding in contract.RESULT_BINDINGS},
         )
         self.assertEqual(49, len(contract.RESULT_BINDINGS))
+        schema = json.loads(
+            (PROJECT_ROOT / "schemas/exit-evidence-manifest.v2.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        global_gate_binding_schema = next(
+            branch["properties"]["result_bindings"]
+            for branch in schema["oneOf"]
+            if branch.get("properties", {})
+            .get("slice", {})
+            .get("properties", {})
+            .get("number", {})
+            .get("const")
+            == 11
+        )
+        self.assertEqual(
+            len(contract.RESULT_BINDINGS),
+            global_gate_binding_schema["minItems"],
+        )
+        self.assertEqual(
+            len(contract.RESULT_BINDINGS),
+            global_gate_binding_schema["maxItems"],
+        )
         self.assertGreaterEqual(
             len(contract.QUALIFICATION_TEST_TARGETS),
             12,

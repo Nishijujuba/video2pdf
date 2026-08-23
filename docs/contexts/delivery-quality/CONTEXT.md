@@ -97,4 +97,6 @@ fidelity failures from Contract Gaps and performs no semantic reinterpretation.
 
 Acceptance Report v2 is the sole active final semantic delivery decision. Acceptance Report v1, fallback, translation, dual authority, and synthetic Legacy Run Records are rejected. Bilibili and YouTube use `active_kernel` coordination for new tasks. Existing Bilibili and YouTube directories stay on the Legacy Track unless explicit migration authority is introduced. The Global Gate authority stays `active_global_gate` and unchanged in scope.
 
+Run-record-free Legacy directories use the shared Guarded Final Compile provider through an explicit `legacy` input track and video root. Global Gate authority admits that provider; exact Legacy path containment and canonical Run Record absence preserve the track boundary. The resulting `final-compile-report/1.0.0` remains target-only mechanical provenance and gains delivery meaning only through a fresh Legacy Acceptance Input Set and Acceptance Report v2.
+
 The completed cold-start candidate used the active v2 provider at `ready_for_delivery`, obtained its fresh Guard only after `accepted`, published real guarded-delivery Exit Evidence after `delivered`, and reached final `CONFIRMED` platform authority before ordinary Bilibili `init-run` became valid. Legacy Bilibili directories cannot be given synthetic Run Records.

@@ -833,6 +833,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             ),
         ):
             self.provider.compile(
+                input_track="kernel",
                 precompile_workspace_root=quality,
                 compile_manifest_path=fixture.manifest,
                 text_origin_plan_path=fixture.plan,

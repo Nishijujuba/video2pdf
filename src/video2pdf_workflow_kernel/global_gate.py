@@ -171,8 +171,18 @@ class LegacyAcceptanceProvider:
         if not criteria_path.is_file() or not criteria_path.is_relative_to(self.project_root):
             _reject("Acceptance criteria authority is unavailable", "policy_binding", "legacy_criteria_unavailable")
 
+        quality_registry = DeliveryQualityRegistry(self.project_root)
         compile_value = read_json(local["compile_report"])
-        if not isinstance(compile_value, dict) or (
+        modern_compile = (
+            isinstance(compile_value, dict)
+            and compile_value.get("schema_name") == "final-compile-report"
+        )
+        if modern_compile:
+            try:
+                quality_registry.validate("final-compile-report", compile_value)
+            except ContractError:
+                _reject("Legacy final compile provenance is absent, stale, or unsupported", "compile_provenance", "legacy_compile_provenance_invalid")
+        elif not isinstance(compile_value, dict) or (
             compile_value.get("schema_version") != "latex_compile_report.v1"
             or compile_value.get("mode") != "final"
             or compile_value.get("status") != "passed"
@@ -233,7 +243,7 @@ class LegacyAcceptanceProvider:
             "text_origin_manifest": "text-origin-manifest",
             "text_equivalence_report": "text-equivalence-report",
         }
-        quality_registry = DeliveryQualityRegistry(self.project_root)
+        quality_values: dict[str, dict[str, Any]] = {}
         for logical_id in sorted(quality_inputs):
             item = quality_inputs[logical_id]
             if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
@@ -241,11 +251,95 @@ class LegacyAcceptanceProvider:
             path = _contained_file(root, Path(item.get("path", "")), gate="quality_input_freshness", code="legacy_quality_input_stale")
             if sha256_file(path) != item.get("sha256"):
                 _reject("Legacy quality input fingerprint is stale", "quality_input_freshness", "legacy_quality_input_stale", logical_id=logical_id)
+            quality_value = read_json(path)
             try:
-                quality_registry.validate(quality_schemas[logical_id], read_json(path))
+                quality_registry.validate(quality_schemas[logical_id], quality_value)
             except (ContractError, KeyError):
                 _reject("Legacy quality input contract is unsupported", "quality_input_contract", "legacy_quality_input_contract_invalid", logical_id=logical_id)
             normalized_quality_inputs[logical_id] = {"path": str(path), "sha256": item["sha256"]}
+            quality_values[logical_id] = quality_value
+
+        if modern_compile:
+            pdf = compile_value["pdf"]
+            report_pdf = (local["compile_report"].parent / pdf["path"]).resolve()
+            compile_manifest = quality_values["final_compile_manifest"]
+            final_seal = quality_values["final_artifact_seal"]
+            render_evidence = quality_values["render_evidence_manifest"]
+            rendered_inventory = quality_values["rendered_text_object_inventory"]
+            text_origin = quality_values["text_origin_manifest"]
+            main_entries = [
+                entry for entry in compile_manifest["entries"]
+                if Path(entry["staging_path"]).name.casefold() == "main.tex"
+            ]
+            manifest_inputs = {
+                (entry["logical_id"], entry["generation"], entry["sha256"])
+                for entry in compile_manifest["entries"]
+            }
+            report_inputs = {
+                (entry["logical_id"], entry["generation"], entry["sha256"])
+                for entry in compile_value["dependency_closure"]["inputs"]
+            }
+            report_fingerprint_is_stale = (
+                compile_value["report_sha256"] != _fingerprint(compile_value, "report_sha256")
+            )
+            pdf_is_current = (
+                report_pdf == local["final_pdf"]
+                and pdf["sha256"] == sha256_file(local["final_pdf"])
+                and pdf["size"] == local["final_pdf"].stat().st_size
+            )
+            main_tex_is_current = (
+                len(main_entries) == 1
+                and Path(main_entries[0]["source_path"]).resolve() == local["main_tex"]
+                and main_entries[0]["sha256"] == sha256_file(local["main_tex"])
+            )
+            compile_manifest_is_current = (
+                manifest_inputs == report_inputs
+                and compile_manifest["manifest_sha256"] == _fingerprint(compile_manifest, "manifest_sha256")
+                and compile_value["compile_manifest_sha256"] == compile_manifest["manifest_sha256"]
+                and compile_value["precompile_text_seal_sha256"] == compile_manifest["precompile_text_seal_sha256"]
+            )
+            final_seal_is_current = (
+                final_seal["seal_sha256"] == _fingerprint(final_seal, "seal_sha256")
+                and compile_value["final_artifact_seal_sha256"] == final_seal["seal_sha256"]
+                and final_seal["precompile_text_seal_sha256"] == compile_value["precompile_text_seal_sha256"]
+                and final_seal["compile_manifest_sha256"] == compile_manifest["manifest_sha256"]
+                and final_seal["final_pdf"] == pdf
+                and final_seal["compile_provider"] == compile_value["compiler_provider"]
+            )
+            render_evidence_is_current = (
+                render_evidence["manifest_sha256"] == _fingerprint(render_evidence, "manifest_sha256")
+                and compile_value["render_evidence_manifest_sha256"] == render_evidence["manifest_sha256"]
+                and render_evidence["final_pdf_sha256"] == pdf["sha256"]
+            )
+            rendered_inventory_is_current = (
+                rendered_inventory["inventory_sha256"] == _fingerprint(rendered_inventory, "inventory_sha256")
+                and compile_value["rendered_text_inventory_sha256"] == rendered_inventory["inventory_sha256"]
+                and rendered_inventory["final_pdf_sha256"] == pdf["sha256"]
+            )
+            text_origin_is_current = (
+                text_origin["manifest_sha256"] == _fingerprint(text_origin, "manifest_sha256")
+                and compile_value["text_origin_manifest_sha256"] == text_origin["manifest_sha256"]
+                and text_origin["precompile_text_seal_sha256"] == compile_value["precompile_text_seal_sha256"]
+                and text_origin["final_artifact_seal_sha256"] == final_seal["seal_sha256"]
+                and text_origin["rendered_text_inventory_sha256"] == rendered_inventory["inventory_sha256"]
+            )
+            relational_checks = {
+                "report_fingerprint": not report_fingerprint_is_stale,
+                "pdf": pdf_is_current,
+                "main_tex": main_tex_is_current,
+                "compile_manifest": compile_manifest_is_current,
+                "final_artifact_seal": final_seal_is_current,
+                "render_evidence_manifest": render_evidence_is_current,
+                "rendered_text_object_inventory": rendered_inventory_is_current,
+                "text_origin_manifest": text_origin_is_current,
+            }
+            failed_relations = [name for name, current in relational_checks.items() if not current]
+            if failed_relations:
+                _reject(
+                    "Legacy final compile provenance is absent, stale, or unsupported",
+                    "compile_provenance", "legacy_compile_provenance_invalid",
+                    failed_relations=failed_relations,
+                )
 
         artifacts = []
         for logical_id, path in (("final_pdf", local["final_pdf"]), ("main_tex", local["main_tex"])):

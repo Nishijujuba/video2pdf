@@ -259,7 +259,139 @@ class GuardedFinalCompileProvider:
         precompile_workspace_root: Path,
         workspace_root: Path,
         runtime_policy_path: Path,
-    ) -> Path:
+        *,
+        input_track: str = "kernel",
+        video_root: Path | None = None,
+        compile_manifest_path: Path | None = None,
+        text_origin_plan_path: Path | None = None,
+        entries: list[dict[str, Any]] | None = None,
+    ) -> tuple[Path, dict[str, Any] | None]:
+        if input_track == "legacy":
+            if video_root is None:
+                raise ContractError(
+                    "Legacy Final Compile requires an explicit video root",
+                    data={
+                        "first_failing_gate": "legacy_final_compile_video_root",
+                        "error_code": "legacy_final_compile_video_root_required",
+                    },
+                )
+            if (
+                compile_manifest_path is None
+                or text_origin_plan_path is None
+                or entries is None
+            ):
+                raise ContractError(
+                    "Legacy Final Compile authority inputs are incomplete",
+                    data={
+                        "first_failing_gate": "legacy_final_compile_authority_inputs",
+                        "error_code": "legacy_final_compile_authority_inputs_incomplete",
+                    },
+                )
+            control_store_root = (self.project_root / "workspace").resolve()
+            if video_root.resolve() == control_store_root:
+                raise ContractError(
+                    "Legacy Final Compile video root cannot be the Global Gate control root",
+                    data={
+                        "first_failing_gate": "global_gate_authority",
+                        "error_code": "legacy_global_gate_root_forbidden",
+                    },
+                )
+            legacy_root = require_contained_path(
+                video_root,
+                control_store_root,
+                purpose="Legacy Final Compile video root",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+            if (legacy_root / "workflow/run.json").exists():
+                raise ContractError(
+                    "Legacy Final Compile forbids a synthetic Workflow Run",
+                    data={
+                        "first_failing_gate": "legacy_run_record_absence",
+                        "error_code": "legacy_synthetic_run_record_forbidden",
+                    },
+                )
+
+            def require_legacy_path(
+                path: Path,
+                *,
+                purpose: str,
+                leaf_kind: str,
+                allow_missing: bool = False,
+            ) -> Path:
+                try:
+                    return require_contained_path(
+                        path,
+                        legacy_root,
+                        purpose=purpose,
+                        error_type=ContractError,
+                        leaf_kind=leaf_kind,
+                        allow_missing=allow_missing,
+                    )
+                except ContractError as exc:
+                    raise ContractError(
+                        f"{purpose} escapes the Legacy video root",
+                        data={
+                            "first_failing_gate": "legacy_final_compile_workspace_boundary",
+                            "error_code": "legacy_final_compile_path_out_of_bounds",
+                        },
+                    ) from exc
+
+            require_legacy_path(
+                precompile_workspace_root,
+                purpose="Legacy Precompile workspace",
+                leaf_kind="directory",
+            )
+            require_legacy_path(
+                compile_manifest_path,
+                purpose="Legacy Final Compile Manifest",
+                leaf_kind="file",
+            )
+            require_legacy_path(
+                text_origin_plan_path,
+                purpose="Legacy Text Origin Plan",
+                leaf_kind="file",
+            )
+            require_legacy_path(
+                runtime_policy_path,
+                purpose="Legacy Final Compile Runtime Policy",
+                leaf_kind="file",
+            )
+            for entry in entries:
+                require_legacy_path(
+                    Path(entry["source_path"]),
+                    purpose="Legacy Final Compile source",
+                    leaf_kind="file",
+                )
+            root = require_legacy_path(
+                workspace_root,
+                purpose="Legacy Final Compile workspace",
+                leaf_kind="directory",
+                allow_missing=True,
+            )
+            from .global_gate import GlobalGatePublisher
+
+            gate = GlobalGatePublisher(project_root=self.project_root).require_current(
+                control_store_root=self.project_root / "workspace"
+            )
+            return root, gate
+
+        if input_track != "kernel":
+            raise ContractError(
+                "Final Compile input track is unsupported",
+                data={
+                    "first_failing_gate": "final_compile_input_track",
+                    "error_code": "final_compile_input_track_unsupported",
+                },
+            )
+        if video_root is not None:
+            raise ContractError(
+                "Kernel Final Compile does not accept a Legacy video root",
+                data={
+                    "first_failing_gate": "final_compile_input_track",
+                    "error_code": "kernel_legacy_authority_forbidden",
+                },
+            )
         precompile = precompile_workspace_root
         run_boundary = next(
             (candidate for candidate in (precompile, *precompile.parents)
@@ -297,11 +429,13 @@ class GuardedFinalCompileProvider:
             raise ContractError(
                 "Final Compile requires the current diagnostic Runtime Policy"
             )
-        return root
+        return root, None
 
     def compile(
         self,
         *,
+        input_track: str,
+        video_root: Path | None = None,
         precompile_workspace_root: Path,
         compile_manifest_path: Path,
         text_origin_plan_path: Path,
@@ -479,8 +613,15 @@ class GuardedFinalCompileProvider:
             raise ContractError("Final Compile Manifest runtime policy binding is stale")
         adapter_identity = self._validate_adapter_authority(compiler_adapter_path)
         adapter = Path(adapter_identity["adapter_path"])
-        root = self._validate_workspace_authority(
-            precompile_workspace_root, workspace_root, runtime_policy
+        root, legacy_gate = self._validate_workspace_authority(
+            precompile_workspace_root,
+            workspace_root,
+            runtime_policy,
+            input_track=input_track,
+            video_root=video_root,
+            compile_manifest_path=compile_manifest_path,
+            text_origin_plan_path=text_origin_plan_path,
+            entries=entries,
         )
         if root.exists() and any(root.iterdir()):
             raise ContractError("Final Compile workspace must be empty")
@@ -799,6 +940,20 @@ class GuardedFinalCompileProvider:
         }
         report["report_sha256"] = _fingerprint_without(report, "report_sha256")
         self.registry.validate("final-compile-report", report)
+        if legacy_gate is not None:
+            from .global_gate import GlobalGatePublisher
+
+            current_gate = GlobalGatePublisher(
+                project_root=self.project_root
+            ).require_current(control_store_root=self.project_root / "workspace")
+            if current_gate != legacy_gate:
+                raise ContractError(
+                    "Global Gate changed during Legacy Final Compile",
+                    data={
+                        "first_failing_gate": "global_gate_authority",
+                        "error_code": "global_gate_authority_changed",
+                    },
+                )
         report_path = root / "final-compile-report.json"
         write_json_atomic(report_path, report)
         write_json_atomic(root / "compiler-adapter-identity.json", adapter_identity)

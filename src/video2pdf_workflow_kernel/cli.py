@@ -210,6 +210,10 @@ def _parser() -> argparse.ArgumentParser:
     rendered_text_reconcile.add_argument("--reconciled-at", required=True)
 
     final_compile = commands.add_parser("delivery-quality-final-compile")
+    final_compile.add_argument(
+        "--input-track", required=True, choices=("kernel", "legacy")
+    )
+    final_compile.add_argument("--video-root", type=Path)
     final_compile.add_argument("--precompile-workspace-root", required=True, type=Path)
     final_compile.add_argument("--compile-manifest", required=True, type=Path)
     final_compile.add_argument("--text-origin-plan", required=True, type=Path)
@@ -1224,6 +1228,8 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         return _ok(command, classification, result, str(args.workspace_root.resolve() / "acceptance_report.json"))
     if command == "delivery-quality-final-compile":
         result = GuardedFinalCompileProvider(project_root).compile(
+            input_track=args.input_track,
+            video_root=args.video_root,
             precompile_workspace_root=args.precompile_workspace_root,
             compile_manifest_path=args.compile_manifest,
             text_origin_plan_path=args.text_origin_plan,

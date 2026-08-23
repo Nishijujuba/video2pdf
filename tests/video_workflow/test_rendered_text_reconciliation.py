@@ -553,6 +553,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         )
         completed, envelope = cli_runner(
             "delivery-quality-final-compile",
+            "--input-track", "kernel",
             "--precompile-workspace-root", str(paths["precompile_workspace"]),
             "--compile-manifest", str(paths["compile_manifest"]),
             "--text-origin-plan", str(plan_path),

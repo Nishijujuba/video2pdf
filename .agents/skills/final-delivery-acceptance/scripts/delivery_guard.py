@@ -863,7 +863,7 @@ def _ensure_compile_report_producer(report: dict[str, Any], target: DeliveryTarg
 
 
 def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
-    """Prove the Kernel final-compile-report/1.0.0 contract for kernel targets."""
+    """Prove the registered final-compile-report/1.0.0 contract."""
 
     report = _require_object(
         _load_json(target.compile_report_path, "final compile report"),
@@ -972,8 +972,16 @@ def _ensure_compile_provenance(target: DeliveryTarget) -> None:
         raise GuardError(f"final compile report is missing: {target.compile_report_relative}")
     report = _require_object(_load_json(target.compile_report_path, "final compile report"), "final compile report")
     schema_version = _require_string(report.get("schema_version"), "final compile report.schema_version")
-    if schema_version != "latex_compile_report.v1":
-        raise GuardError(f"final compile report schema_version must be 'latex_compile_report.v1', got {schema_version}")
+    schema_name = report.get("schema_name")
+    if (schema_name, schema_version) == ("final-compile-report", "1.0.0"):
+        _ensure_kernel_compile_provenance(target)
+        return
+    if schema_name is not None or schema_version != "latex_compile_report.v1":
+        raise GuardError(
+            "final compile report contract must be either legacy "
+            "latex_compile_report.v1 or final-compile-report/1.0.0, got "
+            f"schema_name={schema_name!r}, schema_version={schema_version!r}"
+        )
     mode = _require_string(report.get("mode"), "final compile report.mode")
     if mode != "final":
         raise GuardError(f"final compile report mode must be 'final', got {mode}")

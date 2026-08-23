@@ -301,9 +301,14 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
                 "writer-result.json": writer_result,
             },
         )
+        # fixture_evolution: figure contribution is the target node; its
+        # manifest fingerprint below is rematerialized from these exact bytes.
+        # No downstream node is intentionally stale. The public
+        # production-advance seam must first pass figure_manifest_binding.
         contribution = (
-            b"\\begin{figure}\n\\centering\n"
-            b"\\includegraphics{figures/figure_01}\n"
+            b"\\begin{figure}[H]\n\\centering\n"
+            b"\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,"
+            b"keepaspectratio]{figures/figure_01}\n"
             b"\\caption{Bound evidence.}\n"
             b"\\par\\small Source (source\\_timestamp): 00:00:01\n\\end{figure}\n"
         )
@@ -640,6 +645,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
         final_workspace = run_dir / "review" / "acceptance" / "final-evidence"
         self._require_ok(
             "delivery-quality-final-compile",
+            "--input-track", "kernel",
             "--precompile-workspace-root", str(quality),
             "--compile-manifest", str(compile_manifest_path),
             "--text-origin-plan", str(origin_plan_path),

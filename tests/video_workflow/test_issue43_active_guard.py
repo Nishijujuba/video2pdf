@@ -43,6 +43,7 @@ if str(SRC) not in sys.path:
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.guarded_delivery import _load_active_delivery_guard
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
     normalized_physical_path,
@@ -1396,6 +1397,85 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         guard = json.loads((self.workspace / "delivery_guard_report.json").read_text(encoding="utf-8"))
         self.assertEqual("report_fingerprint_current", guard["first_failing_gate"])
         self.assertEqual("acceptance_v2_report_fingerprint_current_stale", guard["error_code"])
+
+
+class Issue43LegacyModernCompileProvenanceTests(unittest.TestCase):
+    """Legacy delivery targets admit the registered modern compile contract."""
+
+    def test_legacy_target_accepts_modern_final_compile_report(self) -> None:
+        guard = _load_active_delivery_guard(PROJECT_ROOT)
+        root = new_case_dir(self.id(), label="issue43-legacy-modern-compile")
+        video_root = root / "video"
+        final_pdf = video_root / "review/final-compile/adapter-output/final.pdf"
+        main_tex = video_root / "main.tex"
+        compile_report = video_root / "review/final-compile/final-compile-report.json"
+        final_pdf.parent.mkdir(parents=True)
+        main_tex.parent.mkdir(parents=True, exist_ok=True)
+        final_pdf.write_bytes(b"%PDF-1.7\nlegacy guarded final\n")
+        main_tex.write_text("\\documentclass{article}\n", encoding="utf-8")
+        report = {
+            "schema_name": "final-compile-report",
+            "schema_version": "1.0.0",
+            "mode": "final",
+            "status": "pass",
+            "delivery_authority": False,
+            "compiler_provider": {
+                "provider_id": "guarded-final-compile-provider",
+                "provider_sha256": file_sha(
+                    PROJECT_ROOT
+                    / "src/video2pdf_workflow_kernel/final_compile.py"
+                ),
+            },
+            "pdf": {
+                "path": "adapter-output/final.pdf",
+                "sha256": file_sha(final_pdf),
+                "size": final_pdf.stat().st_size,
+            },
+            "dependency_closure": {
+                "complete": True,
+                "inputs": [
+                    {
+                        "logical_id": "integrated_main",
+                        "sha256": file_sha(main_tex),
+                    }
+                ],
+            },
+        }
+        report["report_sha256"] = hashlib.sha256(
+            canonical_json_bytes(report)
+        ).hexdigest()
+        write_json(compile_report, report)
+        target = guard.DeliveryTarget(
+            project_root=PROJECT_ROOT,
+            current_target_path=root / "current.json",
+            current_target={"schema_name": "legacy-session-delivery-target"},
+            video_target={"schema_name": "legacy-delivery-target"},
+            video_output_dir=video_root,
+            target_file=video_root / "review/acceptance/delivery_target.json",
+            final_pdf=final_pdf,
+            main_tex=main_tex,
+            manifest_path=video_root / "review/acceptance/allowed_artifacts_manifest.json",
+            acceptance_report_path=video_root / "review/acceptance/acceptance_report.json",
+            guard_report_path=video_root / "review/acceptance/delivery_guard_report.json",
+            compile_report_path=compile_report,
+            global_gate_authority_path=root / "active_global_gate.json",
+            global_gate_authority_sha256="0" * 64,
+            attempt_limit=3,
+            stage="accepted",
+            final_pdf_relative="review/final-compile/adapter-output/final.pdf",
+            main_tex_relative="main.tex",
+            manifest_relative="review/acceptance/allowed_artifacts_manifest.json",
+            acceptance_report_relative="review/acceptance/acceptance_report.json",
+            guard_report_relative="review/acceptance/delivery_guard_report.json",
+            compile_report_relative="review/final-compile/final-compile-report.json",
+            target_file_relative="review/acceptance/delivery_target.json",
+            compile_provenance_required=True,
+            legacy_existing_pdf=False,
+            recompiled=True,
+            kernel_authority=False,
+        )
+
+        guard._ensure_compile_provenance(target)
 
 
 if __name__ == "__main__":

@@ -7,10 +7,12 @@ import subprocess
 import shutil
 import sys
 import unittest
+from unittest import mock
 
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
-from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+from video2pdf_workflow_kernel.errors import AcceptanceV2Rejected
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher, LegacyAcceptanceProvider
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +30,11 @@ def _write(path: Path, value: object) -> Path:
     else:
         path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
     return path
+
+
+def _refingerprint(value: dict, field: str) -> None:
+    value.pop(field, None)
+    value[field] = acceptance_v2_tests.canonical_sha(value)
 
 
 def _run(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -49,11 +56,14 @@ class Issue43GlobalGateTests(unittest.TestCase):
     commit_visual = acceptance_v2_tests.AcceptanceV2CliTests.commit_visual
     materialize = acceptance_v2_tests.AcceptanceV2CliTests.materialize
 
-    def legacy_graph(self, root: Path | None = None, compile_wrapper: Path | None = None) -> tuple[Path, dict[str, Path]]:
+    def legacy_graph(
+        self, root: Path | None = None, compile_wrapper: Path | None = None,
+        *, publish_authority: bool = True,
+    ) -> tuple[Path, dict[str, Path]]:
         root = root or new_case_dir(self.id(), label="issue43-legacy")
         compile_wrapper = compile_wrapper or PROJECT_ROOT / ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
         kernel_fixture = acceptance_v2_tests.AcceptanceV2CliTests()
-        kernel_binding_path = kernel_fixture.build_binding(root, 1)
+        kernel_binding_path = kernel_fixture.build_binding(root, 1, publish_authority=publish_authority)
         kernel_binding = json.loads(kernel_binding_path.read_text(encoding="utf-8"))
         final_pdf = Path(next(item["path"] for item in kernel_binding["artifacts"] if item["logical_id"] == "final_pdf"))
         main_tex = Path(next(item["path"] for item in kernel_binding["artifacts"] if item["logical_id"] == "main_tex"))
@@ -114,6 +124,91 @@ class Issue43GlobalGateTests(unittest.TestCase):
             "--adopted-at", "2026-08-02T00:00:00Z",
         )
 
+    def modernize_compile_provenance(self, root: Path, paths: dict[str, Path]) -> None:
+        quality_manifest = json.loads(paths["quality_inputs"].read_text(encoding="utf-8"))
+        quality_bindings = quality_manifest["quality_inputs"]
+        quality = {
+            logical_id: json.loads(Path(binding["path"]).read_text(encoding="utf-8"))
+            for logical_id, binding in quality_bindings.items()
+        }
+        manifest = quality["final_compile_manifest"]
+        final_seal = quality["final_artifact_seal"]
+        render_evidence = quality["render_evidence_manifest"]
+        rendered_inventory = quality["rendered_text_object_inventory"]
+        text_origin = quality["text_origin_manifest"]
+        reconciliation = quality["rendered_text_reconciliation"]
+        adapter = PROJECT_ROOT / "tests/video_workflow/fixtures/delivery-quality/guarded_final_compile_adapter.py"
+        pdf = {
+            "path": paths["pdf"].relative_to(root).as_posix(),
+            "sha256": _sha(paths["pdf"]), "size": paths["pdf"].stat().st_size,
+        }
+        final_seal["final_pdf"] = pdf
+        _refingerprint(final_seal, "seal_sha256")
+        text_origin["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        _refingerprint(text_origin, "manifest_sha256")
+        reconciliation["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        reconciliation["text_origin_manifest_sha256"] = text_origin["manifest_sha256"]
+        _refingerprint(reconciliation, "report_sha256")
+        for logical_id in ("final_artifact_seal", "text_origin_manifest", "rendered_text_reconciliation"):
+            path = Path(quality_bindings[logical_id]["path"])
+            _write(path, quality[logical_id])
+            quality_bindings[logical_id]["sha256"] = _sha(path)
+        _write(paths["quality_inputs"], quality_manifest)
+        report = {
+            "schema_name": "final-compile-report", "schema_version": "1.0.0",
+            "mode": "final", "status": "pass", "delivery_authority": False,
+            "precompile_text_seal_sha256": manifest["precompile_text_seal_sha256"],
+            "final_artifact_seal_sha256": final_seal["seal_sha256"],
+            "compile_manifest_sha256": manifest["manifest_sha256"],
+            "dependency_closure": {
+                "complete": True,
+                "inputs": [{
+                    "logical_id": entry["logical_id"], "generation": entry["generation"],
+                    "sha256": entry["sha256"],
+                } for entry in manifest["entries"]],
+                "runtime_inputs": [], "generated_inputs": [],
+                "recorder_sha256": "a" * 64, "recorder_path": "adapter-output/main.fls",
+            },
+            "pdf": pdf,
+            "compiler_provider": final_seal["compile_provider"],
+            "compile_adapter": {
+                "adapter_path": str(adapter), "adapter_sha256": _sha(adapter),
+                "protocol_version": "guarded-final-compile-v1",
+            },
+            "text_origin_plan_sha256": "b" * 64,
+            "render_evidence_manifest_sha256": render_evidence["manifest_sha256"],
+            "rendered_text_inventory_sha256": rendered_inventory["inventory_sha256"],
+            "text_origin_manifest_sha256": text_origin["manifest_sha256"],
+        }
+        _refingerprint(report, "report_sha256")
+        paths["compile"] = _write(root / "final-compile-report.json", report)
+
+    def legacy_graph_with_current_gate(self) -> tuple[Path, dict[str, Path]]:
+        gate_binding = {"authority_sha256": "a" * 64}
+        with (
+            mock.patch.object(acceptance_v2_tests, "activate_test_global_gate"),
+            mock.patch.object(GlobalGatePublisher, "require_current", return_value=gate_binding),
+        ):
+            root, paths = self.legacy_graph(publish_authority=False)
+        return root, paths
+
+    def modern_legacy_graph(self) -> tuple[Path, dict[str, Path]]:
+        root, paths = self.legacy_graph_with_current_gate()
+        self.modernize_compile_provenance(root, paths)
+        return root, paths
+
+    def adopt_with_current_gate(self, root: Path, paths: dict[str, Path]) -> dict:
+        with mock.patch.object(
+            GlobalGatePublisher, "require_current", return_value={"authority_sha256": "a" * 64},
+        ):
+            return LegacyAcceptanceProvider(PROJECT_ROOT).adopt(
+                video_output_dir=root, final_pdf=paths["pdf"], main_tex=paths["tex"],
+                allowed_artifacts_manifest=paths["manifest"], compile_report=paths["compile"],
+                criteria=paths["criteria"], dimension_map=paths["dimensions"],
+                rendered_pages_manifest=paths["pages"], quality_inputs_manifest=paths["quality_inputs"],
+                control_store_root=root, adopted_at="2026-08-02T00:00:00Z",
+            )
+
     def test_legacy_adoption_materializes_a_fresh_run_record_free_input_set(self) -> None:
         root, paths = self.legacy_graph()
         completed, envelope = self.adopt(root, paths)
@@ -123,6 +218,93 @@ class Issue43GlobalGateTests(unittest.TestCase):
         self.assertEqual(value["input_track"], "legacy")
         self.assertNotIn("run", value)
         self.assertFalse((root / "workflow/run.json").exists())
+
+    def test_legacy_adoption_accepts_relationally_current_final_compile_report(self) -> None:
+        root, paths = self.modern_legacy_graph()
+        try:
+            result = self.adopt_with_current_gate(root, paths)
+        except AcceptanceV2Rejected as error:
+            self.fail(str(error.data))
+        adopted = json.loads(Path(result["input_set_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(_sha(paths["compile"]), adopted["compile_provenance"]["sha256"])
+
+    def test_legacy_latex_compile_report_remains_supported(self) -> None:
+        root, paths = self.legacy_graph_with_current_gate()
+        result = self.adopt_with_current_gate(root, paths)
+        adopted = json.loads(Path(result["input_set_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(_sha(paths["compile"]), adopted["compile_provenance"]["sha256"])
+
+    def test_legacy_adoption_rejects_invalid_final_compile_report_schema(self) -> None:
+        root, paths = self.modern_legacy_graph()
+        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        report["delivery_authority"] = True
+        _refingerprint(report, "report_sha256")
+        _write(paths["compile"], report)
+        with self.assertRaises(AcceptanceV2Rejected) as raised:
+            self.adopt_with_current_gate(root, paths)
+        self.assertEqual("compile_provenance", raised.exception.data["first_failing_gate"])
+        self.assertEqual("legacy_compile_provenance_invalid", raised.exception.data["error_code"])
+
+    def test_legacy_adoption_rejects_each_final_compile_report_relation_drift(self) -> None:
+        # scenario_id: legacy_modern_compile_relation_drift; each subtest
+        # rematerializes the report fingerprint after one target contradiction.
+        relation_fields = (
+            "pdf", "final_artifact_seal_sha256", "compile_manifest_sha256",
+            "render_evidence_manifest_sha256", "rendered_text_inventory_sha256",
+            "text_origin_manifest_sha256",
+        )
+        root, paths = self.modern_legacy_graph()
+        current_report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        for relation in relation_fields:
+            with self.subTest(relation=relation):
+                report = json.loads(json.dumps(current_report))
+                if relation == "pdf":
+                    report["pdf"]["sha256"] = "0" * 64
+                else:
+                    report[relation] = "0" * 64
+                _refingerprint(report, "report_sha256")
+                _write(paths["compile"], report)
+                with self.assertRaises(AcceptanceV2Rejected) as raised:
+                    self.adopt_with_current_gate(root, paths)
+                self.assertEqual("compile_provenance", raised.exception.data["first_failing_gate"])
+                self.assertEqual("legacy_compile_provenance_invalid", raised.exception.data["error_code"])
+
+    def test_legacy_adoption_rejects_final_compile_manifest_bound_to_another_main_tex(self) -> None:
+        root, paths = self.modern_legacy_graph()
+        quality_manifest = json.loads(paths["quality_inputs"].read_text(encoding="utf-8"))
+        bindings = quality_manifest["quality_inputs"]
+        manifest_path = Path(bindings["final_compile_manifest"]["path"])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["entries"][0]["source_path"] = str(paths["pdf"])
+        _refingerprint(manifest, "manifest_sha256")
+        _write(manifest_path, manifest)
+        bindings["final_compile_manifest"]["sha256"] = _sha(manifest_path)
+
+        final_seal_path = Path(bindings["final_artifact_seal"]["path"])
+        final_seal = json.loads(final_seal_path.read_text(encoding="utf-8"))
+        final_seal["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        _refingerprint(final_seal, "seal_sha256")
+        _write(final_seal_path, final_seal)
+        bindings["final_artifact_seal"]["sha256"] = _sha(final_seal_path)
+
+        text_origin_path = Path(bindings["text_origin_manifest"]["path"])
+        text_origin = json.loads(text_origin_path.read_text(encoding="utf-8"))
+        text_origin["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        _refingerprint(text_origin, "manifest_sha256")
+        _write(text_origin_path, text_origin)
+        bindings["text_origin_manifest"]["sha256"] = _sha(text_origin_path)
+        _write(paths["quality_inputs"], quality_manifest)
+
+        report = json.loads(paths["compile"].read_text(encoding="utf-8"))
+        report["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        report["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        report["text_origin_manifest_sha256"] = text_origin["manifest_sha256"]
+        _refingerprint(report, "report_sha256")
+        _write(paths["compile"], report)
+        with self.assertRaises(AcceptanceV2Rejected) as raised:
+            self.adopt_with_current_gate(root, paths)
+        self.assertEqual("compile_provenance", raised.exception.data["first_failing_gate"])
+        self.assertEqual("legacy_compile_provenance_invalid", raised.exception.data["error_code"])
 
     def test_legacy_adoption_rejects_stale_page_fingerprint_at_the_freshness_gate(self) -> None:
         # scenario_id: legacy_page_stale; single contradiction after page-manifest publication.

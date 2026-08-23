@@ -458,7 +458,7 @@
         },
         "legacy_track_authority": {"const": "acceptance_report_v2"},
         "platform_kernel_authority": {"const": "unchanged"},
-        "qualification_contract_sha256": {"const": "0e24ee82c2ff68124523546e5891c39227fe4268dbc581b74a319cdde22ef411"}
+        "qualification_contract_sha256": {"const": "62a3ed565b264a1b4b29d4b61a8803afef4bc637eae6b37a899a1672483750c7"}
       }
     },
     "bilibiliPlatformActivationScope": {

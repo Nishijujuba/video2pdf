@@ -39,7 +39,7 @@ MIRROR_SPECS += ((
     ".claude/skills/final-delivery-acceptance/scripts/delivery_guard.py",
 ),)
 POLICY_STATUS = "active_global_gate"
-QUALIFICATION_CONTRACT_SHA256 = "0e24ee82c2ff68124523546e5891c39227fe4268dbc581b74a319cdde22ef411"
+QUALIFICATION_CONTRACT_SHA256 = "62a3ed565b264a1b4b29d4b61a8803afef4bc637eae6b37a899a1672483750c7"
 
 ACTIVATION_SCOPE = {
     "kind": "active_global_gate",
@@ -53,6 +53,10 @@ ACTIVATION_SCOPE = {
 GLOBAL_GATE_TESTS = "tests.video_workflow.test_issue43_global_gate.Issue43GlobalGateTests"
 POLICY_TESTS = "tests.video_workflow.test_issue43_workflow_policy.Issue43WorkflowPolicyTests"
 GUARD_TESTS = "tests.video_workflow.test_issue43_active_guard.Issue43ActiveGuardTests"
+MODERN_GUARD_TESTS = (
+    "tests.video_workflow.test_issue43_active_guard."
+    "Issue43LegacyModernCompileProvenanceTests"
+)
 MIRROR_TEST = (
     "tests.video_workflow.test_issue43_active_guard_policy."
     "Issue43ActiveGuardPolicyTests."
@@ -138,14 +142,14 @@ RESULT_SPECS = (
     (
         "modern_legacy_guard_pass",
         "positive",
-        f"{GUARD_TESTS}.test_public_guard_accepts_registry_valid_modern_legacy_report",
+        f"{MODERN_GUARD_TESTS}.test_public_guard_accepts_registry_valid_modern_legacy_report",
         None,
         None,
     ),
     (
         "modern_legacy_guard_schema_rejected",
         "negative",
-        f"{GUARD_TESTS}.test_public_guard_rejects_single_modern_schema_contradiction",
+        f"{MODERN_GUARD_TESTS}.test_public_guard_rejects_single_modern_schema_contradiction",
         "delivery_guard",
         "delivery_guard_failed",
     ),

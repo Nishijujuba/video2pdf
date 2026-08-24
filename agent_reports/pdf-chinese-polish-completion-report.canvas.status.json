@@ -1,0 +1,4 @@
+{
+  "status": "compile-error",
+  "diagnosticsText": "d:/Project/video2pdf/newskill-kimi/agent_reports/pdf-chinese-polish-completion-report.canvas.tsx:78:24: canvasImage requires a string literal or a template literal without substitutions."
+}

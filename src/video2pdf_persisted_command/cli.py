@@ -40,6 +40,7 @@ STATUS_LOCK_RETRY_DELAY_SECONDS = 0.02
 SUPERVISOR_IDENTITY_FILENAME = "supervisor-identity.json"
 STATUS_PUBLICATION_ERROR_FILENAME = "status-publication-error.json"
 STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1, 0.2)
+STATUS_READ_RETRY_DELAYS_SECONDS = (0.01, 0.025, 0.05, 0.1)
 OPERATOR_GUIDE = "docs/operations/persisted-command-runner.md"
 
 _COOKIE_FILE_ARGUMENTS = frozenset(
@@ -168,6 +169,27 @@ def _is_windows_sharing_conflict(error: OSError) -> bool:
     return os.name == "nt" and getattr(error, "winerror", None) in {5, 32, 33}
 
 
+def _is_transient_read_error(error: OSError) -> bool:
+    return _is_windows_sharing_conflict(error) or error.errno in {
+        errno.EACCES,
+        errno.EAGAIN,
+    }
+
+
+def _read_status_snapshot_text(run_dir: Path) -> str:
+    path = run_dir / "status.json"
+    for attempt in range(len(STATUS_READ_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as error:
+            if (
+                attempt == len(STATUS_READ_RETRY_DELAYS_SECONDS)
+                or not _is_transient_read_error(error)
+            ):
+                raise
+            time.sleep(STATUS_READ_RETRY_DELAYS_SECONDS[attempt])
+
+
 def _write_json_atomic(
     path: Path,
     value: dict[str, Any],
@@ -268,7 +290,7 @@ def _read_status_snapshot(
     *,
     infer_missing_terminal: bool = True,
 ) -> dict[str, Any]:
-    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    status = json.loads(_read_status_snapshot_text(run_dir))
     publication_error_path = run_dir / STATUS_PUBLICATION_ERROR_FILENAME
     if publication_error_path.is_file():
         publication_error = json.loads(

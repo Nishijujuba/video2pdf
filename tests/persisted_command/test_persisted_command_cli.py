@@ -3184,6 +3184,81 @@ class PersistedCommandCliTests(unittest.TestCase):
         self.assertFalse((run_dir / "exit-code.txt").exists())
         self.assertNotEqual(data["status"]["state"], "succeeded")
 
+    def _read_retry_run_dir(self) -> tuple[Path, dict[str, Any]]:
+        run_dir = (
+            PROJECT_ROOT
+            / "待删除"
+            / f"persisted-command-read-retry-{uuid.uuid4().hex}"
+        )
+        run_dir.mkdir(parents=True)
+        status = {
+            "schema_name": "persisted-command-status",
+            "schema_version": "1.0.0",
+            "run_id": str(uuid.uuid4()),
+            "state": "succeeded",
+            "updated_at": "2026-08-25T00:00:00",
+            "exit_code": 0,
+        }
+        (run_dir / "status.json").write_text(
+            json.dumps(status, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return run_dir, status
+
+    def test_read_status_snapshot_retries_transient_sharing_conflict(
+        self,
+    ) -> None:
+        run_dir, status = self._read_retry_run_dir()
+        original_read_text = Path.read_text
+        reads = 0
+
+        def flaky_read_text(
+            path: Path,
+            *args: Any,
+            **kwargs: Any,
+        ) -> str:
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                error = PermissionError(
+                    13, "simulated sharing conflict", str(path)
+                )
+                error.winerror = 32
+                raise error
+            return original_read_text(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", flaky_read_text):
+            snapshot = persisted_cli._read_status_snapshot(run_dir)
+
+        self.assertEqual(reads, 2)
+        self.assertEqual(snapshot["run_id"], status["run_id"])
+        self.assertEqual(snapshot["state"], status["state"])
+
+    def test_read_status_snapshot_bounds_permanent_read_failures(
+        self,
+    ) -> None:
+        run_dir, _status = self._read_retry_run_dir()
+        reads: list[Path] = []
+
+        def always_fail(
+            path: Path,
+            *args: Any,
+            **kwargs: Any,
+        ) -> str:
+            reads.append(path)
+            raise PermissionError(
+                13, "persistent sharing conflict", str(path)
+            )
+
+        with mock.patch.object(Path, "read_text", always_fail):
+            with self.assertRaises(PermissionError):
+                persisted_cli._read_status_snapshot(run_dir)
+
+        self.assertEqual(
+            len(reads),
+            len(persisted_cli.STATUS_READ_RETRY_DELAYS_SECONDS) + 1,
+        )
+
     def _wait_for_status(
         self,
         run_dir: Path,

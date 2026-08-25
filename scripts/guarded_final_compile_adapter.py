@@ -124,6 +124,19 @@ def stage(
             and relative.as_posix().casefold() == "main.tex"
         )
         if is_explicit_entrypoint or is_legacy_entrypoint:
+            if (
+                relative.suffix.casefold() != ".tex"
+                or source.suffix.casefold() != ".tex"
+            ):
+                raise AdapterError(
+                    "compile manifest entrypoint is not a TeX source",
+                    data={
+                        "first_failing_gate": (
+                            "final_editable_tex_source_set_entrypoint"
+                        ),
+                        "error_code": "final_tex_entrypoint_not_tex",
+                    },
+                )
             entrypoint_candidates.append(destination)
         if relative.suffix.casefold() in {".png", ".jpg", ".jpeg"}:
             identity = (entry.get("logical_id"), entry.get("generation"), entry.get("sha256"))

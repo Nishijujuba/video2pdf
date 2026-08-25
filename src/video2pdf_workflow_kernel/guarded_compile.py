@@ -431,9 +431,15 @@ class GuardedCompileProvider:
                     if extension == "" or not PurePosixPath(value).suffix
                 }
                 candidates.add(value.casefold())
+                reference_has_directory = bool(
+                    PurePosixPath(value).parts[:-1]
+                )
                 if not any(
                     candidate in declared_destinations
-                    or PurePosixPath(candidate).name in destination_names
+                    or (
+                        not reference_has_directory
+                        and PurePosixPath(candidate).name in destination_names
+                    )
                     for candidate in candidates
                 ):
                     raise CompileDependencyGap(

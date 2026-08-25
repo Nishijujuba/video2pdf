@@ -93,6 +93,186 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         return isolated_root
 
+    def _legacy_compile_environment(
+        self,
+        tag: str,
+        source_root: Path,
+        source_paths: dict[str, Path],
+    ) -> tuple[Path, dict[str, Path]]:
+        """Build the plan, isolated authority clone, and run-record-free Legacy
+        root; returns (isolated_root, legacy_paths)."""
+        from tests.video_workflow._issue43_git_authority import (
+            build_current_global_gate_authority,
+        )
+        from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+
+        origins = json.loads(source_paths["origins"].read_text(encoding="utf-8"))
+        rendered = json.loads(source_paths["rendered"].read_text(encoding="utf-8"))
+        seal = json.loads(
+            (
+                source_paths["precompile_workspace"]
+                / "precompile-text-seal.json"
+            ).read_text(encoding="utf-8")
+        )
+        plan = {
+            "schema_name": "text-origin-plan",
+            "schema_version": "1.0.0",
+            "precompile_text_seal_sha256": seal["seal_sha256"],
+            "sealed_items": [
+                {
+                    "item_id": edge["sealed_item_id"],
+                    "exact_utf8_text": edge["sealed_text_utf8"],
+                }
+                for edge in origins["edges"]
+                if edge["disposition"] == "sealed_origin"
+            ],
+            "page_count": rendered["coverage"]["page_count"],
+            "extractor_suite": rendered["extractor_suite"],
+            "rendered_objects": [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"text_sha256", "object_sha256"}
+                }
+                for item in rendered["objects"]
+            ],
+            "edges": origins["edges"],
+        }
+        plan["plan_sha256"] = canonical_sha(plan, "plan_sha256")
+        (source_root / "text-origin-plan.json").write_text(
+            json.dumps(
+                plan,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        isolated_root = self._isolated_authority_clone(tag)
+        control_store_root = isolated_root / "workspace"
+        control_store_root.mkdir()
+        authority_repository, exit_evidence = build_current_global_gate_authority(
+            control_store_root,
+            source_git_repository=isolated_root,
+            authority_overlay_root=isolated_root,
+        )
+        GlobalGatePublisher(project_root=authority_repository).activate(
+            control_store_root=control_store_root,
+            exit_evidence=exit_evidence,
+            activated_at="2026-08-25T13:30:00+08:00",
+        )
+
+        legacy_root = control_store_root / "v" / uuid.uuid4().hex[:6]
+        shutil.copytree(source_root, legacy_root)
+        legacy_quality = legacy_root / "precompile"
+        legacy_manifest_path = legacy_root / "compile-manifest.json"
+        legacy_origin_plan_path = legacy_root / "text-origin-plan.json"
+        legacy_runtime_policy = legacy_quality / "legacy-runtime-policy.json"
+        shutil.copy2(
+            legacy_root / "workflow/compile-runtime-policy.json",
+            legacy_runtime_policy,
+        )
+        legacy_policy = json.loads(legacy_runtime_policy.read_text(encoding="utf-8"))
+        legacy_policy["engine"]["prefix_args"] = [
+            str(isolated_root / Path(item).relative_to(PROJECT_ROOT))
+            if Path(item).is_relative_to(PROJECT_ROOT)
+            and not Path(item).is_relative_to(isolated_root)
+            else item
+            for item in legacy_policy["engine"]["prefix_args"]
+        ]
+        for identity in legacy_policy["engine"]["prefix_file_fingerprints"]:
+            path = Path(identity["path"])
+            if path.is_relative_to(PROJECT_ROOT) and not path.is_relative_to(
+                isolated_root
+            ):
+                identity["path"] = str(isolated_root / path.relative_to(PROJECT_ROOT))
+        inventory_path = Path(legacy_policy["package_inventory"]["path"])
+        if inventory_path.is_relative_to(
+            PROJECT_ROOT
+        ) and not inventory_path.is_relative_to(isolated_root):
+            legacy_policy["package_inventory"]["path"] = str(
+                isolated_root / inventory_path.relative_to(PROJECT_ROOT)
+            )
+        legacy_policy["policy_sha256"] = canonical_sha(
+            legacy_policy, "policy_sha256"
+        )
+        legacy_runtime_policy.write_text(
+            json.dumps(
+                legacy_policy,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        legacy_manifest = json.loads(legacy_manifest_path.read_text(encoding="utf-8"))
+        for entry in legacy_manifest["entries"]:
+            original = Path(entry["source_path"])
+            entry["source_path"] = str(legacy_root / original.relative_to(source_root))
+        legacy_manifest["runtime_policy"] = {
+            "path": str(legacy_runtime_policy.resolve()),
+            "sha256": hashlib.sha256(legacy_runtime_policy.read_bytes()).hexdigest(),
+        }
+        legacy_manifest["manifest_sha256"] = canonical_sha(
+            legacy_manifest, "manifest_sha256"
+        )
+        legacy_manifest_path.write_text(
+            json.dumps(
+                legacy_manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        retired_workflow = legacy_root / "待删除/kernel-workflow"
+        retired_workflow.parent.mkdir(parents=True, exist_ok=True)
+        (legacy_root / "workflow").rename(retired_workflow)
+        return isolated_root, {
+            "legacy_root": legacy_root,
+            "legacy_quality": legacy_quality,
+            "legacy_manifest_path": legacy_manifest_path,
+            "legacy_origin_plan_path": legacy_origin_plan_path,
+            "legacy_runtime_policy": legacy_runtime_policy,
+            "workspace": legacy_root / "review/final",
+        }
+
+    def _run_legacy_final_compile(
+        self,
+        isolated_root: Path,
+        legacy: dict[str, Path],
+        *extra_arguments: str,
+    ) -> tuple[subprocess.CompletedProcess[str], dict]:
+        completed = subprocess.run(
+            [
+                sys.executable, "-X", "utf8", "-B",
+                str(isolated_root / "scripts/video_workflow.py"),
+                "delivery-quality-final-compile",
+                "--input-track", "legacy",
+                "--video-root", str(legacy["legacy_root"]),
+                "--precompile-workspace-root", str(legacy["legacy_quality"]),
+                "--compile-manifest", str(legacy["legacy_manifest_path"]),
+                "--text-origin-plan", str(legacy["legacy_origin_plan_path"]),
+                "--compiler-adapter", str(
+                    isolated_root / "scripts/guarded_final_compile_adapter.py"
+                ),
+                "--runtime-policy", str(legacy["legacy_runtime_policy"]),
+                "--workspace-root", str(legacy["workspace"]),
+                "--compiled-at", "2026-08-25T13:30:00+08:00",
+                *extra_arguments,
+            ],
+            cwd=isolated_root,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        return completed, json.loads(completed.stdout)
+
     def test_public_contract_accepts_current_kernel_version_binding(self) -> None:
         artifact = json.loads(
             (
@@ -446,13 +626,9 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         # expected_first_failing_gate: final_editable_tex_source_set_dependency_evidence.
         # expected_error_code: final_tex_include_missing.
         # scenario_class: single_contradiction.
-        from tests.video_workflow._issue43_git_authority import (
-            build_current_global_gate_authority,
-        )
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
-        from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
@@ -462,168 +638,30 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             main_tex_content="\\input{chapters/missing}\n",
             authority_root=PROJECT_ROOT / "待删除/i58m-source" / uuid.uuid4().hex[:6],
         )
-        origins = json.loads(source_paths["origins"].read_text(encoding="utf-8"))
-        rendered = json.loads(source_paths["rendered"].read_text(encoding="utf-8"))
-        seal = json.loads(
-            (
-                source_paths["precompile_workspace"]
-                / "precompile-text-seal.json"
-            ).read_text(encoding="utf-8")
+        isolated_root, legacy = self._legacy_compile_environment(
+            "m", source_root, source_paths
         )
-        plan = {
-            "schema_name": "text-origin-plan",
-            "schema_version": "1.0.0",
-            "precompile_text_seal_sha256": seal["seal_sha256"],
-            "sealed_items": [
-                {
-                    "item_id": edge["sealed_item_id"],
-                    "exact_utf8_text": edge["sealed_text_utf8"],
-                }
-                for edge in origins["edges"]
-                if edge["disposition"] == "sealed_origin"
-            ],
-            "page_count": rendered["coverage"]["page_count"],
-            "extractor_suite": rendered["extractor_suite"],
-            "rendered_objects": [
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key not in {"text_sha256", "object_sha256"}
-                }
-                for item in rendered["objects"]
-            ],
-            "edges": origins["edges"],
-        }
-        plan["plan_sha256"] = canonical_sha(plan, "plan_sha256")
-        (source_root / "text-origin-plan.json").write_text(
-            json.dumps(
-                plan,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-
-        isolated_root = self._isolated_authority_clone("m")
-
-        control_store_root = isolated_root / "workspace"
-        control_store_root.mkdir()
-        authority_repository, exit_evidence = build_current_global_gate_authority(
-            control_store_root,
-            source_git_repository=isolated_root,
-            authority_overlay_root=isolated_root,
-        )
-        GlobalGatePublisher(project_root=authority_repository).activate(
-            control_store_root=control_store_root,
-            exit_evidence=exit_evidence,
-            activated_at="2026-08-25T13:30:00+08:00",
-        )
-
-        legacy_root = control_store_root / "v" / uuid.uuid4().hex[:6]
-        shutil.copytree(source_root, legacy_root)
-        legacy_quality = legacy_root / "precompile"
-        legacy_manifest_path = legacy_root / "compile-manifest.json"
-        legacy_origin_plan_path = legacy_root / "text-origin-plan.json"
-        legacy_runtime_policy = legacy_quality / "legacy-runtime-policy.json"
-        shutil.copy2(
-            legacy_root / "workflow/compile-runtime-policy.json",
-            legacy_runtime_policy,
-        )
-        legacy_policy = json.loads(legacy_runtime_policy.read_text(encoding="utf-8"))
-        legacy_policy["engine"]["prefix_args"] = [
-            str(isolated_root / Path(item).relative_to(PROJECT_ROOT))
-            if Path(item).is_relative_to(PROJECT_ROOT)
-            and not Path(item).is_relative_to(isolated_root)
-            else item
-            for item in legacy_policy["engine"]["prefix_args"]
-        ]
-        for identity in legacy_policy["engine"]["prefix_file_fingerprints"]:
-            path = Path(identity["path"])
-            if path.is_relative_to(PROJECT_ROOT) and not path.is_relative_to(
-                isolated_root
-            ):
-                identity["path"] = str(isolated_root / path.relative_to(PROJECT_ROOT))
-        inventory_path = Path(legacy_policy["package_inventory"]["path"])
-        if inventory_path.is_relative_to(
-            PROJECT_ROOT
-        ) and not inventory_path.is_relative_to(isolated_root):
-            legacy_policy["package_inventory"]["path"] = str(
-                isolated_root / inventory_path.relative_to(PROJECT_ROOT)
-            )
-        legacy_policy["policy_sha256"] = canonical_sha(
-            legacy_policy, "policy_sha256"
-        )
-        legacy_runtime_policy.write_text(
-            json.dumps(
-                legacy_policy,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        legacy_manifest = json.loads(legacy_manifest_path.read_text(encoding="utf-8"))
-        for entry in legacy_manifest["entries"]:
-            original = Path(entry["source_path"])
-            entry["source_path"] = str(legacy_root / original.relative_to(source_root))
-        legacy_manifest["runtime_policy"] = {
-            "path": str(legacy_runtime_policy.resolve()),
-            "sha256": hashlib.sha256(legacy_runtime_policy.read_bytes()).hexdigest(),
-        }
-        legacy_manifest["manifest_sha256"] = canonical_sha(
-            legacy_manifest, "manifest_sha256"
-        )
-        legacy_manifest_path.write_text(
-            json.dumps(
-                legacy_manifest,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        retired_workflow = legacy_root / "待删除/kernel-workflow"
-        retired_workflow.parent.mkdir(parents=True, exist_ok=True)
-        (legacy_root / "workflow").rename(retired_workflow)
-
-        workspace = legacy_root / "review/final"
-        completed = subprocess.run(
-            [
-                sys.executable, "-X", "utf8", "-B",
-                str(isolated_root / "scripts/video_workflow.py"),
-                "delivery-quality-final-compile",
-                "--input-track", "legacy",
-                "--video-root", str(legacy_root),
-                "--precompile-workspace-root", str(legacy_quality),
-                "--compile-manifest", str(legacy_manifest_path),
-                "--text-origin-plan", str(legacy_origin_plan_path),
-                "--compiler-adapter", str(
-                    isolated_root / "scripts/guarded_final_compile_adapter.py"
-                ),
-                "--runtime-policy", str(legacy_runtime_policy),
-                "--workspace-root", str(workspace),
-                "--compiled-at", "2026-08-25T13:30:00+08:00",
-            ],
-            cwd=isolated_root,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        envelope = json.loads(completed.stdout)
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
         self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
         self.assertEqual(
             "final_editable_tex_source_set_dependency_evidence",
             envelope["data"]["first_failing_gate"],
         )
         self.assertEqual("final_tex_include_missing", envelope["data"]["error_code"])
-        self.assertFalse((workspace / "final-editable-tex-source-set.json").exists())
+        self.assertFalse(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").exists()
+        )
 
-    def test_public_final_compile_reports_adapter_missing_entrypoint_stably(self) -> None:
+    def test_public_final_compile_reports_missing_entrypoint_from_real_condition(self) -> None:
+        # scenario_id: real_missing_explicit_entrypoint
+        # target_invariant: an explicit entrypoint identity absent from the exact
+        # sealed compile manifest fails closed at the public entrypoint gate.
+        # mutation_seam: request one logical id that no manifest entry declares.
+        # rematerialized_nodes: none (manifest and seals stay coherent).
+        # deliberately_stale_nodes: none.
+        # expected_first_failing_gate: final_editable_tex_source_set_entrypoint.
+        # expected_error_code: final_tex_entrypoint_missing.
+        # scenario_class: single_contradiction.
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
@@ -635,7 +673,7 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         completed, envelope, workspace = fixture.final_compile(
             root,
             paths,
-            plan_updates={"fixture_entrypoint_missing_error": True},
+            tex_entrypoint_logical_id="absent_chapter_tex",
             compiler_evidence_fixture=True,
         )
 
@@ -646,32 +684,6 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         )
         self.assertEqual(
             "final_tex_entrypoint_missing", envelope["data"]["error_code"]
-        )
-        self.assertFalse((workspace / "final-editable-tex-source-set.json").exists())
-
-    def test_public_final_compile_reports_adapter_ambiguous_entrypoint_stably(self) -> None:
-        from tests.video_workflow.test_rendered_text_reconciliation import (
-            RenderedTextReconciliationCliTests,
-        )
-
-        fixture = RenderedTextReconciliationCliTests(
-            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
-        )
-        root, paths = fixture.fixture(production_compile=True)
-        completed, envelope, workspace = fixture.final_compile(
-            root,
-            paths,
-            plan_updates={"fixture_entrypoint_ambiguous_error": True},
-            compiler_evidence_fixture=True,
-        )
-
-        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
-        self.assertEqual(
-            "final_editable_tex_source_set_entrypoint",
-            envelope["data"]["first_failing_gate"],
-        )
-        self.assertEqual(
-            "final_tex_entrypoint_ambiguous", envelope["data"]["error_code"]
         )
         self.assertFalse((workspace / "final-editable-tex-source-set.json").exists())
 
@@ -1211,35 +1223,322 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             [member["logical_id"] for member in source_set["members"]],
         )
 
+    def test_public_final_compile_accepts_zero_byte_consumed_tex(self) -> None:
+        # target_invariant: a legitimate empty TeX fragment consumed by the
+        # entrypoint remains a valid, delivered source-set member.
+        # mutation_seam: declare and consume a zero-byte chapter file.
+        # rematerialized_nodes: source identity, generation set, manifest, plan.
+        # deliberately_stale_nodes: none.
+        # expected_outcome: success with the empty member carrying size 0.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content="\\input{chapters/empty}\n",
+            additional_tex_sources=(
+                ("empty_chapter_tex", 7, "chapters/empty.tex", ""),
+            ),
+        )
+        completed, envelope, _workspace = fixture.final_compile(
+            root, paths, compiler_evidence_fixture=True
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        source_set = json.loads(
+            Path(envelope["data"]["final_editable_tex_source_set_path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        empty = next(
+            member
+            for member in source_set["members"]
+            if member["logical_id"] == "empty_chapter_tex"
+        )
+        self.assertEqual(0, empty["size"])
+
+    def test_public_validator_treats_posix_case_sensitive_paths_as_distinct(self) -> None:
+        # target_invariant: on POSIX-style project paths, path identity is
+        # case-sensitive; Chapter.tex and chapter.tex are distinct members.
+        main = {
+            "logical_id": "integrated_main_tex", "generation": 1,
+            "path": "/project/main.tex", "sha256": "3" * 64, "size": 12,
+        }
+        upper = {
+            "logical_id": "chapter_upper", "generation": 1,
+            "path": "/project/Chapter.tex", "sha256": "a" * 64, "size": 1,
+        }
+        lower = {
+            "logical_id": "chapter_lower", "generation": 2,
+            "path": "/project/chapter.tex", "sha256": "b" * 64, "size": 1,
+        }
+        artifact = {
+            "schema_name": "final-editable-tex-source-set",
+            "schema_version": "1.0.0",
+            "kernel_version": KERNEL_VERSION,
+            "project_root": "/project",
+            "generation_set_sha256": "e" * 64,
+            "final_pdf": {"path": "final.pdf", "sha256": "4" * 64, "size": 1},
+            "compile_evidence": {
+                "compile_manifest_sha256": "5" * 64,
+                "recorder_path": "adapter-output/compile-recorder.fls",
+                "recorder_sha256": "6" * 64,
+                "dependency_closure_complete": True,
+                "final_pdf": {"path": "final.pdf", "sha256": "4" * 64, "size": 1},
+                "tex_entrypoint_logical_id": "integrated_main_tex",
+                "consumed_project_tex_sources": [main, upper, lower],
+            },
+            "members": [
+                {**main, "role": "tex_entrypoint"},
+                {**upper, "role": "included_tex_source"},
+                {**lower, "role": "included_tex_source"},
+            ],
+        }
+        artifact["source_set_sha256"] = canonical_sha(artifact, "source_set_sha256")
+
+        ContractRegistry(PROJECT_ROOT).validate("final-editable-tex-source-set", artifact)
+
+    def test_public_final_compile_rejects_non_tex_entrypoint_stably(self) -> None:
+        # target_invariant: a non-TeX artifact cannot be the TeX Entry Point.
+        # mutation_seam: request an explicit entrypoint identity whose staging
+        # path is a raster-style artifact.
+        # rematerialized_nodes: none (manifest and seals stay coherent).
+        # deliberately_stale_nodes: none.
+        # expected_first_failing_gate: final_editable_tex_source_set_entrypoint.
+        # expected_error_code: final_tex_entrypoint_not_tex.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            additional_tex_sources=(("cover_image", 1, "cover.png", "png\n"),),
+        )
+        completed, envelope, workspace = fixture.final_compile(
+            root,
+            paths,
+            tex_entrypoint_logical_id="cover_image",
+            compiler_evidence_fixture=True,
+        )
+
+        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "final_editable_tex_source_set_entrypoint",
+            envelope["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "final_tex_entrypoint_not_tex", envelope["data"]["error_code"]
+        )
+        self.assertFalse((workspace / "final-editable-tex-source-set.json").exists())
+
+    def test_public_final_compile_reports_stale_tex_source_identity(self) -> None:
+        # target_invariant: a declared final TeX source whose current bytes no
+        # longer match its manifest identity fails with the stable member
+        # source-identity code instead of a generic manifest error.
+        # mutation_seam: mutate the entrypoint source file after the manifest
+        # and sealed bindings were frozen.
+        # rematerialized_nodes: none (manifest, seals, and plan stay frozen).
+        # deliberately_stale_nodes: source file bytes (target contradiction).
+        # expected_first_failing_gate: final_editable_tex_source_set_identity.
+        # expected_error_code: final_tex_source_identity_stale.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(production_compile=True)
+        main_source = root / "integrated-main.tex"
+        main_source.write_text(
+            main_source.read_text(encoding="utf-8") + "\nchanged\n",
+            encoding="utf-8",
+        )
+        completed, envelope, workspace = fixture.final_compile(
+            root, paths, compiler_evidence_fixture=True
+        )
+
+        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "final_editable_tex_source_set_identity",
+            envelope["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "final_tex_source_identity_stale", envelope["data"]["error_code"]
+        )
+        self.assertFalse((workspace / "final-editable-tex-source-set.json").exists())
+
+    def test_guarded_compile_reference_validation_is_directory_sensitive(self) -> None:
+        # target_invariant: a directory-qualified \input reference cannot be
+        # satisfied by an unrelated file with the same basename elsewhere.
+        from video2pdf_workflow_kernel.guarded_compile import GuardedCompileProvider
+
+        GuardedCompileProvider._validate_declared_references(
+            "\\input{chapters/foo}\n", {"chapters/foo.tex"}, set()
+        )
+        with self.assertRaises(CompileDependencyGap):
+            GuardedCompileProvider._validate_declared_references(
+                "\\input{chapters/foo}\n", {"appendix/foo.tex"}, set()
+            )
+        GuardedCompileProvider._validate_declared_references(
+            "\\input{foo}\n", {"chapters/foo.tex"}, set()
+        )
+
+    def test_public_named_pdf_publication_publishes_nothing_on_source_set_failure(self) -> None:
+        # fault injection A: the PDF is produced but source-set validation fails;
+        # the public named output must stay completely empty, and a retry with
+        # the same name must succeed.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58f" / uuid.uuid4().hex[:6],
+        )
+        finals = root / "finals"
+
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_extra_consumed_tex": True},
+            compiler_evidence_fixture=True,
+            workspace_root=root / "guarded-final-compile-fault-a",
+            final_pdf_name="alpha.pdf",
+            final_output_directory=finals,
+        )
+        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "final_editable_tex_source_set_membership",
+            envelope["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "final_tex_dependency_evidence_mismatch",
+            envelope["data"]["error_code"],
+        )
+        for relative in (
+            "alpha.pdf",
+            "alpha.final-editable-tex-source-set.json",
+            "alpha.final-compile-report.json",
+            "alpha.final-artifact-seal.json",
+        ):
+            self.assertFalse((finals / relative).exists())
+
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_pdf_salt": "alpha"},
+            compiler_evidence_fixture=True,
+            workspace_root=root / "guarded-final-compile-fault-a-retry",
+            final_pdf_name="alpha.pdf",
+            final_output_directory=finals,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertTrue((finals / "alpha.pdf").is_file())
+        self.assertTrue(
+            (finals / "alpha.final-editable-tex-source-set.json").is_file()
+        )
+        self.assertTrue((finals / "alpha.final-compile-report.json").is_file())
+
+    def test_public_named_pdf_publication_publishes_nothing_before_report(self) -> None:
+        # fault injection B: dependency provenance stays incomplete after the
+        # compile evidence exists; nothing may reach the public directory and a
+        # retry with the same name must succeed.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58f" / uuid.uuid4().hex[:6],
+        )
+        finals = root / "finals"
+
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_incomplete_provenance": True},
+            compiler_evidence_fixture=True,
+            workspace_root=root / "guarded-final-compile-fault-b",
+            final_pdf_name="beta.pdf",
+            final_output_directory=finals,
+        )
+        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "final_editable_tex_source_set_dependency_evidence",
+            envelope["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "final_tex_dependency_evidence_incomplete",
+            envelope["data"]["error_code"],
+        )
+        for relative in (
+            "beta.pdf",
+            "beta.final-editable-tex-source-set.json",
+            "beta.final-compile-report.json",
+            "beta.final-artifact-seal.json",
+        ):
+            self.assertFalse((finals / relative).exists())
+
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_pdf_salt": "beta"},
+            compiler_evidence_fixture=True,
+            workspace_root=root / "guarded-final-compile-fault-b-retry",
+            final_pdf_name="beta.pdf",
+            final_output_directory=finals,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertTrue((finals / "beta.pdf").is_file())
+        self.assertTrue(
+            (finals / "beta.final-editable-tex-source-set.json").is_file()
+        )
+        self.assertTrue((finals / "beta.final-compile-report.json").is_file())
+
     def test_public_final_compile_keeps_same_output_directory_pdf_closures_independent(self) -> None:
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
 
-        shared_video_output = (
-            PROJECT_ROOT
-            / "待删除/m"
-            / uuid.uuid4().hex[:4]
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
         )
-        shared_compile_output = shared_video_output / "finals"
+        root, paths = fixture.fixture(
+            production_compile=True,
+            additional_tex_sources=(
+                ("alpha_chapter", 7, "chapters/alpha.tex", "Alpha\n"),
+                ("beta_chapter", 8, "chapters/beta.tex", "Beta\n"),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/m" / uuid.uuid4().hex[:4],
+        )
+        finals = root / "finals"
 
-        def compile_pdf(name: str) -> tuple[dict, Path, Path]:
-            fixture = RenderedTextReconciliationCliTests(
-                "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
-            )
-            logical_id = f"{name}_chapter"
-            root, paths = fixture.fixture(
-                production_compile=True,
-                additional_tex_sources=((logical_id, 1, f"chapters/{name}.tex", f"{name}\n"),),
-                authority_root=shared_video_output / name[0],
-            )
-            completed, envelope, workspace = fixture.final_compile(
+        def compile_pdf(name: str, recorded: list[str]) -> tuple[dict, Path, Path]:
+            completed, envelope, _workspace = fixture.final_compile(
                 root,
                 paths,
-                plan_updates={"fixture_pdf_salt": name},
+                plan_updates={
+                    "fixture_recorded_logical_ids": recorded,
+                    "fixture_pdf_salt": name,
+                },
                 compiler_evidence_fixture=True,
+                workspace_root=root / f"guarded-final-compile-{name}",
                 final_pdf_name=f"{name}.pdf",
-                final_output_directory=shared_compile_output,
+                final_output_directory=finals,
             )
             self.assertEqual(
                 0, completed.returncode, completed.stdout + completed.stderr
@@ -1248,16 +1547,20 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
                 envelope["data"]["final_editable_tex_source_set_path"]
             )
             final_pdf_path = Path(envelope["data"]["final_pdf_path"])
-            self.assertEqual(shared_compile_output, source_set_path.parent)
-            self.assertEqual(shared_compile_output, final_pdf_path.parent)
+            self.assertEqual(finals, source_set_path.parent)
+            self.assertEqual(finals, final_pdf_path.parent)
             return (
                 json.loads(source_set_path.read_text(encoding="utf-8")),
                 final_pdf_path,
                 source_set_path,
             )
 
-        alpha_set, alpha_pdf, alpha_evidence = compile_pdf("alpha")
-        beta_set, beta_pdf, beta_evidence = compile_pdf("beta")
+        alpha_set, alpha_pdf, alpha_evidence = compile_pdf(
+            "alpha", ["integrated_main_tex", "alpha_chapter"]
+        )
+        beta_set, beta_pdf, beta_evidence = compile_pdf(
+            "beta", ["integrated_main_tex", "beta_chapter"]
+        )
 
         self.assertEqual(alpha_pdf.parent, beta_pdf.parent)
         self.assertNotEqual(alpha_pdf, beta_pdf)
@@ -1471,6 +1774,161 @@ handoff.write_text(
                     for member in artifact["members"]
                 ],
             )
+
+    def test_public_legacy_final_compile_rejects_named_output_outside_video_root(self) -> None:
+        # target_invariant: Legacy named output stays inside the video root.
+        # mutation_seam: request one named PDF outside the Legacy video root.
+        # rematerialized_nodes: none.
+        # deliberately_stale_nodes: none.
+        # expected_command: fail closed before any directory or file is created.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58e-source" / uuid.uuid4().hex[:6],
+        )
+        isolated_root, legacy = self._legacy_compile_environment(
+            "e", source_root, source_paths
+        )
+        escaped = Path(legacy["legacy_root"]).parent / "other-video" / "finals"
+        completed, envelope = self._run_legacy_final_compile(
+            isolated_root,
+            legacy,
+            "--final-pdf-name", "escape.pdf",
+            "--final-output-directory", str(escaped),
+        )
+        self.assertEqual(20, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("contract_invalid", envelope["classification"])
+        self.assertFalse(escaped.exists())
+
+    def test_public_final_compile_projects_real_split_tex_recorder(self) -> None:
+        # scenario_id: real_split_tex_closure
+        # target_invariant: the real compiler recorder, not a synthetic manifest
+        # listing, establishes a split-document source set.
+        # mutation_seam: none (positive real compile).
+        # expected_outcome: entrypoint plus the consumed root-level chapter.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content="\\input{chapters/chapter_01}\n",
+            additional_tex_sources=(
+                ("integrated_chapter_01", 7, "chapters/chapter_01.tex", "Chapter one\n"),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/i58split-source" / uuid.uuid4().hex[:6],
+        )
+        isolated_root, legacy = self._legacy_compile_environment(
+            "s", source_root, source_paths
+        )
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        artifact = json.loads(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [
+                ("integrated_main_tex", "tex_entrypoint"),
+                ("integrated_chapter_01", "included_tex_source"),
+            ],
+            [(member["logical_id"], member["role"]) for member in artifact["members"]],
+        )
+
+    def test_public_final_compile_projects_real_nested_tex_recorder(self) -> None:
+        # scenario_id: real_nested_tex_closure
+        # target_invariant: a chapter that itself inputs a deeper project-local
+        # TeX file keeps every transitively consumed member in the source set.
+        # mutation_seam: none (positive real compile).
+        # expected_outcome: entrypoint plus both nested included sources.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content="\\input{chapters/chapter_01}\n",
+            additional_tex_sources=(
+                (
+                    "integrated_chapter_01",
+                    7,
+                    "chapters/chapter_01.tex",
+                    "\\input{chapters/deep}\n",
+                ),
+                ("integrated_deep_tex", 6, "chapters/deep.tex", "Deep paragraph\n"),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/i58nested-source" / uuid.uuid4().hex[:6],
+        )
+        isolated_root, legacy = self._legacy_compile_environment(
+            "n", source_root, source_paths
+        )
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        artifact = json.loads(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [
+                ("integrated_main_tex", "tex_entrypoint"),
+                ("integrated_chapter_01", "included_tex_source"),
+                ("integrated_deep_tex", "included_tex_source"),
+            ],
+            [(member["logical_id"], member["role"]) for member in artifact["members"]],
+        )
+
+    def test_public_final_compile_projects_real_generated_tex_recorder(self) -> None:
+        # scenario_id: real_generated_tex_closure
+        # target_invariant: a consumed generated TeX snippet is delivered and
+        # fingerprinted as an included source from the real recorder.
+        # mutation_seam: none (positive real compile).
+        # expected_outcome: entrypoint plus the consumed generated snippet.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content="\\input{generated/summary}\n",
+            additional_tex_sources=(
+                ("generated_summary_tex", 1, "generated/summary.tex", "Generated summary\n"),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/i58gen-source" / uuid.uuid4().hex[:6],
+        )
+        isolated_root, legacy = self._legacy_compile_environment(
+            "g", source_root, source_paths
+        )
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        artifact = json.loads(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [
+                ("integrated_main_tex", "tex_entrypoint"),
+                ("generated_summary_tex", "included_tex_source"),
+            ],
+            [(member["logical_id"], member["role"]) for member in artifact["members"]],
+        )
 
 
 if __name__ == "__main__":

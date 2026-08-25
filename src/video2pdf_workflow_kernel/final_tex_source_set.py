@@ -5,7 +5,7 @@ from typing import Any
 
 from .errors import CompileDependencyGap
 from .source_candidates import KERNEL_VERSION
-from .utils import canonical_json_bytes, sha256_bytes, sha256_file
+from .utils import canonical_json_bytes, path_fold, sha256_bytes, sha256_file
 
 
 class FinalEditableTexSourceSetProjector:
@@ -40,11 +40,11 @@ class FinalEditableTexSourceSetProjector:
             )
         root = recorder_cwd.resolve()
         observed = {
-            str((path if path.is_absolute() else root / path).resolve()).casefold()
+            path_fold(str((path if path.is_absolute() else root / path).resolve()))
             for path in recorder_inputs
-            if str(
-                (path if path.is_absolute() else root / path).resolve()
-            ).casefold()
+            if path_fold(
+                str((path if path.is_absolute() else root / path).resolve())
+            )
             not in registered_runtime_input_paths
         }
         entrypoint = PurePosixPath(
@@ -59,7 +59,7 @@ class FinalEditableTexSourceSetProjector:
             staged = (root / Path(*staging.parts)).resolve()
             if (
                 staging.suffix.casefold() != ".tex"
-                or str(staged).casefold() not in observed
+                or path_fold(str(staged)) not in observed
             ):
                 continue
             source = Path(str(entry.get("source_path", ""))).resolve()
@@ -90,7 +90,7 @@ class FinalEditableTexSourceSetProjector:
                     ),
                 }
             )
-            represented.add(str(staged).casefold())
+            represented.add(path_fold(str(staged)))
         consumed = {item for item in observed if Path(item).suffix.casefold() == ".tex"}
         if consumed != represented:
             raise CompileDependencyGap(
@@ -103,7 +103,7 @@ class FinalEditableTexSourceSetProjector:
         members.sort(
             key=lambda item: (
                 item["role"] != "tex_entrypoint",
-                item["path"].casefold(),
+                path_fold(item["path"]),
             )
         )
         evidence = [

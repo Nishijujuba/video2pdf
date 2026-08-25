@@ -28,28 +28,6 @@ request = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 plan = json.loads(Path(request["text_origin_plan_path"]).read_text(encoding="utf-8"))
 output = Path(request["output_root"])
 manifest = json.loads(Path(request["compile_manifest_path"]).read_text(encoding="utf-8"))
-if plan.get("fixture_entrypoint_missing_error", False):
-    write_json(
-        output / "adapter-error.json",
-        {
-            "schema_name": "guarded-final-compile-error",
-            "schema_version": "1.0.0",
-            "first_failing_gate": "final_editable_tex_source_set_entrypoint",
-            "error_code": "final_tex_entrypoint_missing",
-        },
-    )
-    raise SystemExit(1)
-if plan.get("fixture_entrypoint_ambiguous_error", False):
-    write_json(
-        output / "adapter-error.json",
-        {
-            "schema_name": "guarded-final-compile-error",
-            "schema_version": "1.0.0",
-            "first_failing_gate": "final_editable_tex_source_set_entrypoint",
-            "error_code": "final_tex_entrypoint_ambiguous",
-        },
-    )
-    raise SystemExit(1)
 pdf = output / "final.pdf"
 document = fitz.open()
 for _ in range(plan["page_count"]):
@@ -141,6 +119,7 @@ if plan.get("fixture_extra_consumed_non_tex", False):
         "unregistered support input\n", encoding="utf-8"
     )
 recorder = output / "compile-recorder.fls"
+recorded_logical_ids = plan.get("fixture_recorded_logical_ids")
 recorder.write_text(
     "".join(
         [
@@ -154,6 +133,10 @@ recorder.write_text(
                 and not (
                     plan.get("fixture_unconsumed_declared_tex", False)
                     and item["staging_path"] != "main.tex"
+                )
+                and (
+                    recorded_logical_ids is None
+                    or item["logical_id"] in recorded_logical_ids
                 )
             ),
             *(

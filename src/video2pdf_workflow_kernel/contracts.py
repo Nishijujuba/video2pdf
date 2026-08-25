@@ -32,6 +32,7 @@ from .errors import (
 )
 from .utils import (
     canonical_json_bytes,
+    path_fold,
     read_json,
     require_safe_path_segment,
     sha256_bytes,
@@ -1774,10 +1775,7 @@ def _validate_final_editable_tex_source_set(instance: dict[str, Any]) -> None:
                 "error_code": "final_tex_logical_id_duplicate",
             },
         )
-    path_identities = [
-        str(_project_path(member["path"])).casefold()
-        for member in instance["members"]
-    ]
+    path_identities = [path_fold(member["path"]) for member in instance["members"]]
     if len(path_identities) != len(set(path_identities)):
         raise CompileDependencyGap(
             "Final Editable TeX Source Set repeats a current path identity",

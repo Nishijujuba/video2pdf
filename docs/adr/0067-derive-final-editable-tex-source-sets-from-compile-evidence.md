@@ -23,6 +23,8 @@ For membership discovery, directory enumeration, parsing TeX directives, and rec
 
 For multiple Final PDFs, separate output directories, compile-identity child directories, and explicit output naming were compared. Separate directories do not satisfy the same-directory workflow. Compile-identity child directories also change the visible output location. The public Final Compile boundary therefore accepts an explicit Final PDF name and output directory while retaining `final.pdf` and the existing workspace layout as defaults. Internal compile workspaces remain isolated, and each named PDF publishes its own evidence paths so closures cannot overwrite or cross-bind.
 
+Named output stays inside the current video-level authority root (the Legacy video root, or the Kernel run boundary); one video cannot publish into another video's directory. Public artifacts are published only after every validation including the Legacy Global Gate re-check, with the Final Compile Report written last as the commit marker, so a failed compile leaves no partial named output and a same-name retry succeeds.
+
 ## Consequences
 
 Monolithic documents produce a one-member set. Split, nested, and generated-source workflows preserve exact editable closure without widening the Final Delivery Package to non-TeX assets. Each source-set identity changes when its PDF binding, generation set, membership, role, path, fingerprint, or size changes.

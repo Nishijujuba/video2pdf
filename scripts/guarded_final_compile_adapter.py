@@ -19,6 +19,7 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
     _MIKTEX_DURABLE_DIRECTORIES,
     _MIKTEX_RUNTIME_ROOTS,
 )
+from video2pdf_workflow_kernel.errors import CompileDependencyGap  # noqa: E402
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
     require_contained_path,
@@ -26,7 +27,9 @@ from video2pdf_workflow_kernel.utils import (  # noqa: E402
 
 
 class AdapterError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, data: dict[str, str] | None = None) -> None:
+        super().__init__(message)
+        self.data = data or {}
 
 
 COMPILE_OUTPUT_TIMEOUT_SECONDS = 300.0
@@ -81,7 +84,12 @@ def runtime_policy(path: Path, expected: object) -> dict[str, Any]:
     return policy
 
 
-def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tuple[
+def stage(
+    manifest: dict[str, Any],
+    staging: Path,
+    policy: dict[str, Any],
+    tex_entrypoint_logical_id: str | None,
+) -> tuple[
     list[dict[str, Any]], Path, dict[tuple[str, int, str], Path]
 ]:
     entries = manifest.get("entries")
@@ -89,7 +97,7 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
         raise AdapterError("compile manifest entries are missing")
     destinations: set[str] = set()
     result: list[dict[str, Any]] = []
-    entry_tex: Path | None = None
+    entrypoint_candidates: list[Path] = []
     raster_sources: dict[tuple[str, int, str], Path] = {}
     for entry in entries:
         source = contained(Path(str(entry.get("source_path", ""))), "compile source")
@@ -107,15 +115,33 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
         shutil.copyfile(source, destination)
         destinations.add(relative.as_posix().casefold())
         result.append({k: entry.get(k) for k in ("logical_id", "generation", "sha256")})
-        if relative.as_posix().casefold() == "main.tex":
-            entry_tex = destination
+        is_explicit_entrypoint = (
+            tex_entrypoint_logical_id is not None
+            and entry.get("logical_id") == tex_entrypoint_logical_id
+        )
+        is_legacy_entrypoint = (
+            tex_entrypoint_logical_id is None
+            and relative.as_posix().casefold() == "main.tex"
+        )
+        if is_explicit_entrypoint or is_legacy_entrypoint:
+            entrypoint_candidates.append(destination)
         if relative.suffix.casefold() in {".png", ".jpg", ".jpeg"}:
             identity = (entry.get("logical_id"), entry.get("generation"), entry.get("sha256"))
             if not isinstance(identity[0], str) or not isinstance(identity[1], int):
                 raise AdapterError("declared raster source identity is incomplete")
             raster_sources[identity] = destination
-    if entry_tex is None:
-        raise AdapterError("compile manifest has no main.tex entry")
+    if len(entrypoint_candidates) != 1:
+        raise AdapterError(
+            "compile manifest entrypoint is missing or ambiguous",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_entrypoint",
+                "error_code": (
+                    "final_tex_entrypoint_missing"
+                    if not entrypoint_candidates
+                    else "final_tex_entrypoint_ambiguous"
+                ),
+            },
+        )
     validator = GuardedCompileProvider(ROOT)
     allowed = {str(item).casefold() for item in policy.get("allowed_packages", [])}
     for path in staging.rglob("*"):
@@ -124,9 +150,21 @@ def stage(manifest: dict[str, Any], staging: Path, policy: dict[str, Any]) -> tu
             try:
                 validator.static_preflight_text(text)
                 validator._validate_declared_references(text, destinations, allowed)
+            except CompileDependencyGap as exc:
+                data = (
+                    {
+                        "first_failing_gate": (
+                            "final_editable_tex_source_set_dependency_evidence"
+                        ),
+                        "error_code": "final_tex_include_missing",
+                    }
+                    if exc.data.get("reference_command") in {"input", "include"}
+                    else None
+                )
+                raise AdapterError(str(exc), data=data) from exc
             except Exception as exc:
                 raise AdapterError(str(exc)) from exc
-    return result, entry_tex, raster_sources
+    return result, entrypoint_candidates[0], raster_sources
 
 
 def _compile_output_state(paths: tuple[Path, ...]) -> tuple[tuple[int, int], ...] | None:
@@ -448,7 +486,18 @@ def run(request_path: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     staging = output / "compiler-staging"
     staging.mkdir()
-    inputs, entry, raster_sources = stage(manifest, staging, policy)
+    tex_entrypoint_logical_id = request.get("tex_entrypoint_logical_id")
+    if tex_entrypoint_logical_id is not None and (
+        not isinstance(tex_entrypoint_logical_id, str)
+        or not tex_entrypoint_logical_id
+    ):
+        raise AdapterError("compile request TeX entrypoint identity is invalid")
+    inputs, entry, raster_sources = stage(
+        manifest,
+        staging,
+        policy,
+        tex_entrypoint_logical_id,
+    )
     built_pdf, built_recorder, runtime_environment, engine_stderr = compile_pdf(
         staging, entry, policy
     )
@@ -494,6 +543,28 @@ def main() -> int:
     try:
         run(Path(sys.argv[1]))
     except AdapterError as exc:
+        if exc.data:
+            try:
+                request = read_object(
+                    contained(Path(sys.argv[1]), "compile request"),
+                    "compile request",
+                )
+                output = contained(
+                    Path(str(request.get("output_root", ""))),
+                    "adapter output",
+                    file=False,
+                )
+                output.mkdir(parents=True, exist_ok=True)
+                write_object(
+                    output / "adapter-error.json",
+                    {
+                        "schema_name": "guarded-final-compile-error",
+                        "schema_version": "1.0.0",
+                        **exc.data,
+                    },
+                )
+            except AdapterError:
+                pass
         print(str(exc), file=sys.stderr)
         return 1
     except Exception:

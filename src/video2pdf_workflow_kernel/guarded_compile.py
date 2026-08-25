@@ -437,7 +437,11 @@ class GuardedCompileProvider:
                     for candidate in candidates
                 ):
                     raise CompileDependencyGap(
-                        f"undeclared direct compile input: {value}"
+                        f"undeclared direct compile input: {value}",
+                        data={
+                            "reference_command": command,
+                            "reference": value,
+                        },
                     )
 
     def compile(self, manifest_path: Path, runtime_policy: dict[str, Any]) -> dict[str, Any]:

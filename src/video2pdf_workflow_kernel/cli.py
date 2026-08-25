@@ -221,6 +221,9 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--runtime-policy", required=True, type=Path)
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
+    final_compile.add_argument("--tex-entrypoint-logical-id")
+    final_compile.add_argument("--final-pdf-name")
+    final_compile.add_argument("--final-output-directory", type=Path)
 
     final_evidence = commands.add_parser("delivery-final-evidence-prepare")
     final_evidence.add_argument("--run-dir", required=True, type=Path)
@@ -1268,6 +1271,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             runtime_policy_path=args.runtime_policy,
             workspace_root=args.workspace_root,
             compiled_at=args.compiled_at,
+            tex_entrypoint_logical_id=args.tex_entrypoint_logical_id,
+            final_pdf_name=args.final_pdf_name,
+            final_output_directory=args.final_output_directory,
         )
         return _ok(
             command,

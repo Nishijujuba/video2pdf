@@ -396,6 +396,22 @@ A diagnostic compile used during production or repair whose outputs carry no fin
 
 The guarded compile that produces the PDF intended for delivery and current final Compile Provenance.
 
+## Final Compile Input Set
+
+The complete generation-bound set of project inputs and approved runtime inputs consumed by one Final Compile. It includes TeX sources, figures, bibliography inputs, local support files, and registered runtime dependencies.
+
+## TeX Entry Point
+
+The single project-local `.tex` file supplied as the root document for one Final Compile. It is one member of the Final Editable TeX Source Set and is not synonymous with the complete editable document.
+
+## Final Editable TeX Source Set
+
+The generation-bound projection of every project-local `.tex` file actually consumed by one Final Compile, derived from current recorder dependency evidence. It contains exactly one TeX Entry Point and zero or more included TeX sources; each member binds its current path, role, logical generation, SHA-256 fingerprint, and size. The artifact records the project root that bounds editable membership and the exact Final PDF that the compile evidence produced. Unused or unrelated TeX files, registered runtime TeX files, and non-TeX compile inputs are excluded.
+
+## Final Delivery Package
+
+The Final PDF together with its complete Final Editable TeX Source Set. Each Final PDF owns an independent compile-evidence closure, including when explicitly named Final PDFs share one output directory. Workflow evidence and non-TeX compile inputs remain outside this user-editable package.
+
 ## Final Artifact Seal
 
 The immutable binding of the assured integrated document and every declared final compile input before Final Compile.

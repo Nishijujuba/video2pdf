@@ -556,6 +556,19 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         }
         return plan
 
+    def _call_through_fail(self, real, fail_at: int):
+        """Run the real publication primitive, then raise at the Nth call."""
+        counter = {"n": 0}
+
+        def flaky(*args, **kwargs):
+            counter["n"] += 1
+            result = real(*args, **kwargs)
+            if counter["n"] == fail_at:
+                raise OSError("injected publication failure")
+            return result
+
+        return flaky
+
     def _public_targets(self, pdf_name: str) -> tuple[str, ...]:
         stem = Path(pdf_name).stem
         return (
@@ -2360,6 +2373,48 @@ handoff.write_text(
         )
 
 
+    def test_guarded_compile_adapter_closure_walk_is_engine_ordered_and_comment_aware(
+        self,
+    ) -> None:
+        # target_invariant: the entrypoint-rooted preflight walk resolves
+        # \input names the way the engine does (staging root first) and never
+        # follows commented references, so a commented draft cannot extend
+        # the walked closure.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "guarded_final_compile_adapter",
+            PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py",
+        )
+        adapter = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(adapter)
+        staging = PROJECT_ROOT / "待删除/i58walk" / uuid.uuid4().hex[:6]
+        (staging / "chapters").mkdir(parents=True)
+        (staging / "main.tex").write_text("\\input{shared}\n", encoding="utf-8")
+        # The engine consumes staging/shared.tex, not the one beside the
+        # including file's directory.
+        (staging / "shared.tex").write_text(
+            "\\input{missing-from-engine}\n", encoding="utf-8"
+        )
+        (staging / "chapters/shared.tex").write_text(
+            "% comment only\n", encoding="utf-8"
+        )
+        (staging / "chapters/onto.tex").write_text(
+            "% \\input{commented}\n", encoding="utf-8"
+        )
+        (staging / "commented.tex").write_text(
+            "\\input{abandoned/missing}\n", encoding="utf-8"
+        )
+
+        closure = adapter._staged_tex_closure(staging, staging / "main.tex")
+
+        closure_paths = {path.resolve() for path in closure}
+        self.assertIn((staging / "shared.tex").resolve(), closure_paths)
+        self.assertNotIn((staging / "chapters/shared.tex").resolve(), closure_paths)
+        self.assertNotIn((staging / "commented.tex").resolve(), closure_paths)
+        self.assertNotIn((staging / "chapters/onto.tex").resolve(), closure_paths)
+
     def test_public_final_compile_ignores_missing_include_in_unconsumed_draft(self) -> None:
         # scenario_id: unconsumed_draft_missing_include
         # target_invariant: the entrypoint-rooted static preflight never fails
@@ -2835,12 +2890,13 @@ handoff.write_text(
         )
 
     def test_public_named_pdf_publication_rolls_back_after_pdf_commit(self) -> None:
-        # fault injection: the PDF rename commits, then the first JSON rename
-        # raises; the already-committed PDF is rolled back. This is the
-        # reviewer scenario "PDF 复制成功后抛出异常".
+        # fault injection: the PDF is genuinely renamed into place, then the
+        # first JSON rename raises; rollback must move the really-committed
+        # PDF. This is the reviewer scenario "PDF 复制成功后抛出异常".
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
+        from video2pdf_workflow_kernel import final_compile as final_compile_module
 
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
@@ -2856,18 +2912,21 @@ handoff.write_text(
             pdf_name="beta.pdf",
             workspace_key="after-pdf-commit",
             patch_target="_publish_commit",
-            side_effect=[None, OSError("commit interrupted")],
+            side_effect=self._call_through_fail(
+                final_compile_module._publish_commit, 2
+            ),
         )
 
     def test_public_named_pdf_publication_rolls_back_when_second_json_write_fails(
         self,
     ) -> None:
-        # fault injection: the first JSON bytes write succeeds, then the
-        # second raises. This is the reviewer scenario
+        # fault injection: the first JSON bytes write succeeds for real, then
+        # the second raises. This is the reviewer scenario
         # "第一个 JSON 写入成功后抛出异常".
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
+        from video2pdf_workflow_kernel import final_compile as final_compile_module
 
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
@@ -2883,16 +2942,19 @@ handoff.write_text(
             pdf_name="gamma.pdf",
             workspace_key="second-json-write",
             patch_target="_publish_bytes",
-            side_effect=[None, OSError("write interrupted")],
+            side_effect=self._call_through_fail(
+                final_compile_module._publish_bytes, 2
+            ),
         )
 
     def test_public_named_pdf_publication_rolls_back_before_report_write(self) -> None:
-        # fault injection: every artifact through the adapter identity commits,
-        # then the report rename raises. This is the reviewer scenario
-        # "Source Set 写入成功、Report 写入前抛出异常".
+        # fault injection: every artifact through the adapter identity is
+        # genuinely committed, then the report rename raises. This is the
+        # reviewer scenario "Source Set 写入成功、Report 写入前抛出异常".
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
+        from video2pdf_workflow_kernel import final_compile as final_compile_module
 
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
@@ -2908,18 +2970,21 @@ handoff.write_text(
             pdf_name="delta.pdf",
             workspace_key="before-report",
             patch_target="_publish_commit",
-            side_effect=[None] * 5 + [OSError("commit interrupted")],
+            side_effect=self._call_through_fail(
+                final_compile_module._publish_commit, 7
+            ),
         )
 
     def test_public_named_pdf_publication_rolls_back_when_report_write_fails(
         self,
     ) -> None:
-        # fault injection: all five JSON content writes succeed, then the
-        # report content write raises. This is the reviewer scenario
+        # fault injection: all five JSON content writes succeed for real, then
+        # the report content write raises. This is the reviewer scenario
         # "Report 写入失败".
         from tests.video_workflow.test_rendered_text_reconciliation import (
             RenderedTextReconciliationCliTests,
         )
+        from video2pdf_workflow_kernel import final_compile as final_compile_module
 
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
@@ -2935,7 +3000,9 @@ handoff.write_text(
             pdf_name="epsilon.pdf",
             workspace_key="report-write",
             patch_target="_publish_bytes",
-            side_effect=[None] * 5 + [OSError("report write failed")],
+            side_effect=self._call_through_fail(
+                final_compile_module._publish_bytes, 6
+            ),
         )
 
 

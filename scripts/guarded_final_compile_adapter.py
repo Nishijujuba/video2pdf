@@ -86,7 +86,10 @@ def runtime_policy(path: Path, expected: object) -> dict[str, Any]:
 
 
 def _resolve_staged_tex(staging: Path, current: Path, candidate: str) -> Path | None:
-    for possibility in (current.parent / candidate, staging / candidate):
+    # kpathsea resolves \input relative to the compiler working directory
+    # (the staging root) before any other search path, so staging-first keeps
+    # the walked closure aligned with what the engine actually consumes.
+    for possibility in (staging / candidate, current.parent / candidate):
         resolved = possibility.resolve()
         try:
             resolved.relative_to(staging.resolve())
@@ -97,6 +100,20 @@ def _resolve_staged_tex(staging: Path, current: Path, candidate: str) -> Path | 
         }:
             return resolved
     return None
+
+
+def _staged_tex_references(text: str) -> list[tuple[str, str]]:
+    """Direct reference directives in source text, ignoring comment content.
+
+    TeX treats everything after an unescaped ``%`` as a comment; following
+    commented references would extend the preflight closure with files the
+    engine never reads.
+    """
+    references: list[tuple[str, str]] = []
+    for raw_line in text.splitlines():
+        before_comment = raw_line.split("%", 1)[0]
+        references.extend(_DIRECT_REFERENCE.findall(before_comment))
+    return references
 
 
 def _staged_tex_closure(staging: Path, entrypoint: Path) -> list[Path]:
@@ -126,7 +143,7 @@ def _staged_tex_closure(staging: Path, entrypoint: Path) -> list[Path]:
         seen.add(current)
         reachable.append(current)
         text = current.read_text(encoding="utf-8", errors="strict")
-        for command, references in _DIRECT_REFERENCE.findall(text):
+        for command, references in _staged_tex_references(text):
             extensions = walk_extensions.get(command)
             if extensions is None:
                 continue

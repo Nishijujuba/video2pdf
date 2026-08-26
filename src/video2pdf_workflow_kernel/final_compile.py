@@ -79,19 +79,27 @@ def _publish_transactional(
         for temp, final in staged:
             _publish_commit(temp, final)
             committed.append(final)
-    except BaseException:
+    except BaseException as error:
+        rollback_failure: OSError | None = None
         rollback = rollback_root / token
         try:
             rollback.mkdir(parents=True, exist_ok=True)
-        except OSError:
+        except OSError as exc:
             rollback = None
+            rollback_failure = exc
         for path in [*committed, *(temp for temp, _ in staged)]:
             if rollback is None or not path.exists():
                 continue
             try:
                 path.rename(rollback / path.name)
-            except OSError:
-                pass
+            except OSError as exc:
+                if rollback_failure is None:
+                    rollback_failure = exc
+        if rollback_failure is not None:
+            error.add_note(
+                "Final Compile publication rollback failed: "
+                f"{type(rollback_failure).__name__}: {rollback_failure}"
+            )
         raise
 
 
@@ -1259,7 +1267,15 @@ class GuardedFinalCompileProvider:
             except CompileDependencyGap:
                 raise
             except Exception as exc:
-                raise CompileDependencyGap("Final Compile publication failed") from exc
+                rollback_notes = [
+                    note
+                    for note in getattr(exc, "__notes__", ())
+                    if note.startswith("Final Compile publication rollback failed")
+                ]
+                raise CompileDependencyGap(
+                    "Final Compile publication failed"
+                    + (f": {rollback_notes[0]}" if rollback_notes else "")
+                ) from exc
             pdf_path = public_root / final_pdf_name
             render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
             published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"

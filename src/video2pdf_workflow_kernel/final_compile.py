@@ -1261,6 +1261,11 @@ class GuardedFinalCompileProvider:
             except Exception as exc:
                 raise CompileDependencyGap("Final Compile publication failed") from exc
             pdf_path = public_root / final_pdf_name
+            render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
+            published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"
+            origins_path = public_root / f"{artifact_prefix}text-origin-manifest.json"
+            source_set_path = public_root / f"{artifact_prefix}final-editable-tex-source-set.json"
+            report_path = public_root / f"{artifact_prefix}final-compile-report.json"
         else:
             render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
             write_json_atomic(render_evidence_path, render_evidence)

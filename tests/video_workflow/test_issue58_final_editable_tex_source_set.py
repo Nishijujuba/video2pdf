@@ -270,12 +270,19 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            real_policy = runtime_policy_for_miktex(
+                package_inventory=inventory_path,
+                system_fonts=[SYSTEM_FONT],
+            )
+            # The registered builder ships the runtime package allowlist; the
+            # fixture document class must be admitted for the real compile.
+            real_policy["allowed_packages"] = ["article", "fontspec", "graphicx"]
+            real_policy["policy_sha256"] = canonical_sha(
+                real_policy, "policy_sha256"
+            )
             legacy_runtime_policy.write_text(
                 json.dumps(
-                    runtime_policy_for_miktex(
-                        package_inventory=inventory_path,
-                        system_fonts=[SYSTEM_FONT],
-                    ),
+                    real_policy,
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -373,7 +380,10 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             "TMP": str(probe / "engine-temp"),
             "USERNAME": "video2pdf",
             "USERDOMAIN": "LOCAL",
-            **_MIKTEX_DURABLE_DIRECTORIES,
+            **{
+                name: str(path)
+                for name, path in _MIKTEX_DURABLE_DIRECTORIES.items()
+            },
             "MIKTEX_COMMONINSTALL": str(_MIKTEX_RUNTIME_ROOTS[0]),
             "MIKTEX_USERLOGDIRECTORY": str(probe / "engine-profile"),
             "USERPROFILE": str(profile),
@@ -448,6 +458,9 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         span of the single-page fixture document is the generated page number.
         """
         import fitz
+        from video2pdf_workflow_kernel.final_compile import (
+            registered_generator_identity,
+        )
 
         objects: list[dict] = []
         page_count = 0

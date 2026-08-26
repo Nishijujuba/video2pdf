@@ -87,7 +87,11 @@ def _publish_transactional(
         except OSError as exc:
             rollback = None
             rollback_failure = exc
-        for path in [*committed, *(temp for temp, _ in staged)]:
+        for path in [
+            *committed,
+            *(temp for temp, _ in staged),
+            *(final for _, final in staged),
+        ]:
             if rollback is None or not path.exists():
                 continue
             try:

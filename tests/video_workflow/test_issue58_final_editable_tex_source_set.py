@@ -557,15 +557,15 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         return plan
 
     def _call_through_fail(self, real, fail_at: int):
-        """Run the real publication primitive, then raise at the Nth call."""
+        """Run the real publication primitive for every call before fail_at,
+        then raise at the Nth call (which has no side effects of its own)."""
         counter = {"n": 0}
 
         def flaky(*args, **kwargs):
             counter["n"] += 1
-            result = real(*args, **kwargs)
             if counter["n"] == fail_at:
                 raise OSError("injected publication failure")
-            return result
+            return real(*args, **kwargs)
 
         return flaky
 

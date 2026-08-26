@@ -140,7 +140,11 @@ recorder.write_text(
                 )
             ),
             *(
-                f"INPUT {item['path']}\n"
+                (
+                    f"INPUT {item['path'].swapcase()}\n"
+                    if plan.get("fixture_runtime_input_case_variant", False)
+                    else f"INPUT {item['path']}\n"
+                )
                 for item in manifest.get("approved_runtime_inputs", [])
                 if not plan.get("fixture_omit_runtime_recorder", False)
             ),

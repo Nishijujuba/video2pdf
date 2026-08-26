@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
     GuardedCompileProvider,
+    _DIRECT_REFERENCE,
     _MIKTEX_DURABLE_DIRECTORIES,
     _MIKTEX_RUNTIME_ROOTS,
 )
@@ -82,6 +83,66 @@ def runtime_policy(path: Path, expected: object) -> dict[str, Any]:
     except Exception as exc:
         raise AdapterError("runtime policy validation failed") from exc
     return policy
+
+
+def _resolve_staged_tex(staging: Path, current: Path, candidate: str) -> Path | None:
+    for possibility in (current.parent / candidate, staging / candidate):
+        resolved = possibility.resolve()
+        try:
+            resolved.relative_to(staging.resolve())
+        except ValueError:
+            continue
+        if resolved.is_file() and resolved.suffix.casefold() in {
+            ".tex", ".cls", ".sty"
+        }:
+            return resolved
+    return None
+
+
+def _staged_tex_closure(staging: Path, entrypoint: Path) -> list[Path]:
+    """Project-local TeX files reachable from the entrypoint reference graph.
+
+    Only reference commands that pull staged TeX (input/include, plus
+    documentclass/usepackage when a class/style exists inside staging) extend
+    the static preflight boundary. Unconsumed staged drafts therefore cannot
+    block a valid compile; the real recorder remains the authoritative
+    consumed-closure evidence. References that resolve to nothing stay for
+    the declared-reference validation of reachable files, which maps them to
+    the stable include classification.
+    """
+    walk_extensions = {
+        "input": (".tex",),
+        "include": (".tex",),
+        "documentclass": (".cls",),
+        "usepackage": (".sty",),
+    }
+    reachable: list[Path] = []
+    seen: set[Path] = set()
+    pending = [entrypoint.resolve()]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        reachable.append(current)
+        text = current.read_text(encoding="utf-8", errors="strict")
+        for command, references in _DIRECT_REFERENCE.findall(text):
+            extensions = walk_extensions.get(command)
+            if extensions is None:
+                continue
+            for reference in references.split(","):
+                value = reference.strip().replace("\\", "/")
+                if not value:
+                    continue
+                candidates = dict.fromkeys(
+                    [value, *(f"{value}{extension}" for extension in extensions)]
+                )
+                for candidate in candidates:
+                    resolved = _resolve_staged_tex(staging, current, candidate)
+                    if resolved is not None:
+                        pending.append(resolved)
+                        break
+    return reachable
 
 
 def stage(
@@ -157,26 +218,25 @@ def stage(
         )
     validator = GuardedCompileProvider(ROOT)
     allowed = {str(item).casefold() for item in policy.get("allowed_packages", [])}
-    for path in staging.rglob("*"):
-        if path.suffix.casefold() in {".tex", ".sty", ".cls"}:
-            text = path.read_text(encoding="utf-8", errors="strict")
-            try:
-                validator.static_preflight_text(text)
-                validator._validate_declared_references(text, destinations, allowed)
-            except CompileDependencyGap as exc:
-                data = (
-                    {
-                        "first_failing_gate": (
-                            "final_editable_tex_source_set_dependency_evidence"
-                        ),
-                        "error_code": "final_tex_include_missing",
-                    }
-                    if exc.data.get("reference_command") in {"input", "include"}
-                    else None
-                )
-                raise AdapterError(str(exc), data=data) from exc
-            except Exception as exc:
-                raise AdapterError(str(exc)) from exc
+    for path in _staged_tex_closure(staging, entrypoint_candidates[0]):
+        text = path.read_text(encoding="utf-8", errors="strict")
+        try:
+            validator.static_preflight_text(text)
+            validator._validate_declared_references(text, destinations, allowed)
+        except CompileDependencyGap as exc:
+            data = (
+                {
+                    "first_failing_gate": (
+                        "final_editable_tex_source_set_dependency_evidence"
+                    ),
+                    "error_code": "final_tex_include_missing",
+                }
+                if exc.data.get("reference_command") in {"input", "include"}
+                else None
+            )
+            raise AdapterError(str(exc), data=data) from exc
+        except Exception as exc:
+            raise AdapterError(str(exc)) from exc
     return result, entrypoint_candidates[0], raster_sources
 
 

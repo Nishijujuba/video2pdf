@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 import uuid
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +30,11 @@ if str(SRC_ROOT) not in sys.path:
 from video2pdf_workflow_kernel.delivery_quality import DeliveryQualityRegistry
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.errors import CompileDependencyGap
+from video2pdf_workflow_kernel.guarded_compile import (
+    _MIKTEX_DURABLE_DIRECTORIES,
+    _MIKTEX_ENGINE,
+    _MIKTEX_RUNTIME_ROOTS,
+)
 from video2pdf_workflow_kernel.source_candidates import KERNEL_VERSION
 
 
@@ -98,13 +105,29 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
         tag: str,
         source_root: Path,
         source_paths: dict[str, Path],
+        *,
+        plan: dict | None = None,
+        real_miktex_runtime_files: list[Path] | None = None,
     ) -> tuple[Path, dict[str, Path]]:
         """Build the plan, isolated authority clone, and run-record-free Legacy
-        root; returns (isolated_root, legacy_paths)."""
+        root; returns (isolated_root, legacy_paths).
+
+        ``plan`` replaces the origins-derived text-origin plan (used when the
+        caller derives it from the real compiler output). When
+        ``real_miktex_runtime_files`` is given, the precompile runtime policy
+        is replaced by the registered MiKTeX policy bound to the exact
+        recorder-observed runtime inputs, and the manifest approves them.
+        """
         from tests.video_workflow._issue43_git_authority import (
             build_current_global_gate_authority,
         )
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            SYSTEM_FONT,
+        )
         from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
+        from video2pdf_workflow_kernel.guarded_compile import (
+            runtime_policy_for_miktex,
+        )
 
         origins = json.loads(source_paths["origins"].read_text(encoding="utf-8"))
         rendered = json.loads(source_paths["rendered"].read_text(encoding="utf-8"))
@@ -114,30 +137,31 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
                 / "precompile-text-seal.json"
             ).read_text(encoding="utf-8")
         )
-        plan = {
-            "schema_name": "text-origin-plan",
-            "schema_version": "1.0.0",
-            "precompile_text_seal_sha256": seal["seal_sha256"],
-            "sealed_items": [
-                {
-                    "item_id": edge["sealed_item_id"],
-                    "exact_utf8_text": edge["sealed_text_utf8"],
-                }
-                for edge in origins["edges"]
-                if edge["disposition"] == "sealed_origin"
-            ],
-            "page_count": rendered["coverage"]["page_count"],
-            "extractor_suite": rendered["extractor_suite"],
-            "rendered_objects": [
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key not in {"text_sha256", "object_sha256"}
-                }
-                for item in rendered["objects"]
-            ],
-            "edges": origins["edges"],
-        }
+        if plan is None:
+            plan = {
+                "schema_name": "text-origin-plan",
+                "schema_version": "1.0.0",
+                "precompile_text_seal_sha256": seal["seal_sha256"],
+                "sealed_items": [
+                    {
+                        "item_id": edge["sealed_item_id"],
+                        "exact_utf8_text": edge["sealed_text_utf8"],
+                    }
+                    for edge in origins["edges"]
+                    if edge["disposition"] == "sealed_origin"
+                ],
+                "page_count": rendered["coverage"]["page_count"],
+                "extractor_suite": rendered["extractor_suite"],
+                "rendered_objects": [
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"text_sha256", "object_sha256"}
+                    }
+                    for item in rendered["objects"]
+                ],
+                "edges": origins["edges"],
+            }
         plan["plan_sha256"] = canonical_sha(plan, "plan_sha256")
         (source_root / "text-origin-plan.json").write_text(
             json.dumps(
@@ -229,6 +253,59 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        if real_miktex_runtime_files is not None:
+            runtime_records = [
+                {
+                    "path": str(path.resolve()),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+                for path in sorted({path.resolve() for path in real_miktex_runtime_files}, key=str)
+            ]
+            inventory_path = legacy_root / "precompile/miktex-package-inventory.json"
+            inventory_path.write_text(
+                json.dumps(
+                    {"schema_version": 1, "files": runtime_records},
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            legacy_runtime_policy.write_text(
+                json.dumps(
+                    runtime_policy_for_miktex(
+                        package_inventory=inventory_path,
+                        system_fonts=[SYSTEM_FONT],
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            legacy_manifest["approved_runtime_inputs"] = [
+                {**record, "classification": "registered_runtime_dependency"}
+                for record in runtime_records
+            ]
+            legacy_manifest["runtime_policy"] = {
+                "path": str(legacy_runtime_policy.resolve()),
+                "sha256": hashlib.sha256(
+                    legacy_runtime_policy.read_bytes()
+                ).hexdigest(),
+            }
+            legacy_manifest["manifest_sha256"] = canonical_sha(
+                legacy_manifest, "manifest_sha256"
+            )
+            legacy_manifest_path.write_text(
+                json.dumps(
+                    legacy_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         retired_workflow = legacy_root / "待删除/kernel-workflow"
         retired_workflow.parent.mkdir(parents=True, exist_ok=True)
         (legacy_root / "workflow").rename(retired_workflow)
@@ -272,6 +349,263 @@ class Issue58FinalEditableTexSourceSetTests(unittest.TestCase):
             check=False,
         )
         return completed, json.loads(completed.stdout)
+
+    def _probe_real_miktex(
+        self,
+        sources: dict[str, str],
+    ) -> tuple[list[Path], Path]:
+        """Compile project-local sources with the registered MiKTeX engine and
+        return (recorder-observed runtime input files, probe root)."""
+        probe = PROJECT_ROOT / "待删除/i58real" / uuid.uuid4().hex[:6]
+        probe.mkdir(parents=True)
+        (probe / "engine-temp").mkdir()
+        (probe / "engine-profile").mkdir()
+        for relative, content in sources.items():
+            path = probe / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        profile = _MIKTEX_DURABLE_DIRECTORIES["MIKTEX_USERDATA"]
+        system_root = os.environ.get("SYSTEMROOT", "C:/Windows")
+        environment = {
+            "PYTHONUTF8": "1",
+            "MIKTEX_ENABLE_INSTALLER": "0",
+            "TEMP": str(probe / "engine-temp"),
+            "TMP": str(probe / "engine-temp"),
+            "USERNAME": "video2pdf",
+            "USERDOMAIN": "LOCAL",
+            **_MIKTEX_DURABLE_DIRECTORIES,
+            "MIKTEX_COMMONINSTALL": str(_MIKTEX_RUNTIME_ROOTS[0]),
+            "MIKTEX_USERLOGDIRECTORY": str(probe / "engine-profile"),
+            "USERPROFILE": str(profile),
+            "HOME": str(profile),
+            "HOMEDRIVE": Path(system_root).drive,
+            "HOMEPATH": str(profile)[len(profile.drive):],
+            "SYSTEMDRIVE": Path(system_root).drive,
+            "SYSTEMROOT": system_root,
+            "WINDIR": os.environ.get("WINDIR", "C:/Windows"),
+        }
+        completed = subprocess.run(
+            [
+                str(_MIKTEX_ENGINE),
+                "--miktex-disable-maintenance",
+                "--miktex-disable-diagnose",
+                "--disable-installer",
+                "-no-shell-escape",
+                "-recorder",
+                "-interaction=nonstopmode",
+                "main.tex",
+            ],
+            cwd=probe,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+            check=False,
+        )
+        self.assertEqual(
+            0,
+            completed.returncode,
+            completed.stdout.decode("utf-8", "replace")
+            + completed.stderr.decode("utf-8", "replace"),
+        )
+        runtime: list[Path] = []
+        for line in (probe / "main.fls").read_text(
+            encoding="utf-8", errors="strict"
+        ).splitlines():
+            if not line.startswith("INPUT "):
+                continue
+            observed = Path(line[6:])
+            if not observed.is_absolute():
+                observed = probe / observed
+            observed = observed.resolve()
+            try:
+                relative = observed.relative_to(probe.resolve())
+            except ValueError:
+                runtime.append(observed)
+                continue
+            if str(relative).replace("\\", "/") in sources:
+                continue
+            suffix = "".join(observed.suffixes[-2:]).casefold()
+            if suffix not in {
+                ".aux", ".toc", ".out", ".log", ".xdv", ".bcf", ".run.xml"
+            }:
+                suffix = observed.suffix.casefold()
+            if suffix not in {
+                ".aux", ".toc", ".out", ".log", ".xdv", ".bcf", ".run.xml"
+            }:
+                runtime.append(observed)
+        return runtime, probe
+
+    def _real_plan_objects(
+        self,
+        pdf: Path,
+    ) -> tuple[int, list[dict], list[dict]]:
+        """Derive the text-origin plan pieces from the real compiled PDF.
+
+        The enumeration walk mirrors the production adapter's
+        render_and_extract so the plan objects match byte for byte; the last
+        span of the single-page fixture document is the generated page number.
+        """
+        import fitz
+
+        objects: list[dict] = []
+        page_count = 0
+        sequence = 0
+        with fitz.open(pdf) as document:
+            page_count = document.page_count
+            for page_index, page in enumerate(document):
+                page_number = page_index + 1
+                for block_index, block in enumerate(
+                    page.get_text("dict").get("blocks", []), 1
+                ):
+                    for line_index, line in enumerate(block.get("lines", []), 1):
+                        for span_index, span in enumerate(
+                            line.get("spans", []), 1
+                        ):
+                            if not span.get("text"):
+                                continue
+                            sequence += 1
+                            objects.append(
+                                {
+                                    "object_id": f"page-{page_number}-text-{sequence}",
+                                    "page": page_number,
+                                    "object_kind": "pdf_text_run",
+                                    "bbox": list(span["bbox"]),
+                                    "exact_utf8_text": span["text"],
+                                    "extractor_id": "pymupdf-text-v1",
+                                    "evidence_locator": (
+                                        f"page:{page_number}/block:{block_index}"
+                                        f"/line:{line_index}/span:{span_index}"
+                                    ),
+                                }
+                            )
+        page_number_id = objects[-1]["object_id"] if objects else ""
+        origin_ids = [
+            item["object_id"] for item in objects if item["object_id"] != page_number_id
+        ]
+        self.assertEqual(
+            "Core claim",
+            "".join(
+                str(item["exact_utf8_text"])
+                for item in objects
+                if item["object_id"] in origin_ids
+            ),
+        )
+        self.assertEqual("1", objects[-1]["exact_utf8_text"])
+        edges = [
+            {
+                "edge_id": "origin.main",
+                "disposition": "sealed_origin",
+                "sealed_item_id": "main.paragraph.001",
+                "sealed_text_utf8": "Core claim",
+                "rendered_object_ids": origin_ids,
+                "recipe": "layout_whitespace",
+            },
+            {
+                "edge_id": "generated.page-number",
+                "disposition": "generated",
+                "rendered_object_ids": [page_number_id],
+                "recipe": "declared_generated",
+                "generator": {
+                    **registered_generator_identity("page-number-v1"),
+                    "inputs": {
+                        "first_page_number": 1,
+                        "page_count": page_count,
+                    },
+                },
+            },
+        ]
+        return page_count, objects, edges
+
+    def _real_miktex_plan(
+        self,
+        seal_sha256: str,
+        probe: Path,
+    ) -> dict:
+        page_count, objects, edges = self._real_plan_objects(probe / "main.pdf")
+        plan = {
+            "schema_name": "text-origin-plan",
+            "schema_version": "1.0.0",
+            "precompile_text_seal_sha256": seal_sha256,
+            "sealed_items": [
+                {
+                    "item_id": "main.paragraph.001",
+                    "exact_utf8_text": "Core claim",
+                }
+            ],
+            "page_count": page_count,
+            "extractor_suite": [
+                {"extractor_id": "pymupdf-text-v1", "extractor_sha256": "a" * 64}
+            ],
+            "rendered_objects": objects,
+            "edges": edges,
+        }
+        return plan
+
+    def _public_targets(self, pdf_name: str) -> tuple[str, ...]:
+        stem = Path(pdf_name).stem
+        return (
+            pdf_name,
+            f"{stem}.render-evidence-manifest.json",
+            f"{stem}.final-artifact-seal.json",
+            f"{stem}.text-origin-manifest.json",
+            f"{stem}.final-editable-tex-source-set.json",
+            f"{stem}.compiler-adapter-identity.json",
+            f"{stem}.final-compile-report.json",
+        )
+
+    def _run_fault_publication(
+        self,
+        fixture,
+        root: Path,
+        paths: dict[str, Path],
+        *,
+        pdf_name: str,
+        workspace_key: str,
+        patch_target: str,
+        side_effect,
+        expect_rollback_files: bool = True,
+    ) -> None:
+        """Run one named publication with a fault injected at the given seam,
+        assert every public target is removed, and retry the same name."""
+        from video2pdf_workflow_kernel import final_compile as final_compile_module
+
+        finals = root / "finals"
+        with mock.patch.object(
+            final_compile_module, patch_target, side_effect=side_effect
+        ):
+            completed, envelope, _workspace = fixture.final_compile(
+                root,
+                paths,
+                compiler_evidence_fixture=True,
+                workspace_root=root / f"guarded-final-compile-{workspace_key}",
+                final_pdf_name=pdf_name,
+                final_output_directory=finals,
+            )
+        self.assertEqual(40, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("compile_dependency_gap", envelope["classification"])
+        for relative in self._public_targets(pdf_name):
+            self.assertFalse((finals / relative).exists())
+        rollback = root / f"待删除/final-compile-publish-{Path(pdf_name).stem}"
+        self.assertTrue(rollback.is_dir())
+        if expect_rollback_files:
+            self.assertTrue(any(rollback.rglob("*")))
+
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_pdf_salt": pdf_name},
+            compiler_evidence_fixture=True,
+            workspace_root=root / f"guarded-final-compile-{workspace_key}-retry",
+            final_pdf_name=pdf_name,
+            final_output_directory=finals,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertTrue((finals / pdf_name).is_file())
+        self.assertTrue(
+            (finals / f"{Path(pdf_name).stem}.final-compile-report.json").is_file()
+        )
 
     def test_public_contract_accepts_current_kernel_version_binding(self) -> None:
         artifact = json.loads(
@@ -1806,6 +2140,9 @@ handoff.write_text(
         self.assertEqual("contract_invalid", envelope["classification"])
         self.assertFalse(escaped.exists())
 
+    @unittest.skipUnless(
+        _MIKTEX_ENGINE.is_file(), "registered MiKTeX engine is unavailable"
+    )
     def test_public_final_compile_projects_real_split_tex_recorder(self) -> None:
         # scenario_id: real_split_tex_closure
         # target_invariant: the real compiler recorder, not a synthetic manifest
@@ -1816,19 +2153,43 @@ handoff.write_text(
             RenderedTextReconciliationCliTests,
         )
 
+        main_content = (
+            "\\documentclass{article}\n\\begin{document}\n"
+            "Core claim\n\\input{chapters/chapter_01}\n\\end{document}\n"
+        )
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
         )
         source_root, source_paths = fixture.fixture(
             production_compile=True,
-            main_tex_content="\\input{chapters/chapter_01}\n",
+            main_tex_content=main_content,
             additional_tex_sources=(
-                ("integrated_chapter_01", 7, "chapters/chapter_01.tex", "Chapter one\n"),
+                (
+                    "integrated_chapter_01",
+                    7,
+                    "chapters/chapter_01.tex",
+                    "% Chapter one placeholder\n",
+                ),
             ),
             authority_root=PROJECT_ROOT / "待删除/i58split-source" / uuid.uuid4().hex[:6],
         )
+        sources = {
+            "main.tex": main_content,
+            "chapters/chapter_01.tex": "% Chapter one placeholder\n",
+        }
+        runtime_files, probe = self._probe_real_miktex(sources)
+        seal = json.loads(
+            (
+                source_paths["precompile_workspace"] / "precompile-text-seal.json"
+            ).read_text(encoding="utf-8")
+        )
+        plan = self._real_miktex_plan(seal["seal_sha256"], probe)
         isolated_root, legacy = self._legacy_compile_environment(
-            "s", source_root, source_paths
+            "s",
+            source_root,
+            source_paths,
+            plan=plan,
+            real_miktex_runtime_files=runtime_files,
         )
         completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
@@ -1845,6 +2206,9 @@ handoff.write_text(
             [(member["logical_id"], member["role"]) for member in artifact["members"]],
         )
 
+    @unittest.skipUnless(
+        _MIKTEX_ENGINE.is_file(), "registered MiKTeX engine is unavailable"
+    )
     def test_public_final_compile_projects_real_nested_tex_recorder(self) -> None:
         # scenario_id: real_nested_tex_closure
         # target_invariant: a chapter that itself inputs a deeper project-local
@@ -1855,12 +2219,16 @@ handoff.write_text(
             RenderedTextReconciliationCliTests,
         )
 
+        main_content = (
+            "\\documentclass{article}\n\\begin{document}\n"
+            "Core claim\n\\input{chapters/chapter_01}\n\\end{document}\n"
+        )
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
         )
         source_root, source_paths = fixture.fixture(
             production_compile=True,
-            main_tex_content="\\input{chapters/chapter_01}\n",
+            main_tex_content=main_content,
             additional_tex_sources=(
                 (
                     "integrated_chapter_01",
@@ -1868,12 +2236,33 @@ handoff.write_text(
                     "chapters/chapter_01.tex",
                     "\\input{chapters/deep}\n",
                 ),
-                ("integrated_deep_tex", 6, "chapters/deep.tex", "Deep paragraph\n"),
+                (
+                    "integrated_deep_tex",
+                    6,
+                    "chapters/deep.tex",
+                    "% Deep paragraph placeholder\n",
+                ),
             ),
             authority_root=PROJECT_ROOT / "待删除/i58nested-source" / uuid.uuid4().hex[:6],
         )
+        sources = {
+            "main.tex": main_content,
+            "chapters/chapter_01.tex": "\\input{chapters/deep}\n",
+            "chapters/deep.tex": "% Deep paragraph placeholder\n",
+        }
+        runtime_files, probe = self._probe_real_miktex(sources)
+        seal = json.loads(
+            (
+                source_paths["precompile_workspace"] / "precompile-text-seal.json"
+            ).read_text(encoding="utf-8")
+        )
+        plan = self._real_miktex_plan(seal["seal_sha256"], probe)
         isolated_root, legacy = self._legacy_compile_environment(
-            "n", source_root, source_paths
+            "n",
+            source_root,
+            source_paths,
+            plan=plan,
+            real_miktex_runtime_files=runtime_files,
         )
         completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
@@ -1891,6 +2280,9 @@ handoff.write_text(
             [(member["logical_id"], member["role"]) for member in artifact["members"]],
         )
 
+    @unittest.skipUnless(
+        _MIKTEX_ENGINE.is_file(), "registered MiKTeX engine is unavailable"
+    )
     def test_public_final_compile_projects_real_generated_tex_recorder(self) -> None:
         # scenario_id: real_generated_tex_closure
         # target_invariant: a consumed generated TeX snippet is delivered and
@@ -1901,19 +2293,43 @@ handoff.write_text(
             RenderedTextReconciliationCliTests,
         )
 
+        main_content = (
+            "\\documentclass{article}\n\\begin{document}\n"
+            "Core claim\n\\input{generated/summary}\n\\end{document}\n"
+        )
         fixture = RenderedTextReconciliationCliTests(
             "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
         )
         source_root, source_paths = fixture.fixture(
             production_compile=True,
-            main_tex_content="\\input{generated/summary}\n",
+            main_tex_content=main_content,
             additional_tex_sources=(
-                ("generated_summary_tex", 1, "generated/summary.tex", "Generated summary\n"),
+                (
+                    "generated_summary_tex",
+                    1,
+                    "generated/summary.tex",
+                    "% Generated summary placeholder\n",
+                ),
             ),
             authority_root=PROJECT_ROOT / "待删除/i58gen-source" / uuid.uuid4().hex[:6],
         )
+        sources = {
+            "main.tex": main_content,
+            "generated/summary.tex": "% Generated summary placeholder\n",
+        }
+        runtime_files, probe = self._probe_real_miktex(sources)
+        seal = json.loads(
+            (
+                source_paths["precompile_workspace"] / "precompile-text-seal.json"
+            ).read_text(encoding="utf-8")
+        )
+        plan = self._real_miktex_plan(seal["seal_sha256"], probe)
         isolated_root, legacy = self._legacy_compile_environment(
-            "g", source_root, source_paths
+            "g",
+            source_root,
+            source_paths,
+            plan=plan,
+            real_miktex_runtime_files=runtime_files,
         )
         completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
@@ -1928,6 +2344,585 @@ handoff.write_text(
                 ("generated_summary_tex", "included_tex_source"),
             ],
             [(member["logical_id"], member["role"]) for member in artifact["members"]],
+        )
+
+
+    def test_public_final_compile_ignores_missing_include_in_unconsumed_draft(self) -> None:
+        # scenario_id: unconsumed_draft_missing_include
+        # target_invariant: the entrypoint-rooted static preflight never fails
+        # on an unconsumed staged draft; consumed-closure classification stays
+        # with the real recorder evidence.
+        # mutation_seam: declare one unused draft whose \input target is absent.
+        # rematerialized_nodes: none (manifest and seals stay coherent).
+        # expected_outcome: compile succeeds; the draft appears only because
+        # the recorder-observed closure includes it.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content="\\input{chapters/good}\n",
+            additional_tex_sources=(
+                (
+                    "integrated_good_chapter",
+                    7,
+                    "chapters/good.tex",
+                    "Good chapter\n",
+                ),
+                (
+                    "unused_draft_tex",
+                    5,
+                    "unused-draft.tex",
+                    "\\input{abandoned/missing}\n",
+                ),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/i58d-source" / uuid.uuid4().hex[:6],
+        )
+        isolated_root, legacy = self._legacy_compile_environment(
+            "d", source_root, source_paths
+        )
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        artifact = json.loads(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            {"integrated_main_tex", "integrated_good_chapter", "unused_draft_tex"},
+            {member["logical_id"] for member in artifact["members"]},
+        )
+
+    @unittest.skipUnless(
+        _MIKTEX_ENGINE.is_file(), "registered MiKTeX engine is unavailable"
+    )
+    def test_public_real_xelatex_recorder_excludes_unconsumed_draft(self) -> None:
+        # scenario_id: real_recorder_excludes_unconsumed_draft
+        # target_invariant: the real XeLaTeX recorder, not a synthetic listing,
+        #   establishes the consumed TeX closure; an unused draft with a
+        #   missing include neither blocks the compile nor enters the set.
+        # mutation_seam: none (positive real compile with an unused draft).
+        # expected_outcome: entrypoint plus both transitive include members;
+        #   unused-draft.tex stays absent from the recorder and the source set.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        main_content = (
+            "\\documentclass{article}\n\\begin{document}\n"
+            "Core claim\n\\input{chapters/used.tex}\n\\end{document}\n"
+        )
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        source_root, source_paths = fixture.fixture(
+            production_compile=True,
+            main_tex_content=main_content,
+            additional_tex_sources=(
+                (
+                    "integrated_chapter_01",
+                    7,
+                    "chapters/used.tex",
+                    "\\input{generated/summary}\n",
+                ),
+                (
+                    "generated_summary_tex",
+                    1,
+                    "generated/summary.tex",
+                    "% Generated summary placeholder\n",
+                ),
+                (
+                    "unused_draft_tex",
+                    5,
+                    "unused-draft.tex",
+                    "\\input{abandoned/missing}\n",
+                ),
+            ),
+            authority_root=PROJECT_ROOT / "待删除/i58u-source" / uuid.uuid4().hex[:6],
+        )
+        sources = {
+            "main.tex": main_content,
+            "chapters/used.tex": "\\input{generated/summary}\n",
+            "generated/summary.tex": "% Generated summary placeholder\n",
+        }
+        runtime_files, probe = self._probe_real_miktex(sources)
+        seal = json.loads(
+            (
+                source_paths["precompile_workspace"] / "precompile-text-seal.json"
+            ).read_text(encoding="utf-8")
+        )
+        plan = self._real_miktex_plan(seal["seal_sha256"], probe)
+        isolated_root, legacy = self._legacy_compile_environment(
+            "u",
+            source_root,
+            source_paths,
+            plan=plan,
+            real_miktex_runtime_files=runtime_files,
+        )
+        completed, envelope = self._run_legacy_final_compile(isolated_root, legacy)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        artifact = json.loads(
+            (legacy["workspace"] / "final-editable-tex-source-set.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [
+                ("integrated_main_tex", "tex_entrypoint"),
+                ("integrated_chapter_01", "included_tex_source"),
+                ("generated_summary_tex", "included_tex_source"),
+            ],
+            [(member["logical_id"], member["role"]) for member in artifact["members"]],
+        )
+        self.assertNotIn(
+            "unused_draft_tex", [member["logical_id"] for member in artifact["members"]]
+        )
+        recorder = (
+            legacy["workspace"] / "adapter-output/compile-recorder.fls"
+        ).read_text(encoding="utf-8")
+        self.assertIn("chapters\\used.tex", recorder)
+        self.assertIn("generated\\summary.tex", recorder)
+        self.assertNotIn("unused-draft.tex", recorder)
+
+    def test_public_projector_excludes_unconsumed_draft_from_persisted_real_recorder(
+        self,
+    ) -> None:
+        # scenario_id: persisted_real_recorder_closure
+        # target_invariant: the projector consumes the persisted real XeLaTeX
+        #   recorder evidence (captured on the registered MiKTeX engine) and
+        #   excludes the manifest-declared unused draft from the source set.
+        # mutation_seam: none (evidence replay over the captured recorder).
+        from video2pdf_workflow_kernel.final_tex_source_set import (
+            FinalEditableTexSourceSetProjector,
+        )
+        from video2pdf_workflow_kernel.utils import path_fold
+
+        recorder_fixture = (
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/guarded-compile/real-miktex-nested-recorder.fls"
+        )
+        recorder_lines = recorder_fixture.read_text(
+            encoding="utf-8", errors="strict"
+        ).splitlines()
+        cwd = PROJECT_ROOT / "待删除/i58fls" / uuid.uuid4().hex[:6]
+        cwd.mkdir(parents=True)
+        source_contents = {
+            "main.tex": (
+                "\\documentclass{article}\n\\begin{document}\n"
+                "Core claim\n\\input{chapters/used.tex}\n\\end{document}\n"
+            ),
+            "chapters/used.tex": "\\input{generated/summary}\n",
+            "generated/summary.tex": "% Generated summary placeholder\n",
+            "unused-draft.tex": "\\input{abandoned/missing}\n",
+        }
+        entries = []
+        for staging_path, content in source_contents.items():
+            source = cwd / "sources" / staging_path
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(content, encoding="utf-8")
+            entries.append(
+                {
+                    "logical_id": (
+                        "integrated_main_tex"
+                        if staging_path == "main.tex"
+                        else (
+                            "integrated_chapter_01"
+                            if staging_path == "chapters/used.tex"
+                            else (
+                                "generated_summary_tex"
+                                if staging_path == "generated/summary.tex"
+                                else "unused_draft_tex"
+                            )
+                        )
+                    ),
+                    "generation": 1,
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "source_path": str(source),
+                    "staging_path": staging_path,
+                }
+            )
+        recorder_inputs: list[Path] = []
+        registered_runtime: set[str] = set()
+        for line in recorder_lines:
+            if not line.startswith("INPUT "):
+                continue
+            observed = Path(line[6:])
+            if not observed.is_absolute():
+                observed = cwd / observed
+            observed = observed.resolve()
+            try:
+                observed.relative_to(cwd.resolve())
+                relative = str(observed.relative_to(cwd.resolve())).replace("\\", "/")
+            except ValueError:
+                registered_runtime.add(path_fold(str(observed)))
+                continue
+            if relative not in source_contents:
+                registered_runtime.add(path_fold(str(observed)))
+                continue
+            recorder_inputs.append(observed)
+        artifact = FinalEditableTexSourceSetProjector().project(
+            compile_entries=entries,
+            recorder_cwd=cwd,
+            recorder_inputs=recorder_inputs,
+            registered_runtime_input_paths=registered_runtime,
+            project_root=cwd,
+            entrypoint_staging_paths=["main.tex"],
+            final_pdf={"path": "final.pdf", "sha256": "4" * 64, "size": 1},
+            generation_set_sha256="e" * 64,
+            compile_manifest_sha256="5" * 64,
+            recorder_path="adapter-output/compile-recorder.fls",
+            recorder_sha256="6" * 64,
+        )
+        self.assertEqual(
+            [
+                "integrated_main_tex",
+                "integrated_chapter_01",
+                "generated_summary_tex",
+            ],
+            [member["logical_id"] for member in artifact["members"]],
+        )
+        self.assertNotIn(
+            "unused_draft_tex", [member["logical_id"] for member in artifact["members"]]
+        )
+
+    def test_public_final_compile_path_identity_is_platform_aware(self) -> None:
+        # target_invariant: filesystem identity folds only Windows-style
+        # path text; POSIX and relative TeX paths stay case-sensitive.
+        from video2pdf_workflow_kernel.final_compile import _identity_key
+        from video2pdf_workflow_kernel.utils import path_fold
+
+        self.assertEqual(
+            _identity_key(Path(r"C:\Work\Chapter.tex")),
+            _identity_key(Path(r"c:\work\chapter.tex")),
+        )
+        self.assertEqual(
+            _identity_key(Path(r"\\server\share\Main.tex")),
+            _identity_key(Path(r"\\SERVER\SHARE\main.tex")),
+        )
+        self.assertEqual(
+            path_fold("C:/Work/Chapter.tex"), path_fold("c:/work/chapter.tex")
+        )
+        self.assertNotEqual(
+            path_fold("/project/Chapter.tex"), path_fold("/project/chapter.tex")
+        )
+        self.assertNotEqual(
+            path_fold("chapters/Chapter.tex"), path_fold("chapters/chapter.tex")
+        )
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only case-insensitive filesystem")
+    def test_public_final_compile_folds_case_variant_runtime_input_on_windows(
+        self,
+    ) -> None:
+        # target_invariant: a recorder-observed runtime path whose text case
+        # differs from the approved declaration still matches on Windows
+        # through the platform-aware identity fold.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(production_compile=True)
+        completed, envelope, _workspace = fixture.final_compile(
+            root,
+            paths,
+            plan_updates={"fixture_runtime_input_case_variant": True},
+            compiler_evidence_fixture=True,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(
+            "guarded_final_compile_complete", envelope["classification"]
+        )
+
+    def test_public_adapter_rejects_ambiguous_manifest_entrypoints_with_stable_code(
+        self,
+    ) -> None:
+        # scenario_id: real_ambiguous_manifest_entrypoints
+        # target_invariant: two manifest TeX entries staging the same path
+        #   fail closed with the stable ambiguous-entrypoint classification.
+        # mutation_seam: declare main_a and main_b at the same staging path.
+        # rematerialized_nodes: none (manifest and plan stay coherent).
+        # expected_first_failing_gate: final_editable_tex_source_set_entrypoint.
+        # expected_error_code: final_tex_entrypoint_ambiguous.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            write_json,
+        )
+
+        isolated_root = self._isolated_authority_clone("am")
+        workspace = isolated_root / "待删除/i58amb" / uuid.uuid4().hex[:6]
+        workspace.mkdir(parents=True)
+        source = workspace / "integrated-main.tex"
+        source.write_text("fixture\n", encoding="utf-8")
+        source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        fake = (
+            isolated_root / "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py"
+        )
+        package_inventory = (
+            isolated_root
+            / "tests/video_workflow/fixtures/guarded-compile/package-inventory.json"
+        )
+        policy = {
+            "schema_name": "compile-runtime-policy",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "policy_id": "fixture-miktex-runtime",
+            "policy_version": "1.0.0",
+            "runtime_family": "miktex",
+            "engine": {
+                "name": "xelatex-fixture",
+                "version": "fixture-1",
+                "executable": str(Path(sys.executable).resolve()),
+                "sha256": hashlib.sha256(
+                    Path(sys.executable).read_bytes()
+                ).hexdigest(),
+                "prefix_args": [str(fake.resolve())],
+                "prefix_file_fingerprints": [
+                    {
+                        "path": str(fake.resolve()),
+                        "sha256": hashlib.sha256(fake.read_bytes()).hexdigest(),
+                    }
+                ],
+            },
+            "package_inventory": {
+                "version": "fixture-1",
+                "path": str(package_inventory.resolve()),
+                "sha256": hashlib.sha256(
+                    package_inventory.read_bytes()
+                ).hexdigest(),
+            },
+            "system_fonts": [],
+            "allowed_packages": ["article"],
+            "allowed_runtime_roots": [str(Path(sys.executable).resolve().parent)],
+            "shell_escape": False,
+            "automatic_package_install": False,
+            "dependency_discovery_policy_version": "recorder-closure-v1",
+        }
+        policy["policy_sha256"] = canonical_sha(policy, "policy_sha256")
+        policy_path = write_json(workspace / "runtime-policy.json", policy)
+        secure_seal = "1" * 64
+        manifest = {
+            "schema_name": "final-compile-manifest",
+            "schema_version": "1.0.0",
+            "activation_status": "target_only",
+            "mode": "final",
+            "precompile_text_seal_sha256": secure_seal,
+            "entries": [
+                {
+                    "logical_id": "main_a",
+                    "generation": 1,
+                    "sha256": source_sha256,
+                    "source_path": str(source),
+                    "staging_path": "main.tex",
+                },
+                {
+                    "logical_id": "main_b",
+                    "generation": 1,
+                    "sha256": source_sha256,
+                    "source_path": str(source),
+                    "staging_path": "main.tex",
+                },
+            ],
+            "approved_runtime_inputs": [],
+            "runtime_policy": {
+                "path": str(policy_path.resolve()),
+                "sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+            },
+        }
+        manifest["manifest_sha256"] = canonical_sha(manifest, "manifest_sha256")
+        manifest_path = write_json(workspace / "compile-manifest.json", manifest)
+        plan = {
+            "schema_name": "text-origin-plan",
+            "schema_version": "1.0.0",
+            "precompile_text_seal_sha256": secure_seal,
+            "page_count": 1,
+            "extractor_suite": [],
+            "rendered_objects": [],
+            "sealed_items": [],
+            "edges": [],
+        }
+        plan["plan_sha256"] = canonical_sha(plan, "plan_sha256")
+        plan_path = write_json(workspace / "text-origin-plan.json", plan)
+        output = workspace / "adapter-output"
+        request = {
+            "schema_name": "guarded-final-compile-request",
+            "schema_version": "1.0.0",
+            "activation_status": "target_only",
+            "precompile_text_seal_sha256": secure_seal,
+            "compile_manifest_path": str(manifest_path.resolve()),
+            "compile_manifest_sha256": manifest["manifest_sha256"],
+            "text_origin_plan_path": str(plan_path.resolve()),
+            "text_origin_plan_sha256": plan["plan_sha256"],
+            "generation_set_sha256": "2" * 64,
+            "compile_provider": {"provider_id": "fixture"},
+            "compiled_at": "2026-08-25T13:30:00+08:00",
+            "output_root": str(output.resolve()),
+            "runtime_policy_path": str(policy_path.resolve()),
+            "runtime_policy_sha256": hashlib.sha256(
+                policy_path.read_bytes()
+            ).hexdigest(),
+        }
+        request_path = write_json(workspace / "compile-request.json", request)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X", "utf8", "-B",
+                str(isolated_root / "scripts/guarded_final_compile_adapter.py"),
+                str(request_path),
+            ],
+            cwd=isolated_root,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(1, completed.returncode, completed.stdout + completed.stderr)
+        self.assertIn(
+            "compile manifest entrypoint is missing or ambiguous", completed.stderr
+        )
+        error = json.loads((output / "adapter-error.json").read_text(encoding="utf-8"))
+        self.assertEqual("guarded-final-compile-error", error["schema_name"])
+        self.assertEqual(
+            "final_editable_tex_source_set_entrypoint", error["first_failing_gate"]
+        )
+        self.assertEqual("final_tex_entrypoint_ambiguous", error["error_code"])
+
+    def test_public_named_pdf_publication_rolls_back_when_pdf_copy_fails(self) -> None:
+        # fault injection: the PDF copy itself raises; nothing reaches the
+        # public target set and the same name can be retried immediately.
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58t" / uuid.uuid4().hex[:6],
+        )
+
+        def fail_pdf_copy(temp: Path, source: Path) -> None:
+            raise OSError("disk full")
+
+        self._run_fault_publication(
+            fixture,
+            root,
+            paths,
+            pdf_name="alpha.pdf",
+            workspace_key="pdf-copy",
+            patch_target="_publish_copy",
+            side_effect=fail_pdf_copy,
+            expect_rollback_files=False,
+        )
+
+    def test_public_named_pdf_publication_rolls_back_after_pdf_commit(self) -> None:
+        # fault injection: the PDF rename commits, then the first JSON rename
+        # raises; the already-committed PDF is rolled back. This is the
+        # reviewer scenario "PDF 复制成功后抛出异常".
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58t" / uuid.uuid4().hex[:6],
+        )
+        self._run_fault_publication(
+            fixture,
+            root,
+            paths,
+            pdf_name="beta.pdf",
+            workspace_key="after-pdf-commit",
+            patch_target="_publish_commit",
+            side_effect=[None, OSError("commit interrupted")],
+        )
+
+    def test_public_named_pdf_publication_rolls_back_when_second_json_write_fails(
+        self,
+    ) -> None:
+        # fault injection: the first JSON bytes write succeeds, then the
+        # second raises. This is the reviewer scenario
+        # "第一个 JSON 写入成功后抛出异常".
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58t" / uuid.uuid4().hex[:6],
+        )
+        self._run_fault_publication(
+            fixture,
+            root,
+            paths,
+            pdf_name="gamma.pdf",
+            workspace_key="second-json-write",
+            patch_target="_publish_bytes",
+            side_effect=[None, OSError("write interrupted")],
+        )
+
+    def test_public_named_pdf_publication_rolls_back_before_report_write(self) -> None:
+        # fault injection: every artifact through the adapter identity commits,
+        # then the report rename raises. This is the reviewer scenario
+        # "Source Set 写入成功、Report 写入前抛出异常".
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58t" / uuid.uuid4().hex[:6],
+        )
+        self._run_fault_publication(
+            fixture,
+            root,
+            paths,
+            pdf_name="delta.pdf",
+            workspace_key="before-report",
+            patch_target="_publish_commit",
+            side_effect=[None] * 5 + [OSError("commit interrupted")],
+        )
+
+    def test_public_named_pdf_publication_rolls_back_when_report_write_fails(
+        self,
+    ) -> None:
+        # fault injection: all five JSON content writes succeed, then the
+        # report content write raises. This is the reviewer scenario
+        # "Report 写入失败".
+        from tests.video_workflow.test_rendered_text_reconciliation import (
+            RenderedTextReconciliationCliTests,
+        )
+
+        fixture = RenderedTextReconciliationCliTests(
+            "test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence"
+        )
+        root, paths = fixture.fixture(
+            production_compile=True,
+            authority_root=PROJECT_ROOT / "待删除/i58t" / uuid.uuid4().hex[:6],
+        )
+        self._run_fault_publication(
+            fixture,
+            root,
+            paths,
+            pdf_name="epsilon.pdf",
+            workspace_key="report-write",
+            patch_target="_publish_bytes",
+            side_effect=[None] * 5 + [OSError("report write failed")],
         )
 
 

@@ -7,7 +7,8 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
-from typing import Any
+import time
+from typing import Any, Callable
 
 import fitz
 
@@ -19,6 +20,7 @@ from .errors import CompileDependencyGap, ContractError
 from .guarded_compile import GuardedCompileProvider
 from .utils import (
     canonical_json_bytes,
+    path_fold,
     read_json,
     require_contained_path,
     sha256_file,
@@ -35,6 +37,62 @@ def _fingerprint_without(value: dict[str, Any], field: str) -> str:
 def _require_fingerprint(value: dict[str, Any], field: str, label: str) -> None:
     if value.get(field) != _fingerprint_without(value, field):
         raise ContractError(f"{label} {field} is stale or invalid")
+
+
+def _identity_key(path: Path) -> str:
+    """Filesystem identity for approved/staged/recorder path matching.
+
+    Windows drive and UNC paths fold case; POSIX paths stay case-sensitive,
+    so /project/Chapter.tex and /project/chapter.tex remain distinct.
+    """
+    return path_fold(str(path))
+
+
+def _publish_copy(temp: Path, source: Path) -> None:
+    shutil.copyfile(source, temp)
+
+
+def _publish_bytes(temp: Path, value: dict[str, Any]) -> None:
+    temp.write_bytes(canonical_json_bytes(value))
+
+
+def _publish_commit(temp: Path, final: Path) -> None:
+    temp.replace(final)
+
+
+def _publish_transactional(
+    public_root: Path,
+    artifacts: list[tuple[str, Callable[[Path], None]]],
+    rollback_root: Path,
+) -> None:
+    """Write one public artifact set through private temp names and commit it
+    with deterministic renames; any failure moves this attempt's files under
+    the rollback root so a same-name retry starts from an empty target set."""
+    token = f"{os.getpid()}-{time.time_ns()}"
+    staged: list[tuple[Path, Path]] = []
+    committed: list[Path] = []
+    try:
+        for final_name, writer in artifacts:
+            temp = public_root / f".{final_name}.{token}.publish-new"
+            writer(temp)
+            staged.append((temp, public_root / final_name))
+        for temp, final in staged:
+            _publish_commit(temp, final)
+            committed.append(final)
+    except BaseException:
+        rollback = rollback_root / token
+        try:
+            rollback.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            rollback = None
+        for path in [*committed, *(temp for temp, _ in staged)]:
+            if rollback is None or not path.exists():
+                continue
+            try:
+                path.rename(rollback / path.name)
+            except OSError:
+                pass
+        raise
 
 
 def final_compile_provider_identity(project_root: Path) -> dict[str, str]:
@@ -529,7 +587,7 @@ class GuardedFinalCompileProvider:
             }:
                 raise CompileDependencyGap("Final Compile runtime input registry is invalid")
             runtime_path = Path(item.get("path", "")).resolve()
-            identity = str(runtime_path).casefold()
+            identity = _identity_key(runtime_path)
             if (
                 not runtime_path.is_file()
                 or sha256_file(runtime_path) != item.get("sha256")
@@ -830,7 +888,7 @@ class GuardedFinalCompileProvider:
                 staged_path.relative_to(recorder_cwd)
             except ValueError as exc:
                 raise CompileDependencyGap("Final Compile staging path escapes recorder root") from exc
-            identity = str(staged_path).casefold()
+            identity = _identity_key(staged_path)
             if (
                 not staged_path.is_file()
                 or sha256_file(staged_path) != entry.get("sha256")
@@ -874,7 +932,11 @@ class GuardedFinalCompileProvider:
                 "Final Compile entrypoint is missing or ambiguous",
                 data={
                     "first_failing_gate": "final_editable_tex_source_set_entrypoint",
-                    "error_code": "final_tex_entrypoint_missing",
+                    "error_code": (
+                        "final_tex_entrypoint_missing"
+                        if not entrypoint_paths
+                        else "final_tex_entrypoint_ambiguous"
+                    ),
                 },
             )
         declared_recorder_paths = approved_runtime_paths | declared_entry_paths
@@ -891,7 +953,7 @@ class GuardedFinalCompileProvider:
                 observed = recorder_cwd / observed
             observed = observed.resolve()
             recorder_inputs.append(observed)
-            identity = str(observed).casefold()
+            identity = _identity_key(observed)
             if identity in declared_recorder_paths:
                 observed_recorder_paths.append(identity)
                 continue
@@ -1156,23 +1218,64 @@ class GuardedFinalCompileProvider:
         # Publish only after every validation and the Legacy Global Gate final
         # re-check have passed; the commit-marking report is written last.
         if final_pdf_name is not None:
-            published_pdf_path = public_root / final_pdf_name
-            shutil.copyfile(pdf_path, published_pdf_path)
-            pdf_path = published_pdf_path
-        render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
-        write_json_atomic(render_evidence_path, render_evidence)
-        published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"
-        write_json_atomic(published_final_seal_path, final_seal)
-        origins_path = public_root / f"{artifact_prefix}text-origin-manifest.json"
-        write_json_atomic(origins_path, origins)
-        source_set_path = public_root / f"{artifact_prefix}final-editable-tex-source-set.json"
-        write_json_atomic(source_set_path, final_editable_tex_source_set)
-        write_json_atomic(
-            public_root / f"{artifact_prefix}compiler-adapter-identity.json",
-            adapter_identity,
-        )
-        report_path = public_root / f"{artifact_prefix}final-compile-report.json"
-        write_json_atomic(report_path, report)
+            published = [
+                (
+                    final_pdf_name,
+                    lambda temp, _source=pdf_path: _publish_copy(temp, _source),
+                ),
+                (
+                    f"{artifact_prefix}render-evidence-manifest.json",
+                    lambda temp: _publish_bytes(temp, render_evidence),
+                ),
+                (
+                    f"{artifact_prefix}final-artifact-seal.json",
+                    lambda temp: _publish_bytes(temp, final_seal),
+                ),
+                (
+                    f"{artifact_prefix}text-origin-manifest.json",
+                    lambda temp: _publish_bytes(temp, origins),
+                ),
+                (
+                    f"{artifact_prefix}final-editable-tex-source-set.json",
+                    lambda temp: _publish_bytes(temp, final_editable_tex_source_set),
+                ),
+                (
+                    f"{artifact_prefix}compiler-adapter-identity.json",
+                    lambda temp: _publish_bytes(temp, adapter_identity),
+                ),
+                (
+                    f"{artifact_prefix}final-compile-report.json",
+                    lambda temp: _publish_bytes(temp, report),
+                ),
+            ]
+            try:
+                _publish_transactional(
+                    public_root,
+                    published,
+                    source_project_root
+                    / "待删除"
+                    / f"final-compile-publish-{output_stem}",
+                )
+            except CompileDependencyGap:
+                raise
+            except Exception as exc:
+                raise CompileDependencyGap("Final Compile publication failed") from exc
+            pdf_path = public_root / final_pdf_name
+        else:
+            render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
+            write_json_atomic(render_evidence_path, render_evidence)
+            published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"
+            write_json_atomic(published_final_seal_path, final_seal)
+            origins_path = public_root / f"{artifact_prefix}text-origin-manifest.json"
+            write_json_atomic(origins_path, origins)
+            source_set_path = public_root / f"{artifact_prefix}final-editable-tex-source-set.json"
+            write_json_atomic(source_set_path, final_editable_tex_source_set)
+            write_json_atomic(
+                public_root / f"{artifact_prefix}compiler-adapter-identity.json",
+                adapter_identity,
+            )
+            report_path = public_root / f"{artifact_prefix}final-compile-report.json"
+            write_json_atomic(report_path, report)
         return {
             "workspace_root": str(root),
             "final_pdf_path": str(pdf_path),

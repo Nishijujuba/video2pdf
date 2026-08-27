@@ -74,7 +74,10 @@ class ControlStoreReinitialization:
         if self.sentinel_path.exists():
             raise ControlStoreUnavailable(
                 "Control Store recovery already has persistent authority",
-                data={"sentinel_path": str(self.sentinel_path)},
+                data={
+                    "gate": "reinitialization_recovery_authority_conflict",
+                    "sentinel_path": str(self.sentinel_path),
+                },
             )
 
         store = ControlStore(self.workspace_root, self.contracts)
@@ -95,7 +98,10 @@ class ControlStoreReinitialization:
             if self.sentinel_path.exists():
                 raise ControlStoreUnavailable(
                     "Control Store recovery already has persistent authority",
-                    data={"sentinel_path": str(self.sentinel_path)},
+                    data={
+                        "gate": "reinitialization_recovery_authority_conflict",
+                        "sentinel_path": str(self.sentinel_path),
+                    },
                 )
             table_rows = self._table_rows(connection)
             unresolved = self._unresolved_ownership(table_rows)
@@ -103,7 +109,10 @@ class ControlStoreReinitialization:
                 raise ControlStoreUnavailable(
                     "Control Store reinitialization eligibility is blocked by "
                     "unresolved authority",
-                    data={"unresolved_ownership": unresolved},
+                    data={
+                        "gate": "reinitialization_unresolved_ownership",
+                        "unresolved_ownership": unresolved,
+                    },
                 )
 
             run_bindings, mutation_chains, delivery_projections = (

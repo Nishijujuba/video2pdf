@@ -1884,6 +1884,10 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
         self.assertEqual(blocked_prepare.returncode, 50, blocked_prepare.stderr)
         blocked_payload = json.loads(blocked_prepare.stdout)
         self.assertEqual(blocked_payload["status"], "error")
+        self.assertEqual(
+            blocked_payload["data"]["gate"],
+            "reinitialization_unresolved_ownership",
+        )
         unresolved = blocked_payload["data"]["unresolved_ownership"]
         self.assertTrue(
             {
@@ -1949,6 +1953,10 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
         self.assertEqual(
             restore_fenced_payload["data"]["message"],
             "Control Store recovery already has persistent authority",
+        )
+        self.assertEqual(
+            restore_fenced_payload["data"]["gate"],
+            "reinitialization_recovery_authority_conflict",
         )
 
     def test_restore_busy_quiescence_failure_does_not_quarantine_or_publish(
@@ -2300,6 +2308,10 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
             "2026-07-17T03:13:45+08:00",
         )
         self.assertEqual(duplicate_prepare.returncode, 50)
+        self.assertEqual(
+            json.loads(duplicate_prepare.stdout)["data"]["gate"],
+            "reinitialization_recovery_authority_conflict",
+        )
         self.assertEqual(sha256_file(snapshot_path), snapshot_sha)
         abandoned = self.run_cli(
             "control-store-reinitialization-abandon",

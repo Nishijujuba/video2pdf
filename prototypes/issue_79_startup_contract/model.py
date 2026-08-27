@@ -107,7 +107,6 @@ def evaluate_startup(
             "detail": "ordinary startup does not read or revalidate historical Exit Evidence",
         }
     )
-
     if runtime.existing_directory:
         checks.append(
             {
@@ -177,4 +176,3 @@ def evaluate_startup(
             ],
         },
     )
-

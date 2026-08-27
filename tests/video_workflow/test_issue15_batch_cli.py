@@ -14,7 +14,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_workflow_workspace
-from tests.video_workflow._batch_authority import BATCH_AUTHORITY
 from video2pdf_workflow_kernel import cli as kernel_cli
 from video2pdf_workflow_kernel.batch_authority import BatchCutoverPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
@@ -44,10 +43,6 @@ def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
                 "title": "Part Two",
             },
         ],
-    ), patch.object(
-        BatchCutoverPublisher,
-        "require_current",
-        return_value=BATCH_AUTHORITY,
     ):
         try:
             parsed = kernel_cli._parser().parse_args(list(arguments))
@@ -62,6 +57,37 @@ def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
         json.dumps(envelope, ensure_ascii=False, sort_keys=True) + "\n",
         "",
     )
+
+
+def _write_batch_project(case_root: Path) -> tuple[Path, Path, Path, Path]:
+    project_root = case_root / "project"
+    config_root = project_root / "config"
+    output_root = project_root / "workspace"
+    control_root = project_root / "control-store"
+    config_root.mkdir(parents=True)
+    profile_path = config_root / "workflow-release-profile.v1.json"
+    profile_path.write_bytes(
+        (PROJECT_ROOT / "config" / "workflow-release-profile.v1.json").read_bytes()
+    )
+    project_config = config_root / "workflow-project.v1.json"
+    project_config.write_text(
+        json.dumps(
+            {
+                "schema_name": "workflow-project-config",
+                "schema_version": "1.0.0",
+                "workspace_root": "workspace",
+                "control_store_root": "control-store",
+                "release_profile": "config/workflow-release-profile.v1.json",
+                "ordinary_run_platforms": ["bilibili", "youtube"],
+                "existing_directory_policy": "explicit_legacy_maintenance_only",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return project_config, output_root, control_root, profile_path
 
 
 class Issue15BatchCliTests(unittest.TestCase):
@@ -79,16 +105,13 @@ class Issue15BatchCliTests(unittest.TestCase):
 
     def test_batch_plan_returns_envelope(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-plan")
-        output_root = workspace / "outputs"
-        control_root = workspace / "control"
-        output_root.mkdir()
-        control_root.mkdir()
-        completed = _run_cli(
+        project_config, output_root, control_root, _profile = _write_batch_project(
+            workspace
+        )
+        arguments = (
             "batch-plan",
-            "--workspace-root",
-            str(output_root),
-            "--control-store-root",
-            str(control_root),
+            "--project-config",
+            str(project_config),
             "--platform",
             "bilibili",
             "--source-url",
@@ -98,10 +121,20 @@ class Issue15BatchCliTests(unittest.TestCase):
             "--request-id",
             "cli-plan-request",
         )
+        with patch.object(
+            BatchCutoverPublisher,
+            "require_current",
+            side_effect=AssertionError("ordinary planning read retired Batch authority"),
+        ):
+            completed = _run_cli(*arguments)
         self.assertEqual(completed.returncode, 0, completed.stdout)
         envelope = json.loads(completed.stdout)
         self.assertEqual(envelope["classification"], "batch_planned")
         self.assertEqual(envelope["command"], "batch-plan")
+        self.assertEqual(
+            envelope["data"]["admission_authority"], "workflow_release_profile"
+        )
+        self.assertEqual(envelope["data"]["release_id"], "workflow-2.0")
         self.assertIn("batch_id", envelope["data"])
         self.assertIn("batch_dir", envelope["data"])
         self.assertEqual(len(envelope["data"]["item_order"]), 2)
@@ -111,23 +144,97 @@ class Issue15BatchCliTests(unittest.TestCase):
         self.assertIsNotNone(record)
         self.assertEqual(Path(record["output_root"]), output_root)
         self.assertTrue(Path(record["batch_dir"]).is_relative_to(output_root))
+        self.assertIsNone(record["batch_authority_binding"])
+        self.assertEqual(record["run_mappings"], [])
+        self.assertEqual(record["projections"], [])
+        self.assertEqual(list(output_root.rglob("workflow/run.json")), [])
 
-    def test_batch_plan_workspace_defaults_to_project_workspace(self) -> None:
-        result = {
-            "batch_id": "a" * 32,
-            "batch_dir": str(PROJECT_ROOT / "workspace" / "batch"),
-            "batch_record_path": str(
-                PROJECT_ROOT / "workspace" / "batch" / "batch-record.json"
+        replayed = _run_cli(*arguments)
+        replay_envelope = json.loads(replayed.stdout)
+        replay_record = ControlStore(
+            control_root, ContractRegistry(PROJECT_ROOT)
+        ).get_batch_record(envelope["data"]["batch_id"])
+        self.assertEqual(replayed.returncode, 0, replayed.stdout)
+        self.assertEqual(replay_envelope["data"]["created_or_replayed"], "REPLAY")
+        self.assertEqual(replay_record["item_order"], record["item_order"])
+        self.assertEqual(
+            len(
+                ControlStore(
+                    control_root, ContractRegistry(PROJECT_ROOT)
+                ).list_batch_records()
             ),
-            "item_order": [],
-            "created_or_replayed": "CREATED",
-        }
-        with patch.object(BatchProjectionProvider, "plan", return_value=result) as plan:
-            args = kernel_cli._parser().parse_args(
-                [
+            1,
+        )
+
+    def test_batch_plan_fails_closed_before_record_for_invalid_profile_admission(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "missing_project_config",
+                "workflow_project_configuration_invalid",
+                "missing_config",
+            ),
+            (
+                "malformed_project_config",
+                "workflow_project_configuration_invalid",
+                "malformed_config",
+            ),
+            ("missing_profile", "workflow_release_profile_invalid", None),
+            ("malformed_profile", "workflow_release_profile_invalid", "malformed"),
+            (
+                "incompatible_profile",
+                "workflow_release_profile_incompatible",
+                "incompatible",
+            ),
+            (
+                "inactive_global_gate",
+                "workflow_release_capability_inactive",
+                "global_gate",
+            ),
+            (
+                "inactive_platform",
+                "workflow_release_capability_inactive",
+                "bilibili",
+            ),
+            ("inactive_batch", "workflow_release_capability_inactive", "batch"),
+        )
+        for label, expected_code, mutation in cases:
+            with self.subTest(label=label):
+                workspace = new_workflow_workspace(
+                    f"{self.id()}-{label}", label="cli-profile-closed"
+                )
+                project_config, output_root, control_root, profile = (
+                    _write_batch_project(workspace)
+                )
+                if mutation == "missing_config":
+                    project_config.rename(project_config.with_suffix(".missing"))
+                elif mutation == "malformed_config":
+                    project_config.write_text("{", encoding="utf-8")
+                elif mutation is None:
+                    profile.rename(profile.with_suffix(".missing"))
+                elif mutation == "malformed":
+                    profile.write_text("{", encoding="utf-8")
+                else:
+                    value = json.loads(profile.read_text(encoding="utf-8"))
+                    if mutation == "incompatible":
+                        value["contract_compatibility"]["batch"] = "9.0.0"
+                    elif mutation == "global_gate":
+                        value["capabilities"] = {
+                            capability: "inactive"
+                            for capability in value["capabilities"]
+                        }
+                    else:
+                        value["capabilities"][mutation] = "inactive"
+                    profile.write_text(
+                        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+                        encoding="utf-8",
+                    )
+
+                completed = _run_cli(
                     "batch-plan",
-                    "--control-store-root",
-                    str(PROJECT_ROOT / "workspace"),
+                    "--project-config",
+                    str(project_config),
                     "--platform",
                     "bilibili",
                     "--source-url",
@@ -135,13 +242,14 @@ class Issue15BatchCliTests(unittest.TestCase):
                     "--task-start",
                     "2026-08-16T09:05:00+08:00",
                     "--request-id",
-                    "default-workspace",
-                ]
-            )
-            kernel_cli._execute(args, PROJECT_ROOT)
-        self.assertEqual(
-            plan.call_args.kwargs["workspace_root"], PROJECT_ROOT / "workspace"
-        )
+                    f"closed-{label}",
+                )
+                envelope = json.loads(completed.stdout)
+                self.assertNotEqual(completed.returncode, 0, completed.stdout)
+                self.assertEqual(envelope["data"]["error_code"], expected_code)
+                self.assertFalse(output_root.exists())
+                self.assertFalse(control_root.exists())
+                self.assertEqual(list(workspace.rglob("batch-record.json")), [])
 
     def test_batch_run_delegates_start_binding_to_provider(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-run-start")
@@ -230,12 +338,13 @@ class Issue15BatchCliTests(unittest.TestCase):
 
     def test_batch_plan_requires_task_start(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-plan-missing")
+        project_config, _output_root, _control_root, _profile = _write_batch_project(
+            workspace
+        )
         completed = _run_cli(
             "batch-plan",
-            "--workspace-root",
-            str(workspace),
-            "--control-store-root",
-            str(workspace),
+            "--project-config",
+            str(project_config),
             "--platform",
             "bilibili",
             "--source-url",

@@ -6,23 +6,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from .contracts import ContractRegistry
 from .errors import ContractError
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
 )
+from .release_profile import WorkflowReleaseProfile
 from .utils import read_json, write_json_atomic
 
 
 PROFILE_RELATIVE_PATH = Path("config/workflow-release-profile.v1.json")
-EXPECTED_CONTRACT_COMPATIBILITY = {
-    "kernel": "2.0.0",
-    "global_gate": "acceptance-report-v2",
-    "bilibili_adapter": "1.0.0",
-    "youtube_adapter": "1.0.0",
-    "batch": "1.0.0",
-}
 EXPECTED_EVIDENCE_SLICES = {
     "bilibili": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},
@@ -42,7 +35,7 @@ class ReleaseMaintenance:
 
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
-        self.contracts = ContractRegistry(self.project_root)
+        self.profiles = WorkflowReleaseProfile(self.project_root)
 
     @property
     def published_profile_path(self) -> Path:
@@ -132,45 +125,9 @@ class ReleaseMaintenance:
         profile: Path,
         **evidence_paths: Path,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        value = self._validate_profile(profile)
+        value = self.profiles.load(profile)
         evidence = self._validate_release_package(**evidence_paths)
         return value, evidence
-
-    def _validate_profile(self, path: Path) -> dict[str, Any]:
-        try:
-            value = read_json(path)
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            _reject(
-                f"Workflow Release Profile is unavailable or malformed: {exc}",
-                "release_profile_schema",
-                "workflow_release_profile_invalid",
-            )
-        try:
-            self.contracts.validate("workflow-release-profile", value)
-        except ContractError as exc:
-            _reject(
-                str(exc),
-                "release_profile_schema",
-                "workflow_release_profile_invalid",
-            )
-        if value["contract_compatibility"] != EXPECTED_CONTRACT_COMPATIBILITY:
-            _reject(
-                "Workflow Release Profile is incompatible with the running contracts",
-                "contract_compatibility",
-                "workflow_release_profile_incompatible",
-            )
-        capabilities = value["capabilities"]
-        if capabilities["global_gate"] != "active" and any(
-            state == "active"
-            for name, state in capabilities.items()
-            if name != "global_gate"
-        ):
-            _reject(
-                "Workflow Release Profile capabilities are incoherent",
-                "capability_coherence",
-                "workflow_release_profile_incoherent",
-            )
-        return value
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
         global_gate = paths.pop("global_gate").resolve()

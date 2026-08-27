@@ -192,18 +192,16 @@ class BatchProjectionProvider:
     # ------------------------------------------------------------------
     def plan(
         self,
-        workspace_root: Path | None,
         contracts: Any,
         *,
+        project_root: Path,
+        project_config: Path,
         platform: str,
         source_url: str | None,
         task_start: str,
         request_id: str,
-        control_store_root: Path | None,
         selection: list[Any] | None = None,
         url_set: str | None = None,
-        project_root: Path | None = None,
-        project_config: Path | None = None,
     ) -> dict[str, Any]:
         if platform not in {"bilibili", "youtube"}:
             raise ContractError(f"batch platform is unsupported: {platform}")
@@ -214,51 +212,21 @@ class BatchProjectionProvider:
             raise ContractError(
                 "batch plan requires exactly one of source_url or url_set"
             )
-        if project_config is not None:
-            if project_root is None:
-                raise ContractError(
-                    "Profile-backed Batch planning requires project_root"
-                )
-            admission_reader = OrdinaryAdmission(project_root)
-            admission_before = admission_reader.require_batch(
-                project_config, platform
-            )
-            workspace = admission_before.workspace_root
-            control_root = admission_before.control_store_root
-            binding = None
-            admission_authority = "workflow_release_profile"
-            release_id = admission_before.release_id
-        else:
-            if workspace_root is None or control_store_root is None:
-                raise ContractError(
-                    "migration-window Batch planning requires explicit workspace and Control Store roots"
-                )
-            workspace = Path(workspace_root).resolve()
-            control_root = Path(control_store_root).resolve()
-            authority_before = self.batch_authority_publisher.require_current(
-                control_store_root=control_root
-            )
-            binding = self._batch_authority_binding(authority_before)
-            admission_authority = "batch_cutover"
-            release_id = None
+        admission_reader = OrdinaryAdmission(project_root)
+        admission_before = admission_reader.require_batch(project_config, platform)
+        workspace = admission_before.workspace_root
+        control_root = admission_before.control_store_root
 
         items = self._enumerate_items(platform, source_url, url_set)
-        if project_config is not None:
-            admission_after = admission_reader.require_batch(project_config, platform)
-            if admission_after != admission_before:
-                raise KernelConflict(
-                    "Workflow Release Profile admission changed during Batch planning",
-                    data={
-                        "first_failing_gate": "release_profile_stability",
-                        "error_code": "workflow_release_profile_changed",
-                    },
-                )
-        else:
-            authority_after = self.batch_authority_publisher.require_current(
-                control_store_root=control_root
+        admission_after = admission_reader.require_batch(project_config, platform)
+        if admission_after != admission_before:
+            raise KernelConflict(
+                "Workflow Release Profile admission changed during Batch planning",
+                data={
+                    "first_failing_gate": "release_profile_stability",
+                    "error_code": "workflow_release_profile_changed",
+                },
             )
-            if self._batch_authority_binding(authority_after) != binding:
-                raise KernelConflict("Batch authority changed during Batch planning")
         selected_indexes = self._resolve_selection(items, selection)
         if not selected_indexes:
             raise ContractError("batch selection produced no selected items")
@@ -331,7 +299,7 @@ class BatchProjectionProvider:
             "batch_dir": str(batch_dir),
             "control_dir": str(control_dir),
             "batch_stage": "planned",
-            "batch_authority_binding": binding,
+            "batch_authority_binding": None,
             "run_task_start": None,
             "item_order": item_order,
             "run_mappings": [],
@@ -376,8 +344,8 @@ class BatchProjectionProvider:
                 "batch_record_path": str(authoritative_record_path),
                 "item_order": existing["item_order"],
                 "created_or_replayed": "REPLAY",
-                "admission_authority": admission_authority,
-                "release_id": release_id,
+                "admission_authority": "workflow_release_profile",
+                "release_id": admission_before.release_id,
             }
         if stored_id != batch_id:
             raise KernelConflict(
@@ -394,8 +362,8 @@ class BatchProjectionProvider:
             "batch_record_path": str(record_path),
             "item_order": item_order,
             "created_or_replayed": outcome,
-            "admission_authority": admission_authority,
-            "release_id": release_id,
+            "admission_authority": "workflow_release_profile",
+            "release_id": admission_before.release_id,
         }
 
     def _enumerate_items(

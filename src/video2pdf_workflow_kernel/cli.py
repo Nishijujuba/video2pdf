@@ -2459,17 +2459,15 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
                 "batch-plan requires exactly one of --source-url or --url-set"
             )
         result = BatchProjectionProvider().plan(
-            workspace_root=None,
             contracts=contracts,
+            project_root=project_root,
+            project_config=args.project_config,
             platform=args.platform,
             source_url=args.source_url,
             task_start=args.task_start,
             request_id=args.request_id,
-            control_store_root=None,
             selection=_parse_batch_selection(args.selection),
             url_set=args.url_set,
-            project_root=project_root,
-            project_config=args.project_config,
         )
         return _ok(
             command,

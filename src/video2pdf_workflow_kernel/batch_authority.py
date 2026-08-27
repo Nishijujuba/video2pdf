@@ -148,6 +148,9 @@ class BatchCutoverPublisher:
     def _connect(
         root: Path, *, initialize: bool = False
     ) -> Iterator[sqlite3.Connection]:
+        from .cutover_retirement import reject_retired_cutover_mutation
+
+        reject_retired_cutover_mutation(root)
         if not root.is_dir():
             raise ControlStoreUnavailable(
                 "Batch cutover control-store root is unavailable"

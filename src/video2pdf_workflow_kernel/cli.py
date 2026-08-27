@@ -61,6 +61,10 @@ from .platform_kernel import (
     BilibiliPlatformCutoverPublisher,
 )
 from .release_maintenance import ReleaseMaintenance
+from .cutover_retirement import (
+    CutoverAuthorityRetirement,
+    cutover_mutation_fence,
+)
 from .production_bootstrap import (
     bootstrap_bilibili_production_probe,
     bootstrap_youtube_production_probe,
@@ -77,6 +81,25 @@ from .utils import read_json
 class MachineArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise CliUsageError(message)
+
+
+_CUTOVER_COMMAND_ROOT_ARGUMENT = {
+    "global-gate-activate": "control_store_root",
+    "global-gate-reconcile": "control_store_root",
+    "global-gate-policy-authority-refresh": "control_store_root",
+    "batch-activate": "control_store_root",
+    "batch-authority-refresh": "control_store_root",
+    "batch-reconcile": "control_store_root",
+    "batch-authority-check": "control_store_root",
+    "platform-kernel-prepare": "control_store_root",
+    "platform-kernel-candidate-activate": "control_store_root",
+    "platform-kernel-activate": "control_store_root",
+    "platform-kernel-reconcile": "control_store_root",
+    "youtube-platform-authority-refresh": "control_store_root",
+    "init-cutover-candidate": "control_store_root",
+    "platform-kernel-candidate-reconcile": "control_store_root",
+    "platform-kernel-candidate-rebind": "control_store_root",
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -304,6 +327,11 @@ def _parser() -> argparse.ArgumentParser:
     release_audit = commands.add_parser("release-audit")
     release_audit.add_argument("--profile", required=True, type=Path)
     _add_release_evidence_inputs(release_audit)
+
+    retire_cutover_authority = commands.add_parser("retire-cutover-authority")
+    retire_cutover_authority.add_argument(
+        "--project-config", required=True, type=Path
+    )
 
     global_gate_activate = commands.add_parser("global-gate-activate")
     global_gate_activate.add_argument("--control-store-root", required=True, type=Path)
@@ -976,6 +1004,16 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "retire-cutover-authority":
+        result = CutoverAuthorityRetirement(project_root).retire(
+            project_config=args.project_config
+        )
+        return _ok(
+            command,
+            "cutover_authority_retired",
+            result,
+            result["tombstone_path"],
+        )
     if command == "release-profile-publish":
         result = ReleaseMaintenance(project_root).publish(
             candidate_profile=args.candidate_profile,
@@ -2501,7 +2539,12 @@ def main(argv: list[str] | None = None) -> int:
                 + "\n"
             )
             return 0
-        envelope = _execute(args, project_root)
+        root_argument = _CUTOVER_COMMAND_ROOT_ARGUMENT.get(command)
+        if root_argument is None:
+            envelope = _execute(args, project_root)
+        else:
+            with cutover_mutation_fence(getattr(args, root_argument)):
+                envelope = _execute(args, project_root)
         exit_code = 0
     except KernelError as exc:
         envelope = _error(command, exc)

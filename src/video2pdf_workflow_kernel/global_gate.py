@@ -449,6 +449,9 @@ class GlobalGatePublisher:
         )
 
     def _connect(self, root: Path) -> sqlite3.Connection:
+        from .cutover_retirement import reject_retired_cutover_mutation
+
+        reject_retired_cutover_mutation(root)
         if not root.is_dir():
             _control_reject("Global Gate control-store root is unavailable", "global_gate_control_store_unavailable")
         try:

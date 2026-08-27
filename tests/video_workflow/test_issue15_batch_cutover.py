@@ -110,6 +110,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                     "batch-authority-check",
                     "release-profile-publish",
                     "release-audit",
+                    "retire-cutover-authority",
                 }
             },
             {
@@ -119,6 +120,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 "batch-authority-check",
                 "release-profile-publish",
                 "release-audit",
+                "retire-cutover-authority",
             },
         )
 

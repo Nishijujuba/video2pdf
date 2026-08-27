@@ -600,6 +600,9 @@ class BilibiliPlatformCutoverPublisher:
         return statuses
 
     def _connect(self, root: Path) -> sqlite3.Connection:
+        from .cutover_retirement import reject_retired_cutover_mutation
+
+        reject_retired_cutover_mutation(root)
         if not root.is_dir():
             raise ControlStoreUnavailable(
                 "Platform cutover control-store root is unavailable"

@@ -4,18 +4,23 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import shutil
 import subprocess
 import sys
-from typing import Any
+import time
+from typing import Any, Callable
 
 import fitz
 
 from .delivery_quality import DeliveryQualityRegistry
+from .contracts import ContractRegistry
+from .final_tex_source_set import FinalEditableTexSourceSetProjector
 from .evidence import EvidenceSupportError, git_output, sha256_git_blob
 from .errors import CompileDependencyGap, ContractError
 from .guarded_compile import GuardedCompileProvider
 from .utils import (
     canonical_json_bytes,
+    path_fold,
     read_json,
     require_contained_path,
     sha256_file,
@@ -32,6 +37,74 @@ def _fingerprint_without(value: dict[str, Any], field: str) -> str:
 def _require_fingerprint(value: dict[str, Any], field: str, label: str) -> None:
     if value.get(field) != _fingerprint_without(value, field):
         raise ContractError(f"{label} {field} is stale or invalid")
+
+
+def _identity_key(path: Path) -> str:
+    """Filesystem identity for approved/staged/recorder path matching.
+
+    Windows drive and UNC paths fold case; POSIX paths stay case-sensitive,
+    so /project/Chapter.tex and /project/chapter.tex remain distinct.
+    """
+    return path_fold(str(path))
+
+
+def _publish_copy(temp: Path, source: Path) -> None:
+    shutil.copyfile(source, temp)
+
+
+def _publish_bytes(temp: Path, value: dict[str, Any]) -> None:
+    temp.write_bytes(canonical_json_bytes(value))
+
+
+def _publish_commit(temp: Path, final: Path) -> None:
+    temp.replace(final)
+
+
+def _publish_transactional(
+    public_root: Path,
+    artifacts: list[tuple[str, Callable[[Path], None]]],
+    rollback_root: Path,
+) -> None:
+    """Write one public artifact set through private temp names and commit it
+    with deterministic renames; any failure moves this attempt's files under
+    the rollback root so a same-name retry starts from an empty target set."""
+    token = f"{os.getpid()}-{time.time_ns()}"
+    staged: list[tuple[Path, Path]] = []
+    committed: list[Path] = []
+    try:
+        for final_name, writer in artifacts:
+            temp = public_root / f".{final_name}.{token}.publish-new"
+            writer(temp)
+            staged.append((temp, public_root / final_name))
+        for temp, final in staged:
+            _publish_commit(temp, final)
+            committed.append(final)
+    except BaseException as error:
+        rollback_failure: OSError | None = None
+        rollback = rollback_root / token
+        try:
+            rollback.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            rollback = None
+            rollback_failure = exc
+        for path in [
+            *committed,
+            *(temp for temp, _ in staged),
+            *(final for _, final in staged),
+        ]:
+            if rollback is None or not path.exists():
+                continue
+            try:
+                path.rename(rollback / path.name)
+            except OSError as exc:
+                if rollback_failure is None:
+                    rollback_failure = exc
+        if rollback_failure is not None:
+            error.add_note(
+                "Final Compile publication rollback failed: "
+                f"{type(rollback_failure).__name__}: {rollback_failure}"
+            )
+        raise
 
 
 def final_compile_provider_identity(project_root: Path) -> dict[str, str]:
@@ -220,6 +293,7 @@ class GuardedFinalCompileProvider:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
         self.registry = DeliveryQualityRegistry(self.project_root)
+        self.workflow_contracts = ContractRegistry(self.project_root)
 
     def _validate_adapter_authority(self, adapter_path: Path) -> dict[str, str]:
         registered = (self.project_root / "scripts/guarded_final_compile_adapter.py").resolve()
@@ -265,7 +339,7 @@ class GuardedFinalCompileProvider:
         compile_manifest_path: Path | None = None,
         text_origin_plan_path: Path | None = None,
         entries: list[dict[str, Any]] | None = None,
-    ) -> tuple[Path, dict[str, Any] | None]:
+    ) -> tuple[Path, dict[str, Any] | None, Path]:
         if input_track == "legacy":
             if video_root is None:
                 raise ContractError(
@@ -374,7 +448,7 @@ class GuardedFinalCompileProvider:
             policy = GlobalGatePublisher(
                 project_root=self.project_root
             ).check_policy(control_store_root=self.project_root / "workspace")
-            return root, policy["global_gate_authority"]
+            return root, policy["global_gate_authority"], legacy_root
 
         if input_track != "kernel":
             raise ContractError(
@@ -429,7 +503,7 @@ class GuardedFinalCompileProvider:
             raise ContractError(
                 "Final Compile requires the current diagnostic Runtime Policy"
             )
-        return root, None
+        return root, None, run_boundary
 
     def compile(
         self,
@@ -443,6 +517,9 @@ class GuardedFinalCompileProvider:
         workspace_root: Path,
         compiled_at: str,
         runtime_policy_path: Path,
+        tex_entrypoint_logical_id: str | None = None,
+        final_pdf_name: str | None = None,
+        final_output_directory: Path | None = None,
     ) -> dict[str, Any]:
         self.registry.check()
         precompile_root = precompile_workspace_root.resolve()
@@ -497,7 +574,20 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap("Final Compile Manifest lacks source or staging paths")
             source = Path(source_path).resolve()
             if not source.is_file() or sha256_file(source) != entry.get("sha256"):
-                raise CompileDependencyGap("Final Compile Manifest source identity is stale")
+                staging_tex = PurePosixPath(staging_path.replace("\\", "/"))
+                raise CompileDependencyGap(
+                    "Final Compile Manifest source identity is stale",
+                    data=(
+                        {
+                            "first_failing_gate": (
+                                "final_editable_tex_source_set_identity"
+                            ),
+                            "error_code": "final_tex_source_identity_stale",
+                        }
+                        if staging_tex.suffix.casefold() == ".tex"
+                        else None
+                    ),
+                )
         approved_runtime_inputs = compile_manifest.get("approved_runtime_inputs", [])
         if not isinstance(approved_runtime_inputs, list):
             raise CompileDependencyGap("Final Compile runtime input registry is invalid")
@@ -509,7 +599,7 @@ class GuardedFinalCompileProvider:
             }:
                 raise CompileDependencyGap("Final Compile runtime input registry is invalid")
             runtime_path = Path(item.get("path", "")).resolve()
-            identity = str(runtime_path).casefold()
+            identity = _identity_key(runtime_path)
             if (
                 not runtime_path.is_file()
                 or sha256_file(runtime_path) != item.get("sha256")
@@ -613,7 +703,7 @@ class GuardedFinalCompileProvider:
             raise ContractError("Final Compile Manifest runtime policy binding is stale")
         adapter_identity = self._validate_adapter_authority(compiler_adapter_path)
         adapter = Path(adapter_identity["adapter_path"])
-        root, legacy_gate = self._validate_workspace_authority(
+        root, legacy_gate, source_project_root = self._validate_workspace_authority(
             precompile_workspace_root,
             workspace_root,
             runtime_policy,
@@ -623,9 +713,47 @@ class GuardedFinalCompileProvider:
             text_origin_plan_path=text_origin_plan_path,
             entries=entries,
         )
+        if (final_pdf_name is None) != (final_output_directory is None):
+            raise ContractError(
+                "Final Compile named PDF output requires a name and output directory"
+            )
+        output_stem: str | None = None
+        public_root = root
+        if final_pdf_name is not None and final_output_directory is not None:
+            pdf_name = Path(final_pdf_name)
+            if (
+                pdf_name.name != final_pdf_name
+                or pdf_name.suffix.casefold() != ".pdf"
+                or not pdf_name.stem
+            ):
+                raise ContractError("Final Compile PDF name must be one PDF filename")
+            output_stem = pdf_name.stem
+            public_root = require_contained_path(
+                final_output_directory,
+                source_project_root,
+                purpose="Final Compile named output directory",
+                error_type=ContractError,
+                leaf_kind="directory",
+                allow_missing=True,
+            )
+            artifact_prefix = f"{output_stem}."
+            public_targets = (
+                public_root / final_pdf_name,
+                public_root / f"{artifact_prefix}final-artifact-seal.json",
+                public_root / f"{artifact_prefix}render-evidence-manifest.json",
+                public_root / f"{artifact_prefix}text-origin-manifest.json",
+                public_root / f"{artifact_prefix}final-compile-report.json",
+                public_root / f"{artifact_prefix}final-editable-tex-source-set.json",
+                public_root / f"{artifact_prefix}compiler-adapter-identity.json",
+            )
+            if any(path.exists() for path in public_targets):
+                raise ContractError("Final Compile output identity already exists")
+        else:
+            artifact_prefix = ""
         if root.exists() and any(root.iterdir()):
             raise ContractError("Final Compile workspace must be empty")
         root.mkdir(parents=True, exist_ok=True)
+        public_root.mkdir(parents=True, exist_ok=True)
         adapter_output = root / "adapter-output"
         adapter_output.mkdir()
         request = {
@@ -641,6 +769,7 @@ class GuardedFinalCompileProvider:
             "compile_provider": final_compile_provider_identity(self.project_root),
             "compiled_at": compiled_at,
             "output_root": str(adapter_output),
+            "tex_entrypoint_logical_id": tex_entrypoint_logical_id,
         }
         request["runtime_policy_path"] = str(runtime_policy)
         request["runtime_policy_sha256"] = sha256_file(runtime_policy)
@@ -657,9 +786,45 @@ class GuardedFinalCompileProvider:
             env=adapter_env,
         )
         if completed.returncode != 0 or completed.stderr:
+            adapter_error_data: dict[str, Any] = {"exit_code": completed.returncode}
+            adapter_error_path = adapter_output / "adapter-error.json"
+            if adapter_error_path.is_file():
+                adapter_error = read_json(adapter_error_path)
+                if (
+                    adapter_error.get("schema_name") == "guarded-final-compile-error"
+                    and adapter_error.get("schema_version") == "1.0.0"
+                    and (
+                        adapter_error.get("first_failing_gate"),
+                        adapter_error.get("error_code"),
+                    )
+                    in {
+                        (
+                            "final_editable_tex_source_set_dependency_evidence",
+                            "final_tex_include_missing",
+                        ),
+                        (
+                            "final_editable_tex_source_set_entrypoint",
+                            "final_tex_entrypoint_missing",
+                        ),
+                        (
+                            "final_editable_tex_source_set_entrypoint",
+                            "final_tex_entrypoint_ambiguous",
+                        ),
+                        (
+                            "final_editable_tex_source_set_entrypoint",
+                            "final_tex_entrypoint_not_tex",
+                        ),
+                    }
+                ):
+                    adapter_error_data.update(
+                        {
+                            "first_failing_gate": adapter_error["first_failing_gate"],
+                            "error_code": adapter_error["error_code"],
+                        }
+                    )
             raise CompileDependencyGap(
                 "guarded Final Compile adapter failed",
-                data={"exit_code": completed.returncode},
+                data=adapter_error_data,
             )
 
         pdf_path = adapter_output / "final.pdf"
@@ -687,7 +852,6 @@ class GuardedFinalCompileProvider:
         if (
             provenance.get("compile_manifest_sha256") != compile_manifest["manifest_sha256"]
             or provenance.get("invocation", {}).get("recorder") is not True
-            or closure.get("complete") is not True
             or not isinstance(recorder_sha256, str)
             or len(recorder_sha256) != 64
             or not isinstance(recorder_relative_path, str)
@@ -703,6 +867,16 @@ class GuardedFinalCompileProvider:
             or provenance.get("text_origin_plan_sha256") != plan["plan_sha256"]
         ):
             raise CompileDependencyGap("Final Compile provenance is incomplete or stale")
+        if closure.get("complete") is not True:
+            raise CompileDependencyGap(
+                "Final Compile dependency closure is incomplete",
+                data={
+                    "first_failing_gate": (
+                        "final_editable_tex_source_set_dependency_evidence"
+                    ),
+                    "error_code": "final_tex_dependency_evidence_incomplete",
+                },
+            )
         recorder_path = (adapter_output / recorder_relative_path).resolve()
         try:
             recorder_path.relative_to(adapter_output)
@@ -716,6 +890,7 @@ class GuardedFinalCompileProvider:
         recorder_cwd = Path(recorder_cwd_value).resolve()
         declared_entry_paths: dict[str, dict[str, Any]] = {}
         entrypoint_paths: list[str] = []
+        entrypoint_staging_paths: list[str] = []
         for entry in entries:
             staged_path = Path(entry["staging_path"])
             if staged_path.is_absolute():
@@ -725,7 +900,7 @@ class GuardedFinalCompileProvider:
                 staged_path.relative_to(recorder_cwd)
             except ValueError as exc:
                 raise CompileDependencyGap("Final Compile staging path escapes recorder root") from exc
-            identity = str(staged_path).casefold()
+            identity = _identity_key(staged_path)
             if (
                 not staged_path.is_file()
                 or sha256_file(staged_path) != entry.get("sha256")
@@ -734,12 +909,51 @@ class GuardedFinalCompileProvider:
             ):
                 raise CompileDependencyGap("Final Compile staged input identity is stale")
             declared_entry_paths[identity] = entry
-            if staged_path.name.casefold() == "main.tex":
+            is_explicit_entrypoint = (
+                tex_entrypoint_logical_id is not None
+                and entry["logical_id"] == tex_entrypoint_logical_id
+            )
+            is_legacy_entrypoint = (
+                tex_entrypoint_logical_id is None
+                and PurePosixPath(
+                    entry["staging_path"].replace("\\", "/")
+                ).as_posix().casefold()
+                == "main.tex"
+            )
+            if is_explicit_entrypoint or is_legacy_entrypoint:
                 entrypoint_paths.append(identity)
+                entrypoint_staging_paths.append(entry["staging_path"])
+                staging_tex = PurePosixPath(
+                    entry["staging_path"].replace("\\", "/")
+                )
+                if (
+                    staging_tex.suffix.casefold() != ".tex"
+                    or Path(entry["source_path"]).suffix.casefold() != ".tex"
+                ):
+                    raise CompileDependencyGap(
+                        "Final Compile entrypoint must be a TeX source",
+                        data={
+                            "first_failing_gate": (
+                                "final_editable_tex_source_set_entrypoint"
+                            ),
+                            "error_code": "final_tex_entrypoint_not_tex",
+                        },
+                    )
         if len(entrypoint_paths) != 1:
-            raise CompileDependencyGap("Final Compile entrypoint is missing or ambiguous")
+            raise CompileDependencyGap(
+                "Final Compile entrypoint is missing or ambiguous",
+                data={
+                    "first_failing_gate": "final_editable_tex_source_set_entrypoint",
+                    "error_code": (
+                        "final_tex_entrypoint_missing"
+                        if not entrypoint_paths
+                        else "final_tex_entrypoint_ambiguous"
+                    ),
+                },
+            )
         declared_recorder_paths = approved_runtime_paths | declared_entry_paths
         observed_recorder_paths: list[str] = []
+        recorder_inputs: list[Path] = []
         generated_recorder_inputs: list[dict[str, Any]] = []
         for line in recorder_path.read_text(
             encoding="utf-8", errors="strict"
@@ -750,7 +964,8 @@ class GuardedFinalCompileProvider:
             if not observed.is_absolute():
                 observed = recorder_cwd / observed
             observed = observed.resolve()
-            identity = str(observed).casefold()
+            recorder_inputs.append(observed)
+            identity = _identity_key(observed)
             if identity in declared_recorder_paths:
                 observed_recorder_paths.append(identity)
                 continue
@@ -767,7 +982,20 @@ class GuardedFinalCompileProvider:
                 or suffix not in GENERATED_RECORDER_SUFFIXES
                 or not observed.is_file()
             ):
-                raise CompileDependencyGap("Final Compile recorder contains undeclared input")
+                source_set_error = (
+                    {
+                        "first_failing_gate": (
+                            "final_editable_tex_source_set_membership"
+                        ),
+                        "error_code": "final_tex_dependency_evidence_mismatch",
+                    }
+                    if inside_recorder_root and suffix == ".tex"
+                    else None
+                )
+                raise CompileDependencyGap(
+                    "Final Compile recorder contains undeclared input",
+                    data=source_set_error,
+                )
             generated_recorder_inputs.append(
                 {
                     "path": str(observed),
@@ -776,10 +1004,15 @@ class GuardedFinalCompileProvider:
                 }
             )
         observed_recorder_path_set = set(observed_recorder_paths)
-        if (
-            entrypoint_paths[0] not in observed_recorder_path_set
-            or not set(approved_runtime_paths).issubset(observed_recorder_path_set)
-        ):
+        if entrypoint_paths[0] not in observed_recorder_path_set:
+            raise CompileDependencyGap(
+                "Final Compile entrypoint is absent from recorder evidence",
+                data={
+                    "first_failing_gate": "final_editable_tex_source_set_membership",
+                    "error_code": "final_tex_dependency_evidence_mismatch",
+                },
+            )
+        if not set(approved_runtime_paths).issubset(observed_recorder_path_set):
             raise CompileDependencyGap("Final Compile recorder closure is not exact")
         pdf_sha256 = sha256_file(pdf_path)
         final_seal = read_json(final_seal_path)
@@ -796,6 +1029,41 @@ class GuardedFinalCompileProvider:
             or provenance.get("final_artifact_seal_sha256") != final_seal["seal_sha256"]
         ):
             raise CompileDependencyGap("Final Artifact Seal is incomplete or stale")
+        if final_pdf_name is not None:
+            final_seal["final_pdf"] = {
+                "path": final_pdf_name,
+                "sha256": pdf_sha256,
+                "size": pdf_path.stat().st_size,
+            }
+            final_seal["seal_sha256"] = _fingerprint_without(
+                final_seal, "seal_sha256"
+            )
+            self.registry.validate("final-artifact-seal", final_seal)
+            provenance["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
+        adapter_evidence_root = (
+            str(adapter_output.resolve())
+            if final_pdf_name is not None
+            else adapter_output.relative_to(root).as_posix()
+        )
+        recorder_public_path = f"{adapter_evidence_root}/{recorder_relative_path}"
+        final_editable_tex_source_set = (
+            FinalEditableTexSourceSetProjector().project(
+                compile_entries=entries,
+                recorder_cwd=recorder_cwd,
+                recorder_inputs=recorder_inputs,
+                registered_runtime_input_paths=set(approved_runtime_paths),
+                project_root=source_project_root,
+                entrypoint_staging_paths=entrypoint_staging_paths,
+                final_pdf=final_seal["final_pdf"],
+                generation_set_sha256=generations["generation_set_sha256"],
+                compile_manifest_sha256=compile_manifest["manifest_sha256"],
+                recorder_path=recorder_public_path,
+                recorder_sha256=recorder_sha256,
+            )
+        )
+        self.workflow_contracts.validate(
+            "final-editable-tex-source-set", final_editable_tex_source_set
+        )
         rendered = read_json(rendered_path)
         if rendered.get("final_pdf_sha256") != pdf_sha256:
             raise CompileDependencyGap("Rendered Text Object Inventory binds another PDF")
@@ -840,6 +1108,8 @@ class GuardedFinalCompileProvider:
         ):
             raise CompileDependencyGap("Rendered Text Object Inventory object contract drifted")
         trace = read_json(trace_path)
+        if final_pdf_name is not None:
+            trace["final_artifact_seal_sha256"] = final_seal["seal_sha256"]
         if (
             trace.get("text_origin_plan_sha256") != plan["plan_sha256"]
             or trace.get("final_artifact_seal_sha256") != final_seal["seal_sha256"]
@@ -870,7 +1140,7 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap("Final Compile rendered page is unreadable") from exc
             pages.append({
                 "page": page_number,
-                "path": f"adapter-output/rendered_pages/{path.name}",
+                "path": f"{adapter_evidence_root}/rendered_pages/{path.name}",
                 "sha256": sha256_file(path),
             })
         expected_pages = list(range(1, pdf_page_count + 1))
@@ -892,11 +1162,6 @@ class GuardedFinalCompileProvider:
             render_evidence, "manifest_sha256"
         )
         self.registry.validate("render-evidence-manifest", render_evidence)
-        render_evidence_path = root / "render-evidence-manifest.json"
-        write_json_atomic(render_evidence_path, render_evidence)
-
-        published_final_seal_path = root / "final-artifact-seal.json"
-        write_json_atomic(published_final_seal_path, final_seal)
 
         origins = {
             "schema_name": "text-origin-manifest",
@@ -910,8 +1175,6 @@ class GuardedFinalCompileProvider:
         }
         origins["manifest_sha256"] = _fingerprint_without(origins, "manifest_sha256")
         self.registry.validate("text-origin-manifest", origins)
-        origins_path = root / "text-origin-manifest.json"
-        write_json_atomic(origins_path, origins)
 
         report = {
             "schema_name": "final-compile-report",
@@ -928,7 +1191,7 @@ class GuardedFinalCompileProvider:
                 "runtime_inputs": approved_runtime_inputs,
                 "generated_inputs": generated_recorder_inputs,
                 "recorder_sha256": recorder_sha256,
-                "recorder_path": f"adapter-output/{recorder_relative_path}",
+                "recorder_path": recorder_public_path,
             },
             "pdf": final_seal["final_pdf"],
             "compiler_provider": provider_identity,
@@ -964,14 +1227,86 @@ class GuardedFinalCompileProvider:
                         "error_code": "global_gate_authority_changed",
                     },
                 )
-        report_path = root / "final-compile-report.json"
-        write_json_atomic(report_path, report)
-        write_json_atomic(root / "compiler-adapter-identity.json", adapter_identity)
+        # Publish only after every validation and the Legacy Global Gate final
+        # re-check have passed; the commit-marking report is written last.
+        if final_pdf_name is not None:
+            published = [
+                (
+                    final_pdf_name,
+                    lambda temp, _source=pdf_path: _publish_copy(temp, _source),
+                ),
+                (
+                    f"{artifact_prefix}render-evidence-manifest.json",
+                    lambda temp: _publish_bytes(temp, render_evidence),
+                ),
+                (
+                    f"{artifact_prefix}final-artifact-seal.json",
+                    lambda temp: _publish_bytes(temp, final_seal),
+                ),
+                (
+                    f"{artifact_prefix}text-origin-manifest.json",
+                    lambda temp: _publish_bytes(temp, origins),
+                ),
+                (
+                    f"{artifact_prefix}final-editable-tex-source-set.json",
+                    lambda temp: _publish_bytes(temp, final_editable_tex_source_set),
+                ),
+                (
+                    f"{artifact_prefix}compiler-adapter-identity.json",
+                    lambda temp: _publish_bytes(temp, adapter_identity),
+                ),
+                (
+                    f"{artifact_prefix}final-compile-report.json",
+                    lambda temp: _publish_bytes(temp, report),
+                ),
+            ]
+            try:
+                _publish_transactional(
+                    public_root,
+                    published,
+                    source_project_root
+                    / "待删除"
+                    / f"final-compile-publish-{output_stem}",
+                )
+            except CompileDependencyGap:
+                raise
+            except Exception as exc:
+                rollback_notes = [
+                    note
+                    for note in getattr(exc, "__notes__", ())
+                    if note.startswith("Final Compile publication rollback failed")
+                ]
+                raise CompileDependencyGap(
+                    "Final Compile publication failed"
+                    + (f": {rollback_notes[0]}" if rollback_notes else "")
+                ) from exc
+            pdf_path = public_root / final_pdf_name
+            render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
+            published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"
+            origins_path = public_root / f"{artifact_prefix}text-origin-manifest.json"
+            source_set_path = public_root / f"{artifact_prefix}final-editable-tex-source-set.json"
+            report_path = public_root / f"{artifact_prefix}final-compile-report.json"
+        else:
+            render_evidence_path = public_root / f"{artifact_prefix}render-evidence-manifest.json"
+            write_json_atomic(render_evidence_path, render_evidence)
+            published_final_seal_path = public_root / f"{artifact_prefix}final-artifact-seal.json"
+            write_json_atomic(published_final_seal_path, final_seal)
+            origins_path = public_root / f"{artifact_prefix}text-origin-manifest.json"
+            write_json_atomic(origins_path, origins)
+            source_set_path = public_root / f"{artifact_prefix}final-editable-tex-source-set.json"
+            write_json_atomic(source_set_path, final_editable_tex_source_set)
+            write_json_atomic(
+                public_root / f"{artifact_prefix}compiler-adapter-identity.json",
+                adapter_identity,
+            )
+            report_path = public_root / f"{artifact_prefix}final-compile-report.json"
+            write_json_atomic(report_path, report)
         return {
             "workspace_root": str(root),
             "final_pdf_path": str(pdf_path),
             "final_artifact_seal_path": str(published_final_seal_path),
             "final_compile_report_path": str(report_path),
+            "final_editable_tex_source_set_path": str(source_set_path),
             "render_evidence_manifest_path": str(render_evidence_path),
             "rendered_text_inventory_path": str(rendered_path),
             "text_origin_manifest_path": str(origins_path),

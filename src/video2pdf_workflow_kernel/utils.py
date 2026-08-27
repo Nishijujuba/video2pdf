@@ -152,6 +152,13 @@ def require_safe_path_segment(
     return value
 
 
+def path_fold(value: str) -> str:
+    """Fold only Windows-style path text; POSIX paths stay case-sensitive."""
+    if re.match(r"^[A-Za-z]:", value) or value.startswith("\\\\"):
+        return value.casefold()
+    return value
+
+
 def require_contained_path(
     path: Path,
     boundary: Path,

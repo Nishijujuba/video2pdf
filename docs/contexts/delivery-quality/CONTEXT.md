@@ -74,6 +74,8 @@ The target-only `delivery-quality-final-compile` boundary admits only a current
 Seal and exact compile-input closure, invokes a fingerprinted compiler adapter,
 and materializes the complete final evidence package before reconciliation.
 
+Video Workflow owns Final Delivery Package, Final Editable TeX Source Set, TeX Entry Point, and Final Compile Input Set. The active Delivery Quality `final-compile-report/1.0.0` remains unchanged; source discovery and the independent generation-bound projection stay outside this context and outside Final Acceptance.
+
 ## Rendered Text Object Inventory
 
 The complete object-level declaration of supported text-bearing PDF surfaces.

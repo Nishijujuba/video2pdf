@@ -127,7 +127,14 @@ def run_cli_with_compiler_evidence_fixture(
 class RenderedTextReconciliationCliTests(unittest.TestCase):
     FINAL_COMPILE_ADAPTER = FINAL_COMPILE_ADAPTER
 
-    def fixture(self, *, production_compile: bool = False) -> tuple[Path, dict[str, Path]]:
+    def fixture(
+        self,
+        *,
+        production_compile: bool = False,
+        additional_tex_sources: tuple[tuple[str, int, str, str], ...] = (),
+        main_tex_content: str | None = None,
+        authority_root: Path | None = None,
+    ) -> tuple[Path, dict[str, Path]]:
         if production_compile:
             from tests.video_workflow.test_single_section_production import (
                 SingleSectionProductionTests,
@@ -136,7 +143,21 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             production = SingleSectionProductionTests(
                 methodName="test_public_plan_and_advance_reach_guarded_diagnostic_compile"
             )
-            production.setUp()
+            if authority_root is None:
+                production.setUp()
+            else:
+                from tests.video_workflow.test_source_publication_integration import (
+                    build_decision_ready_authority,
+                )
+
+                production.root = authority_root
+                production.kernel, production.run_dir, _ = (
+                    build_decision_ready_authority(root=authority_root)
+                )
+                production.kernel.finalize_production_source(
+                    production.run_dir,
+                    published_at="2026-07-21T12:00:00+08:00",
+                )
             production._cli = lambda *args: (
                 subprocess.CompletedProcess(args, 0, "", ""),
                 {
@@ -157,12 +178,30 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             runtime_policy_path, runtime_policy = runtime_policy_fixture(root)
         compile_input = root / "integrated-main.tex"
         compile_input.write_text(
-            "Core claim\n"
-            if production_compile
-            else "guarded final compile fixture\n",
+            main_tex_content
+            if main_tex_content is not None
+            else (
+                "Core claim\n"
+                if production_compile
+                else "guarded final compile fixture\n"
+            ),
             encoding="utf-8",
         )
         compile_input_sha256 = hashlib.sha256(compile_input.read_bytes()).hexdigest()
+        additional_compile_entries = []
+        for logical_id, generation, staging_path, content in additional_tex_sources:
+            source = root / "issue58-tex-sources" / Path(staging_path)
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(content, encoding="utf-8")
+            additional_compile_entries.append(
+                {
+                    "logical_id": logical_id,
+                    "generation": generation,
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "source_path": str(source),
+                    "staging_path": staging_path,
+                }
+            )
         recorder = root / "adapter-output" / "compile-recorder.fls"
         recorder.parent.mkdir()
         recorder.write_text(f"INPUT {compile_input}\n", encoding="utf-8")
@@ -178,6 +217,12 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "producer_ids": ["integration-attempt-8"],
             "artifacts": [
                 {"logical_id": "integrated_main_tex", "generation": 8, "sha256": compile_input_sha256}
+            ] + [
+                {
+                    key: entry[key]
+                    for key in ("logical_id", "generation", "sha256")
+                }
+                for entry in additional_compile_entries
             ],
         }
         generations["generation_set_sha256"] = canonical_sha(generations)
@@ -271,7 +316,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                     "source_path": str(compile_input),
                     "staging_path": "main.tex",
                 }
-            ],
+            ] + additional_compile_entries,
             "approved_runtime_inputs": ([{
                 "path": str(SYSTEM_FONT.resolve()),
                 "sha256": hashlib.sha256(SYSTEM_FONT.read_bytes()).hexdigest(),
@@ -507,6 +552,10 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
         plan_updates: dict | None = None,
         plan_mutator: Callable[[dict], None] | None = None,
         compiler_evidence_fixture: bool = False,
+        tex_entrypoint_logical_id: str | None = None,
+        workspace_root: Path | None = None,
+        final_pdf_name: str | None = None,
+        final_output_directory: Path | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict, Path]:
         origins = json.loads(paths["origins"].read_text(encoding="utf-8"))
         rendered = json.loads(paths["rendered"].read_text(encoding="utf-8"))
@@ -545,13 +594,13 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             plan_mutator(plan)
         plan["plan_sha256"] = canonical_sha(plan)
         plan_path = write_json(root / "text-origin-plan.json", plan)
-        workspace = root / "guarded-final-compile"
+        workspace = workspace_root or root / "guarded-final-compile"
         cli_runner = (
             run_cli_with_compiler_evidence_fixture
             if compiler_evidence_fixture
             else run_cli
         )
-        completed, envelope = cli_runner(
+        arguments = [
             "delivery-quality-final-compile",
             "--input-track", "kernel",
             "--precompile-workspace-root", str(paths["precompile_workspace"]),
@@ -561,7 +610,18 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
             "--runtime-policy", str(paths["runtime_policy"]),
             "--workspace-root", str(workspace),
             "--compiled-at", "2026-07-31T01:15:00Z",
-        )
+        ]
+        if tex_entrypoint_logical_id is not None:
+            arguments.extend(
+                ["--tex-entrypoint-logical-id", tex_entrypoint_logical_id]
+            )
+        if final_pdf_name is not None:
+            arguments.extend(["--final-pdf-name", final_pdf_name])
+        if final_output_directory is not None:
+            arguments.extend(
+                ["--final-output-directory", str(final_output_directory)]
+            )
+        completed, envelope = cli_runner(*arguments)
         return completed, envelope, workspace
 
     def test_public_final_compile_invokes_adapter_and_produces_reconcilable_evidence(self) -> None:

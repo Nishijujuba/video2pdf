@@ -122,6 +122,16 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/bootstrap-record.invalid.json"
     },
     {
+      "schema_name": "final-editable-tex-source-set",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v4/final-editable-tex-source-set.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v4/final-editable-tex-source-set.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["final-editable-tex-source-set-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/final-editable-tex-source-set.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/final-editable-tex-source-set.invalid.json"
+    },
+    {
       "schema_name": "run-record",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/run-record.v1.schema.json",

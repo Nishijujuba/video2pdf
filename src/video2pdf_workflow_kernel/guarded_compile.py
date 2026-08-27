@@ -431,13 +431,23 @@ class GuardedCompileProvider:
                     if extension == "" or not PurePosixPath(value).suffix
                 }
                 candidates.add(value.casefold())
+                reference_has_directory = bool(
+                    PurePosixPath(value).parts[:-1]
+                )
                 if not any(
                     candidate in declared_destinations
-                    or PurePosixPath(candidate).name in destination_names
+                    or (
+                        not reference_has_directory
+                        and PurePosixPath(candidate).name in destination_names
+                    )
                     for candidate in candidates
                 ):
                     raise CompileDependencyGap(
-                        f"undeclared direct compile input: {value}"
+                        f"undeclared direct compile input: {value}",
+                        data={
+                            "reference_command": command,
+                            "reference": value,
+                        },
                     )
 
     def compile(self, manifest_path: Path, runtime_policy: dict[str, Any]) -> dict[str, Any]:

@@ -48,8 +48,9 @@ class _SourcePublicationFixtureBuilder:
         *,
         run_record_version: str = "3.0.0",
         platform: str = "youtube",
+        root: Path | None = None,
     ) -> tuple[VideoWorkflowKernel, Path, dict]:
-        root = TEST_ROOT / uuid.uuid4().hex
+        root = root or TEST_ROOT / uuid.uuid4().hex
         workspace = root / "workspace"
         run_dir = workspace / "production-source-run"
         (run_dir / "workflow").mkdir(parents=True, exist_ok=False)
@@ -239,12 +240,14 @@ def build_decision_ready_authority(
     *,
     run_record_version: str = "3.0.0",
     platform: str = "youtube",
+    root: Path | None = None,
 ) -> tuple[VideoWorkflowKernel, Path, dict]:
     """Build a decision-ready v3 Run bound to a real file-backed authority."""
 
     return _SourcePublicationFixtureBuilder().build_decision_ready_authority(
         run_record_version=run_record_version,
         platform=platform,
+        root=root,
     )
 
 

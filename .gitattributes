@@ -12,6 +12,7 @@ scripts/collect_slice1_exit_evidence.py text eol=lf
 scripts/collect_slice2_exit_evidence.py text eol=lf
 scripts/collect_slice3_exit_evidence.py text eol=lf
 scripts/collect_slice7_exit_evidence.py text eol=lf
+scripts/guarded_final_compile_adapter.py text eol=lf
 scripts/slice7_exit_evidence_contract.py text eol=lf
 scripts/slice3_exit_evidence_contract.py text eol=lf
 scripts/validate_slice_exit_evidence.py text eol=lf

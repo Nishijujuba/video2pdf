@@ -27,12 +27,17 @@ def write_json(path: Path, value: object) -> None:
 request = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 plan = json.loads(Path(request["text_origin_plan_path"]).read_text(encoding="utf-8"))
 output = Path(request["output_root"])
+manifest = json.loads(Path(request["compile_manifest_path"]).read_text(encoding="utf-8"))
 pdf = output / "final.pdf"
 document = fitz.open()
 for _ in range(plan["page_count"]):
     document.new_page()
 document.save(pdf)
 document.close()
+if plan.get("fixture_pdf_salt"):
+    pdf.write_bytes(
+        pdf.read_bytes() + f"\n% {plan['fixture_pdf_salt']}\n".encode("utf-8")
+    )
 pdf_sha256 = hashlib.sha256(pdf.read_bytes()).hexdigest()
 final_seal = {
     "schema_name": "final-artifact-seal",
@@ -92,7 +97,6 @@ write_json(
         ),
     },
 )
-manifest = json.loads(Path(request["compile_manifest_path"]).read_text(encoding="utf-8"))
 closure_inputs = [
     {
         "logical_id": item["logical_id"],
@@ -108,16 +112,53 @@ for item in manifest["entries"]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(item["source_path"], destination)
 (staging / "main.aux").write_text("generated auxiliary\n", encoding="utf-8")
+if plan.get("fixture_extra_consumed_tex", False):
+    (staging / "missing-include.tex").write_text("unmanifested include\n", encoding="utf-8")
+if plan.get("fixture_extra_consumed_non_tex", False):
+    (staging / "unregistered-support.dat").write_text(
+        "unregistered support input\n", encoding="utf-8"
+    )
 recorder = output / "compile-recorder.fls"
+recorded_logical_ids = plan.get("fixture_recorded_logical_ids")
 recorder.write_text(
     "".join(
         [
-            *(f"INPUT {item['staging_path']}\n" for item in manifest["entries"]),
             *(
-                f"INPUT {item['path']}\n"
+                f"INPUT {item['staging_path']}\n"
+                for index, item in enumerate(manifest["entries"])
+                if not (
+                    plan.get("fixture_omit_entrypoint_recorder", False)
+                    and index == 0
+                )
+                and not (
+                    plan.get("fixture_unconsumed_declared_tex", False)
+                    and item["staging_path"] != "main.tex"
+                )
+                and (
+                    recorded_logical_ids is None
+                    or item["logical_id"] in recorded_logical_ids
+                )
+            ),
+            *(
+                (
+                    f"INPUT {item['path'].swapcase()}\n"
+                    if plan.get("fixture_runtime_input_case_variant", False)
+                    else f"INPUT {item['path']}\n"
+                )
                 for item in manifest.get("approved_runtime_inputs", [])
+                if not plan.get("fixture_omit_runtime_recorder", False)
             ),
             "INPUT main.aux\n",
+            *(
+                ["INPUT missing-include.tex\n"]
+                if plan.get("fixture_extra_consumed_tex", False)
+                else []
+            ),
+            *(
+                ["INPUT unregistered-support.dat\n"]
+                if plan.get("fixture_extra_consumed_non_tex", False)
+                else []
+            ),
         ]
     ),
     encoding="utf-8",
@@ -127,12 +168,16 @@ write_json(
     output / "compile-provenance.json",
     {
         "compile_manifest_sha256": request["compile_manifest_sha256"],
-        "text_origin_plan_sha256": plan["plan_sha256"],
+        "text_origin_plan_sha256": (
+            "0" * 64
+            if plan.get("fixture_stale_provenance_text_origin", False)
+            else plan["plan_sha256"]
+        ),
         "final_artifact_seal_sha256": final_seal["seal_sha256"],
         "invocation": {"recorder": True},
         "recorder_cwd": str(staging),
         "dependency_closure": {
-            "complete": True,
+            "complete": not plan.get("fixture_incomplete_provenance", False),
             "inputs": closure_inputs,
             "runtime_inputs": manifest.get("approved_runtime_inputs", []),
             "recorder_sha256": recorder_sha256,

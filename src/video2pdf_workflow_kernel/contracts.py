@@ -24,9 +24,15 @@ except ImportError as exc:  # pragma: no cover - exercised by startup environmen
         "requirements/pylock.video-workflow-runtime.toml"
     ) from exc
 
-from .errors import ContractError, UnknownContractVersion, UnresolvedSchemaReference
+from .errors import (
+    CompileDependencyGap,
+    ContractError,
+    UnknownContractVersion,
+    UnresolvedSchemaReference,
+)
 from .utils import (
     canonical_json_bytes,
+    path_fold,
     read_json,
     require_safe_path_segment,
     sha256_bytes,
@@ -123,6 +129,7 @@ KNOWN_INVARIANTS = frozenset(
         "bootstrap-source-identity-v2",
         "control-store-identity-path-v1",
         "fixture-package-paths-v1",
+        "final-editable-tex-source-set-v1",
         "run-record-freshness-v1",
         "run-record-freshness-v2",
         "run-record-freshness-v3",
@@ -1702,6 +1709,136 @@ def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
         _validate_project_relative_path(value)
 
 
+def _project_path(value: str) -> PureWindowsPath | PurePosixPath:
+    """Interpret an absolute project path with the matching path flavour."""
+    if re.match(r"^[A-Za-z]:", value) or value.startswith("\\\\"):
+        return PureWindowsPath(value)
+    return PurePosixPath(value)
+
+
+def _validate_final_editable_tex_source_set(instance: dict[str, Any]) -> None:
+    expected_sha = sha256_bytes(
+        canonical_json_bytes(
+            {
+                key: value
+                for key, value in instance.items()
+                if key != "source_set_sha256"
+            }
+        )
+    )
+    if instance["source_set_sha256"] != expected_sha:
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set identity is stale",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_identity",
+                "error_code": "final_tex_source_set_identity_stale",
+            },
+        )
+    if any(
+        _project_path(member["path"]).suffix.casefold() != ".tex"
+        for member in instance["members"]
+    ):
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set contains a non-TeX member",
+            data={
+                "first_failing_gate": (
+                    "final_editable_tex_source_set_project_membership"
+                ),
+                "error_code": "final_tex_member_not_tex",
+            },
+        )
+    project_root_value = instance["project_root"]
+    _validate_canonical_absolute_path(project_root_value)
+    project_root_path = _project_path(project_root_value)
+    for member in instance["members"]:
+        member_path_value = member["path"]
+        _validate_canonical_absolute_path(member_path_value)
+        member_path = _project_path(member_path_value)
+        if type(member_path) is not type(project_root_path) or not member_path.is_relative_to(
+            project_root_path
+        ):
+            raise CompileDependencyGap(
+                "Final Editable TeX Source Set member escapes project root",
+                data={
+                    "first_failing_gate": (
+                        "final_editable_tex_source_set_project_membership"
+                    ),
+                    "error_code": "final_tex_member_outside_project",
+                },
+            )
+    logical_ids = [member["logical_id"] for member in instance["members"]]
+    if len(logical_ids) != len(set(logical_ids)):
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set repeats a logical identity",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_identity",
+                "error_code": "final_tex_logical_id_duplicate",
+            },
+        )
+    path_identities = [path_fold(member["path"]) for member in instance["members"]]
+    if len(path_identities) != len(set(path_identities)):
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set repeats a current path identity",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_identity",
+                "error_code": "final_tex_path_duplicate",
+            },
+        )
+    if instance["compile_evidence"]["final_pdf"] != instance["final_pdf"]:
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set compile evidence binds another Final PDF",
+            data={
+                "first_failing_gate": (
+                    "final_editable_tex_source_set_pdf_binding"
+                ),
+                "error_code": "final_tex_pdf_binding_ambiguous",
+            },
+        )
+    entrypoints = [
+        member
+        for member in instance["members"]
+        if member["role"] == "tex_entrypoint"
+    ]
+    if len(entrypoints) != 1:
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set requires exactly one TeX Entry Point",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_entrypoint",
+                "error_code": (
+                    "final_tex_entrypoint_missing"
+                    if not entrypoints
+                    else "final_tex_entrypoint_ambiguous"
+                ),
+            },
+        )
+    if (
+        entrypoints[0]["logical_id"]
+        != instance["compile_evidence"]["tex_entrypoint_logical_id"]
+    ):
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set entrypoint contradicts compile evidence",
+            data={
+                "first_failing_gate": (
+                    "final_editable_tex_source_set_entrypoint_binding"
+                ),
+                "error_code": "final_tex_entrypoint_evidence_mismatch",
+            },
+        )
+    evidence = instance["compile_evidence"]["consumed_project_tex_sources"]
+    member_identities = [
+        {key: value for key, value in member.items() if key != "role"}
+        for member in instance["members"]
+    ]
+    if member_identities != evidence:
+        raise CompileDependencyGap(
+            "Final Editable TeX Source Set differs from consumed TeX dependency evidence",
+            data={
+                "first_failing_gate": "final_editable_tex_source_set_membership",
+                "error_code": "final_tex_dependency_evidence_mismatch",
+            },
+        )
+
+
 INVARIANT_VALIDATORS = {
     "artifact-plan-paths-v1": _validate_artifact_plan,
     "artifact-plan-paths-v2": _validate_artifact_plan_v2,
@@ -1712,6 +1849,7 @@ INVARIANT_VALIDATORS = {
         value["workspace_path"]
     ),
     "fixture-package-paths-v1": _validate_fixture_package,
+    "final-editable-tex-source-set-v1": _validate_final_editable_tex_source_set,
     "run-record-freshness-v1": _validate_run_record,
     "run-record-freshness-v2": _validate_task_capable_run_record,
     "run-record-freshness-v3": _validate_run_record_v3,
@@ -1872,7 +2010,7 @@ class ContractRegistry:
             positive_count += 1
             try:
                 self.validate(entry.schema_name, read_json(entry.negative_example))
-            except ContractError:
+            except (ContractError, CompileDependencyGap):
                 negative_count += 1
             else:
                 raise ContractError(

@@ -1857,6 +1857,100 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
                 committed_sentinel,
             )
 
+        active_kernel, active_run_dir = self.traced_kernel(
+            "reinitialization-active-authority"
+        )
+        prepared_task = active_kernel.prepare_source_acquisition_task(
+            active_run_dir,
+            logical_task_key="reinitialization-active-authority",
+            prepared_at="2026-07-17T07:33:00+08:00",
+            required_resources=("whisper",),
+        )
+        active_kernel.claim_task(
+            active_run_dir,
+            prepared_task.task_id,
+            coordinator_session_id="coordinator-active-reinitialization",
+            worker_id="worker-active-reinitialization",
+        )
+        blocked_prepare = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            active_kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-prepare-reinitialization",
+            "--prepared-at",
+            "2026-07-17T07:34:00+08:00",
+        )
+        self.assertEqual(blocked_prepare.returncode, 50, blocked_prepare.stderr)
+        blocked_payload = json.loads(blocked_prepare.stdout)
+        self.assertEqual(blocked_payload["status"], "error")
+        unresolved = blocked_payload["data"]["unresolved_ownership"]
+        self.assertTrue(
+            {
+                "task_claims",
+                "task_attempts",
+                "resource_queue_entries",
+                "resource_leases",
+            }.issubset({item["kind"] for item in unresolved})
+        )
+        self.assertFalse(
+            (
+                active_kernel.workspace_root
+                / ".workflow-control-recovery.json"
+            ).exists()
+        )
+        reinitialization_root = (
+            active_kernel.workspace_root
+            / ".workflow-control-reinitialization"
+        )
+        self.assertFalse(
+            reinitialization_root.exists()
+            and any(reinitialization_root.rglob("eligibility-snapshot.json"))
+        )
+
+        restore_kernel, _restore_run_dir = self.traced_kernel(
+            "reinitialization-active-restore"
+        )
+        restore_backup_id = "backup-reinitialization-active-restore"
+        restore_backup_dir = (
+            restore_kernel.workspace_root.parent
+            / "selected-backups"
+            / restore_backup_id
+        )
+        restore_kernel.backup_control_store(
+            restore_backup_dir,
+            backup_id=restore_backup_id,
+            coordinator_session_id="coordinator-backup-active-restore",
+            created_at="2026-07-17T07:35:00+08:00",
+        )
+        with self.assertRaises(recovery_module.RestoreInterruption):
+            ControlStoreRecovery(restore_kernel.workspace_root).restore_selected(
+                restore_backup_dir,
+                backup_id=restore_backup_id,
+                coordinator_session_id="coordinator-active-restore",
+                restored_at="2026-07-17T07:36:00+08:00",
+                fault_point="after_prepared",
+            )
+        restore_fenced_prepare = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            restore_kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-prepare-during-restore",
+            "--prepared-at",
+            "2026-07-17T07:37:00+08:00",
+        )
+        self.assertEqual(
+            restore_fenced_prepare.returncode,
+            50,
+            restore_fenced_prepare.stderr,
+        )
+        restore_fenced_payload = json.loads(restore_fenced_prepare.stdout)
+        self.assertEqual(
+            restore_fenced_payload["data"]["message"],
+            "Control Store recovery already has persistent authority",
+        )
+
     def test_restore_busy_quiescence_failure_does_not_quarantine_or_publish(
         self,
     ) -> None:
@@ -2146,6 +2240,94 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
         )
         self.assertFalse((kernel.workspace_root / ".workflow-control-recovery.json").exists())
         self.assertEqual(VideoWorkflowKernel(kernel.workspace_root).control_store.check().status, "ok")
+
+        identity_paths = (
+            kernel.control_store.path,
+            kernel.control_store.marker_path,
+            kernel.control_store.anchor_path,
+        )
+        original_identity = {
+            path: sha256_file(path)
+            for path in identity_paths
+        }
+        prepared = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-reinitialization-q",
+            "--prepared-at",
+            "2026-07-17T03:13:00+08:00",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        prepared_payload = json.loads(prepared.stdout)
+        self.assertEqual(
+            prepared_payload["classification"],
+            "control_store_reinitialization_eligibility_published",
+        )
+        snapshot_path = Path(prepared_payload["evidence_path"])
+        snapshot = read_json(snapshot_path)
+        sentinel_path = kernel.workspace_root / ".workflow-control-recovery.json"
+        sentinel = read_json(sentinel_path)
+        self.assertEqual(sentinel["operation"], "reinitialization")
+        self.assertEqual(sentinel["state"], "ELIGIBILITY_PUBLISHED")
+        self.assertEqual(snapshot["store_identity"]["store_id"], kernel.control_store.store_id)
+        self.assertEqual(snapshot["schema_generation"], SCHEMA_VERSION)
+        self.assertEqual(snapshot["maintenance_fence_id"], sentinel["operation_id"])
+        self.assertEqual(snapshot["proposed_replacement_epoch"], 1)
+        self.assertEqual(len(snapshot["authority_inventory"]["run_bindings"]), 1)
+        self.assertTrue(snapshot["authority_inventory"]["committed_mutation_chains"])
+        self.assertEqual(snapshot["unresolved_ownership"], [])
+        self.assertEqual(
+            {path: sha256_file(path) for path in identity_paths},
+            original_identity,
+        )
+        with self.assertRaises(ControlStoreUnavailable):
+            VideoWorkflowKernel(kernel.workspace_root).trace_source_ready(
+                fixture=FIXTURE,
+                task_start="2026-07-17T03:13:30+08:00",
+                request_id=f"reinitialization-fenced-{uuid.uuid4().hex[:8]}",
+            )
+
+        snapshot_sha = sha256_file(snapshot_path)
+        duplicate_prepare = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-duplicate-reinitialization-q",
+            "--prepared-at",
+            "2026-07-17T03:13:45+08:00",
+        )
+        self.assertEqual(duplicate_prepare.returncode, 50)
+        self.assertEqual(sha256_file(snapshot_path), snapshot_sha)
+        abandoned = self.run_cli(
+            "control-store-reinitialization-abandon",
+            "--workspace-root",
+            kernel.workspace_root,
+            "--operation-id",
+            sentinel["operation_id"],
+            "--coordinator-session-id",
+            "coordinator-reinitialization-q",
+            "--abandoned-at",
+            "2026-07-17T03:14:00+08:00",
+        )
+        self.assertEqual(abandoned.returncode, 0, abandoned.stderr)
+        abandoned_payload = json.loads(abandoned.stdout)
+        self.assertEqual(
+            abandoned_payload["classification"],
+            "control_store_reinitialization_preparation_abandoned",
+        )
+        self.assertFalse(sentinel_path.exists())
+        self.assertEqual(sha256_file(snapshot_path), snapshot_sha)
+        self.assertEqual(
+            {path: sha256_file(path) for path in identity_paths},
+            original_identity,
+        )
+        self.assertEqual(
+            VideoWorkflowKernel(kernel.workspace_root).control_store.check().status,
+            "ok",
+        )
 
 
 if __name__ == "__main__":

@@ -68,6 +68,34 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/control-store-identity.invalid.json"
     },
     {
+      "schema_name": "control-store-reinitialization-eligibility-snapshot",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-eligibility-snapshot.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-reinitialization-eligibility-snapshot.v1.schema.json",
+      "kind": "contract",
+      "invariants": ["control-store-reinitialization-eligibility-v1"],
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-eligibility-snapshot.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-eligibility-snapshot.invalid.json"
+    },
+    {
+      "schema_name": "control-store-reinitialization-sentinel",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-sentinel.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-reinitialization-sentinel.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-sentinel.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-sentinel.invalid.json"
+    },
+    {
+      "schema_name": "control-store-reinitialization-abandonment",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-abandonment.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/control-store-reinitialization-abandonment.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-abandonment.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/control-store-reinitialization-abandonment.invalid.json"
+    },
+    {
       "schema_name": "control-store-backup-manifest",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-backup-manifest.v1.schema.json",

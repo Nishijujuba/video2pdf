@@ -12,6 +12,7 @@ from .contracts import ContractRegistry
 from .delivery_quality import DeliveryQualityRegistry
 from .control_store import ControlStore
 from .control_store_recovery import ControlStoreRecovery
+from .control_store_reinitialization import ControlStoreReinitialization
 from .errors import (
     CliUsageError,
     ControlStoreUnavailable,
@@ -496,6 +497,29 @@ def _parser() -> argparse.ArgumentParser:
 
     store_recovery_status = commands.add_parser("control-store-recovery-status")
     store_recovery_status.add_argument("--workspace-root", required=True, type=Path)
+
+    store_reinitialization_prepare = commands.add_parser(
+        "control-store-reinitialization-prepare"
+    )
+    store_reinitialization_prepare.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    store_reinitialization_prepare.add_argument(
+        "--coordinator-session-id", required=True
+    )
+    store_reinitialization_prepare.add_argument("--prepared-at", required=True)
+
+    store_reinitialization_abandon = commands.add_parser(
+        "control-store-reinitialization-abandon"
+    )
+    store_reinitialization_abandon.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    store_reinitialization_abandon.add_argument("--operation-id", required=True)
+    store_reinitialization_abandon.add_argument(
+        "--coordinator-session-id", required=True
+    )
+    store_reinitialization_abandon.add_argument("--abandoned-at", required=True)
 
     probe = commands.add_parser("bootstrap-probe")
     _add_bootstrap_probe_inputs(probe)
@@ -1499,6 +1523,35 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             str(result["classification"]),
             result,
             result.get("recovery_report_path") or result.get("sentinel_path"),
+        )
+    if command == "control-store-reinitialization-prepare":
+        result = ControlStoreReinitialization(
+            args.workspace_root,
+            project_root=project_root,
+        ).prepare_eligibility(
+            coordinator_session_id=args.coordinator_session_id,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["snapshot_path"]),
+        )
+    if command == "control-store-reinitialization-abandon":
+        result = ControlStoreReinitialization(
+            args.workspace_root,
+            project_root=project_root,
+        ).abandon_preparation(
+            operation_id=args.operation_id,
+            coordinator_session_id=args.coordinator_session_id,
+            abandoned_at=args.abandoned_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["abandonment_path"]),
         )
     if command == "contracts-check":
         registry = ContractRegistry(project_root, args.registry)

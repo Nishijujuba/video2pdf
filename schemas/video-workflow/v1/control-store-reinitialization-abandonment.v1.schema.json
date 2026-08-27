@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-abandonment.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "kernel_version", "operation_id",
+    "snapshot_sha256", "store_id", "coordinator_session_id", "abandoned_at",
+    "replacement_identity_published"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-reinitialization-abandonment"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "operation_id": {"type": "string", "pattern": "^reinitialize-[0-9a-f]{32}$"},
+    "snapshot_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "abandoned_at": {"type": "string", "format": "date-time"},
+    "replacement_identity_published": {"const": false}
+  }
+}

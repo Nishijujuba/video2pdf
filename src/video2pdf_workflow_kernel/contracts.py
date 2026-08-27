@@ -122,6 +122,7 @@ KNOWN_INVARIANTS = frozenset(
         "batch-record-v1",
         "bootstrap-source-identity-v2",
         "control-store-identity-path-v1",
+        "control-store-reinitialization-eligibility-v1",
         "fixture-package-paths-v1",
         "run-record-freshness-v1",
         "run-record-freshness-v2",
@@ -1702,6 +1703,104 @@ def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
         _validate_project_relative_path(value)
 
 
+def _validate_control_store_reinitialization_eligibility(
+    instance: dict[str, Any],
+) -> None:
+    if instance["maintenance_fence_id"] != instance["snapshot_id"]:
+        raise ContractError(
+            "Control Store reinitialization snapshot and maintenance fence disagree"
+        )
+    if (
+        instance["proposed_replacement_epoch"]
+        != instance["current_store_epoch"] + 1
+    ):
+        raise ContractError(
+            "Control Store reinitialization replacement epoch is not the successor"
+        )
+    workspace = instance["workspace_identity"]
+    _validate_canonical_absolute_path(workspace["workspace_path"])
+    expected_normalized = os.path.normcase(
+        os.path.abspath(workspace["workspace_path"])
+    ).casefold()
+    if workspace["normalized_workspace_path"] != expected_normalized:
+        raise ContractError(
+            "Control Store reinitialization workspace identity is not canonical"
+        )
+
+    inventory = instance["authority_inventory"]
+    complete = inventory["complete_store_rows"]
+    required_tables = {
+        "schema_migrations",
+        "control_store_metadata",
+        "run_bindings",
+        "initialization_intents",
+        "run_state_mutation_intents",
+        "run_state_mutation_identity_versions",
+        "task_claims",
+        "task_claim_authorities",
+        "task_attempts",
+        "task_attempt_authorities",
+        "task_completion_authorities",
+        "task_promotion_identity_versions",
+        "task_promotion_intents",
+        "task_reclaim_transitions",
+        "source_publication_intents",
+        "delivery_lifecycle_intents",
+        "projection_publication_slots",
+        "batch_records",
+        "batch_item_projections",
+        "resource_configurations",
+        "resource_sequences",
+        "resource_queue_entries",
+        "resource_leases",
+        "resource_lease_resources",
+        "resource_fairness_cursors",
+        "resource_circuit_breakers",
+        "resource_control_events",
+    }
+    missing_tables = sorted(required_tables - set(complete))
+    if missing_tables:
+        raise ContractError(
+            "Control Store reinitialization snapshot omits authority tables: "
+            f"{missing_tables}"
+        )
+
+    direct_bindings = {
+        "batch_records": "batch_records",
+        "batch_item_projections": "batch_item_projections",
+        "claims": "task_claims",
+        "attempts": "task_attempts",
+        "queues": "resource_queue_entries",
+        "leases": "resource_leases",
+        "publication_slots": "projection_publication_slots",
+        "initialization_intents": "initialization_intents",
+    }
+    for inventory_name, table_name in direct_bindings.items():
+        if inventory[inventory_name] != complete[table_name]:
+            raise ContractError(
+                "Control Store reinitialization named inventory disagrees with "
+                f"complete Store rows: {inventory_name}"
+            )
+    for table_name, rows in inventory["mutation_intents"].items():
+        if rows != complete.get(table_name):
+            raise ContractError(
+                "Control Store reinitialization Mutation Intent inventory disagrees"
+            )
+    for table_name, rows in inventory["resource_state"].items():
+        if rows != complete.get(table_name):
+            raise ContractError(
+                "Control Store reinitialization resource inventory disagrees"
+            )
+    bound_run_ids = {row["run_id"] for row in inventory["run_bindings"]}
+    chain_run_ids = {
+        row["run_id"] for row in inventory["committed_mutation_chains"]
+    }
+    if bound_run_ids != chain_run_ids:
+        raise ContractError(
+            "Control Store reinitialization Run bindings and mutation chains disagree"
+        )
+
+
 INVARIANT_VALIDATORS = {
     "artifact-plan-paths-v1": _validate_artifact_plan,
     "artifact-plan-paths-v2": _validate_artifact_plan_v2,
@@ -1710,6 +1809,9 @@ INVARIANT_VALIDATORS = {
     "bootstrap-source-identity-v2": _validate_bootstrap_record_v2,
     "control-store-identity-path-v1": lambda value: _validate_canonical_absolute_path(
         value["workspace_path"]
+    ),
+    "control-store-reinitialization-eligibility-v1": (
+        _validate_control_store_reinitialization_eligibility
     ),
     "fixture-package-paths-v1": _validate_fixture_package,
     "run-record-freshness-v1": _validate_run_record,

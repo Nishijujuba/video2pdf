@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-eligibility-snapshot.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "kernel_version", "snapshot_id",
+    "prepared_at", "coordinator_session_id", "store_identity",
+    "workspace_identity", "schema_generation", "maintenance_fence_id",
+    "current_store_epoch", "proposed_replacement_epoch",
+    "authority_inventory", "unresolved_ownership"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-reinitialization-eligibility-snapshot"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "snapshot_id": {"type": "string", "pattern": "^reinitialize-[0-9a-f]{32}$"},
+    "prepared_at": {"type": "string", "format": "date-time"},
+    "coordinator_session_id": {"type": "string", "minLength": 1},
+    "store_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["store_id", "marker_sha256", "anchor_sha256", "database_relpath"],
+      "properties": {
+        "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "marker_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "anchor_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "database_relpath": {"const": ".workflow-control/control.sqlite3"}
+      }
+    },
+    "workspace_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_path", "normalized_workspace_path"],
+      "properties": {
+        "workspace_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "normalized_workspace_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "schema_generation": {"const": 11},
+    "maintenance_fence_id": {"type": "string", "pattern": "^reinitialize-[0-9a-f]{32}$"},
+    "current_store_epoch": {"type": "integer", "minimum": 0},
+    "proposed_replacement_epoch": {"type": "integer", "minimum": 1},
+    "authority_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_bindings", "committed_mutation_chains", "batch_records",
+        "batch_item_projections", "delivery_projections", "claims", "attempts",
+        "queues", "reservations", "leases", "publication_slots",
+        "resource_state", "initialization_intents", "mutation_intents",
+        "complete_store_rows"
+      ],
+      "properties": {
+        "run_bindings": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "committed_mutation_chains": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "batch_records": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "batch_item_projections": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "delivery_projections": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "claims": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "attempts": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "queues": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "reservations": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "leases": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "publication_slots": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "resource_state": {"$ref": "#/$defs/table_inventory"},
+        "initialization_intents": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+        "mutation_intents": {"$ref": "#/$defs/table_inventory"},
+        "complete_store_rows": {"$ref": "#/$defs/table_inventory"}
+      }
+    },
+    "unresolved_ownership": {"type": "array", "maxItems": 0}
+  },
+  "$defs": {
+    "row": {"type": "object"},
+    "table_inventory": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"$ref": "#/$defs/row"}
+      }
+    }
+  }
+}

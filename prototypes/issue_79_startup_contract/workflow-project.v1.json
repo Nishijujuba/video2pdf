@@ -1,0 +1,13 @@
+{
+  "schema_name": "workflow-project-config",
+  "schema_version": "1.0.0",
+  "workspace_root": "workspace",
+  "control_store_root": "workspace",
+  "release_profile": "config/workflow-release-profile.v1.json",
+  "ordinary_run_platforms": [
+    "bilibili",
+    "youtube"
+  ],
+  "existing_directory_policy": "explicit_legacy_maintenance_only"
+}
+

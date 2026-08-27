@@ -232,6 +232,22 @@ The exclusive per-run right to publish canonical artifacts and replace the Video
 
 The project-level transactional authority for coordination shared across runs, including claims, leases, scheduling, publication slots, and Mutation Intents. Per-run lifecycle authority remains in each Video Workflow Run Record.
 
+## Fresh Control Store Initialization
+
+The first creation of a Cross-Run Control Store for a workspace that has no prior Control Store identity evidence and no governed workflow authority. A previously initialized or authority-bearing workspace is ineligible.
+
+## Authority-Preserving Control Store Reinitialization
+
+A governed recovery transition that replaces an absent or incomplete local Control Store identity while carrying forward every current cross-run authority and fencing every ownership state that cannot be proven terminal.
+
+## Control Store Reinitialization Eligibility Snapshot
+
+A pre-loss authority record produced while the Cross-Run Control Store is healthy, quiesced, and mutation-fenced; it binds the exhaustive state that must be preserved or proven terminal before Authority-Preserving Control Store Reinitialization.
+
+## Control Store Restoration
+
+A governed recovery transition that replaces an unavailable Cross-Run Control Store with one explicitly selected, authority-bearing SQLite backup and reconciles the restored authority against surviving workflow records.
+
 ## Control Store Unavailable
 
 The global fail-closed state entered when the Cross-Run Control Store cannot prove its integrity or transaction authority. Governed Kernel mutations remain blocked until evidence-bearing restoration and reconciliation pass.

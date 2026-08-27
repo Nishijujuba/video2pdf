@@ -824,9 +824,7 @@ def _parser() -> argparse.ArgumentParser:
     guarded_compile.add_argument("--runtime-policy", required=True, type=Path)
 
     batch_plan = commands.add_parser("batch-plan")
-    batch_plan.add_argument("--project-config", type=Path)
-    batch_plan.add_argument("--workspace-root", type=Path)
-    batch_plan.add_argument("--control-store-root", type=Path)
+    batch_plan.add_argument("--project-config", required=True, type=Path)
     batch_plan.add_argument("--platform", required=True, choices=("bilibili", "youtube"))
     batch_plan.add_argument("--source-url")
     batch_plan.add_argument("--task-start", required=True)
@@ -2460,28 +2458,14 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             raise CliUsageError(
                 "batch-plan requires exactly one of --source-url or --url-set"
             )
-        if args.project_config is not None and (
-            args.workspace_root is not None or args.control_store_root is not None
-        ):
-            raise CliUsageError(
-                "batch-plan --project-config cannot be combined with explicit workspace or Control Store roots"
-            )
-        if args.project_config is None and args.control_store_root is None:
-            raise CliUsageError(
-                "batch-plan requires --project-config or --control-store-root"
-            )
         result = BatchProjectionProvider().plan(
-            workspace_root=(
-                None
-                if args.project_config is not None
-                else args.workspace_root or project_root / "workspace"
-            ),
+            workspace_root=None,
             contracts=contracts,
             platform=args.platform,
             source_url=args.source_url,
             task_start=args.task_start,
             request_id=args.request_id,
-            control_store_root=args.control_store_root,
+            control_store_root=None,
             selection=_parse_batch_selection(args.selection),
             url_set=args.url_set,
             project_root=project_root,

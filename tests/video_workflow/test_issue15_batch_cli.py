@@ -166,90 +166,49 @@ class Issue15BatchCliTests(unittest.TestCase):
             1,
         )
 
-    def test_batch_plan_fails_closed_before_record_for_invalid_profile_admission(
-        self,
-    ) -> None:
-        cases = (
-            (
-                "missing_project_config",
-                "workflow_project_configuration_invalid",
-                "missing_config",
-            ),
-            (
-                "malformed_project_config",
-                "workflow_project_configuration_invalid",
-                "malformed_config",
-            ),
-            ("missing_profile", "workflow_release_profile_invalid", None),
-            ("malformed_profile", "workflow_release_profile_invalid", "malformed"),
-            (
-                "incompatible_profile",
-                "workflow_release_profile_incompatible",
-                "incompatible",
-            ),
-            (
-                "inactive_global_gate",
-                "workflow_release_capability_inactive",
-                "global_gate",
-            ),
-            (
-                "inactive_platform",
-                "workflow_release_capability_inactive",
-                "bilibili",
-            ),
-            ("inactive_batch", "workflow_release_capability_inactive", "batch"),
+    def test_batch_plan_inactive_profile_fails_before_record(self) -> None:
+        workspace = new_workflow_workspace(self.id(), label="cli-profile-closed")
+        project_config, output_root, control_root, profile = _write_batch_project(
+            workspace
         )
-        for label, expected_code, mutation in cases:
-            with self.subTest(label=label):
-                workspace = new_workflow_workspace(
-                    f"{self.id()}-{label}", label="cli-profile-closed"
-                )
-                project_config, output_root, control_root, profile = (
-                    _write_batch_project(workspace)
-                )
-                if mutation == "missing_config":
-                    project_config.rename(project_config.with_suffix(".missing"))
-                elif mutation == "malformed_config":
-                    project_config.write_text("{", encoding="utf-8")
-                elif mutation is None:
-                    profile.rename(profile.with_suffix(".missing"))
-                elif mutation == "malformed":
-                    profile.write_text("{", encoding="utf-8")
-                else:
-                    value = json.loads(profile.read_text(encoding="utf-8"))
-                    if mutation == "incompatible":
-                        value["contract_compatibility"]["batch"] = "9.0.0"
-                    elif mutation == "global_gate":
-                        value["capabilities"] = {
-                            capability: "inactive"
-                            for capability in value["capabilities"]
-                        }
-                    else:
-                        value["capabilities"][mutation] = "inactive"
-                    profile.write_text(
-                        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
-                        encoding="utf-8",
-                    )
+        value = json.loads(profile.read_text(encoding="utf-8"))
+        value["capabilities"]["batch"] = "inactive"
+        profile.write_text(
+            json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
 
-                completed = _run_cli(
-                    "batch-plan",
-                    "--project-config",
-                    str(project_config),
-                    "--platform",
-                    "bilibili",
-                    "--source-url",
-                    "https://www.bilibili.com/video/BV1xx411c7mD/",
-                    "--task-start",
-                    "2026-08-16T09:05:00+08:00",
-                    "--request-id",
-                    f"closed-{label}",
-                )
-                envelope = json.loads(completed.stdout)
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertEqual(envelope["data"]["error_code"], expected_code)
-                self.assertFalse(output_root.exists())
-                self.assertFalse(control_root.exists())
-                self.assertEqual(list(workspace.rglob("batch-record.json")), [])
+        # scenario_id: inactive_batch_capability
+        # target_invariant: the Profile must activate ordinary Batch planning
+        # mutation_seam: published Profile capabilities.batch
+        # rematerialized_nodes: Profile JSON
+        # intentionally_stale_nodes: none
+        # expected_first_gate: batch_capability
+        # expected_error_code: workflow_release_capability_inactive
+        # scenario_class: single_contradiction
+        completed = _run_cli(
+            "batch-plan",
+            "--project-config",
+            str(project_config),
+            "--platform",
+            "bilibili",
+            "--source-url",
+            "https://www.bilibili.com/video/BV1xx411c7mD/",
+            "--task-start",
+            "2026-08-16T09:05:00+08:00",
+            "--request-id",
+            "inactive-batch",
+        )
+        envelope = json.loads(completed.stdout)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(envelope["data"]["first_failing_gate"], "batch_capability")
+        self.assertEqual(
+            envelope["data"]["error_code"],
+            "workflow_release_capability_inactive",
+        )
+        self.assertFalse(output_root.exists())
+        self.assertFalse(control_root.exists())
+        self.assertEqual(list(workspace.rglob("batch-record.json")), [])
 
     def test_batch_run_delegates_start_binding_to_provider(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-run-start")

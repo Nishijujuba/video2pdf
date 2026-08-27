@@ -72,6 +72,10 @@ The final platform authority recorded only after a published Exit Evidence Manif
 
 The completed cutover lifecycle followed `PREPARED` -> `INITIALIZED` -> `source_ready` -> `ready_for_delivery` with a provider-current passing Acceptance Report v2 -> `PROVISIONAL` -> `accepted` -> fresh current Delivery Guard -> `delivered` -> published Slice 12 Exit Evidence -> `CONFIRMED`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` carried candidate-only authority during that activation.
 
+## Workflow Release Profile
+
+The single atomic, versioned, repository-owned machine-readable authority that declares which completed Workflow 2.0 releases are available to ordinary Runs. It binds contract-compatibility identities rather than a Git commit or tag and partitions the coherent release state by Global Gate, platform, and Batch capability. It contains no historical Exit Evidence path, fingerprint, or lineage reference. Ordinary admission validates the Profile and its compatibility with the running workflow contracts. Complete historical Exit Evidence validation runs only as a Profile-publication gate or an explicit release-maintenance audit; it carries no continuing ordinary-run admission authority.
+
 ## Contract Schema Version
 
 The explicit compatibility identity of one machine-readable workflow contract. Readers accept only registered compatible versions.

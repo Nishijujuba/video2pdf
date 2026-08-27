@@ -316,6 +316,15 @@
       "last_session_id": "session-20260808-150000",
       "stage": "delivered",
       "updated_at": "2026-08-08T21:26:01+08:00"
+    },
+    {
+      "video_output_dir": "workspace/腾讯_AI Agent运行时安全防护与自迭代体系_ds",
+      "target_file": "workspace/腾讯_AI Agent运行时安全防护与自迭代体系_ds/review/acceptance/delivery_target.json",
+      "owner_session_id": "ds-ai-agent-security-20260825",
+      "owner_status": "active",
+      "last_session_id": "ds-ai-agent-security-20260825",
+      "stage": "ready_for_delivery",
+      "updated_at": "2026-08-25T01:04:39+08:00"
     }
   ]
 }

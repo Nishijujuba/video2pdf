@@ -10,7 +10,12 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .delivery_quality import DeliveryQualityRegistry
-from .evidence import EvidenceSupportError, git_output, sha256_git_blob
+from .evidence import (
+    EvidenceSupportError,
+    exit_evidence_revalidation_enabled,
+    git_output,
+    sha256_git_blob,
+)
 from .errors import AcceptanceV2Rejected, ContractError, ControlStoreUnavailable, GlobalGateFault
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
@@ -1128,6 +1133,14 @@ class GlobalGatePublisher:
     def check_policy(self, *, control_store_root: Path) -> dict[str, Any]:
         root = control_store_root.resolve()
         current = self.require_current(control_store_root=root)
+        try:
+            revalidation_enabled = exit_evidence_revalidation_enabled(root)
+        except EvidenceSupportError as exc:
+            _reject(
+                str(exc),
+                "workflow_policy_config",
+                "workflow_policy_config_invalid",
+            )
         with self._connect(root) as control:
             policy = control.execute(
                 "SELECT * FROM gate_policy_authority WHERE singleton=1"
@@ -1142,11 +1155,34 @@ class GlobalGatePublisher:
                 "global_gate_policy_reconcile_required",
             )
         if policy is not None:
-            policy_authority, evidence = self._validate_policy_authority(
-                root=root,
-                current=current,
-                row=policy,
-            )
+            if revalidation_enabled:
+                policy_authority, evidence = self._validate_policy_authority(
+                    root=root,
+                    current=current,
+                    row=policy,
+                )
+            else:
+                policy_path = root / "active_global_gate_policy.json"
+                if (
+                    not policy_path.is_file()
+                    or sha256_file(policy_path) != policy["authority_sha256"]
+                ):
+                    _reject(
+                        "Global Gate policy authority bytes are absent or stale",
+                        "policy_authority",
+                        "global_gate_policy_authority_stale",
+                    )
+                policy_authority = read_json(policy_path)
+                if not self._policy_authority_matches_committed_state(
+                    authority=policy_authority,
+                    current=current,
+                    row=policy,
+                ):
+                    _reject(
+                        "Global Gate policy authority conflicts with committed control state",
+                        "policy_authority",
+                        "global_gate_policy_authority_conflict",
+                    )
             policy_binding = {
                 "path": str(root / "active_global_gate_policy.json"),
                 "file_sha256": policy["authority_sha256"],
@@ -1157,17 +1193,40 @@ class GlobalGatePublisher:
         else:
             policy_authority = None
             policy_binding = None
-            authority = read_json(Path(current["path"]))
-            evidence_path = Path(authority["exit_evidence_path"])
-            if not evidence_path.is_file() or sha256_file(evidence_path) != current["exit_evidence_sha256"]:
-                _reject("Current Global Gate Exit Evidence is stale", "global_gate_authority", "global_gate_exit_evidence_stale")
-            evidence = _validate_policy_evidence(read_json(evidence_path))
+            if revalidation_enabled:
+                authority = read_json(Path(current["path"]))
+                evidence_path = Path(authority["exit_evidence_path"])
+                if (
+                    not evidence_path.is_file()
+                    or sha256_file(evidence_path)
+                    != current["exit_evidence_sha256"]
+                ):
+                    _reject(
+                        "Current Global Gate Exit Evidence is stale",
+                        "global_gate_authority",
+                        "global_gate_exit_evidence_stale",
+                    )
+                evidence = _validate_policy_evidence(read_json(evidence_path))
+        if revalidation_enabled:
+            policy_status = evidence["policy_status"]
+            active_atomic_members = sorted(evidence["atomic_member_status"])
+            mirror_checks = evidence["mirror_checks"]
+            results = evidence["results"]
+        else:
+            policy_status = "active_global_gate"
+            active_atomic_members = []
+            mirror_checks = []
+            results = {}
         return {
             "current": True,
-            "policy_status": evidence["policy_status"],
-            "active_atomic_members": sorted(evidence["atomic_member_status"]),
-            "mirror_checks": evidence["mirror_checks"],
+            "policy_status": policy_status,
+            "active_atomic_members": active_atomic_members,
+            "mirror_checks": mirror_checks,
             "global_gate_authority": current,
             "policy_authority": policy_binding,
-            "results": evidence["results"],
+            "results": results,
+            "evidence_freshness_check": (
+                "enabled" if revalidation_enabled else "disabled"
+            ),
+            "exit_evidence_revalidated": revalidation_enabled,
         }

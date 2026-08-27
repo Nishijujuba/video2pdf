@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from pathlib import Path, PurePosixPath
 import subprocess
 import os
@@ -16,6 +17,37 @@ class EvidenceSupportError(RuntimeError):
 
 
 _CANONICAL_ARCHIVE_CONFIG = ("-c", "core.autocrlf=true")
+WORKFLOW_POLICY_CONFIG_FILE = "workflow-policy-config.json"
+
+
+def exit_evidence_revalidation_enabled(control_store_root: Path) -> bool:
+    """Read whether policy checks must revalidate referenced Exit Evidence."""
+
+    config_path = control_store_root.resolve() / WORKFLOW_POLICY_CONFIG_FILE
+    if not config_path.is_file():
+        return True
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EvidenceSupportError(
+            f"workflow policy configuration is unavailable or invalid: {exc}"
+        ) from exc
+    if (
+        not isinstance(value, dict)
+        or set(value) != {
+            "schema_name",
+            "schema_version",
+            "evidence_freshness_check",
+        }
+        or value.get("schema_name") != "workflow-policy-config"
+        or value.get("schema_version") != "1.0.0"
+        or not isinstance(value.get("evidence_freshness_check"), str)
+        or value["evidence_freshness_check"] not in {"enabled", "disabled"}
+    ):
+        raise EvidenceSupportError(
+            "workflow policy configuration must declare evidence_freshness_check as enabled or disabled"
+        )
+    return value["evidence_freshness_check"] == "enabled"
 
 
 def _trusted_git_executable() -> Path:

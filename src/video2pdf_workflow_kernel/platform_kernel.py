@@ -22,6 +22,7 @@ from .errors import (
 )
 from .evidence import (
     EvidenceSupportError,
+    exit_evidence_revalidation_enabled,
     git_output,
     sha256_git_archive,
     sha256_git_blob,
@@ -3668,8 +3669,6 @@ class BilibiliPlatformCutoverPublisher:
             or authority.get("exit_evidence_sha256") != current["evidence_sha256"]
             or authority.get("authority_sha256")
             != _fingerprint(authority, "authority_sha256")
-            or not evidence_path.is_file()
-            or sha256_file(evidence_path) != current["evidence_sha256"]
         ):
             raise KernelConflict(
                 f"{display_name} Platform Kernel authority content conflicts with control state",
@@ -3678,15 +3677,46 @@ class BilibiliPlatformCutoverPublisher:
                     "error_code": f"{prefix}_platform_authority_conflict",
                 },
             )
-        evidence = _validate_evidence(read_json(evidence_path), platform, evidence_path)
-        _require_formal_exit_evidence(evidence_path, platform)
+        try:
+            revalidation_enabled = exit_evidence_revalidation_enabled(root)
+        except EvidenceSupportError as exc:
+            raise KernelConflict(
+                str(exc),
+                data={
+                    "first_failing_gate": "workflow_policy_config",
+                    "error_code": "workflow_policy_config_invalid",
+                },
+            ) from exc
+        if revalidation_enabled:
+            if (
+                not evidence_path.is_file()
+                or sha256_file(evidence_path) != current["evidence_sha256"]
+            ):
+                raise KernelConflict(
+                    f"{display_name} Platform Kernel Exit Evidence is stale",
+                    data={
+                        "first_failing_gate": "platform_kernel_authority",
+                        "error_code": f"{prefix}_platform_exit_evidence_stale",
+                    },
+                )
+            evidence = _validate_evidence(
+                read_json(evidence_path), platform, evidence_path
+            )
+            _require_formal_exit_evidence(evidence_path, platform)
+            platform_statuses = evidence["platform_statuses"]
+        else:
+            platform_statuses = {platform: authority["authority_status"]}
         return {
             "platform": platform,
             "generation": int(current["generation"]),
             "authority_path": str(authority_path),
             "authority_sha256": current["authority_sha256"],
             "exit_evidence_sha256": current["evidence_sha256"],
-            "platform_statuses": evidence["platform_statuses"],
+            "platform_statuses": platform_statuses,
+            "evidence_freshness_check": (
+                "enabled" if revalidation_enabled else "disabled"
+            ),
+            "exit_evidence_revalidated": revalidation_enabled,
             "current": True,
         }
 

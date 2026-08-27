@@ -76,6 +76,18 @@ The completed cutover lifecycle followed `PREPARED` -> `INITIALIZED` -> `source_
 
 The single atomic, versioned, repository-owned machine-readable authority that declares which completed Workflow 2.0 releases are available to ordinary Runs. It binds contract-compatibility identities rather than a Git commit or tag and partitions the coherent release state by Global Gate, platform, and Batch capability. It contains no historical Exit Evidence path, fingerprint, or lineage reference. Ordinary admission validates the Profile and its compatibility with the running workflow contracts. Complete historical Exit Evidence validation runs only as a Profile-publication gate or an explicit release-maintenance audit; it carries no continuing ordinary-run admission authority.
 
+## Retired Cutover Authority State
+
+Machine-local Global Gate, platform, or Batch JSON, SQLite rows, candidates, and publication intents whose release-time authority ended when a compatible Workflow Release Profile became authoritative. It remains historical material and carries no ordinary-admission or live coordination authority.
+
+## Cutover Authority Retirement Record
+
+The project-local migration record that binds one Workflow Release Profile to the inventory and explicit disposition of every Retired Cutover Authority State item. It is recovery and audit evidence and grants no runtime authority.
+
+## Cutover Authority Tombstone
+
+The project-local terminal marker showing that retired cutover state was archived under one Cutover Authority Retirement Record and must not be recreated through old cutover commands. It is not an ordinary-startup dependency.
+
 ## Contract Schema Version
 
 The explicit compatibility identity of one machine-readable workflow contract. Readers accept only registered compatible versions.

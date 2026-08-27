@@ -21,6 +21,14 @@ if str(SRC_ROOT) not in sys.path:
 
 from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel  # noqa: E402
 from video2pdf_workflow_kernel.control_store import SCHEMA_VERSION  # noqa: E402
+from video2pdf_workflow_kernel.batch_projection import (  # noqa: E402
+    BatchProjectionProvider,
+)
+from video2pdf_workflow_kernel.adapters import (  # noqa: E402
+    BilibiliPlatformAdapter,
+    YtDlpRuntime,
+)
+from video2pdf_workflow_kernel.models import DeterministicLocatorRequest  # noqa: E402
 from video2pdf_workflow_kernel.control_store_recovery import (  # noqa: E402
     ControlStoreRecovery,
 )
@@ -2146,7 +2154,9 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
                 )
                 self.assertTrue((operation_dir / "sentinel.json").is_file())
 
-    def test_restore_requires_quiescence_and_explicit_selected_backup(self) -> None:
+    def test_restore_and_reinitialization_require_selected_authority_and_resume(
+        self,
+    ) -> None:
         kernel, _run_dir = self.traced_kernel("restore-quiescence")
         backup_dir = kernel.workspace_root.parent / "selected-backups" / "backup-q"
         kernel.backup_control_store(
@@ -2370,6 +2380,248 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
         self.assertEqual(
             VideoWorkflowKernel(kernel.workspace_root).control_store.check().status,
             "ok",
+        )
+
+        replacement_kernel, replacement_run_dir = self.traced_kernel(
+            "authority-preserving-replacement"
+        )
+        stale_store = replacement_kernel.control_store
+        replacement_run = read_json(replacement_run_dir / "workflow/run.json")
+        batch_id = "86" * 16
+        batch_task_start = "2026-07-17T03:14:00+08:00"
+        batch_probe = replacement_kernel.bootstrap_production_source(
+            adapter=BilibiliPlatformAdapter(
+                YtDlpRuntime(
+                    python_executable=Path(sys.executable),
+                    ffmpeg_dir=PROJECT_ROOT,
+                )
+            ),
+            request=DeterministicLocatorRequest(
+                source_url="https://www.bilibili.com/video/BV1TEST00001/",
+                original_title="Issue 86 Batch item",
+                explicit_item_selector="p1",
+            ),
+            runner=object(),
+            task_start=batch_task_start,
+            request_id=f"{batch_id}:1",
+            provider_kind="deterministic_locator",
+        )
+        gate_path = replacement_kernel.workspace_root / "active-global-gate.json"
+        write_json_atomic(gate_path, {"generation": 1, "status": "current"})
+        batch_initialized = replacement_kernel.initialize_production_source(
+            batch_probe,
+            session_id="session-issue86-batch",
+            global_gate_binding={
+                "authority_path": str(gate_path.resolve()),
+                "authority_sha256": sha256_file(gate_path),
+                "generation": 1,
+            },
+        )
+        batch_run = read_json(batch_initialized.run_dir / "workflow/run.json")
+        batch_record = read_json(
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/contracts/batch-record.valid.json"
+        )
+        batch_record["batch_identity"]["canonical_platform"] = "bilibili"
+        batch_record["run_task_start"] = batch_task_start
+        batch_record["item_order"][0]["canonical_item_id"] = (
+            batch_run["canonical_item_id"]
+        )
+        batch_record.update(
+            {
+                "batch_id": batch_id,
+                "output_root": str(replacement_kernel.workspace_root),
+                "batch_dir": str(
+                    replacement_kernel.workspace_root / "batch-control" / batch_id
+                ),
+                "control_dir": str(
+                    replacement_kernel.workspace_root
+                    / ".workflow-control"
+                    / "batches"
+                    / batch_id
+                ),
+                "item_order": [batch_record["item_order"][0]],
+                "run_mappings": [
+                    {
+                        "item_index": 1,
+                        "run_id": batch_run["run_id"],
+                        "request_id": f"{batch_id}:1",
+                    }
+                ],
+                "projections": [],
+            }
+        )
+        replacement_kernel.contracts.validate("batch-record", batch_record)
+        stale_store.create_batch_record(
+            batch_record, batch_record["batch_identity"]
+        )
+        BatchProjectionProvider().rebuild_projections(
+            replacement_kernel.workspace_root,
+            replacement_kernel.contracts,
+            batch_id=batch_id,
+            control_store_root=replacement_kernel.workspace_root,
+        )
+        replacement_prepare = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            replacement_kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-authority-preserving-replacement",
+            "--prepared-at",
+            "2026-07-17T03:15:00+08:00",
+        )
+        self.assertEqual(replacement_prepare.returncode, 0, replacement_prepare.stderr)
+        replacement_prepared = json.loads(replacement_prepare.stdout)
+        selected_snapshot = Path(replacement_prepared["evidence_path"])
+        copied_snapshot = selected_snapshot.parent / "unselected-snapshot.json"
+        write_json_atomic(copied_snapshot, read_json(selected_snapshot))
+        differently_bound = self.run_cli(
+            "control-store-reinitialize",
+            "--workspace-root",
+            replacement_kernel.workspace_root,
+            "--snapshot",
+            copied_snapshot,
+            "--coordinator-session-id",
+            "coordinator-authority-preserving-replacement",
+            "--reinitialized-at",
+            "2026-07-17T03:15:30+08:00",
+        )
+        self.assertEqual(differently_bound.returncode, 50)
+        self.assertEqual(
+            json.loads(differently_bound.stdout)["data"]["gate"],
+            "reinitialization_snapshot_binding",
+        )
+
+        lost_control_dir = (
+            replacement_kernel.workspace_root.parent / "lost-control-store"
+        )
+        replacement_kernel.control_store.control_dir.replace(lost_control_dir)
+        replacement = self.run_cli(
+            "control-store-reinitialize",
+            "--workspace-root",
+            replacement_kernel.workspace_root,
+            "--snapshot",
+            selected_snapshot,
+            "--coordinator-session-id",
+            "coordinator-authority-preserving-replacement",
+            "--reinitialized-at",
+            "2026-07-17T03:16:00+08:00",
+        )
+        self.assertEqual(replacement.returncode, 0, replacement.stderr)
+        replacement_payload = json.loads(replacement.stdout)
+        self.assertEqual(
+            replacement_payload["classification"],
+            "control_store_reinitialization_complete",
+        )
+        replacement_report = read_json(Path(replacement_payload["evidence_path"]))
+        self.assertEqual(replacement_report["final_global_status"], "passed")
+        self.assertEqual(replacement_report["replacement_store_epoch"], 1)
+        self.assertEqual(
+            replacement_report["imported_authority"]["run_ids"],
+            sorted([replacement_run["run_id"], batch_run["run_id"]]),
+        )
+        self.assertEqual(
+            replacement_report["imported_authority"]["nested_batch_run_ids"],
+            [batch_run["run_id"]],
+        )
+        self.assertEqual(
+            replacement_report["imported_authority"]["batch_projection_ids"],
+            [f"{batch_id}:1"],
+        )
+        self.assertEqual(
+            replacement_report["imported_authority"]["delivery_run_ids"],
+            [batch_run["run_id"]],
+        )
+        current_store = VideoWorkflowKernel(
+            replacement_kernel.workspace_root
+        ).control_store
+        self.assertEqual(current_store.store_fencing_epoch, 1)
+        self.assertIsNotNone(
+            current_store.binding_for_run(
+                read_json(replacement_run_dir / "workflow/run.json")["run_id"]
+            )
+        )
+        with self.assertRaisesRegex(
+            ControlStoreUnavailable,
+            "fencing epoch",
+        ):
+            stale_store.bind_run(
+                run_id="late-replaced-store-run",
+                output_path=replacement_kernel.workspace_root / "late-output",
+                initialization_intent_id="late-replaced-store-intent",
+            )
+
+        resume_kernel, resume_run_dir = self.traced_kernel(
+            "authority-preserving-resume"
+        )
+        resume_prepare = self.run_cli(
+            "control-store-reinitialization-prepare",
+            "--workspace-root",
+            resume_kernel.workspace_root,
+            "--coordinator-session-id",
+            "coordinator-authority-preserving-resume",
+            "--prepared-at",
+            "2026-07-17T03:17:00+08:00",
+        )
+        self.assertEqual(resume_prepare.returncode, 0, resume_prepare.stderr)
+        resume_prepared = json.loads(resume_prepare.stdout)
+        resume_snapshot = Path(resume_prepared["evidence_path"])
+        resume_kernel.control_store.control_dir.replace(
+            resume_kernel.workspace_root.parent / "lost-control-store-resume"
+        )
+        interrupted = self.run_cli(
+            "control-store-reinitialize",
+            "--workspace-root",
+            resume_kernel.workspace_root,
+            "--snapshot",
+            resume_snapshot,
+            "--coordinator-session-id",
+            "coordinator-authority-preserving-resume",
+            "--reinitialized-at",
+            "2026-07-17T03:18:00+08:00",
+            "--fault-point",
+            "after_committed",
+        )
+        self.assertNotEqual(interrupted.returncode, 0)
+        resume = self.run_cli(
+            "control-store-reinitialize-resume",
+            "--workspace-root",
+            resume_kernel.workspace_root,
+            "--operation-id",
+            resume_prepared["data"]["operation_id"],
+            "--resumed-at",
+            "2026-07-17T03:19:00+08:00",
+        )
+        self.assertEqual(resume.returncode, 0, resume.stderr)
+        resume_payload = json.loads(resume.stdout)
+        self.assertEqual(
+            resume_payload["data"]["operation_id"],
+            resume_prepared["data"]["operation_id"],
+        )
+        self.assertEqual(
+            resume_payload["classification"],
+            "control_store_reinitialization_complete",
+        )
+        resumed_store = VideoWorkflowKernel(resume_kernel.workspace_root).control_store
+        self.assertEqual(resumed_store.store_fencing_epoch, 1)
+        self.assertIsNotNone(
+            resumed_store.binding_for_run(
+                read_json(resume_run_dir / "workflow/run.json")["run_id"]
+            )
+        )
+        archived_resume = self.run_cli(
+            "control-store-reinitialize-resume",
+            "--workspace-root",
+            resume_kernel.workspace_root,
+            "--operation-id",
+            resume_prepared["data"]["operation_id"],
+            "--resumed-at",
+            "2026-07-17T03:20:00+08:00",
+        )
+        self.assertEqual(archived_resume.returncode, 0, archived_resume.stderr)
+        self.assertEqual(
+            json.loads(archived_resume.stdout)["classification"],
+            "control_store_reinitialization_complete",
         )
 
 

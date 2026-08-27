@@ -15,13 +15,17 @@
     "kernel_version": {"const": "2.0.0"},
     "operation_id": {"type": "string", "pattern": "^reinitialize-[0-9a-f]{32}$"},
     "operation": {"const": "reinitialization"},
-    "state": {"enum": ["PREPARING", "ELIGIBILITY_PUBLISHED", "BLOCKED"]},
+    "state": {"enum": ["PREPARING", "ELIGIBILITY_PUBLISHED", "PREPARED", "OLD_MOVED", "NEW_PUBLISHED", "RECONCILING", "COMMITTED", "BLOCKED"]},
     "coordinator_session_id": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "format": "date-time"},
     "snapshot_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
     "snapshot_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
     "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
-    "proposed_replacement_epoch": {"type": "integer", "minimum": 1}
+    "proposed_replacement_epoch": {"type": "integer", "minimum": 1},
+    "state_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "recovery_token_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "report_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+    "report_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"}
   },
   "allOf": [
     {
@@ -30,6 +34,20 @@
         "required": ["state"]
       },
       "then": {"required": ["snapshot_sha256"]}
+    },
+    {
+      "if": {
+        "properties": {"state": {"enum": ["PREPARED", "OLD_MOVED", "NEW_PUBLISHED", "RECONCILING", "COMMITTED", "BLOCKED"]}},
+        "required": ["state"]
+      },
+      "then": {"required": ["snapshot_sha256", "state_path", "recovery_token_sha256"]}
+    },
+    {
+      "if": {
+        "properties": {"state": {"enum": ["COMMITTED", "BLOCKED"]}},
+        "required": ["state"]
+      },
+      "then": {"required": ["report_path", "report_sha256"]}
     }
   ]
 }

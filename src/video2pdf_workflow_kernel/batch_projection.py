@@ -885,6 +885,7 @@ class BatchProjectionProvider:
         *,
         batch_id: str,
         control_store_root: Path | None = None,
+        recovery_operation_token: str | None = None,
     ) -> list[dict[str, Any]]:
         workspace = Path(workspace_root).resolve()
         control_root = (
@@ -892,7 +893,11 @@ class BatchProjectionProvider:
             if control_store_root is None
             else Path(control_store_root).resolve()
         )
-        store = self._open_store(control_root, contracts)
+        store = self._open_store(
+            control_root,
+            contracts,
+            recovery_operation_token=recovery_operation_token,
+        )
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
@@ -903,7 +908,11 @@ class BatchProjectionProvider:
         }
         if not mapped_by_index:
             return []
-        run_store = self._open_existing_store(Path(record["output_root"]), contracts)
+        run_store = self._open_existing_store(
+            Path(record["output_root"]),
+            contracts,
+            recovery_operation_token=recovery_operation_token,
+        )
         projections: list[dict[str, Any]] = []
         for item in record["item_order"]:
             if not item["selected"]:
@@ -1245,18 +1254,32 @@ class BatchProjectionProvider:
         cls._validate_planned_record(contracts, record)
 
     @staticmethod
-    def _open_store(workspace_root: Path, contracts: Any) -> Any:
+    def _open_store(
+        workspace_root: Path,
+        contracts: Any,
+        *,
+        recovery_operation_token: str | None = None,
+    ) -> Any:
         from .control_store import ControlStore
 
         workspace = Path(workspace_root).resolve()
         if ControlStore.identity_evidence_exists(workspace):
-            store = ControlStore(workspace, contracts)
+            store = ControlStore(
+                workspace,
+                contracts,
+                recovery_operation_token=recovery_operation_token,
+            )
             store.check()
             return store
         return ControlStore.initialize(workspace, contracts)
 
     @staticmethod
-    def _open_existing_store(workspace_root: Path, contracts: Any) -> Any:
+    def _open_existing_store(
+        workspace_root: Path,
+        contracts: Any,
+        *,
+        recovery_operation_token: str | None = None,
+    ) -> Any:
         from .control_store import ControlStore
 
         workspace = Path(workspace_root).resolve()
@@ -1264,7 +1287,11 @@ class BatchProjectionProvider:
             raise ControlStoreUnavailable(
                 f"Run Control Store is unavailable: {workspace}"
             )
-        store = ControlStore(workspace, contracts)
+        store = ControlStore(
+            workspace,
+            contracts,
+            recovery_operation_token=recovery_operation_token,
+        )
         store.check()
         return store
 

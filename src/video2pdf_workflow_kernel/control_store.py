@@ -435,6 +435,7 @@ class ControlStore:
         self.workspace_root = workspace_root.resolve()
         self.contracts = contracts
         self._recovery_operation_token = recovery_operation_token
+        self._store_fencing_epoch = 0
         raw = str(self.workspace_root)
         if raw.startswith("\\\\"):
             raise ControlStoreUnavailable("UNC workspace roots are unsupported")
@@ -603,6 +604,19 @@ class ControlStore:
                 )
             ):
                 return
+            if (
+                sentinel.get("operation") == "reinitialization"
+                and sentinel.get("state") in {"NEW_PUBLISHED", "RECONCILING"}
+                and isinstance(expected_token_sha256, str)
+                and isinstance(self._recovery_operation_token, str)
+                and hmac.compare_digest(
+                    hashlib.sha256(
+                        self._recovery_operation_token.encode("utf-8")
+                    ).hexdigest(),
+                    expected_token_sha256,
+                )
+            ):
+                return
         raise ControlStoreUnavailable(
             "Control Store mutation is blocked by persistent recovery authority",
             data=data,
@@ -640,6 +654,7 @@ class ControlStore:
             connection = self._connect()
             try:
                 connection.execute("BEGIN")
+                self._assert_store_fencing_epoch(connection)
                 snapshot_data_version = self._data_version(connection)
                 self._validate_reclaim_history_before_mutation(connection)
                 version = int(
@@ -662,6 +677,7 @@ class ControlStore:
                 ):
                     continue
                 self._assert_mutation_allowed()
+                self._assert_store_fencing_epoch(connection)
                 try:
                     yield connection, plan
                     connection.execute("COMMIT")
@@ -740,6 +756,10 @@ class ControlStore:
                 "INSERT INTO control_store_metadata(key, value) VALUES ('store_id', ?)",
                 (self.store_id,),
             )
+            connection.execute(
+                "INSERT INTO control_store_metadata(key, value) "
+                "VALUES ('store_fencing_epoch', '0')"
+            )
             connection.execute("INSERT INTO schema_migrations(version) VALUES (1)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
             connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
@@ -801,9 +821,13 @@ class ControlStore:
         try:
             connection = self._connect_raw()
             try:
-                row = connection.execute(
-                    "SELECT value FROM control_store_metadata WHERE key='store_id'"
-                ).fetchone()
+                metadata = {
+                    str(item[0]): str(item[1])
+                    for item in connection.execute(
+                        "SELECT key, value FROM control_store_metadata "
+                        "WHERE key IN ('store_id', 'store_fencing_epoch')"
+                    ).fetchall()
+                }
                 version = connection.execute(
                     "SELECT COALESCE(MAX(version), 0) FROM schema_migrations"
                 ).fetchone()[0]
@@ -811,11 +835,49 @@ class ControlStore:
                 connection.close()
         except sqlite3.Error as exc:
             raise ControlStoreUnavailable(f"Control Store database is invalid: {exc}") from exc
-        if row is None or row[0] != self.store_id:
+        if metadata.get("store_id") != self.store_id:
             raise ControlStoreUnavailable("Control Store database identity disagrees with marker")
+        raw_epoch = metadata.get("store_fencing_epoch", "0")
+        try:
+            self._store_fencing_epoch = int(raw_epoch)
+        except (TypeError, ValueError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store fencing epoch metadata is invalid"
+            ) from exc
+        if self._store_fencing_epoch < 0:
+            raise ControlStoreUnavailable(
+                "Control Store fencing epoch metadata is invalid"
+            )
         if int(version) != SCHEMA_VERSION:
             raise ControlStoreUnavailable(
                 f"unknown Control Store schema version: {version}"
+            )
+
+    @property
+    def store_fencing_epoch(self) -> int:
+        return self._store_fencing_epoch
+
+    def _assert_store_fencing_epoch(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        row = connection.execute(
+            "SELECT value FROM control_store_metadata "
+            "WHERE key='store_fencing_epoch'"
+        ).fetchone()
+        raw_epoch = "0" if row is None else row[0]
+        try:
+            current_epoch = int(raw_epoch)
+        except (TypeError, ValueError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store fencing epoch metadata is invalid"
+            ) from exc
+        if current_epoch != self._store_fencing_epoch:
+            raise ControlStoreUnavailable(
+                "Control Store fencing epoch changed; replaced Store authority is stale",
+                data={
+                    "expected_store_fencing_epoch": self._store_fencing_epoch,
+                    "current_store_fencing_epoch": current_epoch,
+                },
             )
 
     @staticmethod

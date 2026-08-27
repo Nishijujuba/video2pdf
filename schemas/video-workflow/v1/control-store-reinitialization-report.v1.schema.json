@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-reinitialization-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "kernel_version", "operation_id",
+    "snapshot_sha256", "final_global_status", "replacement_store_epoch",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_name": {"const": "control-store-reinitialization-report"},
+    "schema_version": {"const": "1.0.0"},
+    "kernel_version": {"const": "2.0.0"},
+    "operation_id": {"type": "string", "pattern": "^reinitialize-[0-9a-f]{32}$"},
+    "snapshot_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "store_id": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+    "replacement_store_epoch": {"type": "integer", "minimum": 1},
+    "final_global_status": {"enum": ["passed", "blocked"]},
+    "identity_agreement": {"const": "passed"},
+    "database_authority_agreement": {"const": "passed"},
+    "filesystem_authority_agreement": {"const": "passed"},
+    "output_binding_agreement": {"const": "passed"},
+    "mutation_chain_agreement": {"const": "passed"},
+    "projection_agreement": {"const": "passed"},
+    "unresolved_ownership": {"type": "array", "maxItems": 0},
+    "imported_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_ids", "batch_ids", "nested_batch_run_ids", "batch_projection_ids", "delivery_run_ids", "table_row_counts"],
+      "properties": {
+        "run_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "batch_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "nested_batch_run_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "batch_projection_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "delivery_run_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "table_row_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "blocked_gate": {"type": "string", "minLength": 1},
+    "diagnostic": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"final_global_status": {"const": "passed"}}, "required": ["final_global_status"]},
+      "then": {"required": ["store_id", "identity_agreement", "database_authority_agreement", "filesystem_authority_agreement", "output_binding_agreement", "mutation_chain_agreement", "projection_agreement", "unresolved_ownership", "imported_authority"]}
+    },
+    {
+      "if": {"properties": {"final_global_status": {"const": "blocked"}}, "required": ["final_global_status"]},
+      "then": {"required": ["blocked_gate", "diagnostic"]}
+    }
+  ]
+}

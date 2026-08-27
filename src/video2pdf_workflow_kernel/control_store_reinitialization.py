@@ -39,6 +39,24 @@ _RESOURCE_TABLES = (
     "resource_control_events",
 )
 
+REINITIALIZATION_FAULT_POINTS = frozenset(
+    {
+        "after_prepared",
+        "after_old_moved",
+        "after_new_published",
+        "after_reconciling",
+        "after_committed",
+    }
+)
+
+
+class ReinitializationInterruption(RuntimeError):
+    """Test-only interruption after a durable reinitialization boundary."""
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(f"injected Control Store reinitialization interruption at {fault_point}")
+        self.fault_point = fault_point
+
 
 class ControlStoreReinitialization:
     """Prepare a healthy Store for a later authority-preserving replacement."""
@@ -333,6 +351,880 @@ class ControlStoreReinitialization:
             "store_id": store.store_id,
             "replacement_identity_published": False,
         }
+
+    def reinitialize_selected(
+        self,
+        snapshot_path: Path,
+        *,
+        coordinator_session_id: str,
+        reinitialized_at: str,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace a lost Store from its one pre-loss eligibility authority."""
+        self._validate_inputs(
+            coordinator_session_id=coordinator_session_id,
+            recorded_at=reinitialized_at,
+        )
+        self._validate_fault_point(fault_point)
+        snapshot_path = snapshot_path.resolve()
+        sentinel = self._load_selected_sentinel_for_replacement()
+        operation_id = str(sentinel["operation_id"])
+        operation_dir = self.operations_root / operation_id
+        selected_path = Path(str(sentinel["snapshot_path"])).resolve()
+        if snapshot_path != selected_path:
+            raise ControlStoreUnavailable(
+                "selected Control Store reinitialization snapshot is differently bound",
+                data={"gate": "reinitialization_snapshot_binding"},
+            )
+        if sentinel.get("coordinator_session_id") != coordinator_session_id:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization coordinator authority disagrees",
+                data={"gate": "reinitialization_coordinator_binding"},
+            )
+        snapshot = self._validate_selected_snapshot(
+            sentinel, snapshot_path, operation_dir
+        )
+        state_path = operation_dir / "reinitialization-state.json"
+        if state_path.exists():
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization already has a durable replacement operation; resume it",
+                data={
+                    "gate": "reinitialization_operation_already_started",
+                    "operation_id": operation_id,
+                },
+            )
+        self._require_replacement_needed()
+        candidate_root = operation_dir / "replacement" / "candidate"
+        prior_root = operation_dir / "replacement" / "prior"
+        state = {
+            "schema_name": "control-store-reinitialization-state",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "operation_id": operation_id,
+            "snapshot_path": str(snapshot_path),
+            "snapshot_sha256": str(sentinel["snapshot_sha256"]),
+            "coordinator_session_id": coordinator_session_id,
+            "replacement_store_epoch": int(snapshot["proposed_replacement_epoch"]),
+            "candidate_root": str(candidate_root),
+            "prior_root": str(prior_root),
+            "state": "PREPARED",
+            "state_history": [
+                {"state": "PREPARED", "recorded_at": reinitialized_at}
+            ],
+        }
+        self.contracts.validate("control-store-reinitialization-state", state)
+        self._write_json_new(state_path, state)
+        sentinel.update(
+            {
+                "state": "PREPARED",
+                "state_path": str(state_path),
+                "recovery_token_sha256": hashlib.sha256(
+                    operation_id.encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+        self.contracts.validate("control-store-reinitialization-sentinel", sentinel)
+        write_json_atomic(self.sentinel_path, sentinel)
+        self._inject_fault(fault_point, "after_prepared")
+        return self._continue_replacement(
+            state,
+            snapshot,
+            continued_at=reinitialized_at,
+            fault_point=fault_point,
+        )
+
+    def resume_replacement(
+        self,
+        *,
+        operation_id: str,
+        resumed_at: str,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Resume the exact durable replacement selected before interruption."""
+        self._validate_inputs(
+            coordinator_session_id="reinitialization-resume",
+            recorded_at=resumed_at,
+        )
+        self._validate_fault_point(fault_point)
+        sentinel = self._load_resume_sentinel(operation_id)
+        if sentinel.get("operation_id") != operation_id:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization resume operation disagrees",
+                data={"gate": "reinitialization_operation_binding"},
+            )
+        operation_dir = self.operations_root / operation_id
+        state_path = Path(
+            str(
+                sentinel.get(
+                    "state_path",
+                    operation_dir / "reinitialization-state.json",
+                )
+            )
+        )
+        try:
+            state_path.resolve().relative_to(operation_dir.resolve())
+        except (OSError, ValueError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization state authority is outside its operation"
+            ) from exc
+        try:
+            state = read_json(state_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization state authority is unavailable"
+            ) from exc
+        if (
+            state.get("operation_id") != operation_id
+            or state.get("snapshot_sha256") != sentinel.get("snapshot_sha256")
+        ):
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization state authority disagrees"
+            )
+        try:
+            self.contracts.validate("control-store-reinitialization-state", state)
+        except ContractError as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization state authority is contradictory"
+            ) from exc
+        snapshot_path = Path(str(state["snapshot_path"]))
+        snapshot = self._validate_selected_snapshot(
+            sentinel, snapshot_path, operation_dir
+        )
+        if sentinel.get("state") == "ELIGIBILITY_PUBLISHED":
+            sentinel.update(
+                {
+                    "state": "PREPARED",
+                    "state_path": str(state_path),
+                    "recovery_token_sha256": hashlib.sha256(
+                        operation_id.encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
+            self.contracts.validate(
+                "control-store-reinitialization-sentinel", sentinel
+            )
+            write_json_atomic(self.sentinel_path, sentinel)
+        return self._continue_replacement(
+            state,
+            snapshot,
+            continued_at=resumed_at,
+            fault_point=fault_point,
+        )
+
+    def _load_resume_sentinel(self, operation_id: str) -> dict[str, Any]:
+        if self.sentinel_path.exists():
+            return self._load_selected_sentinel_for_replacement()
+        archived_path = (
+            self.operations_root / operation_id / "committed-sentinel.json"
+        )
+        try:
+            sentinel = read_json(archived_path)
+            self.contracts.validate(
+                "control-store-reinitialization-sentinel", sentinel
+            )
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization resume authority is unavailable",
+                data={"gate": "reinitialization_authority_missing"},
+            ) from exc
+        if (
+            sentinel.get("operation_id") != operation_id
+            or sentinel.get("state") != "COMMITTED"
+        ):
+            raise ControlStoreUnavailable(
+                "archived Control Store reinitialization authority disagrees"
+            )
+        return sentinel
+
+    def _continue_replacement(
+        self,
+        state: dict[str, Any],
+        snapshot: dict[str, Any],
+        *,
+        continued_at: str,
+        fault_point: str | None,
+    ) -> dict[str, Any]:
+        operation_id = str(state["operation_id"])
+        operation_dir = self.operations_root / operation_id
+        state_path = operation_dir / "reinitialization-state.json"
+        candidate_root = Path(str(state["candidate_root"]))
+        prior_root = Path(str(state["prior_root"]))
+        try:
+            if state["state"] == "COMMITTED":
+                return self._complete_committed_operation(state, snapshot)
+            if state["state"] == "BLOCKED":
+                state["state"] = state.pop("blocked_from_state")
+                self.contracts.validate(
+                    "control-store-reinitialization-state", state
+                )
+                write_json_atomic(state_path, state)
+            if state["state"] == "PREPARED":
+                self._ensure_candidate(
+                    candidate_root, prior_root, snapshot, operation_id
+                )
+                self._move_replaced_identity(prior_root)
+                self._advance_state(state, state_path, "OLD_MOVED", continued_at)
+                self._update_reinitialization_sentinel("OLD_MOVED")
+            self._inject_fault(fault_point, "after_old_moved")
+
+            if state["state"] == "OLD_MOVED":
+                self._publish_candidate(candidate_root, operation_id, snapshot)
+                self._advance_state(state, state_path, "NEW_PUBLISHED", continued_at)
+                self._update_reinitialization_sentinel("NEW_PUBLISHED")
+            elif state["state"] in {"NEW_PUBLISHED", "RECONCILING"}:
+                self._validate_published_replacement(operation_id, snapshot)
+            self._inject_fault(fault_point, "after_new_published")
+
+            self._advance_state(state, state_path, "RECONCILING", continued_at)
+            self._update_reinitialization_sentinel("RECONCILING")
+            reconciliation = self._reconcile_imported_authority(
+                operation_id, snapshot
+            )
+            self._inject_fault(fault_point, "after_reconciling")
+            report = self._passing_report(
+                state, snapshot, reconciliation, continued_at
+            )
+            report_path = (
+                self.workspace_root
+                / ".workflow-control"
+                / "control_store_reinitialization_report.json"
+            )
+            self.contracts.validate("control-store-reinitialization-report", report)
+            write_json_atomic(report_path, report)
+            self._advance_state(state, state_path, "COMMITTED", continued_at)
+            self._update_reinitialization_sentinel(
+                "COMMITTED", report_path=report_path
+            )
+            self._inject_fault(fault_point, "after_committed")
+            return self._complete_committed_operation(state, snapshot)
+        except ReinitializationInterruption:
+            raise
+        except BaseException as exc:
+            if state.get("state") == "COMMITTED":
+                raise ControlStoreUnavailable(
+                    "Control Store reinitialization committed; sentinel archival remains pending",
+                    data={
+                        "gate": "reinitialization_commit_archive_pending",
+                        "operation_id": operation_id,
+                    },
+                ) from exc
+            report_path = operation_dir / "blocked-reinitialization-report.json"
+            blocked = {
+                "schema_name": "control-store-reinitialization-report",
+                "schema_version": "1.0.0",
+                "kernel_version": "2.0.0",
+                "operation_id": operation_id,
+                "snapshot_sha256": state["snapshot_sha256"],
+                "final_global_status": "blocked",
+                "replacement_store_epoch": state["replacement_store_epoch"],
+                "blocked_gate": getattr(exc, "data", {}).get(
+                    "gate", "reinitialization_reconciliation"
+                ),
+                "diagnostic": str(exc),
+                "recorded_at": continued_at,
+            }
+            self.contracts.validate("control-store-reinitialization-report", blocked)
+            write_json_atomic(report_path, blocked)
+            state["blocked_from_state"] = str(state["state"])
+            self._advance_state(state, state_path, "BLOCKED", continued_at)
+            self._update_reinitialization_sentinel(
+                "BLOCKED", report_path=report_path
+            )
+            if isinstance(exc, ControlStoreUnavailable):
+                exc.data.setdefault("evidence_path", str(report_path))
+                raise
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization blocked",
+                data={
+                    "gate": "reinitialization_reconciliation",
+                    "evidence_path": str(report_path),
+                },
+            ) from exc
+
+    def _complete_committed_operation(
+        self, state: dict[str, Any], snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        operation_id = str(state["operation_id"])
+        operation_dir = self.operations_root / operation_id
+        report_path = (
+            self.workspace_root
+            / ".workflow-control"
+            / "control_store_reinitialization_report.json"
+        )
+        try:
+            report = read_json(report_path)
+            self.contracts.validate(
+                "control-store-reinitialization-report", report
+            )
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            raise ControlStoreUnavailable(
+                "committed Control Store reinitialization report is unavailable"
+            ) from exc
+        if (
+            report.get("operation_id") != operation_id
+            or report.get("snapshot_sha256") != state.get("snapshot_sha256")
+            or report.get("store_id")
+            != snapshot.get("store_identity", {}).get("store_id")
+            or report.get("final_global_status") != "passed"
+        ):
+            raise ControlStoreUnavailable(
+                "committed Control Store reinitialization report disagrees"
+            )
+        archived_sentinel = operation_dir / "committed-sentinel.json"
+        if self.sentinel_path.exists():
+            sentinel = read_json(self.sentinel_path)
+            if sentinel.get("state") != "COMMITTED":
+                self._update_reinitialization_sentinel(
+                    "COMMITTED", report_path=report_path
+                )
+                sentinel = read_json(self.sentinel_path)
+            if (
+                sentinel.get("report_path") != str(report_path)
+                or sentinel.get("report_sha256") != sha256_file(report_path)
+            ):
+                raise ControlStoreUnavailable(
+                    "committed Control Store reinitialization sentinel disagrees"
+                )
+            if archived_sentinel.exists():
+                raise ControlStoreUnavailable(
+                    "committed Control Store reinitialization has competing sentinels"
+                )
+            os.replace(self.sentinel_path, archived_sentinel)
+        else:
+            try:
+                archived = read_json(archived_sentinel)
+                self.contracts.validate(
+                    "control-store-reinitialization-sentinel", archived
+                )
+            except (OSError, json.JSONDecodeError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "committed Control Store reinitialization sentinel is unavailable"
+                ) from exc
+            if (
+                archived.get("operation_id") != operation_id
+                or archived.get("state") != "COMMITTED"
+                or archived.get("report_path") != str(report_path)
+                or archived.get("report_sha256") != sha256_file(report_path)
+            ):
+                raise ControlStoreUnavailable(
+                    "archived Control Store reinitialization sentinel disagrees"
+                )
+        return {
+            "classification": "control_store_reinitialization_complete",
+            "operation_id": operation_id,
+            "snapshot_path": state["snapshot_path"],
+            "report_path": str(report_path),
+            "replacement_store_epoch": state["replacement_store_epoch"],
+        }
+
+    def _validate_selected_snapshot(
+        self,
+        sentinel: dict[str, Any],
+        snapshot_path: Path,
+        operation_dir: Path,
+    ) -> dict[str, Any]:
+        try:
+            snapshot_path = snapshot_path.resolve()
+            snapshot_path.relative_to(operation_dir.resolve())
+        except (OSError, ValueError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization snapshot is outside its operation",
+                data={"gate": "reinitialization_snapshot_binding"},
+            ) from exc
+        if (
+            not snapshot_path.is_file()
+            or sha256_file(snapshot_path) != sentinel.get("snapshot_sha256")
+        ):
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization snapshot is missing or stale",
+                data={"gate": "reinitialization_snapshot_freshness"},
+            )
+        try:
+            snapshot = read_json(snapshot_path)
+            self.contracts.validate(
+                "control-store-reinitialization-eligibility-snapshot", snapshot
+            )
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization snapshot is contradictory",
+                data={"gate": "reinitialization_snapshot_contract"},
+            ) from exc
+        if (
+            snapshot.get("snapshot_id") != sentinel.get("operation_id")
+            or snapshot.get("maintenance_fence_id") != sentinel.get("operation_id")
+            or snapshot.get("store_identity", {}).get("store_id")
+            != sentinel.get("store_id")
+            or snapshot.get("proposed_replacement_epoch")
+            != sentinel.get("proposed_replacement_epoch")
+            or snapshot.get("workspace_identity", {}).get(
+                "normalized_workspace_path"
+            )
+            != normalized_physical_path(self.workspace_root)
+            or snapshot.get("schema_generation") != SCHEMA_VERSION
+        ):
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization snapshot authority disagrees",
+                data={"gate": "reinitialization_snapshot_binding"},
+            )
+        self._validate_snapshot_filesystem(snapshot)
+        return snapshot
+
+    def _validate_snapshot_filesystem(self, snapshot: dict[str, Any]) -> None:
+        for binding in snapshot["authority_inventory"]["run_bindings"]:
+            run_path = Path(str(binding["run_record_path"]))
+            try:
+                record = read_json(run_path)
+                self.contracts.validate_run_record(record)
+            except (OSError, json.JSONDecodeError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "imported Run authority is unavailable",
+                    data={"gate": "reinitialization_run_reconciliation"},
+                ) from exc
+            if (
+                record.get("run_id") != binding.get("run_id")
+                or sha256_file(run_path) != binding.get("run_record_sha256")
+                or record.get("coordination_revision")
+                != binding.get("coordination_revision")
+            ):
+                raise ControlStoreUnavailable(
+                    "imported Run authority changed after eligibility",
+                    data={"gate": "reinitialization_snapshot_freshness"},
+                )
+
+    def _require_replacement_needed(self) -> None:
+        try:
+            store = ControlStore(self.workspace_root, self.contracts)
+            if store.check().status == "ok":
+                raise ControlStoreUnavailable(
+                    "Control Store is healthy; replacement is not required",
+                    data={"gate": "reinitialization_recovery_not_required"},
+                )
+        except ControlStoreUnavailable as exc:
+            if exc.data.get("gate") == "reinitialization_recovery_not_required":
+                raise
+
+    def _materialize_candidate(
+        self,
+        candidate_root: Path,
+        snapshot: dict[str, Any],
+        operation_id: str,
+    ) -> None:
+        candidate_root.mkdir(parents=True, exist_ok=False)
+        candidate = self._candidate_store(candidate_root, operation_id)
+        candidate.control_dir.mkdir(parents=True, exist_ok=False)
+        candidate._create_database()
+        write_json_atomic(candidate.marker_path, candidate._identity_record("marker"))
+        write_json_atomic(candidate.anchor_path, candidate._identity_record("anchor"))
+        rows = self._replacement_rows(snapshot)
+        connection = candidate._connect_raw()
+        try:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            for table in rows:
+                connection.execute(f'DELETE FROM "{table}"')
+            for table, table_rows in rows.items():
+                for row in table_rows:
+                    columns = list(row)
+                    column_sql = ", ".join(f'"{column}"' for column in columns)
+                    placeholders = ", ".join("?" for _ in columns)
+                    connection.execute(
+                        f'INSERT INTO "{table}" ({column_sql}) VALUES ({placeholders})',
+                        tuple(row[column] for column in columns),
+                    )
+            connection.execute("COMMIT")
+            connection.execute("PRAGMA foreign_keys=ON")
+            if connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise ControlStoreUnavailable(
+                    "replacement Control Store import violates foreign keys",
+                    data={"gate": "reinitialization_import"},
+                )
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+        candidate._validate_existing()
+        if candidate.store_fencing_epoch != snapshot["proposed_replacement_epoch"]:
+            raise ControlStoreUnavailable(
+                "replacement Control Store fencing epoch disagrees",
+                data={"gate": "reinitialization_epoch"},
+            )
+
+    def _ensure_candidate(
+        self,
+        candidate_root: Path,
+        prior_root: Path,
+        snapshot: dict[str, Any],
+        operation_id: str,
+    ) -> None:
+        prior_root.mkdir(parents=True, exist_ok=True)
+        if candidate_root.exists():
+            try:
+                candidate = self._candidate_store(candidate_root, operation_id)
+                candidate._validate_existing()
+                if (
+                    candidate.store_fencing_epoch
+                    == snapshot["proposed_replacement_epoch"]
+                ):
+                    return
+            except ControlStoreUnavailable:
+                pass
+            partial_index = 1
+            while (prior_root / f"partial-candidate-{partial_index:02d}").exists():
+                partial_index += 1
+            os.replace(
+                candidate_root,
+                prior_root / f"partial-candidate-{partial_index:02d}",
+            )
+        self._materialize_candidate(candidate_root, snapshot, operation_id)
+
+    def _candidate_store(
+        self, candidate_root: Path, operation_id: str
+    ) -> ControlStore:
+        """Bind ControlStore validation to the durable off-canonical candidate."""
+        candidate = ControlStore.__new__(ControlStore)
+        candidate._configure(
+            self.workspace_root,
+            self.contracts,
+            recovery_operation_token=operation_id,
+        )
+        candidate.control_dir = candidate_root / ".workflow-control"
+        candidate.path = candidate.control_dir / "control.sqlite3"
+        candidate.marker_path = candidate.control_dir / "control-store.json"
+        candidate.anchor_dir = candidate_root
+        candidate.anchor_path = candidate_root / "anchor.json"
+        return candidate
+
+    def _move_replaced_identity(self, prior_root: Path) -> None:
+        live = ControlStore.__new__(ControlStore)
+        live._configure(self.workspace_root, self.contracts)
+        prior_control = prior_root / ".workflow-control"
+        prior_anchor = prior_root / "anchor.json"
+        if live.control_dir.exists():
+            if prior_control.exists():
+                raise ControlStoreUnavailable(
+                    "replaced Control Store identity is contradictory",
+                    data={"gate": "reinitialization_prior_identity"},
+                )
+            os.replace(live.control_dir, prior_control)
+        if live.anchor_path.exists():
+            if prior_anchor.exists():
+                raise ControlStoreUnavailable(
+                    "replaced Control Store anchor is contradictory",
+                    data={"gate": "reinitialization_prior_identity"},
+                )
+            os.replace(live.anchor_path, prior_anchor)
+
+    def _publish_candidate(
+        self,
+        candidate_root: Path,
+        operation_id: str,
+        snapshot: dict[str, Any],
+    ) -> None:
+        live = ControlStore.__new__(ControlStore)
+        live._configure(
+            self.workspace_root,
+            self.contracts,
+            recovery_operation_token=operation_id,
+        )
+        candidate_control = candidate_root / ".workflow-control"
+        candidate_anchor = candidate_root / "anchor.json"
+        if not live.control_dir.exists():
+            if not candidate_control.exists():
+                raise ControlStoreUnavailable(
+                    "replacement Control Store candidate is unavailable",
+                    data={"gate": "reinitialization_publication"},
+                )
+            os.replace(candidate_control, live.control_dir)
+        live.anchor_dir.mkdir(parents=True, exist_ok=True)
+        if not live.anchor_path.exists():
+            if not candidate_anchor.exists():
+                raise ControlStoreUnavailable(
+                    "replacement Control Store anchor candidate is unavailable",
+                    data={"gate": "reinitialization_publication"},
+                )
+            os.replace(candidate_anchor, live.anchor_path)
+        self._validate_published_replacement(operation_id, snapshot)
+
+    def _validate_published_replacement(
+        self, operation_id: str, snapshot: dict[str, Any]
+    ) -> ControlStore:
+        store = ControlStore(
+            self.workspace_root,
+            self.contracts,
+            recovery_operation_token=operation_id,
+        )
+        store.check()
+        if store.store_fencing_epoch != snapshot["proposed_replacement_epoch"]:
+            raise ControlStoreUnavailable(
+                "published replacement fencing epoch disagrees",
+                data={"gate": "reinitialization_epoch"},
+            )
+        return store
+
+    def _reconcile_imported_authority(
+        self, operation_id: str, snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        store = self._validate_published_replacement(operation_id, snapshot)
+        from .kernel import VideoWorkflowKernel
+
+        kernel = VideoWorkflowKernel(
+            self.workspace_root,
+            _control_store_recovery_token=operation_id,
+        )
+        run_ids: list[str] = []
+        run_dirs: dict[str, Path] = {}
+        for binding in snapshot["authority_inventory"]["run_bindings"]:
+            run_id = str(binding["run_id"])
+            kernel.reconcile_authority("kernel_run", run_id)
+            run_ids.append(run_id)
+            run_dirs[run_id] = Path(str(binding["output_path"]))
+
+        batch_ids: list[str] = []
+        nested_batch_run_ids: set[str] = set()
+        batch_records: dict[str, dict[str, Any]] = {}
+        for row in snapshot["authority_inventory"]["batch_records"]:
+            try:
+                record = json.loads(str(row["batch_record_json"]))
+                self.contracts.validate("batch-record", record)
+            except (TypeError, ValueError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "imported Batch authority is contradictory",
+                    data={"gate": "reinitialization_batch_reconciliation"},
+                ) from exc
+            if record.get("batch_id") != row.get("batch_id"):
+                raise ControlStoreUnavailable(
+                    "imported Batch identity disagrees",
+                    data={"gate": "reinitialization_batch_reconciliation"},
+                )
+            batch_id = str(row["batch_id"])
+            batch_ids.append(batch_id)
+            batch_records[batch_id] = record
+            for mapping in record.get("run_mappings", []):
+                mapped_run_id = str(mapping["run_id"])
+                if mapped_run_id not in run_dirs:
+                    raise ControlStoreUnavailable(
+                        "imported nested Batch item has no Run authority",
+                        data={
+                            "gate": "reinitialization_batch_reconciliation"
+                        },
+                    )
+                nested_batch_run_ids.add(mapped_run_id)
+        run_id_set = set(run_ids)
+        projection_ids: list[str] = []
+        for row in snapshot["authority_inventory"]["batch_item_projections"]:
+            try:
+                projection = json.loads(str(row["projection_json"]))
+                self.contracts.validate("batch-item-projection", projection)
+            except (TypeError, ValueError, ContractError) as exc:
+                raise ControlStoreUnavailable(
+                    "imported Batch projection is contradictory",
+                    data={"gate": "reinitialization_batch_reconciliation"},
+                ) from exc
+            if str(row["run_id"]) not in run_id_set:
+                raise ControlStoreUnavailable(
+                    "imported Batch projection has no Run authority",
+                    data={"gate": "reinitialization_batch_reconciliation"},
+                )
+            if (
+                projection.get("batch_id") != row.get("batch_id")
+                or projection.get("item_index") != row.get("item_index")
+                or projection.get("run_id") != row.get("run_id")
+            ):
+                raise ControlStoreUnavailable(
+                    "imported Batch projection row identity disagrees",
+                    data={"gate": "reinitialization_batch_reconciliation"},
+                )
+            projection_ids.append(
+                f'{row["batch_id"]}:{int(row["item_index"])}'
+            )
+
+        from .batch_projection import BatchProjectionProvider
+
+        batch_provider = BatchProjectionProvider()
+        for batch_id in sorted(batch_records):
+            record = batch_records[batch_id]
+            batch_provider.rebuild_projections(
+                Path(str(record["output_root"])),
+                self.contracts,
+                batch_id=batch_id,
+                control_store_root=self.workspace_root,
+                recovery_operation_token=operation_id,
+            )
+
+        delivery_run_ids: list[str] = []
+        bindings = {
+            str(item["run_id"]): item
+            for item in snapshot["authority_inventory"]["run_bindings"]
+        }
+        for projection in snapshot["authority_inventory"]["delivery_projections"]:
+            run_id = str(projection["run_id"])
+            binding = bindings.get(run_id)
+            if binding is None:
+                raise ControlStoreUnavailable(
+                    "imported delivery projection has no Run authority",
+                    data={"gate": "reinitialization_delivery_reconciliation"},
+                )
+            record = read_json(Path(str(binding["run_record_path"])))
+            if record.get("delivery") != projection.get("delivery"):
+                raise ControlStoreUnavailable(
+                    "imported delivery projection disagrees with Run authority",
+                    data={"gate": "reinitialization_delivery_reconciliation"},
+                )
+            from .delivery_lifecycle import DeliveryLifecycleProvider
+
+            delivery_result = DeliveryLifecycleProvider(
+                self.project_root
+            ).reconcile(run_dir=run_dirs[run_id])
+            if (
+                delivery_result.get("run_id") != run_id
+                or delivery_result.get("stage")
+                != projection.get("delivery", {}).get("stage")
+            ):
+                raise ControlStoreUnavailable(
+                    "public delivery reconciliation disagrees with imported authority",
+                    data={
+                        "gate": "reinitialization_delivery_reconciliation"
+                    },
+                )
+            delivery_run_ids.append(run_id)
+
+        connection = store._connect()
+        try:
+            actual_rows = self._table_rows(connection)
+        finally:
+            connection.close()
+        expected_rows = self._replacement_rows(snapshot)
+        if actual_rows != expected_rows:
+            raise ControlStoreUnavailable(
+                "replacement Control Store import is incomplete or changed during reconciliation",
+                data={"gate": "reinitialization_import_reconciliation"},
+            )
+        return {
+            "run_ids": sorted(run_ids),
+            "batch_ids": sorted(batch_ids),
+            "nested_batch_run_ids": sorted(nested_batch_run_ids),
+            "batch_projection_ids": sorted(projection_ids),
+            "delivery_run_ids": sorted(delivery_run_ids),
+            "table_row_counts": {
+                table: len(rows) for table, rows in sorted(actual_rows.items())
+            },
+        }
+
+    @staticmethod
+    def _replacement_rows(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        rows = json.loads(
+            json.dumps(snapshot["authority_inventory"]["complete_store_rows"])
+        )
+        metadata_rows = [
+            row
+            for row in rows["control_store_metadata"]
+            if row["key"] != "store_fencing_epoch"
+        ]
+        metadata_rows.append(
+            {
+                "key": "store_fencing_epoch",
+                "value": str(snapshot["proposed_replacement_epoch"]),
+            }
+        )
+        rows["control_store_metadata"] = sorted(
+            metadata_rows, key=lambda row: row["key"]
+        )
+        return rows
+
+    def _passing_report(
+        self,
+        state: dict[str, Any],
+        snapshot: dict[str, Any],
+        reconciliation: dict[str, Any],
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        return {
+            "schema_name": "control-store-reinitialization-report",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "operation_id": state["operation_id"],
+            "snapshot_sha256": state["snapshot_sha256"],
+            "store_id": snapshot["store_identity"]["store_id"],
+            "replacement_store_epoch": state["replacement_store_epoch"],
+            "final_global_status": "passed",
+            "identity_agreement": "passed",
+            "database_authority_agreement": "passed",
+            "filesystem_authority_agreement": "passed",
+            "output_binding_agreement": "passed",
+            "mutation_chain_agreement": "passed",
+            "projection_agreement": "passed",
+            "unresolved_ownership": [],
+            "imported_authority": reconciliation,
+            "recorded_at": recorded_at,
+        }
+
+    def _load_selected_sentinel_for_replacement(self) -> dict[str, Any]:
+        try:
+            sentinel = read_json(self.sentinel_path)
+            self.contracts.validate(
+                "control-store-reinitialization-sentinel", sentinel
+            )
+        except (OSError, json.JSONDecodeError, ContractError) as exc:
+            raise ControlStoreUnavailable(
+                "Control Store reinitialization authority is unavailable",
+                data={"gate": "reinitialization_authority_missing"},
+            ) from exc
+        if (
+            sentinel.get("operation") != "reinitialization"
+            or sentinel.get("state")
+            not in {
+                "ELIGIBILITY_PUBLISHED",
+                "PREPARED",
+                "OLD_MOVED",
+                "NEW_PUBLISHED",
+                "RECONCILING",
+                "COMMITTED",
+                "BLOCKED",
+            }
+        ):
+            raise ControlStoreUnavailable(
+                "selected Control Store reinitialization authority is not active",
+                data={"gate": "reinitialization_authority_state"},
+            )
+        return sentinel
+
+    def _advance_state(
+        self,
+        state: dict[str, Any],
+        state_path: Path,
+        target: str,
+        recorded_at: str,
+    ) -> None:
+        if state.get("state") != target:
+            state["state"] = target
+            state.setdefault("state_history", []).append(
+                {"state": target, "recorded_at": recorded_at}
+            )
+            self.contracts.validate("control-store-reinitialization-state", state)
+            write_json_atomic(state_path, state)
+
+    def _update_reinitialization_sentinel(
+        self, state: str, *, report_path: Path | None = None
+    ) -> None:
+        sentinel = read_json(self.sentinel_path)
+        sentinel["state"] = state
+        if report_path is not None:
+            sentinel["report_path"] = str(report_path)
+            sentinel["report_sha256"] = sha256_file(report_path)
+        self.contracts.validate("control-store-reinitialization-sentinel", sentinel)
+        write_json_atomic(self.sentinel_path, sentinel)
+
+    @staticmethod
+    def _validate_fault_point(fault_point: str | None) -> None:
+        if fault_point is not None and fault_point not in REINITIALIZATION_FAULT_POINTS:
+            raise ContractError("unknown Control Store reinitialization fault point")
+
+    @staticmethod
+    def _inject_fault(fault_point: str | None, boundary: str) -> None:
+        if fault_point == boundary:
+            raise ReinitializationInterruption(boundary)
 
     def _load_selected_sentinel(self, operation_id: str) -> dict[str, Any]:
         try:

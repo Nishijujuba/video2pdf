@@ -12,7 +12,10 @@ from .contracts import ContractRegistry
 from .delivery_quality import DeliveryQualityRegistry
 from .control_store import ControlStore
 from .control_store_recovery import ControlStoreRecovery
-from .control_store_reinitialization import ControlStoreReinitialization
+from .control_store_reinitialization import (
+    ControlStoreReinitialization,
+    REINITIALIZATION_FAULT_POINTS,
+)
 from .errors import (
     CliUsageError,
     ControlStoreUnavailable,
@@ -560,6 +563,24 @@ def _parser() -> argparse.ArgumentParser:
         "--coordinator-session-id", required=True
     )
     store_reinitialization_abandon.add_argument("--abandoned-at", required=True)
+
+    store_reinitialize = commands.add_parser("control-store-reinitialize")
+    store_reinitialize.add_argument("--workspace-root", required=True, type=Path)
+    store_reinitialize.add_argument("--snapshot", required=True, type=Path)
+    store_reinitialize.add_argument("--coordinator-session-id", required=True)
+    store_reinitialize.add_argument("--reinitialized-at", required=True)
+    store_reinitialize.add_argument(
+        "--fault-point", choices=sorted(REINITIALIZATION_FAULT_POINTS)
+    )
+
+    store_reinitialize_resume = commands.add_parser(
+        "control-store-reinitialize-resume"
+    )
+    store_reinitialize_resume.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    store_reinitialize_resume.add_argument("--operation-id", required=True)
+    store_reinitialize_resume.add_argument("--resumed-at", required=True)
 
     probe = commands.add_parser("bootstrap-probe")
     _add_bootstrap_probe_inputs(probe)
@@ -1641,6 +1662,36 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             str(result["classification"]),
             result,
             str(result["abandonment_path"]),
+        )
+    if command == "control-store-reinitialize":
+        result = ControlStoreReinitialization(
+            args.workspace_root,
+            project_root=project_root,
+        ).reinitialize_selected(
+            args.snapshot,
+            coordinator_session_id=args.coordinator_session_id,
+            reinitialized_at=args.reinitialized_at,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["report_path"]),
+        )
+    if command == "control-store-reinitialize-resume":
+        result = ControlStoreReinitialization(
+            args.workspace_root,
+            project_root=project_root,
+        ).resume_replacement(
+            operation_id=args.operation_id,
+            resumed_at=args.resumed_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            str(result["report_path"]),
         )
     if command == "contracts-check":
         registry = ContractRegistry(project_root, args.registry)

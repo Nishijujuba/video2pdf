@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .errors import ContractError, KernelConflict
-from .release_maintenance import ReleaseMaintenance
+from .release_profile import WorkflowReleaseProfile
 from .utils import read_json, sha256_file, write_json_atomic
 
 
@@ -225,7 +225,7 @@ class CutoverAuthorityRetirement:
         profile_path = _resolve_project_path(
             self.project_root, config["release_profile"], "release_profile"
         )
-        profile = ReleaseMaintenance(self.project_root)._validate_profile(profile_path)
+        profile = WorkflowReleaseProfile(self.project_root).load(profile_path)
 
         with _exclusive_retirement_fence(root):
             committed = tombstone_path(root)

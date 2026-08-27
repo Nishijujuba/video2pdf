@@ -296,14 +296,18 @@ class VideoWorkflowKernel:
         requested_source_acquisition_mode: str = "fresh_download",
         resource_admission: dict[str, Any] | None = None,
     ) -> ProductionBootstrapResult:
-        """Persist a deterministic locator or an offline recorded Bootstrap probe."""
+        """Persist a deterministic, recorded, or live provider Bootstrap probe."""
 
         from .adapters import PlatformAdapter, PlatformAdapterError
         from .source_acquisition import derive_source_identity, record_source_blocker
 
         if not isinstance(adapter, PlatformAdapter):
             raise ContractError("production Source Adapter does not implement PlatformAdapter")
-        if provider_kind not in {"deterministic_locator", "recorded_fixture"}:
+        if provider_kind not in {
+            "deterministic_locator",
+            "recorded_fixture",
+            "live_provider",
+        }:
             raise ContractError("fresh production Bootstrap provider kind is unsupported")
         if requested_source_acquisition_mode != "fresh_download":
             raise ContractError("production platform probe requires fresh_download mode")

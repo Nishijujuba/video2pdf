@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/workflow-admission-activation.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name",
+    "schema_version",
+    "activation_status",
+    "release_id",
+    "profile_sha256",
+    "generation",
+    "activated_at"
+  ],
+  "properties": {
+    "schema_name": {"const": "workflow-admission-activation"},
+    "schema_version": {"const": "1.0.0"},
+    "activation_status": {"const": "active_profile_admission"},
+    "release_id": {"const": "workflow-2.0"},
+    "profile_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "generation": {"type": "integer", "minimum": 1},
+    "activated_at": {"type": "string", "minLength": 1}
+  }
+}

@@ -149,7 +149,7 @@
         "resource_admission"
       ],
       "properties": {
-        "provider_kind": {"enum": ["deterministic_locator", "recorded_fixture", "verified_import"]},
+        "provider_kind": {"enum": ["deterministic_locator", "recorded_fixture", "live_provider", "verified_import"]},
         "command_argv_redacted": {
           "type": "array",
           "items": {"type": "string", "minLength": 1, "maxLength": 2000}

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+from contextlib import redirect_stderr, redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -15,10 +18,54 @@ from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow.test_issue13_platform_cutover import (
     _run_cli as _run_platform_cli,
 )
+from src.video2pdf_workflow_kernel.adapters import RecordedCommandRunner
+from src.video2pdf_workflow_kernel.cli import main as workflow_main
+from src.video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 
 
 def _run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
     completed = _run_platform_cli(*arguments)
+    return completed, json.loads(completed.stdout)
+
+
+def _run_start_cli_with_recording(
+    recording: Path,
+    *arguments: str,
+    injected_fault_point: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    runner_patch = patch(
+        "src.video2pdf_workflow_kernel.production_bootstrap.SubprocessCommandRunner",
+        return_value=RecordedCommandRunner(recording),
+    )
+    original_initialize = VideoWorkflowKernel.initialize_production_source
+
+    def initialize_with_fault(self, probe, **kwargs):
+        kwargs["fault_point"] = injected_fault_point
+        return original_initialize(self, probe, **kwargs)
+
+    fault_patch = (
+        patch.object(
+            VideoWorkflowKernel,
+            "initialize_production_source",
+            initialize_with_fault,
+        )
+        if injected_fault_point is not None
+        else None
+    )
+    with runner_patch, redirect_stdout(stdout), redirect_stderr(stderr):
+        if fault_patch is None:
+            returncode = workflow_main(list(arguments))
+        else:
+            with fault_patch:
+                returncode = workflow_main(list(arguments))
+    completed = subprocess.CompletedProcess(
+        args=list(arguments),
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )
     return completed, json.loads(completed.stdout)
 
 
@@ -49,33 +96,65 @@ def _source_identity(item_id: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _write_start_run_project(case_root: Path) -> tuple[Path, Path, Path]:
+    project_root = case_root / "project"
+    config_root = project_root / "config"
+    workspace_root = project_root / "workspace"
+    config_root.mkdir(parents=True)
+    profile_path = config_root / "workflow-release-profile.v1.json"
+    profile_path.write_bytes(
+        (PROJECT_ROOT / "config" / "workflow-release-profile.v1.json").read_bytes()
+    )
+    activation_path = config_root / "workflow-admission-activation.v1.json"
+    activation_path.write_text(
+        json.dumps(
+            {
+                "schema_name": "workflow-admission-activation",
+                "schema_version": "1.0.0",
+                "activation_status": "active_profile_admission",
+                "release_id": "workflow-2.0",
+                "profile_sha256": _sha256(profile_path),
+                "generation": 1,
+                "activated_at": "2026-08-27T00:00:00Z",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    project_config = config_root / "workflow-project.v1.json"
+    project_config.write_text(
+        json.dumps(
+            {
+                "schema_name": "workflow-project-config",
+                "schema_version": "1.0.0",
+                "workspace_root": "../workspace",
+                "control_store_root": "../workspace",
+                "release_profile": "workflow-release-profile.v1.json",
+                "ordinary_run_platforms": ["bilibili", "youtube"],
+                "existing_directory_policy": "explicit_legacy_maintenance_only",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    credential = case_root / "private" / "cookies.txt"
+    credential.parent.mkdir(parents=True)
+    credential.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".example.invalid\tTRUE\t/\tTRUE\t2147483647\tSESSION\tsecret\n",
+        encoding="utf-8",
+    )
+    return project_config, workspace_root, credential
+
+
 class Issue13RunInitializationTests(unittest.TestCase):
-    def test_init_run_rejects_unsafe_session_ids_before_session_target_publication(
+    def test_start_run_rejects_unsafe_session_ids_before_bootstrap_or_run_publication(
         self,
     ) -> None:
-        from tests.video_workflow.test_issue13_platform_cutover import (
-            Issue13PlatformCutoverTests,
-        )
-
-        authority_fixture = Issue13PlatformCutoverTests(
-            "test_bilibili_activation_publishes_single_platform_authority"
-        )
-        control_store_root, exit_evidence = (
-            authority_fixture._write_valid_cutover_manifest()
-        )
-        activated = _run_platform_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-
         cases = (
             ("parent_segment", ".."),
             ("absolute_path", None),
@@ -86,38 +165,21 @@ class Issue13RunInitializationTests(unittest.TestCase):
                 case_root = new_case_dir(
                     f"{self.id()}-{label}", label="issue13-unsafe-session-id"
                 )
-                project_root = case_root / "project"
-                workspace_root = project_root / "workspace"
-                probe_path = (
-                    workspace_root
-                    / "待删除"
-                    / "pipeline-bootstrap"
-                    / "00000000000000000000000000000000"
-                    / "probe.json"
-                )
-                probe_path.parent.mkdir(parents=True)
-                probe_path.write_bytes(
-                    (
-                        PROJECT_ROOT
-                        / "tests"
-                        / "video_workflow"
-                        / "fixtures"
-                        / "contracts"
-                        / "bootstrap-record.v2.valid.json"
-                    ).read_bytes()
+                project_config, workspace_root, _credential = (
+                    _write_start_run_project(case_root)
                 )
                 session_id = declared_session_id or str(
                     (case_root / "absolute-session-escape").resolve()
                 )
 
                 completed, envelope = _run_cli(
-                    "init-run",
-                    "--workspace-root",
-                    str(workspace_root),
-                    "--control-store-root",
-                    str(control_store_root),
-                    "--probe",
-                    str(probe_path),
+                    "start-run",
+                    "--project-config",
+                    str(project_config),
+                    "--platform",
+                    "bilibili",
+                    "--source-url",
+                    "https://www.bilibili.com/video/BV1TEST00001/?p=1",
                     "--session-id",
                     session_id,
                 )
@@ -140,110 +202,29 @@ class Issue13RunInitializationTests(unittest.TestCase):
                     },
                     completed.stdout + completed.stderr,
                 )
+                self.assertFalse(workspace_root.exists())
 
-    def test_active_bilibili_init_run_atomically_publishes_v4_and_delivery_projections(
+    def test_profile_backed_start_run_atomically_publishes_v4_and_delivery_projections(
         self,
     ) -> None:
-        from tests.video_workflow.test_issue13_platform_cutover import (
-            Issue13PlatformCutoverTests,
-        )
-
-        authority_fixture = Issue13PlatformCutoverTests(
-            "test_bilibili_activation_publishes_single_platform_authority"
-        )
-        control_store_root, exit_evidence = (
-            authority_fixture._write_valid_cutover_manifest()
-        )
-        activated = _run_platform_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-
         case_root = new_case_dir(self.id(), label="issue13-run-initialization")
         project_root = case_root / "project"
-        workspace_root = project_root / "workspace"
-        probe_path = (
-            workspace_root
-            / "待删除"
-            / "pipeline-bootstrap"
-            / "13131313131313131313131313131313"
-            / "probe.json"
-        )
-        probe_path.parent.mkdir(parents=True)
-        probe_path.write_text(
-            json.dumps(
-                {
-                    "schema_name": "bootstrap-record",
-                    "schema_version": "2.0.0",
-                    "kernel_version": "2.0.0",
-                    "run_id": "13131313131313131313131313131313",
-                    "request_id": "issue-13-public-init",
-                    "task_start": "2026-08-09T09:00:00+08:00",
-                    "requested_source_acquisition_mode": "fresh_download",
-                    "adapter": {
-                        "id": "bilibili",
-                        "contract_version": "1.0.0",
-                        "canonical_platform": "bilibili",
-                    },
-                    "source_request": {
-                        "kind": "fresh_download",
-                        "canonical_locator": (
-                            "https://www.bilibili.com/video/BV1Issue13001"
-                        ),
-                    },
-                    "canonical_platform": "bilibili",
-                    "canonical_item_id": "BV1Issue13001",
-                    "source_identity_scheme": "canonical-platform-item-v1",
-                    "source_identity": (
-                        "30980733474409763bdd58bf2bd372fe1"
-                        "c2d6b6489f86dbb9f9ce836285f3116"
-                    ),
-                    "original_title": "Issue 13 Bilibili run",
-                    "availability": {
-                        "duration_seconds": 120,
-                        "chapter_count": 0,
-                        "subtitle_languages": ["en"],
-                        "media_format_classes": ["combined"],
-                    },
-                    "probe_execution": {
-                        "provider_kind": "recorded_fixture",
-                        "command_argv_redacted": [
-                            "recorded-bilibili",
-                            "--source",
-                            "https://www.bilibili.com/video/BV1Issue13001",
-                        ],
-                        "authentication_classification": "cookie_accepted",
-                        "normalized_result_sha256": "1" * 64,
-                        "resource_admission": None,
-                    },
-                    "status": "probe_complete",
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        project_config, workspace_root, credential = _write_start_run_project(case_root)
 
-        completed, envelope = _run_cli(
-            "init-run",
-            "--workspace-root",
-            str(workspace_root),
-            "--control-store-root",
-            str(control_store_root),
-            "--probe",
-            str(probe_path),
+        completed, envelope = _run_start_cli_with_recording(
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/providers/bilibili/fresh-download",
+            "start-run",
+            "--project-config",
+            str(project_config),
+            "--platform",
+            "bilibili",
+            "--source-url",
+            "https://www.bilibili.com/video/BV1TEST00001/?p=1",
             "--session-id",
             "session-issue13",
+            "--credential-ref",
+            str(credential),
         )
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertEqual("run_initialized", envelope["classification"])
@@ -489,81 +470,46 @@ class Issue13RunInitializationTests(unittest.TestCase):
         self.assertEqual(_sha256(video_target_path), task_entry["video_target"]["sha256"])
         self.assertEqual(_sha256(session_target_path), task_entry["session_target"]["sha256"])
 
-    def test_active_init_retry_recovers_without_reacquiring_delivery_lock(
+    def test_start_run_retry_recovers_without_reprobing_or_reacquiring_delivery_lock(
         self,
     ) -> None:
-        from tests.video_workflow.test_issue13_platform_cutover import (
-            Issue13PlatformCutoverTests,
+        case_root = new_case_dir(self.id(), label="issue13-init-direct-retry")
+        project_config, _workspace_root, credential = _write_start_run_project(
+            case_root
         )
-
-        authority_fixture = Issue13PlatformCutoverTests(
-            "test_bilibili_activation_publishes_single_platform_authority"
-        )
-        control_store_root, exit_evidence = (
-            authority_fixture._write_valid_cutover_manifest()
-        )
-        activated = _run_platform_cli(
-            "platform-kernel-activate",
+        session_id = "session-issue13-direct-retry"
+        command = (
+            "start-run",
+            "--project-config",
+            str(project_config),
             "--platform",
             "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-
-        case_root = new_case_dir(self.id(), label="issue13-init-direct-retry")
-        project_root = case_root / "project"
-        workspace_root = project_root / "workspace"
-        run_id = "00000000000000000000000000000000"
-        session_id = "session-issue13-direct-retry"
-        probe_path = (
-            workspace_root
-            / "待删除"
-            / "pipeline-bootstrap"
-            / run_id
-            / "probe.json"
-        )
-        probe_path.parent.mkdir(parents=True)
-        probe_path.write_bytes(
-            (
-                PROJECT_ROOT
-                / "tests"
-                / "video_workflow"
-                / "fixtures"
-                / "contracts"
-                / "bootstrap-record.v2.valid.json"
-            ).read_bytes()
-        )
-        command = (
-            "init-run",
-            "--workspace-root",
-            str(workspace_root),
-            "--control-store-root",
-            str(control_store_root),
-            "--probe",
-            str(probe_path),
+            "--source-url",
+            "https://www.bilibili.com/video/BV1TEST00001/?p=1",
             "--session-id",
             session_id,
+            "--credential-ref",
+            str(credential),
+        )
+        recording = (
+            PROJECT_ROOT
+            / "tests/video_workflow/fixtures/providers/bilibili/fresh-download"
         )
 
-        interrupted, fault = _run_cli(
+        interrupted, fault = _run_start_cli_with_recording(
+            recording,
             *command,
-            "--fault-point",
-            "after_output_dir_publish",
+            injected_fault_point="after_output_dir_publish",
         )
         self.assertEqual(60, interrupted.returncode, interrupted.stdout)
         self.assertEqual("injected_initialization_fault", fault["classification"])
 
-        recovered, recovery = _run_cli(*command)
+        recovered, recovery = _run_start_cli_with_recording(recording, *command)
         self.assertEqual(0, recovered.returncode, recovered.stdout + recovered.stderr)
         self.assertEqual("run_initialized", recovery["classification"])
-        self.assertEqual(run_id, recovery["data"]["run_id"])
+        run_id = recovery["data"]["run_id"]
 
-        completed, envelope = _run_cli(*command)
+        completed, envelope = _run_start_cli_with_recording(recording, *command)
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertEqual("run_initialized", envelope["classification"])
         self.assertEqual(run_id, envelope["data"]["run_id"])

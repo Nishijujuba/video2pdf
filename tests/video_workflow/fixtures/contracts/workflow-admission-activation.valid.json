@@ -1,0 +1,9 @@
+{
+  "schema_name": "workflow-admission-activation",
+  "schema_version": "1.0.0",
+  "activation_status": "active_profile_admission",
+  "release_id": "workflow-2.0",
+  "profile_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "generation": 1,
+  "activated_at": "2026-08-27T00:00:00Z"
+}

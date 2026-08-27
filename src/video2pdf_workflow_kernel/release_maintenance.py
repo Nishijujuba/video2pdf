@@ -48,6 +48,29 @@ class ReleaseMaintenance:
     def published_profile_path(self) -> Path:
         return self.project_root / PROFILE_RELATIVE_PATH
 
+    def require_for_admission(
+        self, *, profile: Path, capability: str
+    ) -> dict[str, Any]:
+        """Validate ordinary capability without reading historical evidence."""
+
+        value = self._validate_profile(profile.resolve())
+        if capability not in {"bilibili", "youtube", "batch"}:
+            _reject(
+                "Workflow Release Profile capability is unsupported",
+                "platform_activation",
+                "workflow_release_capability_unsupported",
+            )
+        if (
+            value["capabilities"]["global_gate"] != "active"
+            or value["capabilities"][capability] != "active"
+        ):
+            _reject(
+                "Workflow Release Profile capability is inactive",
+                "platform_activation",
+                "workflow_release_capability_inactive",
+            )
+        return value
+
     def publish(
         self,
         *,

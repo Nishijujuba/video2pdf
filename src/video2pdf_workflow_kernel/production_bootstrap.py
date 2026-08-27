@@ -5,12 +5,13 @@ import os
 from pathlib import Path
 import stat
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from .adapters import (
     BilibiliPlatformAdapter,
     PlatformProbeRequest,
     RecordedCommandRunner,
+    SubprocessCommandRunner,
     YouTubePlatformAdapter,
     YtDlpRuntime,
 )
@@ -139,6 +140,7 @@ def bootstrap_bilibili_production_probe(
     request_id: str,
     explicit_item_selector: str | None,
     provider_recording: Path | None,
+    provider_mode: Literal["deterministic", "recorded", "live"] | None = None,
 ) -> Any:
     return _bootstrap_platform_production_probe(
         platform="bilibili",
@@ -151,6 +153,7 @@ def bootstrap_bilibili_production_probe(
         request_id=request_id,
         explicit_item_selector=explicit_item_selector,
         provider_recording=provider_recording,
+        provider_mode=provider_mode,
     )
 
 
@@ -165,6 +168,7 @@ def bootstrap_youtube_production_probe(
     request_id: str,
     explicit_item_selector: str | None,
     provider_recording: Path | None,
+    provider_mode: Literal["deterministic", "recorded", "live"] | None = None,
 ) -> Any:
     return _bootstrap_platform_production_probe(
         platform="youtube",
@@ -177,6 +181,7 @@ def bootstrap_youtube_production_probe(
         request_id=request_id,
         explicit_item_selector=explicit_item_selector,
         provider_recording=provider_recording,
+        provider_mode=provider_mode,
     )
 
 
@@ -192,6 +197,7 @@ def _bootstrap_platform_production_probe(
     request_id: str,
     explicit_item_selector: str | None,
     provider_recording: Path | None,
+    provider_mode: Literal["deterministic", "recorded", "live"] | None,
 ) -> Any:
     if not source_url:
         raise ContractError("production Bootstrap requires --source-url")
@@ -205,7 +211,14 @@ def _bootstrap_platform_production_probe(
         adapter = YouTubePlatformAdapter(runtime)
     else:
         adapter = BilibiliPlatformAdapter(runtime)
-    if provider_recording is None:
+    selected_mode = provider_mode or (
+        "recorded" if provider_recording is not None else "deterministic"
+    )
+    if selected_mode == "deterministic":
+        if provider_recording is not None:
+            raise ContractError(
+                "deterministic Bootstrap cannot accept a provider recording"
+            )
         if cookie_file is not None:
             raise ContractError(
                 "deterministic Bootstrap cannot accept --cookie-file"
@@ -228,11 +241,15 @@ def _bootstrap_platform_production_probe(
             provider_kind="deterministic_locator",
         )
 
+    if selected_mode == "recorded" and provider_recording is None:
+        raise ContractError("recorded Bootstrap requires a provider recording")
+    if selected_mode == "live" and provider_recording is not None:
+        raise ContractError("live Bootstrap cannot accept a provider recording")
     if cookie_file is None:
-        raise ContractError("recorded Bootstrap requires --cookie-file")
+        raise ContractError("provider Bootstrap requires a credential reference")
     if original_title is not None:
         raise ContractError(
-            "recorded Bootstrap derives title from provider metadata"
+            "provider Bootstrap derives title from provider metadata"
         )
 
     disposable_root = workspace_root.resolve().parent / "待删除"
@@ -249,7 +266,11 @@ def _bootstrap_platform_production_probe(
     )
     staging_root = disposable_root / "bootstrap" / "provider-attempts" / identity
 
-    runner = RecordedCommandRunner(provider_recording)
+    runner = (
+        SubprocessCommandRunner()
+        if selected_mode == "live"
+        else RecordedCommandRunner(provider_recording)
+    )
     request = PlatformProbeRequest(
         source_url=source_url,
         localized_cookie_file=localized_cookie,
@@ -262,5 +283,7 @@ def _bootstrap_platform_production_probe(
         runner=runner,
         task_start=task_start,
         request_id=request_id,
-        provider_kind="recorded_fixture",
+        provider_kind=(
+            "live_provider" if selected_mode == "live" else "recorded_fixture"
+        ),
     )

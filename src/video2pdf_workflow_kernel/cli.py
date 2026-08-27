@@ -61,6 +61,7 @@ from .platform_kernel import (
     BilibiliPlatformCutoverPublisher,
 )
 from .release_maintenance import ReleaseMaintenance
+from .ordinary_startup import OrdinaryRunStartup
 from .cutover_retirement import (
     CutoverAuthorityRetirement,
     cutover_mutation_fence,
@@ -562,6 +563,15 @@ def _parser() -> argparse.ArgumentParser:
 
     probe = commands.add_parser("bootstrap-probe")
     _add_bootstrap_probe_inputs(probe)
+
+    start_run = commands.add_parser("start-run")
+    start_run.add_argument("--project-config", required=True, type=Path)
+    start_run.add_argument(
+        "--platform", required=True, choices=("bilibili", "youtube")
+    )
+    start_run.add_argument("--source-url", required=True)
+    start_run.add_argument("--session-id", required=True)
+    start_run.add_argument("--credential-ref", type=Path)
 
     init = commands.add_parser("init-run")
     init.add_argument("--workspace-root", required=True, type=Path)
@@ -1758,6 +1768,20 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             "probe_complete",
             data,
             str(result.record_path),
+        )
+    if command == "start-run":
+        result = OrdinaryRunStartup(project_root).start(
+            project_config=args.project_config,
+            platform=args.platform,
+            source_url=args.source_url,
+            session_id=args.session_id,
+            credential_ref=args.credential_ref,
+        )
+        return _ok(
+            command,
+            "run_initialized",
+            result,
+            str(Path(result["run_dir"]) / "workflow/run.json"),
         )
     if command == "source-import" and args.prior_run_dir is not None:
         if (

@@ -67,6 +67,15 @@
       "negative_example": "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
     },
     {
+      "schema_name": "workflow-admission-activation",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/workflow-admission-activation.v1.schema.json",
+      "schema_path": "schemas/video-workflow/v1/workflow-admission-activation.v1.schema.json",
+      "kind": "contract",
+      "positive_example": "tests/video_workflow/fixtures/contracts/workflow-admission-activation.valid.json",
+      "negative_example": "tests/video_workflow/fixtures/contracts/workflow-admission-activation.invalid.json"
+    },
+    {
       "schema_name": "control-store-identity",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/video-workflow/v1/control-store-identity.v1.schema.json",

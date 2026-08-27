@@ -69,7 +69,7 @@
         "complete_store_rows": {"$ref": "#/$defs/table_inventory"}
       }
     },
-    "unresolved_ownership": {"type": "array", "maxItems": 0}
+    "unresolved_ownership": {"type": "array"}
   },
   "$defs": {
     "row": {"type": "object"},

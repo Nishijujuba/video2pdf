@@ -1857,6 +1857,37 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
                 committed_sentinel,
             )
 
+        # scenario_id: reinitialization_snapshot_unresolved_ownership
+        # target_invariant: eligibility requires zero unresolved ownership
+        # mutation_seam: unresolved_ownership after exhaustive Store inventory
+        # rematerialized_nodes: none; the target field is the terminal snapshot node
+        # intentionally_stale_nodes: none
+        # expected_first_gate: reinitialization_snapshot_unresolved_ownership
+        # expected_error_code: reinitialization_snapshot_unresolved_ownership
+        # scenario_class: single_contradiction
+        eligibility_fixture_root = (
+            PROJECT_ROOT / "tests/video_workflow/fixtures/contracts"
+        )
+        kernel.contracts.validate(
+            "control-store-reinitialization-eligibility-snapshot",
+            read_json(
+                eligibility_fixture_root
+                / "control-store-reinitialization-eligibility-snapshot.valid.json"
+            ),
+        )
+        with self.assertRaises(ContractError) as invalid_eligibility:
+            kernel.contracts.validate(
+                "control-store-reinitialization-eligibility-snapshot",
+                read_json(
+                    eligibility_fixture_root
+                    / "control-store-reinitialization-eligibility-snapshot.invalid.json"
+                ),
+            )
+        self.assertEqual(
+            invalid_eligibility.exception.data["gate"],
+            "reinitialization_snapshot_unresolved_ownership",
+        )
+
         active_kernel, active_run_dir = self.traced_kernel(
             "reinitialization-active-authority"
         )

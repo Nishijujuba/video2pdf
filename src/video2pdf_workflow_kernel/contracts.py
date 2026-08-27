@@ -1706,6 +1706,11 @@ def _validate_scaffold_contract(instance: dict[str, Any]) -> None:
 def _validate_control_store_reinitialization_eligibility(
     instance: dict[str, Any],
 ) -> None:
+    if instance["unresolved_ownership"]:
+        raise ContractError(
+            "Control Store reinitialization snapshot contains unresolved ownership",
+            data={"gate": "reinitialization_snapshot_unresolved_ownership"},
+        )
     if instance["maintenance_fence_id"] != instance["snapshot_id"]:
         raise ContractError(
             "Control Store reinitialization snapshot and maintenance fence disagree"

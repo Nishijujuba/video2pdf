@@ -60,6 +60,7 @@ from .platform_kernel import (
     ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
     BilibiliPlatformCutoverPublisher,
 )
+from .release_maintenance import ReleaseMaintenance
 from .production_bootstrap import (
     bootstrap_bilibili_production_probe,
     bootstrap_youtube_production_probe,
@@ -293,6 +294,16 @@ def _parser() -> argparse.ArgumentParser:
     legacy_adopt.add_argument("--control-store-root", required=True, type=Path)
     legacy_adopt.add_argument("--adopted-at", required=True)
     legacy_adopt.add_argument("--output", type=Path)
+
+    release_profile_publish = commands.add_parser("release-profile-publish")
+    release_profile_publish.add_argument(
+        "--candidate-profile", required=True, type=Path
+    )
+    _add_release_evidence_inputs(release_profile_publish)
+
+    release_audit = commands.add_parser("release-audit")
+    release_audit.add_argument("--profile", required=True, type=Path)
+    _add_release_evidence_inputs(release_audit)
 
     global_gate_activate = commands.add_parser("global-gate-activate")
     global_gate_activate.add_argument("--control-store-root", required=True, type=Path)
@@ -795,6 +806,13 @@ def _add_trace_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--title-override")
 
 
+def _add_release_evidence_inputs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--global-gate-exit-evidence", required=True, type=Path)
+    parser.add_argument("--bilibili-exit-evidence", required=True, type=Path)
+    parser.add_argument("--youtube-exit-evidence", required=True, type=Path)
+    parser.add_argument("--batch-exit-evidence", required=True, type=Path)
+
+
 def _add_bootstrap_probe_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace-root", required=True, type=Path)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -958,6 +976,29 @@ def _resource_status_data(status: Any) -> dict[str, Any]:
 
 def _execute(args: argparse.Namespace, project_root: Path) -> dict:
     command = args.command
+    if command == "release-profile-publish":
+        result = ReleaseMaintenance(project_root).publish(
+            candidate_profile=args.candidate_profile,
+            global_gate_exit_evidence=args.global_gate_exit_evidence,
+            bilibili_exit_evidence=args.bilibili_exit_evidence,
+            youtube_exit_evidence=args.youtube_exit_evidence,
+            batch_exit_evidence=args.batch_exit_evidence,
+        )
+        return _ok(
+            command,
+            "workflow_release_profile_published",
+            result,
+            result["profile_path"],
+        )
+    if command == "release-audit":
+        result = ReleaseMaintenance(project_root).audit(
+            profile=args.profile,
+            global_gate_exit_evidence=args.global_gate_exit_evidence,
+            bilibili_exit_evidence=args.bilibili_exit_evidence,
+            youtube_exit_evidence=args.youtube_exit_evidence,
+            batch_exit_evidence=args.batch_exit_evidence,
+        )
+        return _ok(command, "workflow_release_audit_passed", result)
     if command == "legacy-acceptance-adopt":
         result = LegacyAcceptanceProvider(project_root).adopt(
             video_output_dir=args.video_output_dir, final_pdf=args.final_pdf,

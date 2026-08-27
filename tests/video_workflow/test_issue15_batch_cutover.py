@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
+import json
 import sqlite3
 import sys
+from types import SimpleNamespace
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +30,7 @@ from video2pdf_workflow_kernel.errors import (
     ControlStoreUnavailable,
     KernelConflict,
 )
+from video2pdf_workflow_kernel import release_maintenance
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
     read_json,
@@ -91,7 +95,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             )
         return root, evidence, publisher
 
-    def test_batch_authority_commands_are_public(self) -> None:
+    def test_batch_and_release_maintenance_commands_are_public(self) -> None:
         choices = kernel_cli._parser()._subparsers._group_actions[0].choices
 
         self.assertEqual(
@@ -104,6 +108,8 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                     "batch-authority-refresh",
                     "batch-reconcile",
                     "batch-authority-check",
+                    "release-profile-publish",
+                    "release-audit",
                 }
             },
             {
@@ -111,6 +117,8 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 "batch-authority-refresh",
                 "batch-reconcile",
                 "batch-authority-check",
+                "release-profile-publish",
+                "release-audit",
             },
         )
 
@@ -132,7 +140,9 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertFalse((root / BATCH_CUTOVER_DB).exists())
 
-    def test_batch_authority_commands_return_workflow_envelopes(self) -> None:
+    def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
+        self,
+    ) -> None:
         authority = {
             "authority_path": "D:/workspace/active_batch.json",
             "authority_sha256": "a" * 64,
@@ -189,6 +199,145 @@ class Issue15BatchCutoverTests(unittest.TestCase):
 
                 self.assertEqual(envelope["classification"], classification)
                 self.assertEqual(envelope["evidence_path"], authority["authority_path"])
+
+        root = new_case_dir(self.id(), label="release-maintenance")
+        candidate = root / "candidate-profile.json"
+        candidate.write_bytes(
+            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
+        )
+        published = root / "published-profile.json"
+        evidence_arguments = [
+            "--global-gate-exit-evidence", str(root / "global-gate.json"),
+            "--bilibili-exit-evidence", str(root / "bilibili.json"),
+            "--youtube-exit-evidence", str(root / "youtube.json"),
+            "--batch-exit-evidence", str(root / "batch.json"),
+        ]
+        validated_evidence = {
+            capability: {"path": str(root / f"{capability}.json")}
+            for capability in ("global_gate", "bilibili", "youtube", "batch")
+        }
+
+        with (
+            patch.object(
+                release_maintenance,
+                "PROFILE_RELATIVE_PATH",
+                published.relative_to(PROJECT_ROOT),
+            ),
+            patch.object(
+                release_maintenance.ReleaseMaintenance,
+                "_validate_release_package",
+                return_value=validated_evidence,
+            ) as validate_release_package,
+        ):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                published_exit = kernel_cli.main(
+                    [
+                        "release-profile-publish",
+                        "--candidate-profile", str(candidate),
+                        *evidence_arguments,
+                    ]
+                )
+            published_result = json.loads(stdout.getvalue())
+            self.assertEqual(published_exit, 0)
+            self.assertEqual(
+                published_result["classification"],
+                "workflow_release_profile_published",
+            )
+            self.assertEqual(read_json(published), read_json(candidate))
+            self.assertEqual(validate_release_package.call_count, 1)
+
+            authoritative_bytes = published.read_bytes()
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                failed_exit = kernel_cli.main(
+                    [
+                        "release-profile-publish",
+                        "--candidate-profile",
+                        str(
+                            PROJECT_ROOT
+                            / "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
+                        ),
+                        *evidence_arguments,
+                    ]
+                )
+            failed_result = json.loads(stdout.getvalue())
+            self.assertEqual(failed_exit, 20)
+            self.assertEqual(failed_result["status"], "error")
+            self.assertEqual(
+                failed_result["data"]["error_code"],
+                "workflow_release_profile_invalid",
+            )
+            self.assertEqual(published.read_bytes(), authoritative_bytes)
+            self.assertEqual(validate_release_package.call_count, 1)
+
+            runtime_authority = root / "runtime-authority.json"
+            runtime_authority.write_text('{"unchanged":true}\n', encoding="utf-8")
+            runtime_bytes = runtime_authority.read_bytes()
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                audit_exit = kernel_cli.main(
+                    [
+                        "release-audit",
+                        "--profile", str(published),
+                        *evidence_arguments,
+                    ]
+                )
+            audit_result = json.loads(stdout.getvalue())
+            self.assertEqual(audit_exit, 0)
+            self.assertEqual(
+                audit_result["classification"],
+                "workflow_release_audit_passed",
+            )
+            self.assertFalse(audit_result["data"]["profile_published"])
+            self.assertFalse(audit_result["data"]["runtime_authority_changed"])
+            self.assertEqual(published.read_bytes(), authoritative_bytes)
+            self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
+            self.assertEqual(validate_release_package.call_count, 2)
+
+        historical_validator = SimpleNamespace(
+            EvidenceError=ValueError,
+            validate_manifest=lambda *args, **kwargs: None,
+        )
+        with (
+            patch(
+                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_mirrors"
+            ),
+            patch(
+                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_implementation"
+            ),
+            patch(
+                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_bindings"
+            ),
+            patch.object(
+                release_maintenance.ReleaseMaintenance,
+                "_load_slice_validator",
+                return_value=historical_validator,
+            ),
+        ):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                historical_audit_exit = kernel_cli.main(
+                    [
+                        "release-audit",
+                        "--profile",
+                        str(PROJECT_ROOT / "config/workflow-release-profile.v1.json"),
+                        "--global-gate-exit-evidence",
+                        str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
+                        "--bilibili-exit-evidence",
+                        str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
+                        "--youtube-exit-evidence",
+                        str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
+                        "--batch-exit-evidence",
+                        str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
+                    ]
+                )
+        historical_audit_result = json.loads(stdout.getvalue())
+        self.assertEqual(historical_audit_exit, 0)
+        self.assertEqual(
+            historical_audit_result["classification"],
+            "workflow_release_audit_passed",
+        )
 
     def test_activate_publishes_current_batch_authority(self) -> None:
         root, evidence = self._case("activate")

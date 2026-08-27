@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/video-workflow/v1/workflow-release-profile.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "release_id", "contract_compatibility", "capabilities"],
+  "properties": {
+    "schema_name": {"const": "workflow-release-profile"},
+    "schema_version": {"const": "1.0.0"},
+    "release_id": {"const": "workflow-2.0"},
+    "contract_compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kernel", "global_gate", "bilibili_adapter", "youtube_adapter", "batch"],
+      "properties": {
+        "kernel": {"type": "string", "minLength": 1},
+        "global_gate": {"type": "string", "minLength": 1},
+        "bilibili_adapter": {"type": "string", "minLength": 1},
+        "youtube_adapter": {"type": "string", "minLength": 1},
+        "batch": {"type": "string", "minLength": 1}
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["global_gate", "bilibili", "youtube", "batch"],
+      "properties": {
+        "global_gate": {"enum": ["active", "inactive"]},
+        "bilibili": {"enum": ["active", "inactive"]},
+        "youtube": {"enum": ["active", "inactive"]},
+        "batch": {"enum": ["active", "inactive"]}
+      }
+    }
+  }
+}

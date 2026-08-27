@@ -108,10 +108,37 @@ def _commit_paths(project_root: Path, commit: str) -> set[str]:
     ).splitlines()))
 
 
-def _validate_schema(project_root: Path, value: Any) -> dict[str, Any]:
-    schema_path = project_root / "schemas/exit-evidence-manifest.v2.schema.json"
+def _validate_schema(
+    project_root: Path,
+    value: Any,
+    *,
+    use_historical_schema: bool,
+) -> dict[str, Any]:
     try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        if use_historical_schema:
+            implementation_commit = value.get("implementation_commit")
+            if (
+                not isinstance(implementation_commit, str)
+                or len(implementation_commit) != 40
+                or any(character not in "0123456789abcdef" for character in implementation_commit)
+            ):
+                _fail(
+                    "Global Gate implementation commit identity is invalid",
+                    "exit_evidence_schema",
+                    "exit_evidence_schema_invalid",
+                )
+            schema_text = _git(
+                project_root,
+                "show",
+                f"{implementation_commit}:schemas/exit-evidence-manifest.v2.schema.json",
+                gate="exit_evidence_schema",
+                code="exit_evidence_schema_invalid",
+            )
+        else:
+            schema_text = (
+                project_root / "schemas/exit-evidence-manifest.v2.schema.json"
+            ).read_text(encoding="utf-8")
+        schema = json.loads(schema_text)
         Draft202012Validator.check_schema(schema)
         errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.absolute_path))
     except (OSError, UnicodeError, json.JSONDecodeError, SchemaError) as exc:
@@ -125,13 +152,23 @@ def _validate_schema(project_root: Path, value: Any) -> dict[str, Any]:
     return value
 
 
-def _validate_closed_policy(project_root: Path, value: dict[str, Any]) -> None:
+def _validate_closed_policy(
+    project_root: Path,
+    value: dict[str, Any],
+    *,
+    use_historical_contract: bool,
+) -> None:
     if value["slice"] != SLICE or value["slice_base_commit"] != SLICE_BASE_COMMIT:
         _fail("Global Gate Slice authority is stale", "slice_authority", "slice_authority_stale")
     scope = value["activation_scope"]
     if scope.get("platform_kernel_authority") != "unchanged":
         _fail("Global Gate cannot change platform Kernel authority", "activation_scope", "platform_kernel_authority_changed")
-    if scope != ACTIVATION_SCOPE:
+    expected_scope = dict(ACTIVATION_SCOPE)
+    if use_historical_contract:
+        expected_scope["qualification_contract_sha256"] = scope.get(
+            "qualification_contract_sha256"
+        )
+    if scope != expected_scope:
         _fail("Global Gate activation scope is unsupported", "activation_scope", "unsupported_activation_scope")
     if value["atomic_members"] != list(ATOMIC_MEMBERS):
         _fail("Global Gate atomic member registry is incomplete", "atomic_members", "atomic_member_set_mismatch")
@@ -154,7 +191,12 @@ def _validate_closed_policy(project_root: Path, value: dict[str, Any]) -> None:
         json.dumps(bindings, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
     ).encode("utf-8")
-    if hashlib.sha256(binding_bytes).hexdigest() != QUALIFICATION_CONTRACT_SHA256:
+    expected_contract_sha256 = (
+        scope["qualification_contract_sha256"]
+        if use_historical_contract
+        else QUALIFICATION_CONTRACT_SHA256
+    )
+    if hashlib.sha256(binding_bytes).hexdigest() != expected_contract_sha256:
         _fail("Global Gate qualification result contract is stale", "qualification_result_binding", "global_gate_qualification_contract_stale")
     binding_pairs = {(item["result_id"], item["result_kind"]) for item in bindings}
     if len(bindings) != len(binding_pairs) or binding_pairs != result_pairs:
@@ -279,7 +321,13 @@ def _validate_mirrors(project_root: Path, value: dict[str, Any]) -> None:
             _fail("Global Gate mirror is stale or unequal", "mirror_checks", "global_gate_mirror_stale")
 
 
-def _validate_publication(project_root: Path, value: dict[str, Any], manifest_path: Path) -> None:
+def _validate_publication(
+    project_root: Path,
+    value: dict[str, Any],
+    manifest_path: Path,
+    *,
+    require_current_publication: bool,
+) -> None:
     relative = manifest_path.relative_to(project_root).as_posix()
     head_blob = _git(project_root, "rev-parse", f"HEAD:{relative}", gate="historical_evidence", code="canonical_manifest_uncommitted")
     worktree_blob = _git(project_root, "hash-object", f"--path={relative}", "--", relative, gate="historical_evidence", code="canonical_manifest_uncommitted")
@@ -295,16 +343,17 @@ def _validate_publication(project_root: Path, value: dict[str, Any], manifest_pa
             continue
     if publication is None:
         _fail("canonical manifest publication commit is absent", "historical_evidence", "historical_evidence_lineage_invalid")
-    head = _git(
-        project_root, "rev-parse", "HEAD",
-        gate="implementation_currentness", code="evidence_publication_not_current",
-    )
-    if publication != head:
-        _fail(
-            "Global Gate evidence publication is not the current committed authority",
-            "implementation_currentness",
-            "evidence_publication_not_current",
+    if require_current_publication:
+        head = _git(
+            project_root, "rev-parse", "HEAD",
+            gate="implementation_currentness", code="evidence_publication_not_current",
         )
+        if publication != head:
+            _fail(
+                "Global Gate evidence publication is not the current committed authority",
+                "implementation_currentness",
+                "evidence_publication_not_current",
+            )
     parents = _git(project_root, "rev-list", "--parents", "-n", "1", publication, gate="historical_evidence", code="historical_evidence_lineage_invalid").split()
     if len(parents) != 2 or parents[1] != value["implementation_commit"]:
         _fail("evidence publication is not the direct child of implementation commit", "historical_evidence", "historical_evidence_lineage_invalid")
@@ -368,8 +417,13 @@ def _validate_publication(project_root: Path, value: dict[str, Any], manifest_pa
         _fail("implementation commit is evidence-only", "historical_evidence", "implementation_commit_evidence_only")
 
 
-def validate_global_gate_exit_evidence(manifest_path: Path, *, project_root: Path) -> ValidatedExitEvidence:
-    """Validate the complete committed Issue 43 Manifest v2 before activation CAS."""
+def validate_global_gate_exit_evidence(
+    manifest_path: Path,
+    *,
+    project_root: Path,
+    require_current_publication: bool = True,
+) -> ValidatedExitEvidence:
+    """Validate committed Issue 43 evidence for activation or explicit audit."""
     root = project_root.resolve()
     path = manifest_path.resolve()
     try:
@@ -380,10 +434,23 @@ def validate_global_gate_exit_evidence(manifest_path: Path, *, project_root: Pat
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ExitEvidenceValidationError(str(exc), first_failing_gate="exit_evidence_schema", error_code="exit_evidence_unavailable") from exc
-    _validate_schema(root, value)
-    _validate_closed_policy(root, value)
+    _validate_schema(
+        root,
+        value,
+        use_historical_schema=not require_current_publication,
+    )
+    _validate_closed_policy(
+        root,
+        value,
+        use_historical_contract=not require_current_publication,
+    )
     _validate_mirrors(root, value)
     _validate_implementation(root, value)
     _validate_bindings(root, value, path)
-    _validate_publication(root, value, path)
+    _validate_publication(
+        root,
+        value,
+        path,
+        require_current_publication=require_current_publication,
+    )
     return ValidatedExitEvidence(path=path, sha256=sha256_file(path), value=value)

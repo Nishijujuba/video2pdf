@@ -1,0 +1,19 @@
+{
+  "schema_name": "workflow-release-profile",
+  "schema_version": "1.0.0",
+  "release_id": "workflow-2.0",
+  "contract_compatibility": {
+    "kernel": "2.0.0",
+    "global_gate": "acceptance-report-v2",
+    "bilibili_adapter": "1.0.0",
+    "youtube_adapter": "1.0.0",
+    "batch": "1.0.0"
+  },
+  "capabilities": {
+    "global_gate": "active",
+    "bilibili": "active",
+    "youtube": "active",
+    "batch": "active"
+  },
+  "historical_exit_evidence_path": "evidence/slice-14/exit-evidence-manifest.json"
+}

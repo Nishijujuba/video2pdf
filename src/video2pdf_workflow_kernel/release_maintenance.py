@@ -46,7 +46,7 @@ class ReleaseMaintenance:
     ) -> dict[str, Any]:
         """Validate ordinary capability without reading historical evidence."""
 
-        value = self._validate_profile(profile.resolve())
+        value = self.profiles.load(profile.resolve())
         if capability not in {"bilibili", "youtube", "batch"}:
             _reject(
                 "Workflow Release Profile capability is unsupported",

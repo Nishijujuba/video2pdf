@@ -528,6 +528,74 @@ def compiler_source_locations(
     }
 
 
+def _complete_toc_source_locations(
+    objects: list[dict[str, Any]],
+    locations: dict[str, dict[str, Any]],
+    stable_final_round_auxiliaries: dict[Path, str],
+) -> None:
+    toc_sources = [
+        path.resolve()
+        for path in stable_final_round_auxiliaries
+        if path.suffix.casefold() == ".toc" and path.is_file()
+    ]
+    if len(toc_sources) != 1:
+        return
+    toc_source = toc_sources[0]
+    source_lines = toc_source.read_text(encoding="utf-8").splitlines()
+    objects_by_id = {item["object_id"]: item for item in objects}
+    anchors: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for object_id, location in locations.items():
+        if Path(location["source_path"]).resolve() != toc_source:
+            continue
+        obj = objects_by_id.get(object_id)
+        line_number = location.get("line")
+        if obj is None or not isinstance(line_number, int):
+            continue
+        anchors.setdefault((obj["page"], line_number), []).append(obj)
+    for obj in objects:
+        if obj["object_id"] in locations or not obj["exact_utf8_text"].strip():
+            continue
+        candidates: list[int] = []
+        bbox = obj["bbox"]
+        center_y = (bbox[1] + bbox[3]) / 2
+        for (page, line_number), line_anchors in anchors.items():
+            if page != obj["page"] or not 1 <= line_number <= len(source_lines):
+                continue
+            if _normalized_layout_text(obj["exact_utf8_text"]) not in (
+                _normalized_layout_text(source_lines[line_number - 1])
+            ):
+                continue
+            same_baseline = all(
+                abs(
+                    center_y
+                    - (anchor["bbox"][1] + anchor["bbox"][3]) / 2
+                )
+                <= 1.0
+                for anchor in line_anchors
+            )
+            bounded_by_anchors = any(
+                anchor["bbox"][2] <= bbox[0] + 0.5 for anchor in line_anchors
+            ) and any(
+                anchor["bbox"][0] >= bbox[2] - 0.5 for anchor in line_anchors
+            )
+            if same_baseline and bounded_by_anchors:
+                candidates.append(line_number)
+        if len(candidates) != 1:
+            continue
+        line_number = candidates[0]
+        locations[obj["object_id"]] = {
+            "object_id": obj["object_id"],
+            "source_path": str(toc_source),
+            "line": line_number,
+            "column": -1,
+            "query": {
+                "page": obj["page"],
+                "x": (bbox[0] + bbox[2]) / 2,
+                "y": center_y,
+            },
+        }
+
+
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
     normalized = pixmap
     if pixmap.alpha or pixmap.colorspace is None or pixmap.colorspace.n != 3:
@@ -718,6 +786,11 @@ def render_and_derive(
         entry=entry,
         manifest_entries=manifest_entries,
         observed_declared_paths=observed_declared_paths,
+    )
+    _complete_toc_source_locations(
+        objects,
+        locations,
+        stable_final_round_auxiliaries,
     )
     entry_by_staged_path = {
         str((staging / Path(item["staging_path"])).resolve()).casefold(): item

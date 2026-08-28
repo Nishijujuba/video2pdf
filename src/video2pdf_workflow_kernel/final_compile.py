@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from typing import Any
+import unicodedata
 
 import fitz
 
@@ -84,6 +85,10 @@ def registered_generator_identity(generator_id: str) -> dict[str, str]:
     }
 
 
+def _normalized_layout_text(value: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", value).split())
+
+
 def validate_latex_toc_generated_text(
     generator: dict[str, Any],
     objects_by_id: dict[str, dict[str, Any]],
@@ -157,14 +162,13 @@ def validate_latex_toc_generated_text(
     for line_number, object_id_group in grouped.items():
         _, number, title, page = parsed_lines[line_number]
         tokens = [objects_by_id[value]["exact_utf8_text"] for value in object_id_group]
-        if "".join(value for value in tokens if value not in {".", " "}) != (
-            number + title + page
-        ):
+        if _normalized_layout_text(
+            "".join(value for value in tokens if value not in {".", " "})
+        ) != _normalized_layout_text(number + title + page):
             return False
         decorations = [value for value in tokens if value in {".", " "}]
         if (
-            not decorations
-            or len(decorations) > 128
+            len(decorations) > 128
             or any(
                 value == decorations[index - 1]
                 for index, value in enumerate(decorations)

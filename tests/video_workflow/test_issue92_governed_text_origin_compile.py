@@ -22,6 +22,7 @@ from video2pdf_workflow_kernel.final_compile import (
     validate_latex_toc_generated_text,
 )
 from video2pdf_workflow_kernel.errors import ContractError
+from scripts.guarded_final_compile_adapter import _complete_toc_source_locations
 
 from tests.video_workflow import test_guarded_final_compile_adapter as final_compile_fixture
 from tests.video_workflow import test_precompile_quality as precompile_fixture
@@ -647,6 +648,59 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 generator, objects, ["left", "right"], sealed_items, 2
             )
         )
+
+    def test_toc_location_completion_requires_unique_bounding_anchors(self) -> None:
+        fixture, _, _ = self._inventory_bound_adapter_fixture()
+        toc = fixture.root / "main.toc"
+        toc.write_text(
+            "\\contentsline {subsection}{\\numberline {4.2}EchoLeak：边界}{11}{subsection.4.2}%\n",
+            encoding="utf-8",
+        )
+        objects = [
+            {
+                "object_id": "before",
+                "page": 2,
+                "bbox": [80, 100, 100, 111],
+                "exact_utf8_text": "4.2",
+            },
+            {
+                "object_id": "missing",
+                "page": 2,
+                "bbox": [105, 100, 155, 111],
+                "exact_utf8_text": "EchoLeak",
+            },
+            {
+                "object_id": "after",
+                "page": 2,
+                "bbox": [160, 100, 240, 111],
+                "exact_utf8_text": "：边界",
+            },
+        ]
+        locations = {
+            "before": {
+                "object_id": "before",
+                "source_path": str(toc),
+                "line": 1,
+                "column": -1,
+                "query": {"page": 2, "x": 90, "y": 105.5},
+            },
+            "after": {
+                "object_id": "after",
+                "source_path": str(toc),
+                "line": 1,
+                "column": -1,
+                "query": {"page": 2, "x": 200, "y": 105.5},
+            },
+        }
+
+        _complete_toc_source_locations(
+            objects,
+            locations,
+            {toc.resolve(): hashlib.sha256(toc.read_bytes()).hexdigest()},
+        )
+
+        self.assertEqual(1, locations["missing"]["line"])
+        self.assertEqual(str(toc.resolve()), locations["missing"]["source_path"])
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

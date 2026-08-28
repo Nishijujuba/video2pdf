@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ContractError
+from .release_activation import WorkflowReleaseActivation
 from .release_profile import WorkflowReleaseProfile
 from .utils import read_json
 
@@ -32,6 +33,8 @@ class BatchAdmission:
     control_store_root: Path
     profile_path: Path
     release_id: str
+    profile_sha256: str
+    activation_generation: int
     capabilities: tuple[tuple[str, str], ...]
 
 
@@ -39,7 +42,9 @@ class OrdinaryAdmission:
     """Own project configuration and Profile checks for ordinary work."""
 
     def __init__(self, code_project_root: Path) -> None:
-        self.profiles = WorkflowReleaseProfile(code_project_root)
+        self.code_project_root = code_project_root.resolve()
+        self.profiles = WorkflowReleaseProfile(self.code_project_root)
+        self.activation = WorkflowReleaseActivation(self.code_project_root)
 
     def require_batch(self, project_config: Path, platform: str) -> BatchAdmission:
         config_path = project_config.resolve()
@@ -73,11 +78,18 @@ class OrdinaryAdmission:
             profile, platform, gate="platform_capability"
         )
         self.profiles.require_active(profile, "batch", gate="batch_capability")
+        activation = self.activation.require_current(
+            profile_path=profile_path,
+            profile=profile,
+            control_store_root=control_store_root,
+        )
         return BatchAdmission(
             workspace_root=workspace_root,
             control_store_root=control_store_root,
             profile_path=profile_path,
             release_id=profile["release_id"],
+            profile_sha256=activation["profile_sha256"],
+            activation_generation=activation["generation"],
             capabilities=tuple(sorted(profile["capabilities"].items())),
         )
 

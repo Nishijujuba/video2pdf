@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from .errors import ContractError
+from .cutover_retirement import project_maintenance_fence
+from .evidence import EvidenceSupportError, git_output
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
@@ -72,26 +75,48 @@ class ReleaseMaintenance:
         bilibili_exit_evidence: Path,
         youtube_exit_evidence: Path,
         batch_exit_evidence: Path,
+        control_store_root: Path | None = None,
+        historical_release: bool = False,
     ) -> dict[str, Any]:
-        profile_path = candidate_profile.resolve()
-        profile, evidence = self._validate(
-            profile=profile_path,
-            global_gate=global_gate_exit_evidence,
-            bilibili=bilibili_exit_evidence,
-            youtube=youtube_exit_evidence,
-            batch=batch_exit_evidence,
+        fence = (
+            nullcontext()
+            if control_store_root is None
+            else project_maintenance_fence(control_store_root)
         )
+        with fence:
+            profile_path = candidate_profile.resolve()
+            profile, evidence = self._validate(
+                profile=profile_path,
+                historical_release=historical_release,
+                global_gate=global_gate_exit_evidence,
+                bilibili=bilibili_exit_evidence,
+                youtube=youtube_exit_evidence,
+                batch=batch_exit_evidence,
+            )
 
-        output = self.published_profile_path
-        output.parent.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(output, profile)
-        return {
-            "profile_path": str(output),
-            "release_id": profile["release_id"],
-            "capabilities": profile["capabilities"],
-            "historical_evidence": evidence,
-            "runtime_activation_changed": False,
-        }
+            output = self.published_profile_path
+            activation_path = output.parent / "workflow-admission-activation.v1.json"
+            if (
+                control_store_root is not None
+                and activation_path.is_file()
+                and output.is_file()
+                and read_json(output) != profile
+            ):
+                _reject(
+                    "A current Profile can only change through coordinated activation",
+                    "project_maintenance_fence",
+                    "workflow_release_activation_required",
+            )
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if not output.is_file() or read_json(output) != profile:
+                write_json_atomic(output, profile)
+            return {
+                "profile_path": str(output),
+                "release_id": profile["release_id"],
+                "capabilities": profile["capabilities"],
+                "historical_evidence": evidence,
+                "runtime_activation_changed": False,
+            }
 
     def audit(
         self,
@@ -101,10 +126,12 @@ class ReleaseMaintenance:
         bilibili_exit_evidence: Path,
         youtube_exit_evidence: Path,
         batch_exit_evidence: Path,
+        historical_release: bool = False,
     ) -> dict[str, Any]:
         profile_path = profile.resolve()
         value, evidence = self._validate(
             profile=profile_path,
+            historical_release=historical_release,
             global_gate=global_gate_exit_evidence,
             bilibili=bilibili_exit_evidence,
             youtube=youtube_exit_evidence,
@@ -123,11 +150,106 @@ class ReleaseMaintenance:
         self,
         *,
         profile: Path,
+        historical_release: bool = False,
         **evidence_paths: Path,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         value = self.profiles.load(profile)
-        evidence = self._validate_release_package(**evidence_paths)
+        evidence = (
+            self._validate_historical_release_package(**evidence_paths)
+            if historical_release
+            else self._validate_release_package(**evidence_paths)
+        )
         return value, evidence
+
+    def _validate_historical_release_package(
+        self, **paths: Path
+    ) -> dict[str, Any]:
+        """Audit immutable release evidence at its publication commit."""
+
+        expected = {
+            "global_gate": {"number": 11, "name": "global-acceptance-v2-gate"},
+            **EXPECTED_EVIDENCE_SLICES,
+        }
+        evidence: dict[str, Any] = {}
+        for capability in ("global_gate", "bilibili", "youtube", "batch"):
+            path = paths[capability].resolve()
+            if not path.is_relative_to(self.project_root):
+                _reject(
+                    f"{capability} Exit Evidence escapes the project",
+                    "evidence_paths",
+                    f"{capability}_exit_evidence_invalid",
+                )
+            try:
+                value = read_json(path)
+                if not isinstance(value, dict):
+                    raise TypeError("Exit Evidence must be a JSON object")
+                relative = path.relative_to(self.project_root).as_posix()
+                head_blob = git_output(
+                    self.project_root, "rev-parse", f"HEAD:{relative}"
+                )
+                worktree_blob = git_output(
+                    self.project_root,
+                    "hash-object",
+                    f"--path={relative}",
+                    "--",
+                    relative,
+                )
+                implementation = str(value["implementation_commit"])
+                publication = git_output(
+                    self.project_root,
+                    "log",
+                    "-1",
+                    "--format=%H",
+                    "HEAD",
+                    "--",
+                    relative,
+                )
+                parents = git_output(
+                    self.project_root,
+                    "rev-list",
+                    "--parents",
+                    "-n",
+                    "1",
+                    publication,
+                ).split()
+                git_output(
+                    self.project_root,
+                    "merge-base",
+                    "--is-ancestor",
+                    implementation,
+                    publication,
+                )
+            except (
+                OSError,
+                UnicodeError,
+                json.JSONDecodeError,
+                KeyError,
+                EvidenceSupportError,
+                TypeError,
+            ) as exc:
+                _reject(
+                    f"{capability} historical Exit Evidence is invalid: {exc}",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
+            if (
+                value.get("slice") != expected[capability]
+                or value.get("overall_decision") != "pass"
+                or head_blob != worktree_blob
+                or len(parents) != 2
+                or parents[1] != implementation
+            ):
+                _reject(
+                    f"{capability} historical Exit Evidence publication is stale",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
+            evidence[capability] = {
+                "path": str(path),
+                "publication_commit": publication,
+                "implementation_commit": implementation,
+            }
+        return evidence
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
         global_gate = paths.pop("global_gate").resolve()

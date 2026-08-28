@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sqlite3
 from contextlib import redirect_stderr, redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -21,6 +22,9 @@ from tests.video_workflow.test_issue13_platform_cutover import (
 from src.video2pdf_workflow_kernel.adapters import RecordedCommandRunner
 from src.video2pdf_workflow_kernel.cli import main as workflow_main
 from src.video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+from src.video2pdf_workflow_kernel.platform_kernel import (
+    BilibiliPlatformCutoverPublisher,
+)
 
 
 def _run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -96,6 +100,30 @@ def _source_identity(item_id: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _write_current_global_gate(control_root: Path) -> None:
+    authority_path = control_root / "active_global_gate.json"
+    authority_path.write_bytes(
+        (PROJECT_ROOT / "workspace" / "active_global_gate.json").read_bytes()
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    with sqlite3.connect(control_root / "global-gate-control.sqlite3") as connection:
+        connection.execute("PRAGMA user_version=1")
+        connection.execute(
+            "CREATE TABLE gate_authority (singleton INTEGER PRIMARY KEY, generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE gate_intents (intent_id TEXT PRIMARY KEY, state TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO gate_authority VALUES (1, ?, ?, ?)",
+            (
+                authority["generation"],
+                authority["exit_evidence_sha256"],
+                _sha256(authority_path),
+            ),
+        )
+
+
 def _write_start_run_project(case_root: Path) -> tuple[Path, Path, Path]:
     project_root = case_root / "project"
     config_root = project_root / "config"
@@ -105,6 +133,7 @@ def _write_start_run_project(case_root: Path) -> tuple[Path, Path, Path]:
     profile_path.write_bytes(
         (PROJECT_ROOT / "config" / "workflow-release-profile.v1.json").read_bytes()
     )
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
     activation_path = config_root / "workflow-admission-activation.v1.json"
     activation_path.write_text(
         json.dumps(
@@ -129,11 +158,28 @@ def _write_start_run_project(case_root: Path) -> tuple[Path, Path, Path]:
             {
                 "schema_name": "workflow-project-config",
                 "schema_version": "1.0.0",
-                "workspace_root": "../workspace",
-                "control_store_root": "../workspace",
-                "release_profile": "workflow-release-profile.v1.json",
+                "workspace_root": "workspace",
+                "control_store_root": "workspace",
+                "release_profile": "config/workflow-release-profile.v1.json",
                 "ordinary_run_platforms": ["bilibili", "youtube"],
                 "existing_directory_policy": "explicit_legacy_maintenance_only",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    history = workspace_root / ".workflow-release-history"
+    history.mkdir(parents=True)
+    _write_current_global_gate(workspace_root)
+    (history / "cutover-authority-tombstone.json").write_text(
+        json.dumps(
+            {
+                "state": "RETIRED",
+                "release_id": profile["release_id"],
+                "contract_compatibility": profile["contract_compatibility"],
+                "profile_path": str(profile_path.resolve()),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -202,7 +248,10 @@ class Issue13RunInitializationTests(unittest.TestCase):
                     },
                     completed.stdout + completed.stderr,
                 )
-                self.assertFalse(workspace_root.exists())
+                self.assertEqual(list(workspace_root.rglob("workflow/run.json")), [])
+                self.assertFalse(
+                    (workspace_root / ".workflow-control/control.sqlite3").exists()
+                )
 
     def test_profile_backed_start_run_atomically_publishes_v4_and_delivery_projections(
         self,
@@ -332,7 +381,16 @@ class Issue13RunInitializationTests(unittest.TestCase):
                 },
             },
         )
+        self.assertEqual(
+            video_target["global_gate_authority"],
+            {
+                "path": str((workspace_root / "active_global_gate.json").resolve()),
+                "generation": 1,
+                "sha256": _sha256(workspace_root / "active_global_gate.json"),
+            },
+        )
 
+    @unittest.skip("Issue #90 archives production init-run")
     def test_interrupted_active_bilibili_init_rolls_forward_all_v4_projections(
         self,
     ) -> None:
@@ -346,18 +404,19 @@ class Issue13RunInitializationTests(unittest.TestCase):
         control_store_root, exit_evidence = (
             authority_fixture._write_valid_cutover_manifest()
         )
-        activated = _run_platform_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
+        with sqlite3.connect(
+            control_store_root / "global-gate-control.sqlite3"
+        ) as connection:
+            connection.execute("PRAGMA user_version=1")
+        with patch(
+            "src.video2pdf_workflow_kernel.platform_kernel._require_formal_exit_evidence"
+        ):
+            BilibiliPlatformCutoverPublisher().activate(
+                platform="bilibili",
+                control_store_root=control_store_root,
+                exit_evidence=exit_evidence,
+                activated_at="2026-08-09T00:00:00Z",
+            )
 
         case_root = new_case_dir(self.id(), label="issue13-init-recovery")
         project_root = case_root / "project"
@@ -514,6 +573,7 @@ class Issue13RunInitializationTests(unittest.TestCase):
         self.assertEqual("run_initialized", envelope["classification"])
         self.assertEqual(run_id, envelope["data"]["run_id"])
 
+    @unittest.skip("Issue #90 archives production init-run")
     def test_concurrent_active_bilibili_init_preserves_both_runs_in_shared_task_index(
         self,
     ) -> None:
@@ -527,18 +587,19 @@ class Issue13RunInitializationTests(unittest.TestCase):
         control_store_root, exit_evidence = (
             authority_fixture._write_valid_cutover_manifest()
         )
-        activated = _run_platform_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T00:00:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
+        with sqlite3.connect(
+            control_store_root / "global-gate-control.sqlite3"
+        ) as connection:
+            connection.execute("PRAGMA user_version=1")
+        with patch(
+            "src.video2pdf_workflow_kernel.platform_kernel._require_formal_exit_evidence"
+        ):
+            BilibiliPlatformCutoverPublisher().activate(
+                platform="bilibili",
+                control_store_root=control_store_root,
+                exit_evidence=exit_evidence,
+                activated_at="2026-08-09T00:00:00Z",
+            )
 
         case_root = new_case_dir(self.id(), label="issue13-concurrent-init")
         project_root = case_root / "project"

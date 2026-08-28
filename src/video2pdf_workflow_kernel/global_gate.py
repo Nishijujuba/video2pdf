@@ -500,6 +500,55 @@ class GlobalGatePublisher:
         except OSError as exc:
             raise ControlStoreUnavailable("Global Gate control store is unavailable", data={"first_failing_gate": "control_store", "error_code": "global_gate_control_store_unavailable"}) from exc
 
+    @staticmethod
+    def _connect_existing_readonly(root: Path) -> sqlite3.Connection:
+        """Open current final-quality authority without entering a retired mutator."""
+
+        database_path = root / GLOBAL_GATE_DB
+        try:
+            connection = sqlite3.connect(
+                f"file:{database_path.as_posix()}?mode=ro",
+                uri=True,
+                timeout=0.05,
+            )
+            connection.row_factory = sqlite3.Row
+            if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                connection.close()
+                _control_reject(
+                    "Global Gate control store is corrupt",
+                    "global_gate_control_store_corrupt",
+                )
+            if (
+                connection.execute("PRAGMA user_version").fetchone()[0]
+                != GLOBAL_GATE_SCHEMA_VERSION
+            ):
+                connection.close()
+                _control_reject(
+                    "Global Gate control store schema is incompatible",
+                    "global_gate_control_store_incompatible",
+                )
+            return connection
+        except ControlStoreUnavailable:
+            raise
+        except sqlite3.DatabaseError as exc:
+            code = (
+                "global_gate_control_store_corrupt"
+                if "not a database" in str(exc).casefold()
+                else "global_gate_control_store_locked"
+            )
+            raise ControlStoreUnavailable(
+                "Global Gate control store cannot be opened",
+                data={"first_failing_gate": "control_store", "error_code": code},
+            ) from exc
+        except OSError as exc:
+            raise ControlStoreUnavailable(
+                "Global Gate control store is unavailable",
+                data={
+                    "first_failing_gate": "control_store",
+                    "error_code": "global_gate_control_store_unavailable",
+                },
+            ) from exc
+
     def _validate_publication_identity(
         self, *, evidence_path: Path, project_root: Path,
         expected_sha256: str | None = None,
@@ -625,7 +674,7 @@ class GlobalGatePublisher:
     def require_current(self, *, control_store_root: Path) -> dict[str, Any]:
         root = control_store_root.resolve()
         authority_path = root / "active_global_gate.json"
-        with self._connect(root) as control:
+        with self._connect_existing_readonly(root) as control:
             row = control.execute("SELECT * FROM gate_authority WHERE singleton=1").fetchone()
             pending = control.execute("SELECT COUNT(*) FROM gate_intents WHERE state!='COMMITTED'").fetchone()[0]
         if row is None or pending or not authority_path.is_file() or sha256_file(authority_path) != row["authority_sha256"]:

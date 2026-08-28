@@ -17,8 +17,10 @@ from .errors import (
     KernelConflict,
     KernelError,
 )
+from .cutover_retirement import project_admission_lease, tombstone_path
 from .kernel import FAULT_POINTS as KERNEL_INITIALIZATION_FAULT_POINTS
 from .ordinary_admission import OrdinaryAdmission
+from .release_activation import ACTIVATION_FILE
 from .utils import (
     canonical_json_bytes,
     read_json,
@@ -187,6 +189,128 @@ class BatchProjectionProvider:
             raise ContractError("current Batch authority has an incomplete binding")
         return {key: authority[key] for key in required}
 
+    @staticmethod
+    def _profile_authority_binding(admission: Any) -> dict[str, Any]:
+        return {
+            "authority_kind": "workflow_release_profile",
+            "profile_path": str(admission.profile_path.resolve()),
+            "profile_sha256": admission.profile_sha256,
+            "release_id": admission.release_id,
+            "activation_path": str(
+                (admission.profile_path.parent / ACTIVATION_FILE).resolve()
+            ),
+            "activation_generation": admission.activation_generation,
+        }
+
+    def _require_record_authority(
+        self,
+        record: dict[str, Any],
+        contracts: Any,
+        control_root: Path,
+    ) -> dict[str, Any]:
+        binding = record.get("batch_authority_binding")
+        if (
+            isinstance(binding, dict)
+            and binding.get("authority_kind") == "workflow_release_profile"
+        ):
+            profile_path = Path(str(binding.get("profile_path", ""))).resolve()
+            if (
+                not profile_path.is_relative_to(contracts.project_root.resolve())
+                or not isinstance(binding.get("profile_sha256"), str)
+                or len(binding["profile_sha256"]) != 64
+                or not isinstance(binding.get("release_id"), str)
+                or not binding["release_id"]
+                or Path(str(binding.get("activation_path", ""))).resolve()
+                != (profile_path.parent / ACTIVATION_FILE).resolve()
+                or not isinstance(binding.get("activation_generation"), int)
+                or binding["activation_generation"] < 1
+            ):
+                raise KernelConflict(
+                    "Batch Record Profile admission binding is invalid",
+                    data={
+                        "batch_id": record["batch_id"],
+                        "first_failing_gate": "batch_authority_binding",
+                        "error_code": "batch_authority_binding_stale",
+                    },
+                )
+            return {"global_gate_binding": self._current_global_gate_binding(control_root)}
+
+        tombstone = tombstone_path(control_root)
+        if tombstone.is_file():
+            if not isinstance(binding, dict):
+                raise KernelConflict(
+                    "Retired Batch Record authority binding is missing",
+                    data={
+                        "batch_id": record["batch_id"],
+                        "first_failing_gate": "batch_authority_binding",
+                        "error_code": "batch_authority_binding_stale",
+                    },
+                )
+            retired = read_json(tombstone)
+            archived_authority = (
+                Path(str(retired.get("audit_bundle_path", "")))
+                / "original"
+                / "active_batch.json"
+            )
+            if (
+                not archived_authority.is_file()
+                or sha256_file(archived_authority) != binding.get("authority_sha256")
+            ):
+                raise KernelConflict(
+                    "Retired Batch Record authority archive is missing or stale",
+                    data={
+                        "batch_id": record["batch_id"],
+                        "first_failing_gate": "batch_authority_binding",
+                        "error_code": "batch_authority_binding_stale",
+                    },
+                )
+            archived = read_json(archived_authority)
+            archived_binding = {
+                "authority_path": str((control_root / "active_batch.json").resolve()),
+                "authority_sha256": sha256_file(archived_authority),
+                "exit_evidence_sha256": archived.get("exit_evidence_sha256"),
+                "generation": archived.get("generation"),
+                "publication_commit": archived.get("publication_commit"),
+            }
+            if archived_binding != binding:
+                raise KernelConflict(
+                    "Retired Batch Record authority binding conflicts with its archive",
+                    data={
+                        "batch_id": record["batch_id"],
+                        "first_failing_gate": "batch_authority_binding",
+                        "error_code": "batch_authority_binding_stale",
+                    },
+                )
+            return {"global_gate_binding": self._current_global_gate_binding(control_root)}
+
+        current = self.batch_authority_publisher.require_current(
+            control_store_root=control_root
+        )
+        current_binding = self._batch_authority_binding(current)
+        if binding != current_binding:
+            raise KernelConflict(
+                "Batch Record authority binding is missing or stale",
+                data={
+                    "batch_id": record["batch_id"],
+                    "first_failing_gate": "batch_authority_binding",
+                    "error_code": "batch_authority_binding_stale",
+                },
+            )
+        return current
+
+    @staticmethod
+    def _current_global_gate_binding(control_root: Path) -> dict[str, Any]:
+        from .global_gate import GlobalGatePublisher
+
+        current = GlobalGatePublisher().require_current(
+            control_store_root=control_root
+        )
+        return {
+            "authority_path": current["path"],
+            "authority_sha256": current["file_sha256"],
+            "generation": current["generation"],
+        }
+
     # ------------------------------------------------------------------
     # plan
     # ------------------------------------------------------------------
@@ -299,7 +423,9 @@ class BatchProjectionProvider:
             "batch_dir": str(batch_dir),
             "control_dir": str(control_dir),
             "batch_stage": "planned",
-            "batch_authority_binding": None,
+            "batch_authority_binding": self._profile_authority_binding(
+                admission_before
+            ),
             "run_task_start": None,
             "item_order": item_order,
             "run_mappings": [],
@@ -308,63 +434,77 @@ class BatchProjectionProvider:
             "updated_at": now,
         }
         self._validate_planned_record(contracts, record)
-        store = self._open_store(control_root, contracts)
-        try:
-            stored_id, outcome = store.create_batch_record(record, record["batch_identity"])
-        except KernelConflict:
-            # A deterministic replay may differ only in plan timestamps; the
-            # existing planned record is authoritative.  Reuse it so repeated
-            # plan calls stay idempotent and never create a second record.
-            existing = store.get_batch_record(batch_id)
-            if existing is None:
-                raise
-            self._validate_loaded_record(contracts, existing)
-            expected_replay = dict(record)
-            authoritative_replay = dict(existing)
-            for volatile_key in ("created_at", "updated_at"):
-                expected_replay.pop(volatile_key, None)
-                authoritative_replay.pop(volatile_key, None)
-            if authoritative_replay != expected_replay:
+        with project_admission_lease(control_root):
+            admission_commit = admission_reader.require_batch(
+                project_config, platform
+            )
+            if admission_commit != admission_before:
                 raise KernelConflict(
-                    "batch plan replay differs from the authoritative Batch Record",
+                    "Workflow Release Profile admission changed before Batch commit",
                     data={
-                        "batch_id": batch_id,
-                        "first_failing_gate": "batch_record_replay_identity",
-                        "error_code": "batch_record_replay_conflict",
+                        "first_failing_gate": "release_profile_stability",
+                        "error_code": "workflow_release_profile_changed",
                     },
                 )
-            authoritative_record_path = (
-                Path(existing["batch_dir"]) / "batch-record.json"
-            )
-            if not authoritative_record_path.is_file():
-                self._persist_record_file(existing)
+            store = self._open_store(control_root, contracts)
+            try:
+                stored_id, outcome = store.create_batch_record(
+                    record, record["batch_identity"]
+                )
+            except KernelConflict:
+                # A deterministic replay may differ only in plan timestamps; the
+                # existing planned record is authoritative.  Reuse it so repeated
+                # plan calls stay idempotent and never create a second record.
+                existing = store.get_batch_record(batch_id)
+                if existing is None:
+                    raise
+                self._validate_loaded_record(contracts, existing)
+                expected_replay = dict(record)
+                authoritative_replay = dict(existing)
+                for volatile_key in ("created_at", "updated_at"):
+                    expected_replay.pop(volatile_key, None)
+                    authoritative_replay.pop(volatile_key, None)
+                if authoritative_replay != expected_replay:
+                    raise KernelConflict(
+                        "batch plan replay differs from the authoritative Batch Record",
+                        data={
+                            "batch_id": batch_id,
+                            "first_failing_gate": "batch_record_replay_identity",
+                            "error_code": "batch_record_replay_conflict",
+                        },
+                    )
+                authoritative_record_path = (
+                    Path(existing["batch_dir"]) / "batch-record.json"
+                )
+                if not authoritative_record_path.is_file():
+                    self._persist_record_file(existing)
+                return {
+                    "batch_id": batch_id,
+                    "batch_dir": str(existing["batch_dir"]),
+                    "batch_record_path": str(authoritative_record_path),
+                    "item_order": existing["item_order"],
+                    "created_or_replayed": "REPLAY",
+                    "admission_authority": "workflow_release_profile",
+                    "release_id": admission_before.release_id,
+                }
+            if stored_id != batch_id:
+                raise KernelConflict(
+                    "batch record identity changed on replay",
+                    data={"expected": batch_id, "actual": stored_id},
+                )
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            (batch_dir.parent / "待删除").mkdir(parents=True, exist_ok=True)
+            record_path = batch_dir / "batch-record.json"
+            write_json_atomic(record_path, record)
             return {
                 "batch_id": batch_id,
-                "batch_dir": str(existing["batch_dir"]),
-                "batch_record_path": str(authoritative_record_path),
-                "item_order": existing["item_order"],
-                "created_or_replayed": "REPLAY",
+                "batch_dir": str(batch_dir),
+                "batch_record_path": str(record_path),
+                "item_order": item_order,
+                "created_or_replayed": outcome,
                 "admission_authority": "workflow_release_profile",
                 "release_id": admission_before.release_id,
             }
-        if stored_id != batch_id:
-            raise KernelConflict(
-                "batch record identity changed on replay",
-                data={"expected": batch_id, "actual": stored_id},
-            )
-        batch_dir.mkdir(parents=True, exist_ok=True)
-        (batch_dir.parent / "待删除").mkdir(parents=True, exist_ok=True)
-        record_path = batch_dir / "batch-record.json"
-        write_json_atomic(record_path, record)
-        return {
-            "batch_id": batch_id,
-            "batch_dir": str(batch_dir),
-            "batch_record_path": str(record_path),
-            "item_order": item_order,
-            "created_or_replayed": outcome,
-            "admission_authority": "workflow_release_profile",
-            "release_id": admission_before.release_id,
-        }
 
     def _enumerate_items(
         self,
@@ -500,27 +640,39 @@ class BatchProjectionProvider:
             raise ContractError(
                 "batch-run requires a valid Kernel delivery session identity"
             )
-        current_authority = self.batch_authority_publisher.require_current(
-            control_store_root=Path(control_store_root)
-        )
-        current_binding = self._batch_authority_binding(current_authority)
         del workspace_root
         control_root = Path(control_store_root).resolve()
+        with project_admission_lease(control_root):
+            return self._run_with_admission_lease(
+                contracts,
+                batch_id=batch_id,
+                control_root=control_root,
+                session_id=session_id,
+                run_task_start=run_task_start,
+                fault_point=fault_point,
+            )
+
+    def _run_with_admission_lease(
+        self,
+        contracts: Any,
+        *,
+        batch_id: str,
+        control_root: Path,
+        session_id: str,
+        run_task_start: str,
+        fault_point: str | None,
+    ) -> dict[str, Any]:
+        """Own one fenced Batch Record to Run-mapping commit lifecycle."""
+
         store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
         workspace = Path(record["output_root"]).resolve()
-        if record.get("batch_authority_binding") != current_binding:
-            raise KernelConflict(
-                "Batch Record authority binding is missing or stale",
-                data={
-                    "batch_id": batch_id,
-                    "first_failing_gate": "batch_authority_binding",
-                    "error_code": "batch_authority_binding_stale",
-                },
-            )
+        current_authority = self._require_record_authority(
+            record, contracts, control_root
+        )
         global_gate_binding = current_authority.get("global_gate_binding")
         if not isinstance(global_gate_binding, dict) or not global_gate_binding:
             raise ContractError("current Batch authority lacks its Global Gate binding")
@@ -773,25 +925,13 @@ class BatchProjectionProvider:
         control_store_root: Path,
     ) -> dict[str, Any]:
         control_root = Path(control_store_root).resolve()
-        current_authority = self.batch_authority_publisher.require_current(
-            control_store_root=control_root
-        )
-        current_binding = self._batch_authority_binding(current_authority)
         del workspace_root
         store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
-        if record.get("batch_authority_binding") != current_binding:
-            raise KernelConflict(
-                "Batch Record authority binding is missing or stale",
-                data={
-                    "batch_id": batch_id,
-                    "first_failing_gate": "batch_authority_binding",
-                    "error_code": "batch_authority_binding_stale",
-                },
-            )
+        self._require_record_authority(record, contracts, control_root)
         workspace = Path(record["output_root"]).resolve()
         reconciled: list[dict[str, Any]] = []
         mappings = list(record.get("run_mappings", []))
@@ -1169,24 +1309,12 @@ class BatchProjectionProvider:
             if control_store_root is None
             else Path(control_store_root).resolve()
         )
-        current_authority = self.batch_authority_publisher.require_current(
-            control_store_root=control_root
-        )
-        current_binding = self._batch_authority_binding(current_authority)
         store = self._open_store(control_root, contracts)
         record = store.get_batch_record(batch_id)
         if record is None:
             raise KernelConflict("batch record not found", data={"batch_id": batch_id})
         self._validate_loaded_record(contracts, record)
-        if record.get("batch_authority_binding") != current_binding:
-            raise KernelConflict(
-                "Batch Record authority binding is missing or stale",
-                data={
-                    "batch_id": batch_id,
-                    "first_failing_gate": "batch_authority_binding",
-                    "error_code": "batch_authority_binding_stale",
-                },
-            )
+        self._require_record_authority(record, contracts, control_root)
         mappings = list(record.get("run_mappings", []))
         run_store = (
             None

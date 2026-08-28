@@ -66,16 +66,10 @@ SOURCE_RECONCILE_SAME_RUN = (
 )
 
 BILIBILI_ACTIVE_STATUS = (
-    "Bilibili is `active_kernel` for all new tasks under the current runtime "
-    "`CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing "
-    "Bilibili directories remain Legacy unless an explicit migration authority is "
-    "introduced."
+    "Bilibili is `active_kernel` for new tasks through the Workflow Release Profile."
 )
 YOUTUBE_ACTIVE_STATUS = (
-    "YouTube is `active_kernel` for all new tasks under the current runtime "
-    "`CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing "
-    "YouTube directories remain Legacy unless an explicit migration authority is "
-    "introduced."
+    "YouTube is `active_kernel` for new tasks through the Workflow Release Profile."
 )
 class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
     def test_new_bilibili_tasks_use_active_kernel_and_existing_directories_stay_legacy(self) -> None:
@@ -92,7 +86,8 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn(BILIBILI_ACTIVE_STATUS, text)
+                self.assertIn("Workflow Release Profile", text)
+                self.assertIn("`active_kernel`", text)
                 self.assertNotIn("Bilibili remains `active_legacy`", text)
                 self.assertNotIn("No component has `active_kernel` status", text)
 
@@ -103,14 +98,14 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         ):
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn("workflow-policy-check", text)
-                self.assertIn("init-run", text)
+                self.assertIn("start-run --project-config", text)
+                self.assertNotIn("workflow-policy-check", text)
                 self.assertNotIn(
                     "The current repository has no confirmed Bilibili platform authority",
                     text,
                 )
                 self.assertNotIn("Cold-start cutover bootstrap", text)
-                self.assertIn("never redirect a new task", text)
+                self.assertIn("A new request has no Legacy fallback", text)
 
     def test_cold_start_cutover_order_is_consistent_across_authority_docs(self) -> None:
         paths = (
@@ -125,8 +120,8 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         text = (ROOT / "docs/adr/video-workflow-kernel-2.0-decision-map.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn('PC -->|"yes"| BP["Bootstrap Probe"]', text)
-        self.assertIn('PC -->|"no"| FC["Fail closed and repair authority"]', text)
+        self.assertIn('SR -->|"yes"| BP["Bootstrap Probe"]', text)
+        self.assertIn('SR -->|"no"| FC["Fail closed before Run creation"]', text)
         self.assertNotIn('CS -->|"cold-start candidate"|', text)
         self.assertNotIn('PR["Prepare one bound cutover candidate"]', text)
 
@@ -185,8 +180,7 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
                 self.assertIn("Bilibili", text)
                 self.assertIn("`active_kernel`", text)
                 self.assertIn("YouTube", text)
-                self.assertIn(BILIBILI_ACTIVE_STATUS, text)
-                self.assertIn(YOUTUBE_ACTIVE_STATUS, text)
+                self.assertIn("Workflow Release Profile", text)
                 self.assertIn("`active_global_gate`", text)
 
     def test_bilibili_skill_mirror_delegates_kernel_mechanics_to_public_cli(self) -> None:
@@ -194,8 +188,7 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         mirror = (ROOT / ".claude/skills/bilibili-render-pdf/SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(authority, mirror)
         for command in (
-            "bootstrap-probe",
-            "init-run",
+            "start-run",
             "source-acquire",
             "source-acquire-reconcile",
             "production-plan",
@@ -206,9 +199,9 @@ class Issue13PlatformPolicyDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(command, authority)
         self.assertIn(BILIBILI_ACTIVE_STATUS, authority)
-        self.assertIn("Existing Bilibili directories remain Legacy", authority)
+        self.assertIn("Existing Bilibili directories remain on explicit Legacy maintenance routes", authority)
         self.assertNotIn("Bilibili remains `active_legacy`", authority)
-        self.assertIn("never redirect a new task", authority)
+        self.assertIn("A new request has no Legacy fallback", authority)
         self.assertIn("Global Gate remains `active_global_gate`", authority)
         self.assertIn(
             "Direct `yt-dlp`, `whisper`, and `compile_latex_ascii.py` commands in "

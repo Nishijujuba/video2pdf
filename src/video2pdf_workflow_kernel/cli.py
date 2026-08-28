@@ -54,21 +54,11 @@ from .acceptance_v2 import (
     AcceptanceV2Provider,
 )
 from .batch_projection import BATCH_RUN_FAULT_POINTS, BatchProjectionProvider
-from .batch_authority import (
-    ACTIVATION_FAULT_POINTS as BATCH_ACTIVATION_FAULT_POINTS,
-    BatchCutoverPublisher,
-)
-from .global_gate import ACTIVATION_FAULT_POINTS, GlobalGatePublisher, LegacyAcceptanceProvider
-from .platform_kernel import (
-    ACTIVATION_FAULT_POINTS as PLATFORM_ACTIVATION_FAULT_POINTS,
-    BilibiliPlatformCutoverPublisher,
-)
+from .global_gate import LegacyAcceptanceProvider
 from .release_maintenance import ReleaseMaintenance
+from .release_activation import WorkflowReleaseActivation
 from .ordinary_startup import OrdinaryRunStartup
-from .cutover_retirement import (
-    CutoverAuthorityRetirement,
-    cutover_mutation_fence,
-)
+from .cutover_retirement import CutoverAuthorityRetirement
 from .production_bootstrap import (
     bootstrap_bilibili_production_probe,
     bootstrap_youtube_production_probe,
@@ -85,25 +75,6 @@ from .utils import read_json
 class MachineArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise CliUsageError(message)
-
-
-_CUTOVER_COMMAND_ROOT_ARGUMENT = {
-    "global-gate-activate": "control_store_root",
-    "global-gate-reconcile": "control_store_root",
-    "global-gate-policy-authority-refresh": "control_store_root",
-    "batch-activate": "control_store_root",
-    "batch-authority-refresh": "control_store_root",
-    "batch-reconcile": "control_store_root",
-    "batch-authority-check": "control_store_root",
-    "platform-kernel-prepare": "control_store_root",
-    "platform-kernel-candidate-activate": "control_store_root",
-    "platform-kernel-activate": "control_store_root",
-    "platform-kernel-reconcile": "control_store_root",
-    "youtube-platform-authority-refresh": "control_store_root",
-    "init-cutover-candidate": "control_store_root",
-    "platform-kernel-candidate-reconcile": "control_store_root",
-    "platform-kernel-candidate-rebind": "control_store_root",
-}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -328,6 +299,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_release_evidence_inputs(release_profile_publish)
 
+    release_profile_activate = commands.add_parser("release-profile-activate")
+    release_profile_activate.add_argument(
+        "--project-config", required=True, type=Path
+    )
+    release_profile_activate.add_argument("--activated-at", required=True)
+    _add_release_evidence_inputs(release_profile_activate)
+
     release_audit = commands.add_parser("release-audit")
     release_audit.add_argument("--profile", required=True, type=Path)
     _add_release_evidence_inputs(release_audit)
@@ -335,126 +313,6 @@ def _parser() -> argparse.ArgumentParser:
     retire_cutover_authority = commands.add_parser("retire-cutover-authority")
     retire_cutover_authority.add_argument(
         "--project-config", required=True, type=Path
-    )
-
-    global_gate_activate = commands.add_parser("global-gate-activate")
-    global_gate_activate.add_argument("--control-store-root", required=True, type=Path)
-    global_gate_activate.add_argument("--exit-evidence", required=True, type=Path)
-    global_gate_activate.add_argument("--activated-at", required=True)
-    global_gate_activate.add_argument("--fault-point", choices=sorted(ACTIVATION_FAULT_POINTS))
-
-    global_gate_reconcile = commands.add_parser("global-gate-reconcile")
-    global_gate_reconcile.add_argument("--control-store-root", required=True, type=Path)
-
-    global_gate_policy_refresh = commands.add_parser(
-        "global-gate-policy-authority-refresh"
-    )
-    global_gate_policy_refresh.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    global_gate_policy_refresh.add_argument(
-        "--exit-evidence", required=True, type=Path
-    )
-    global_gate_policy_refresh.add_argument(
-        "--expected-generation", required=True, type=int
-    )
-    global_gate_policy_refresh.add_argument("--refreshed-at", required=True)
-    global_gate_policy_refresh.add_argument(
-        "--fault-point", choices=sorted(ACTIVATION_FAULT_POINTS)
-    )
-
-    batch_activate = commands.add_parser("batch-activate")
-    batch_activate.add_argument("--control-store-root", required=True, type=Path)
-    batch_activate.add_argument("--exit-evidence", required=True, type=Path)
-    batch_activate.add_argument("--activated-at", required=True)
-    batch_activate.add_argument(
-        "--fault-point", choices=sorted(BATCH_ACTIVATION_FAULT_POINTS)
-    )
-
-    batch_authority_refresh = commands.add_parser("batch-authority-refresh")
-    batch_authority_refresh.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    batch_authority_refresh.add_argument(
-        "--exit-evidence", required=True, type=Path
-    )
-    batch_authority_refresh.add_argument(
-        "--expected-generation", required=True, type=int
-    )
-    batch_authority_refresh.add_argument("--refreshed-at", required=True)
-    batch_authority_refresh.add_argument(
-        "--fault-point", choices=sorted(BATCH_ACTIVATION_FAULT_POINTS)
-    )
-
-    batch_reconcile = commands.add_parser("batch-reconcile")
-    batch_reconcile.add_argument("--control-store-root", required=True, type=Path)
-
-    batch_authority_check = commands.add_parser("batch-authority-check")
-    batch_authority_check.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-
-    workflow_policy_check = commands.add_parser("workflow-policy-check")
-    workflow_policy_check.add_argument("--control-store-root", required=True, type=Path)
-
-    platform_kernel_prepare = commands.add_parser("platform-kernel-prepare")
-    platform_kernel_prepare.add_argument("--platform", required=True)
-    platform_kernel_prepare.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    platform_kernel_prepare.add_argument("--implementation-commit", required=True)
-    platform_kernel_prepare.add_argument(
-        "--candidate-probe", required=True, type=Path
-    )
-    platform_kernel_prepare.add_argument("--candidate-session-id", required=True)
-    platform_kernel_prepare.add_argument("--prepared-at", required=True)
-
-    platform_kernel_candidate_activate = commands.add_parser(
-        "platform-kernel-candidate-activate"
-    )
-    platform_kernel_candidate_activate.add_argument("--platform", required=True)
-    platform_kernel_candidate_activate.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    platform_kernel_candidate_activate.add_argument(
-        "--candidate-run-dir", required=True, type=Path
-    )
-    platform_kernel_candidate_activate.add_argument("--activated-at", required=True)
-
-    platform_kernel_activate = commands.add_parser("platform-kernel-activate")
-    platform_kernel_activate.add_argument("--platform", required=True)
-    platform_kernel_activate.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    platform_kernel_activate.add_argument(
-        "--exit-evidence", required=True, type=Path
-    )
-    platform_kernel_activate.add_argument("--activated-at", required=True)
-    platform_kernel_activate.add_argument(
-        "--fault-point", choices=sorted(PLATFORM_ACTIVATION_FAULT_POINTS)
-    )
-
-    platform_kernel_reconcile = commands.add_parser("platform-kernel-reconcile")
-    platform_kernel_reconcile.add_argument("--platform", required=True)
-    platform_kernel_reconcile.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-
-    youtube_platform_authority_refresh = commands.add_parser(
-        "youtube-platform-authority-refresh"
-    )
-    youtube_platform_authority_refresh.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    youtube_platform_authority_refresh.add_argument(
-        "--exit-evidence", required=True, type=Path
-    )
-    youtube_platform_authority_refresh.add_argument(
-        "--expected-generation", required=True, type=int
-    )
-    youtube_platform_authority_refresh.add_argument("--refreshed-at", required=True)
-    youtube_platform_authority_refresh.add_argument(
-        "--fault-point", choices=sorted(PLATFORM_ACTIVATION_FAULT_POINTS)
     )
 
     delivery_transition = commands.add_parser("delivery-transition")
@@ -601,51 +459,6 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--control-store-root", type=Path)
     init.add_argument("--session-id")
     init.add_argument("--fault-point", choices=sorted(FAULT_POINTS))
-
-    cutover_candidate_init = commands.add_parser("init-cutover-candidate")
-    cutover_candidate_init.add_argument("--workspace-root", required=True, type=Path)
-    cutover_candidate_init.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    cutover_candidate_init.add_argument("--probe", required=True, type=Path)
-    cutover_candidate_init.add_argument("--session-id", required=True)
-    cutover_candidate_init.add_argument(
-        "--fault-point", choices=sorted(FAULT_POINTS | {"after_candidate_begin"})
-    )
-
-    cutover_candidate_reconcile = commands.add_parser(
-        "platform-kernel-candidate-reconcile"
-    )
-    cutover_candidate_reconcile.add_argument(
-        "--platform", required=True, choices=("bilibili", "youtube")
-    )
-    cutover_candidate_reconcile.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    cutover_candidate_reconcile.add_argument(
-        "--workspace-root", required=True, type=Path
-    )
-    cutover_candidate_reconcile.add_argument(
-        "--candidate-probe", required=True, type=Path
-    )
-    cutover_candidate_reconcile.add_argument(
-        "--candidate-session-id", required=True
-    )
-
-    cutover_candidate_rebind = commands.add_parser(
-        "platform-kernel-candidate-rebind"
-    )
-    cutover_candidate_rebind.add_argument(
-        "--platform", required=True, choices=("bilibili", "youtube")
-    )
-    cutover_candidate_rebind.add_argument(
-        "--control-store-root", required=True, type=Path
-    )
-    cutover_candidate_rebind.add_argument(
-        "--candidate-run-dir", required=True, type=Path
-    )
-    cutover_candidate_rebind.add_argument("--implementation-commit", required=True)
-    cutover_candidate_rebind.add_argument("--rebound-at", required=True)
 
     source_import = commands.add_parser("source-import")
     source_import.add_argument("--workspace-root", required=True, type=Path)
@@ -977,35 +790,6 @@ def _error(command: str, error: KernelError) -> dict:
     }
 
 
-def _platform_cutover_presence(db_path: Path) -> set[str]:
-    """Return platforms with any committed platform-kernel control state."""
-    import sqlite3
-
-    platforms: set[str] = set()
-    try:
-        connection = sqlite3.connect(
-            db_path, timeout=0.05, isolation_level=None
-        )
-        try:
-            for table in (
-                "platform_cutover_authority",
-                "platform_cutover_candidates",
-                "platform_cutover_intents",
-            ):
-                try:
-                    rows = connection.execute(
-                        f"SELECT DISTINCT platform FROM {table}"
-                    ).fetchall()
-                except sqlite3.DatabaseError:
-                    continue
-                platforms.update(row[0] for row in rows)
-        finally:
-            connection.close()
-    except (OSError, sqlite3.DatabaseError):
-        return platforms
-    return platforms
-
-
 def _resource_status_data(status: Any) -> dict[str, Any]:
     return {
         "queue_id": status.queue_id,
@@ -1045,8 +829,30 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             result["tombstone_path"],
         )
     if command == "release-profile-publish":
+        project_config = project_root / "config" / "workflow-project.v1.json"
+        project_configuration = read_json(project_config)
+        control_store_root = (
+            project_config.parent.parent
+            / str(project_configuration["control_store_root"])
+        ).resolve()
         result = ReleaseMaintenance(project_root).publish(
             candidate_profile=args.candidate_profile,
+            global_gate_exit_evidence=args.global_gate_exit_evidence,
+            bilibili_exit_evidence=args.bilibili_exit_evidence,
+            youtube_exit_evidence=args.youtube_exit_evidence,
+            batch_exit_evidence=args.batch_exit_evidence,
+            control_store_root=control_store_root,
+        )
+        return _ok(
+            command,
+            "workflow_release_profile_published",
+            result,
+            result["profile_path"],
+        )
+    if command == "release-profile-activate":
+        result = WorkflowReleaseActivation(project_root).activate(
+            project_config=args.project_config,
+            activated_at=args.activated_at,
             global_gate_exit_evidence=args.global_gate_exit_evidence,
             bilibili_exit_evidence=args.bilibili_exit_evidence,
             youtube_exit_evidence=args.youtube_exit_evidence,
@@ -1054,9 +860,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
         )
         return _ok(
             command,
-            "workflow_release_profile_published",
+            "workflow_release_profile_activated",
             result,
-            result["profile_path"],
+            result["activation_path"],
         )
     if command == "release-audit":
         result = ReleaseMaintenance(project_root).audit(
@@ -1065,6 +871,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             bilibili_exit_evidence=args.bilibili_exit_evidence,
             youtube_exit_evidence=args.youtube_exit_evidence,
             batch_exit_evidence=args.batch_exit_evidence,
+            historical_release=True,
         )
         return _ok(command, "workflow_release_audit_passed", result)
     if command == "legacy-acceptance-adopt":
@@ -1077,170 +884,6 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             control_store_root=args.control_store_root, adopted_at=args.adopted_at, output=args.output,
         )
         return _ok(command, "legacy_acceptance_adopted", result, result["input_set_path"])
-    if command == "global-gate-activate":
-        result = GlobalGatePublisher().activate(
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            activated_at=args.activated_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(command, "global_gate_activated", result, result["authority_path"])
-    if command == "global-gate-reconcile":
-        result = GlobalGatePublisher().reconcile(control_store_root=args.control_store_root)
-        return _ok(command, "global_gate_reconciled", result, result["authority_path"])
-    if command == "global-gate-policy-authority-refresh":
-        result = GlobalGatePublisher().refresh_policy_authority(
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            expected_generation=args.expected_generation,
-            refreshed_at=args.refreshed_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            "global_gate_policy_authority_refreshed",
-            result,
-            result["authority_path"],
-        )
-    if command == "batch-activate":
-        result = BatchCutoverPublisher().activate(
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            activated_at=args.activated_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            "batch_authority_activated",
-            result,
-            result["authority_path"],
-        )
-    if command == "batch-authority-refresh":
-        result = BatchCutoverPublisher().refresh_authority(
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            expected_generation=args.expected_generation,
-            refreshed_at=args.refreshed_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            (
-                "batch_authority_refresh_cancelled"
-                if result.get("cancelled") is True
-                else "batch_authority_refreshed"
-            ),
-            result,
-            result["authority_path"],
-        )
-    if command == "batch-reconcile":
-        result = BatchCutoverPublisher().reconcile(
-            control_store_root=args.control_store_root
-        )
-        return _ok(
-            command,
-            (
-                "batch_authority_reconcile_cancelled"
-                if result.get("cancelled") is True
-                else "batch_authority_reconciled"
-            ),
-            result,
-            result["authority_path"],
-        )
-    if command == "batch-authority-check":
-        result = BatchCutoverPublisher().require_current(
-            control_store_root=args.control_store_root
-        )
-        return _ok(
-            command,
-            "batch_authority_current",
-            result,
-            result["authority_path"],
-        )
-    if command == "workflow-policy-check":
-        result = GlobalGatePublisher().check_policy(control_store_root=args.control_store_root)
-        platform_db = args.control_store_root.resolve() / "platform-kernel-control.sqlite3"
-        platform_statuses = {"bilibili": "active_legacy", "youtube": "active_legacy"}
-        if platform_db.is_file():
-            publisher = BilibiliPlatformCutoverPublisher()
-            with_control_presence = _platform_cutover_presence(platform_db)
-            for platform in ("bilibili", "youtube"):
-                try:
-                    platform_policy = publisher.check_policy(
-                        platform=platform,
-                        control_store_root=args.control_store_root,
-                    )
-                    platform_statuses.update(platform_policy["platform_statuses"])
-                except KernelError:
-                    if platform in with_control_presence:
-                        raise
-                    # No committed authority, candidate, or intent for this
-                    # platform: keep its legacy fallback status.
-                    continue
-        result["platform_statuses"] = platform_statuses
-        return _ok(command, "workflow_policy_current", result, result["global_gate_authority"]["path"])
-    if command == "platform-kernel-prepare":
-        result = BilibiliPlatformCutoverPublisher().prepare_candidate(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            implementation_commit=args.implementation_commit,
-            candidate_probe=args.candidate_probe,
-            candidate_session_id=args.candidate_session_id,
-            prepared_at=args.prepared_at,
-        )
-        return _ok(
-            command,
-            "platform_kernel_candidate_prepared",
-            result,
-        )
-    if command == "platform-kernel-candidate-activate":
-        result = BilibiliPlatformCutoverPublisher().activate_candidate(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            candidate_run_dir=args.candidate_run_dir,
-            activated_at=args.activated_at,
-        )
-        return _ok(command, "platform_kernel_candidate_activated", result)
-    if command == "platform-kernel-activate":
-        result = BilibiliPlatformCutoverPublisher().activate(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            activated_at=args.activated_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            "platform_kernel_activated",
-            result,
-            result["authority_path"],
-        )
-    if command == "platform-kernel-reconcile":
-        result = BilibiliPlatformCutoverPublisher().reconcile(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-        )
-        return _ok(
-            command,
-            "platform_kernel_reconciled",
-            result,
-            result["authority_path"],
-        )
-    if command == "youtube-platform-authority-refresh":
-        result = BilibiliPlatformCutoverPublisher().refresh_authority(
-            platform="youtube",
-            control_store_root=args.control_store_root,
-            exit_evidence=args.exit_evidence,
-            expected_generation=args.expected_generation,
-            refreshed_at=args.refreshed_at,
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            "platform_kernel_authority_refreshed",
-            result,
-            result["authority_path"],
-        )
     if command == "delivery-transition":
         result = DeliveryLifecycleProvider(project_root).transition(
             run_dir=args.run_dir,
@@ -1917,225 +1560,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             result,
             str(args.run_dir.resolve() / "workflow" / "run.json"),
         )
-    if command == "init-cutover-candidate":
-        kernel = VideoWorkflowKernel(args.workspace_root)
-        kernel.control_store = ControlStore.initialize(
-            args.workspace_root, kernel.contracts
-        )
-        probe = _production_probe_from_path(args.probe, kernel.contracts)
-        if probe.canonical_platform not in {"bilibili", "youtube"}:
-            raise CliUsageError(
-                "cutover candidate init is active only for Bilibili or YouTube"
-            )
-        publisher = BilibiliPlatformCutoverPublisher()
-        candidate = publisher.begin_candidate_initialization(
-            platform=probe.canonical_platform,
-            control_store_root=args.control_store_root,
-            candidate_probe=args.probe,
-            candidate_session_id=args.session_id,
-            workspace_root=args.workspace_root,
-        )
-        if args.fault_point == "after_candidate_begin":
-            raise InitializationFault("after_candidate_begin")
-        result = kernel.initialize_production_source(
-            probe,
-            session_id=args.session_id,
-            global_gate_binding=candidate["global_gate_binding"],
-            fault_point=args.fault_point,
-        )
-        publisher.record_candidate_initialized(
-            platform=probe.canonical_platform,
-            control_store_root=args.control_store_root,
-            candidate_run_dir=result.run_dir,
-        )
-        return _ok(
-            command,
-            "cutover_candidate_initialized",
-            {
-                "run_id": result.run_id,
-                "run_dir": str(result.run_dir),
-                "platform": probe.canonical_platform,
-                "stage": "generating",
-                "session_id": args.session_id,
-            },
-            str(result.run_dir / "workflow/run.json"),
-        )
-    if command == "platform-kernel-candidate-reconcile":
-        publisher = BilibiliPlatformCutoverPublisher()
-        candidate = publisher.require_prepared_candidate(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            candidate_probe=args.candidate_probe,
-            candidate_session_id=args.candidate_session_id,
-        )
-        if candidate.get("state") != "INITIALIZING":
-            raise KernelConflict(
-                "Bilibili cutover candidate has no interrupted initialization",
-                data={
-                    "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_initialization_not_reconcilable",
-                },
-            )
-        if Path(str(candidate.get("workspace_root", ""))).resolve() != args.workspace_root.resolve():
-            raise KernelConflict(
-                "Bilibili cutover candidate workspace binding changed",
-                data={
-                    "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_cutover_candidate_binding_mismatch",
-                },
-            )
-        kernel = VideoWorkflowKernel(args.workspace_root)
-        kernel.control_store = ControlStore.initialize(
-            args.workspace_root, kernel.contracts
-        )
-        intent = kernel.control_store.intent_for_run(candidate["candidate_run_id"])
-        binding = kernel.control_store.binding_for_run(candidate["candidate_run_id"])
-        if intent is None and binding is None:
-            candidate_outputs = []
-            for marker in args.workspace_root.rglob("*.json"):
-                if marker.name not in {"run.json", "prepared-run.json"}:
-                    continue
-                try:
-                    if read_json(marker).get("run_id") == candidate["candidate_run_id"]:
-                        candidate_outputs.append(marker)
-                except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                    candidate_outputs.append(marker)
-            if candidate_outputs:
-                raise KernelConflict(
-                    "Bilibili candidate has unbound initialization output",
-                    data={
-                        "first_failing_gate": "platform_kernel_candidate",
-                        "error_code": "bilibili_candidate_initialization_state_ambiguous",
-                    },
-                )
-            publisher.rollback_unstarted_candidate_initialization(
-                platform=args.platform,
-                control_store_root=args.control_store_root,
-                candidate_run_id=candidate["candidate_run_id"],
-                workspace_root=args.workspace_root,
-            )
-            return _ok(
-                command,
-                "candidate_initialization_rolled_back",
-                {
-                    "run_id": candidate["candidate_run_id"],
-                    "platform": args.platform,
-                    "state": "PREPARED",
-                },
-                None,
-            )
-        if intent is None or binding is None:
-            raise KernelConflict(
-                "Bilibili candidate initialization state is contradictory",
-                data={
-                    "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_initialization_state_ambiguous",
-                },
-            )
-        result = kernel.reconcile_initialization(candidate["candidate_run_id"])
-        if result.outcome == "old_state_complete":
-            reconciled_intent = kernel.control_store.intent_for_run(
-                candidate["candidate_run_id"]
-            )
-            reconciled_binding = kernel.control_store.binding_for_run(
-                candidate["candidate_run_id"]
-            )
-            if (
-                reconciled_intent is None
-                or reconciled_intent["state"] != "ABORTED"
-                or reconciled_binding is not None
-                or result.run_dir.exists()
-            ):
-                raise KernelConflict(
-                    "Bilibili candidate aborted initialization is contradictory",
-                    data={
-                        "first_failing_gate": "platform_kernel_candidate",
-                        "error_code": "bilibili_candidate_initialization_state_ambiguous",
-                    },
-                )
-            publisher.rollback_unstarted_candidate_initialization(
-                platform=args.platform,
-                control_store_root=args.control_store_root,
-                candidate_run_id=candidate["candidate_run_id"],
-                workspace_root=args.workspace_root,
-            )
-            return _ok(
-                command,
-                "candidate_initialization_rolled_back",
-                {
-                    "run_id": candidate["candidate_run_id"],
-                    "platform": args.platform,
-                    "state": "PREPARED",
-                    "kernel_initialization_state": "ABORTED",
-                },
-                None,
-            )
-        publisher.record_candidate_initialized(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            candidate_run_dir=result.run_dir,
-        )
-        return _ok(
-            command,
-            "candidate_initialization_reconciled",
-            {
-                "run_id": result.run_id,
-                "run_dir": str(result.run_dir),
-                "platform": args.platform,
-                "reconcile_classification": result.outcome,
-            },
-            str(result.run_dir / "workflow/run.json"),
-        )
-    if command == "platform-kernel-candidate-rebind":
-        result = BilibiliPlatformCutoverPublisher().rebind_candidate_implementation(
-            platform=args.platform,
-            control_store_root=args.control_store_root,
-            candidate_run_dir=args.candidate_run_dir,
-            implementation_commit=args.implementation_commit,
-            rebound_at=args.rebound_at,
-        )
-        return _ok(
-            command,
-            "platform_kernel_candidate_rebound",
-            result,
-            result["run_record_path"],
-        )
     if command == "init-run" and args.fixture is None:
-        if args.control_store_root is None or not args.session_id:
-            raise CliUsageError(
-                "active Kernel init-run requires --control-store-root and --session-id"
-            )
-        kernel = VideoWorkflowKernel(args.workspace_root)
-        kernel.control_store = ControlStore.initialize(
-            args.workspace_root, kernel.contracts
-        )
-        probe = _production_probe_from_path(args.probe, kernel.contracts)
-        if probe.canonical_platform not in {"bilibili", "youtube"}:
-            raise CliUsageError(
-                "production init-run is active only for Bilibili or YouTube"
-            )
-        platform = BilibiliPlatformCutoverPublisher().require_current(
-            platform=probe.canonical_platform,
-            control_store_root=args.control_store_root,
-        )
-        platform_authority = read_json(Path(platform["authority_path"]))
-        result = kernel.initialize_production_source(
-            probe,
-            session_id=args.session_id,
-            global_gate_binding=platform_authority["global_gate_binding"],
-            fault_point=args.fault_point,
-        )
-        return _ok(
-            command,
-            "run_initialized",
-            {
-                "run_id": result.run_id,
-                "run_dir": str(result.run_dir),
-                "platform": probe.canonical_platform,
-                "stage": "generating",
-                "session_id": args.session_id,
-            },
-            str(result.run_dir / "workflow/run.json"),
+        raise CliUsageError(
+            "production init-run is archived; use Profile-backed start-run"
         )
     if command in {"init-run", "source-import"}:
         if command == "init-run" and (
@@ -2615,12 +2042,7 @@ def main(argv: list[str] | None = None) -> int:
                 + "\n"
             )
             return 0
-        root_argument = _CUTOVER_COMMAND_ROOT_ARGUMENT.get(command)
-        if root_argument is None:
-            envelope = _execute(args, project_root)
-        else:
-            with cutover_mutation_fence(getattr(args, root_argument)):
-                envelope = _execute(args, project_root)
+        envelope = _execute(args, project_root)
         exit_code = 0
     except KernelError as exc:
         envelope = _error(command, exc)

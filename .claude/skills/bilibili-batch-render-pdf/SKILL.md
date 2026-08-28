@@ -11,15 +11,13 @@ This skill is a Kernel-supervisor skill. It does not replace `bilibili-render-pd
 
 ## Active Authority Boundary
 
-Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
+Batch is `active_batch` for new batches through the Workflow Release Profile. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
 
-For every new batch, run `workflow-policy-check` and `batch-authority-check` first. When Batch reports current `active_batch` authority, create the new batch with ordinary `batch-plan`. If either check reports missing or stale authority, fail closed and repair authority before planning; never route a new batch through the Legacy driver.
+For every new batch, invoke `batch-plan --project-config`. Planning validates the current Workflow Release Profile, requested platform and Batch capabilities, committed Cutover Authority Tombstone, and current Profile activation before it enumerates items or creates a Batch Record. Any failed admission leaves no new Batch Record. A new request has no Legacy fallback.
 
-### Authority recovery
+### Release maintenance
 
-Publishing Slice 14 and activating Batch authority are separate governed recovery steps. Use `batch-activate` only when the formal Batch authority is absent and repository owners explicitly authorize rebuilding activation evidence. Use `batch-reconcile` after an interrupted activation. A published manifest without a current `active_batch.json` authority leaves new planning closed.
-
-Use `batch-authority-refresh` when an existing Batch authority is stale because its published Slice 14 evidence or prerequisite Global Gate/platform bindings have advanced. Refresh requires the current authority generation as an optimistic concurrency fence and publishes the next generation. Use `batch-reconcile` after an interrupted refresh. Existing Legacy batch directories remain on the Legacy driver throughout authority recovery; recovery changes authority for new batches and never migrates historical directories.
+The active Batch skill exposes no migration-era cutover command. Repository owners publish or audit a compatible Workflow Release Profile through release maintenance and use coordinated release activation to retire machine-local cutover state before ordinary admission opens. Historical Slice 14 evidence and audit bundles remain preserved as release history. Existing Legacy batch directories remain on the Legacy driver throughout release maintenance.
 
 ## Fit
 
@@ -34,62 +32,32 @@ For one Bilibili video without batch orchestration, use `bilibili-render-pdf` di
 
 ## Batch Flow (pinned)
 
-Invoke Kernel batch mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. The default governed flow for every new batch is `workflow-policy-check` -> `batch-authority-check` -> `batch-plan` -> `batch-run` -> `batch-recover`/`batch-status`. `batch-activate`, `batch-authority-refresh`, and `batch-reconcile` belong only to authority recovery:
+Invoke Kernel batch mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. The governed flow for every new batch is `batch-plan` -> `batch-run` -> `batch-recover`/`batch-status`:
 
-1. `workflow-policy-check` — fail closed unless the Global Gate and both platform authorities remain current.
-2. `batch-authority-check` — fail closed unless the active Batch authority, Exit Evidence, Global Gate, and platform bindings remain current.
-3. `batch-plan` — deterministically enumerate the source items and write the planned Batch Record (no Runs are created).
-4. `batch-run` — create one independent Video Workflow Run per selected item through the kernel's guarded initialization path and submit only currently admitted work through Resource Admission.
-5. `batch-recover` — reconcile referenced runs and rebuild every item projection from authoritative Run state after interruption.
-6. `batch-status` — report the read-only batch status and per-item projection summaries.
-7. `batch-rebuild-projections` — rebuild every item projection from authoritative Run state without touching Run state.
-
-Absent-authority recovery uses `batch-activate` to publish generation 1 from the published Slice 14 Exit Evidence Manifest. Stale-authority recovery uses `batch-authority-refresh` to publish the next generation from refreshed Slice 14 evidence. `batch-reconcile` converges an interrupted activation or refresh intent without creating an extra authority generation.
+1. `batch-plan` — validate Profile-backed admission, deterministically enumerate the source items, and write the planned Batch Record (no Runs are created).
+2. `batch-run` — create one independent Video Workflow Run per selected item through the kernel's guarded initialization path and submit only currently admitted work through Resource Admission.
+3. `batch-recover` — reconcile referenced runs and rebuild every item projection from authoritative Run state after interruption.
+4. `batch-status` — report the read-only batch status and per-item projection summaries.
+5. `batch-rebuild-projections` — rebuild every item projection from authoritative Run state without touching Run state.
 
 ## Command Reference (pinned)
 
 Use the Workflow CLI launcher with the skill virtual environment:
 
-Verify the current Global Gate, platform, and Batch authorities before ordinary planning:
-
 ```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py workflow-policy-check --control-store-root "<control-store-root>"
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-authority-check --control-store-root "<control-store-root>"
+D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan --project-config "config/workflow-project.v1.json" --platform bilibili --source-url <url> --task-start <iso> --request-id <id>
 ```
 
-Absent Batch authority: after repository-owner authorization, publish generation 1 from the current Slice 14 evidence. If activation is interrupted, reconcile the prepared intent, then prove the authority current:
-
-```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-activate --control-store-root "<control-store-root>" --exit-evidence "<published-slice14-manifest>" --activated-at "<iso>"
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-reconcile --control-store-root "<control-store-root>"
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-authority-check --control-store-root "<control-store-root>"
-```
-
-Stale Batch authority: publish refreshed Slice 14 evidence, then read `<control-store-root>/active_batch.json`. The failing authority-check envelope does not supply the current generation. Require the file's `generation` to be an integer greater than or equal to 1, and pass that exact value as the optimistic concurrency fence. If refresh is interrupted, reconcile its prepared intent before checking currentness:
-
-```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-authority-refresh --control-store-root "<control-store-root>" --exit-evidence "<refreshed-slice14-manifest>" --expected-generation "<current-generation>" --refreshed-at "<iso>"
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-reconcile --control-store-root "<control-store-root>"
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-authority-check --control-store-root "<control-store-root>"
-```
-
-`batch-authority-check` is required before `batch-plan` and after any authority repair or control-root relocation. A stale `--expected-generation` fails closed; the operator must reread current authority and must not bypass the generation fence.
-
-```powershell
-D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan --control-store-root <control-store-root> --platform bilibili --source-url <url> --task-start <iso> --request-id <id>
-```
-
-Plan a batch (`--control-store-root --platform (--source-url | --url-set) --task-start --request-id [--selection] [--workspace-root]`). `--control-store-root` owns the Batch Record and supervisor state. `--workspace-root` is the output root for the independent Runs. When `--workspace-root` is omitted, the Workflow CLI uses the repository `workspace` directory. The planned Batch Record binds this output root, so every later command resolves it from the record and accepts only the control-store root:
+Plan a batch (`--project-config --platform (--source-url | --url-set) --task-start --request-id [--selection]`). The project configuration binds the Workflow Release Profile, Control Store, and output workspace. The planned Batch Record binds these resolved roots, so every later command resolves them from the record and accepts only the control-store root:
 
 ```powershell
 D:/Project/video2pdf/kimi/.venv/Scripts/python.exe -X utf8 -B scripts/video_workflow.py batch-plan `
-  --control-store-root "<control-store-root>" `
+  --project-config "config/workflow-project.v1.json" `
   --platform bilibili `
   --source-url "https://www.bilibili.com/video/BV..." `
   --task-start "2026-08-16T09:30:00+08:00" `
   --request-id "<request-id>" `
-  [--selection 1,2,3] `
-  [--workspace-root "D:\Project\video2pdf\newskill-kimi\workspace"]
+  [--selection 1,2,3]
 ```
 
 Create and submit the independent Runs (`--batch-id --control-store-root --session-id [--run-task-start] [--fault-point]`):

@@ -8,6 +8,7 @@ work/
 *.pyc
 .codex/delivery-targets/sessions/
 .codex/last_youtube_output.txt
+/.video-workflow-control-anchors/
 /magick_test.jpg
 /.claude/settings.json
 /.claude/2
@@ -41,4 +42,3 @@ workspace/**
 !workspace/*.pdf
 !workspace/**/*.pdf
 workspace/**/待删除/
-

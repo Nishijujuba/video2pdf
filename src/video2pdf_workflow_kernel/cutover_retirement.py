@@ -22,19 +22,11 @@ TOMBSTONE_FILE = "cutover-authority-tombstone.json"
 FENCE_FILE = "cutover-authority-retirement.lock"
 
 _JSON_SURFACES = (
-    Path("active_global_gate.json"),
-    Path("active_global_gate_policy.json"),
     Path("platform-authorities/bilibili.json"),
     Path("platform-authorities/youtube.json"),
     Path("active_batch.json"),
 )
 _DATABASES = {
-    Path("global-gate-control.sqlite3"): {
-        "gate_authority",
-        "gate_intents",
-        "gate_policy_authority",
-        "gate_policy_refresh_intents",
-    },
     Path("platform-kernel-control.sqlite3"): {
         "platform_cutover_authority",
         "platform_cutover_intents",
@@ -47,9 +39,22 @@ _DATABASES = {
         "batch_authority_refresh_intents",
     },
 }
+_PRESERVED_FINAL_QUALITY_SURFACES = frozenset(
+    {
+        "active_global_gate.json",
+        "active_global_gate_policy.json",
+        "global-gate-control.sqlite3",
+        "global-gate-control.sqlite3-wal",
+        "global-gate-control.sqlite3-shm",
+        "global-gate-control.sqlite3-journal",
+    }
+)
 _SIDECARS = ("-wal", "-shm", "-journal")
-_MUTATOR_FENCE_HELD: ContextVar[bool] = ContextVar(
-    "cutover_mutator_fence_held", default=False
+_PROJECT_MAINTENANCE_FENCE_HELD: ContextVar[bool] = ContextVar(
+    "project_maintenance_fence_held", default=False
+)
+_PROJECT_ADMISSION_LEASE_HELD: ContextVar[bool] = ContextVar(
+    "project_admission_lease_held", default=False
 )
 
 
@@ -88,6 +93,7 @@ def _fence_file_lock(
     root: Path,
     *,
     message: str,
+    gate: str = "retirement_fence",
     error_code: str,
     error_type: type[ContractError] | type[KernelConflict],
 ) -> Iterator[Path]:
@@ -104,7 +110,7 @@ def _fence_file_lock(
             raise error_type(
                 message,
                 data={
-                    "first_failing_gate": "retirement_fence",
+                    "first_failing_gate": gate,
                     "error_code": error_code,
                 },
             ) from exc
@@ -116,6 +122,9 @@ def _fence_file_lock(
 
 @contextmanager
 def _exclusive_retirement_fence(root: Path) -> Iterator[Path]:
+    if _PROJECT_MAINTENANCE_FENCE_HELD.get():
+        yield root / HISTORY_DIR / FENCE_FILE
+        return
     with _fence_file_lock(
         root,
         message="Another cutover-authority retirement owns the exclusive fence",
@@ -123,6 +132,79 @@ def _exclusive_retirement_fence(root: Path) -> Iterator[Path]:
         error_type=KernelConflict,
     ) as path:
         yield path
+
+
+@contextmanager
+def project_maintenance_fence(root: Path) -> Iterator[Path]:
+    """Fence release activation against admission and old cutover mutation."""
+
+    resolved = root.resolve()
+    if _PROJECT_ADMISSION_LEASE_HELD.get():
+        raise KernelConflict(
+            "Ordinary admission already owns the project maintenance boundary",
+            data={
+                "first_failing_gate": "project_maintenance_fence",
+                "error_code": "project_admission_in_progress",
+            },
+        )
+    with _fence_file_lock(
+        resolved,
+        message="Another project maintenance operation owns the exclusive fence",
+        gate="project_maintenance_fence",
+        error_code="project_maintenance_in_progress",
+        error_type=KernelConflict,
+    ) as path:
+        token = _PROJECT_MAINTENANCE_FENCE_HELD.set(True)
+        try:
+            yield path
+        finally:
+            _PROJECT_MAINTENANCE_FENCE_HELD.reset(token)
+
+
+@contextmanager
+def project_admission_lease(root: Path) -> Iterator[Path]:
+    """Keep activation outside one complete ordinary-admission commit."""
+
+    resolved = root.resolve()
+    if _PROJECT_ADMISSION_LEASE_HELD.get():
+        yield resolved / HISTORY_DIR / FENCE_FILE
+        return
+    with _fence_file_lock(
+        resolved,
+        message="Project release activation is in progress",
+        gate="project_maintenance_fence",
+        error_code="project_maintenance_in_progress",
+        error_type=ContractError,
+    ) as path:
+        token = _PROJECT_ADMISSION_LEASE_HELD.set(True)
+        try:
+            yield path
+        finally:
+            _PROJECT_ADMISSION_LEASE_HELD.reset(token)
+
+
+def require_project_admission_open(root: Path) -> None:
+    """Reject ordinary admission while coordinated release activation owns the fence."""
+
+    resolved = root.resolve()
+    if _PROJECT_ADMISSION_LEASE_HELD.get():
+        return
+    lock_path = resolved / HISTORY_DIR / FENCE_FILE
+    if not lock_path.is_file():
+        return
+    with lock_path.open("r+b") as handle:
+        try:
+            _lock_byte(handle, blocking=False)
+        except OSError as exc:
+            raise ContractError(
+                "Project release activation is in progress",
+                data={
+                    "first_failing_gate": "project_maintenance_fence",
+                    "error_code": "project_maintenance_in_progress",
+                },
+            ) from exc
+        else:
+            _unlock_byte(handle)
 
 
 def reject_retired_cutover_mutation(control_store_root: Path) -> None:
@@ -137,7 +219,7 @@ def reject_retired_cutover_mutation(control_store_root: Path) -> None:
                 "tombstone_path": str(tombstone),
             },
         )
-    if _MUTATOR_FENCE_HELD.get():
+    if _PROJECT_MAINTENANCE_FENCE_HELD.get():
         return
     lock_path = root / HISTORY_DIR / FENCE_FILE
     if not lock_path.is_file():
@@ -171,12 +253,12 @@ def cutover_mutation_fence(control_store_root: Path) -> Iterator[None]:
         error_code="cutover_authority_retirement_in_progress",
         error_type=ContractError,
     ):
-        token = _MUTATOR_FENCE_HELD.set(True)
+        token = _PROJECT_MAINTENANCE_FENCE_HELD.set(True)
         try:
             reject_retired_cutover_mutation(root)
             yield
         finally:
-            _MUTATOR_FENCE_HELD.reset(token)
+            _PROJECT_MAINTENANCE_FENCE_HELD.reset(token)
 
 
 def _resolve_project_path(project_root: Path, raw: Any, field: str) -> Path:
@@ -209,12 +291,18 @@ class CutoverAuthorityRetirement:
         self.contracts = ContractRegistry(self.project_root)
 
     def retire(self, *, project_config: Path) -> dict[str, Any]:
-        config = self._load_project_config(project_config)
+        config_path = project_config.resolve()
+        config = self._load_project_config(config_path)
+        configured_project_root = config_path.parent.parent.resolve()
         root = _resolve_project_path(
-            self.project_root, config["control_store_root"], "control_store_root"
+            configured_project_root,
+            config["control_store_root"],
+            "control_store_root",
         )
         workspace = _resolve_project_path(
-            self.project_root, config["workspace_root"], "workspace_root"
+            configured_project_root,
+            config["workspace_root"],
+            "workspace_root",
         )
         if root != workspace:
             self._reject(
@@ -223,7 +311,9 @@ class CutoverAuthorityRetirement:
                 "workflow_project_configuration_inconsistent",
             )
         profile_path = _resolve_project_path(
-            self.project_root, config["release_profile"], "release_profile"
+            configured_project_root,
+            config["release_profile"],
+            "release_profile",
         )
         profile = WorkflowReleaseProfile(self.project_root).load(profile_path)
 
@@ -297,8 +387,8 @@ class CutoverAuthorityRetirement:
                     "audit_bundle_path": str(bundle),
                     "capabilities_retired": sorted(
                         name
-                        for name, state in profile["capabilities"].items()
-                        if state == "active"
+                        for name in ("bilibili", "youtube", "batch")
+                        if profile["capabilities"].get(name) == "active"
                     ),
                     "disposition_counts": self._disposition_counts(record),
                     "historical_limitation_count": sum(
@@ -537,20 +627,6 @@ class CutoverAuthorityRetirement:
         }
         bindings = (
             (
-                "global-gate-control.sqlite3",
-                "gate_authority",
-                "gate_intents",
-                "active_global_gate.json",
-                None,
-            ),
-            (
-                "global-gate-control.sqlite3",
-                "gate_policy_authority",
-                "gate_policy_refresh_intents",
-                "active_global_gate_policy.json",
-                None,
-            ),
-            (
                 "platform-kernel-control.sqlite3",
                 "platform_cutover_authority",
                 ("platform_cutover_intents", "platform_authority_refresh_intents"),
@@ -614,8 +690,6 @@ class CutoverAuthorityRetirement:
     def _validate_capabilities(profile: dict[str, Any], inventory: list[dict[str, Any]]) -> None:
         present = {item["relative_path"] for item in inventory if item["present"]}
         required: set[str] = set()
-        if "active_global_gate.json" in present or "global-gate-control.sqlite3" in present:
-            required.add("global_gate")
         if "platform-authorities/bilibili.json" in present:
             required.add("bilibili")
         if "platform-authorities/youtube.json" in present:
@@ -659,6 +733,8 @@ class CutoverAuthorityRetirement:
         for item in record["inventory"]:
             paths = item.get("family", [item["relative_path"]])
             for raw in paths:
+                if raw in _PRESERVED_FINAL_QUALITY_SURFACES:
+                    continue
                 source = root / raw
                 target = original / raw
                 if source.is_file() and target.exists():
@@ -688,6 +764,8 @@ class CutoverAuthorityRetirement:
         remaining = []
         for item in record["inventory"]:
             for raw in item.get("family", [item["relative_path"]]):
+                if raw in _PRESERVED_FINAL_QUALITY_SURFACES:
+                    continue
                 if (root / raw).exists():
                     remaining.append(raw)
         if remaining:
@@ -730,6 +808,7 @@ class CutoverAuthorityRetirement:
                 raw
                 for item in record["inventory"]
                 for raw in item.get("family", [item["relative_path"]])
+                if raw not in _PRESERVED_FINAL_QUALITY_SURFACES
                 if (root / raw).exists()
             ]
             if active_paths:
@@ -794,6 +873,9 @@ class CutoverAuthorityRetirement:
 __all__ = [
     "CutoverAuthorityRetirement",
     "cutover_mutation_fence",
+    "project_admission_lease",
+    "project_maintenance_fence",
+    "require_project_admission_open",
     "reject_retired_cutover_mutation",
     "tombstone_path",
 ]

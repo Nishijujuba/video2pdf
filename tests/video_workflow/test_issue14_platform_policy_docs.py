@@ -7,10 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 YOUTUBE_ACTIVE_STATUS = (
-    "YouTube is `active_kernel` for all new tasks under the current runtime "
-    "`CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing "
-    "YouTube directories remain Legacy unless an explicit migration authority is "
-    "introduced."
+    "YouTube is `active_kernel` for new tasks through the Workflow Release Profile."
 )
 
 
@@ -29,7 +26,8 @@ class Issue14PlatformPolicyDocumentationTests(unittest.TestCase):
         for relative in paths:
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn(YOUTUBE_ACTIVE_STATUS, text)
+                self.assertIn("Workflow Release Profile", text)
+                self.assertIn("`active_kernel`", text)
                 self.assertNotIn("YouTube remains `active_legacy`", text)
                 self.assertNotIn(
                     "The current repository has no confirmed YouTube platform authority",
@@ -51,7 +49,7 @@ class Issue14PlatformPolicyDocumentationTests(unittest.TestCase):
                 self.assertIn("Bilibili", text)
                 self.assertIn("`active_kernel`", text)
                 self.assertIn("YouTube", text)
-                self.assertIn(YOUTUBE_ACTIVE_STATUS, text)
+                self.assertIn("Workflow Release Profile", text)
                 self.assertIn("`active_global_gate`", text)
 
     def test_youtube_skill_mirror_delegates_kernel_mechanics_to_public_cli(self) -> None:
@@ -59,8 +57,7 @@ class Issue14PlatformPolicyDocumentationTests(unittest.TestCase):
         mirror = (ROOT / ".claude/skills/youtube-render-pdf/SKILL.md").read_text(encoding="utf-8")
         self.assertEqual(authority, mirror)
         for command in (
-            "bootstrap-probe",
-            "init-run",
+            "start-run",
             "source-acquire",
             "source-acquire-reconcile",
             "production-plan",
@@ -71,12 +68,12 @@ class Issue14PlatformPolicyDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(command, authority)
         self.assertIn(YOUTUBE_ACTIVE_STATUS, authority)
-        self.assertIn("Existing YouTube directories remain Legacy", authority)
+        self.assertIn("Existing YouTube directories remain on explicit Legacy maintenance routes", authority)
         self.assertIn("Global Gate remains `active_global_gate`", authority)
         self.assertIn("Slice 13", authority)
         self.assertNotIn("YouTube remains `active_legacy`", authority)
         self.assertNotIn("Cold-start cutover bootstrap", authority)
-        self.assertIn("never redirect a new task", authority)
+        self.assertIn("A new request has no Legacy fallback", authority)
         self.assertNotIn(
             "The current repository has no confirmed YouTube platform authority",
             authority,

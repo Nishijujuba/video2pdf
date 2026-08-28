@@ -2,7 +2,7 @@
 
 Status: active domain language. Component runtime activation is recorded in the [Video Workflow Kernel 2.0 decision map](../../adr/video-workflow-kernel-2.0-decision-map.md).
 
-Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence. Existing YouTube directories remain Legacy unless an explicit migration authority is introduced. Final-quality authority remains the Delivery Quality `active_global_gate`.
+The Workflow Release Profile is the sole ordinary-admission authority for completed Workflow 2.0 capabilities. Bilibili and YouTube are `active_kernel` for new tasks through `start-run --project-config`; Batch is `active_batch` for new batches through `batch-plan --project-config`. Both routes require the committed Cutover Authority Tombstone and current Profile activation. Existing directories retain explicit Legacy maintenance. Final-quality authority remains the Delivery Quality `active_global_gate`.
 
 The completed cold-start cutover bound one exact Bilibili Run as the evidence candidate through `platform-kernel-prepare` and `init-cutover-candidate`. `PREPARED`, `INITIALIZED`, and `PROVISIONAL` were bounded candidate states; final activation recorded `CONFIRMED` for the matching delivered candidate and its published Exit Evidence before ordinary new-run authority opened.
 
@@ -86,7 +86,7 @@ The project-local migration record that binds one Workflow Release Profile to th
 
 ## Cutover Authority Tombstone
 
-The project-local terminal marker showing that retired cutover state was archived under one Cutover Authority Retirement Record and must not be recreated through old cutover commands. It is not an ordinary-startup dependency.
+The project-local terminal marker showing that retired cutover state was archived under one Cutover Authority Retirement Record and cannot be recreated through old cutover commands. Ordinary single-video and Batch admission require its identity to match the current Workflow Release Profile.
 
 ## Contract Schema Version
 
@@ -498,7 +498,7 @@ A read-only, rebuildable view of one Video Workflow Run inside a Batch Record.
 
 ## Batch activation status
 
-Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
+Batch is `active_batch` for all new batches through Profile-backed `batch-plan --project-config`. Planning requires the committed Cutover Authority Tombstone and current Profile activation. The Legacy batch driver is retained for pre-existing batch directories only; PDF-existence success and global `--concurrency` are retired.
 
 ## Delivery Target
 

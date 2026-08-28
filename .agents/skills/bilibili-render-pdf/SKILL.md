@@ -35,17 +35,17 @@ The output must:
 
 ## Active Authority Boundary
 
-Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence. Existing Bilibili directories remain Legacy unless an explicit migration authority is introduced. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both Legacy and Kernel inputs.
+Bilibili is `active_kernel` for new tasks through the Workflow Release Profile. Existing Bilibili directories remain on explicit Legacy maintenance routes. Global Gate remains `active_global_gate` and Acceptance Report v2 stays the sole final-quality authority for both Legacy and Kernel inputs.
 
-For every new Bilibili task, run `workflow-policy-check` first. When Bilibili reports current `active_kernel` authority, start the new task with ordinary `init-run`. If the Global Gate or platform authority is missing, stale, or unconfirmed, fail closed and repair authority before creating the task; never redirect a new task into a Legacy directory or a historical activation path.
+For every new Bilibili task, invoke `start-run --project-config` with the source URL, session identity, and credential reference. The command validates the current Workflow Release Profile, Cutover Authority Tombstone, Profile activation, Control Store, Bootstrap Probe, output claim, Run initialization, and final-quality lifecycle binding. Any failed admission leaves no new Run. A new request has no Legacy fallback.
 
 The skill owns teaching intent, Bilibili-specific semantic choices, role briefs, source-language priorities, figure judgment, writing rules, and Reviewer instructions. The Video Workflow Kernel owns directory naming and scaffold creation, downloads and source finalization, task envelopes and promotion, production advancement, compile execution, delivery-target mutations, ownership handoff, reconciliation, archival, and mechanical evidence publication.
 
-Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start or resume with `bootstrap-probe`, `init-run`, `reconcile-run`, and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
+Invoke Kernel mechanics only through the public Workflow CLI at `scripts/video_workflow.py`. Start with `start-run`; resume with `reconcile-run` and `reconcile-authority`; advance or recover source and production through `source-acquire`, `source-acquire-reconcile`, `source-import`, `production-plan`, `production-advance`, and task commands; compile through `guarded-compile`; mutate delivery state only through `delivery-transition`, `delivery-handoff`, and `delivery-archive`. The skill never writes Kernel authority files or SQLite rows directly.
 
 ### Cold-start recovery only
 
-If `workflow-policy-check` reports that the formal Bilibili authority is absent, stop new-task initialization and obtain repository-owner authorization for authority recovery. Historical cutover mechanics and evidence remain in the governing ADRs and published Slice 12 records; this active skill provides no executable cutover path.
+If `start-run` reports a missing, malformed, incompatible, inactive, or stale Profile authority, stop new-task initialization and obtain repository-owner authorization for release maintenance. Historical cutover mechanics and Slice 12 evidence remain preserved as release history; this active skill exposes no executable cutover path.
 
 ### Execution track partition
 
@@ -204,7 +204,7 @@ Skip subtitles entirely and rely on dense frame sampling to extract teaching con
 
 ## Output Naming
 
-For a new Kernel task, `init-run` creates the output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
+For a new Kernel task, `start-run` creates the output directory under `D:\Project\video2pdf\newskill-kimi\workspace` using the original Bilibili title plus the task start timestamp from the local machine timezone:
 
 ```text
 D:\Project\video2pdf\newskill-kimi\workspace\{normalized-original-video-title}_{yyyyMMdd_HHmmss}

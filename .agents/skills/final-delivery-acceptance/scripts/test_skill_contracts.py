@@ -19,29 +19,26 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
     def test_new_task_skills_use_current_kernel_authority_and_preserve_legacy_directories(self) -> None:
         required_by_skill = {
             "bilibili-render-pdf": (
-                "Bilibili is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 12 Exit Evidence.",
-                "For every new Bilibili task, run `workflow-policy-check` first.",
-                "When Bilibili reports current `active_kernel` authority, start the new task with ordinary `init-run`.",
-                "Existing Bilibili directories remain Legacy",
-                "Cold-start recovery only",
+                "Bilibili is `active_kernel` for new tasks through the Workflow Release Profile.",
+                "For every new Bilibili task, invoke `start-run --project-config`",
+                "Cutover Authority Tombstone",
+                "Existing Bilibili directories remain on explicit Legacy maintenance routes",
             ),
             "youtube-render-pdf": (
-                "YouTube is `active_kernel` for all new tasks under the current runtime `CONFIRMED` platform authority and published Slice 13 Exit Evidence.",
-                "For every new YouTube task, run `workflow-policy-check` first.",
-                "When YouTube reports current `active_kernel` authority, start the new task with ordinary `init-run`.",
-                "Existing YouTube directories remain Legacy",
-                "Cold-start recovery only",
+                "YouTube is `active_kernel` for new tasks through the Workflow Release Profile.",
+                "For every new YouTube task, invoke `start-run --project-config`",
+                "Cutover Authority Tombstone",
+                "Existing YouTube directories remain on explicit Legacy maintenance routes",
             ),
             "bilibili-batch-render-pdf": (
-                "Batch is `active_batch` for all new batches under the current runtime authority and published Slice 14 Exit Evidence Manifest.",
-                "For every new batch, run `workflow-policy-check` and `batch-authority-check` first.",
-                "When Batch reports current `active_batch` authority, create the new batch with ordinary `batch-plan`.",
+                "Batch is `active_batch` for new batches through the Workflow Release Profile.",
+                "For every new batch, invoke `batch-plan --project-config`.",
+                "Cutover Authority Tombstone",
                 "Pre-existing legacy batch directories",
-                "Cold-start recovery only",
             ),
             "final-delivery-acceptance": (
-                "For newly generated Bilibili and YouTube work, runtime Platform Kernel authority is resolved with `workflow-policy-check` before `init-run`.",
-                "Existing Legacy directories remain Legacy",
+                "For newly generated Bilibili and YouTube work, `start-run --project-config` validates the Workflow Release Profile",
+                "Existing Legacy directories remain on explicit Legacy maintenance routes",
             ),
         }
 
@@ -93,9 +90,8 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
                 text = read(REPO_ROOT / relative)
                 for phrase in required:
                     self.assertIn(phrase, text)
-                self.assertIn("Bilibili is `active_kernel` for all new tasks", text)
-                self.assertIn("YouTube is `active_kernel` for all new tasks", text)
-                self.assertIn("Batch is `active_batch` for all new batches", text)
+                self.assertIn("Bilibili and YouTube are `active_kernel` for new tasks", text)
+                self.assertIn("Batch is `active_batch` for new batches", text)
 
         final_context = read(REPO_ROOT / "docs/contexts/final-acceptance/CONTEXT.md")
         delivery_context = read(REPO_ROOT / "docs/contexts/delivery-quality/CONTEXT.md")
@@ -104,9 +100,8 @@ class FinalDeliveryAcceptanceSkillContractTests(unittest.TestCase):
         self.assertIn("Status: superseded", final_context)
         self.assertIn("Status: active_global_gate", delivery_context)
         self.assertIn("`active_global_gate`", decision_map)
-        self.assertIn("Bilibili is `active_kernel` for all new tasks", decision_map)
-        self.assertIn("YouTube is `active_kernel` for all new tasks", decision_map)
-        self.assertIn("Batch is `active_batch` for all new batches", decision_map)
+        self.assertIn("Bilibili and YouTube are `active_kernel` for new tasks", decision_map)
+        self.assertIn("Batch is `active_batch` for new batches", decision_map)
         self.assertIn("active_global_gate", context_map)
 
     def test_reviewer_skill_defines_read_only_context_and_outputs(self) -> None:

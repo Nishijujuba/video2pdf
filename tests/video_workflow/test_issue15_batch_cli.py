@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import hashlib
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -19,7 +21,33 @@ from video2pdf_workflow_kernel.batch_authority import BatchCutoverPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.cutover_retirement import project_maintenance_fence
 from video2pdf_workflow_kernel.errors import KernelError
+
+
+def _write_current_global_gate(control_root: Path) -> None:
+    authority_path = control_root / "active_global_gate.json"
+    authority_path.write_bytes(
+        (PROJECT_ROOT / "workspace" / "active_global_gate.json").read_bytes()
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority_file_sha = hashlib.sha256(authority_path.read_bytes()).hexdigest()
+    with sqlite3.connect(control_root / "global-gate-control.sqlite3") as connection:
+        connection.execute("PRAGMA user_version=1")
+        connection.execute(
+            "CREATE TABLE gate_authority (singleton INTEGER PRIMARY KEY, generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE gate_intents (intent_id TEXT PRIMARY KEY, state TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO gate_authority VALUES (1, ?, ?, ?)",
+            (
+                authority["generation"],
+                authority["exit_evidence_sha256"],
+                authority_file_sha,
+            ),
+        )
 
 
 def _run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -68,6 +96,42 @@ def _write_batch_project(case_root: Path) -> tuple[Path, Path, Path, Path]:
     profile_path = config_root / "workflow-release-profile.v1.json"
     profile_path.write_bytes(
         (PROJECT_ROOT / "config" / "workflow-release-profile.v1.json").read_bytes()
+    )
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    control_root.mkdir(parents=True)
+    _write_current_global_gate(control_root)
+    history = control_root / ".workflow-release-history"
+    history.mkdir()
+    (history / "cutover-authority-tombstone.json").write_text(
+        json.dumps(
+            {
+                "state": "RETIRED",
+                "release_id": profile["release_id"],
+                "contract_compatibility": profile["contract_compatibility"],
+                "profile_path": str(profile_path.resolve()),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (config_root / "workflow-admission-activation.v1.json").write_text(
+        json.dumps(
+            {
+                "schema_name": "workflow-admission-activation",
+                "schema_version": "1.0.0",
+                "activation_status": "active_profile_admission",
+                "release_id": profile["release_id"],
+                "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+                "generation": 1,
+                "activated_at": "2026-08-27T00:00:00Z",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
     )
     project_config = config_root / "workflow-project.v1.json"
     project_config.write_text(
@@ -144,7 +208,17 @@ class Issue15BatchCliTests(unittest.TestCase):
         self.assertIsNotNone(record)
         self.assertEqual(Path(record["output_root"]), output_root)
         self.assertTrue(Path(record["batch_dir"]).is_relative_to(output_root))
-        self.assertIsNone(record["batch_authority_binding"])
+        self.assertEqual(
+            record["batch_authority_binding"]["authority_kind"],
+            "workflow_release_profile",
+        )
+        self.assertEqual(
+            Path(record["batch_authority_binding"]["profile_path"]),
+            _profile.resolve(),
+        )
+        self.assertEqual(
+            record["batch_authority_binding"]["release_id"], "workflow-2.0"
+        )
         self.assertEqual(record["run_mappings"], [])
         self.assertEqual(record["projections"], [])
         self.assertEqual(list(output_root.rglob("workflow/run.json")), [])
@@ -165,49 +239,62 @@ class Issue15BatchCliTests(unittest.TestCase):
             ),
             1,
         )
+        with patch.object(
+            BatchCutoverPublisher,
+            "require_current",
+            side_effect=AssertionError("Profile-backed status read retired Batch authority"),
+        ):
+            status = _run_cli(
+                "batch-status",
+                "--control-store-root",
+                str(control_root),
+                "--batch-id",
+                envelope["data"]["batch_id"],
+            )
+        self.assertEqual(status.returncode, 0, status.stdout)
+        self.assertEqual(
+            json.loads(status.stdout)["classification"], "batch_status_reported"
+        )
 
-    def test_batch_plan_inactive_profile_fails_before_record(self) -> None:
+    def test_batch_plan_maintenance_fence_fails_before_record(self) -> None:
         workspace = new_workflow_workspace(self.id(), label="cli-profile-closed")
-        project_config, output_root, control_root, profile = _write_batch_project(
+        project_config, output_root, control_root, _profile = _write_batch_project(
             workspace
         )
-        value = json.loads(profile.read_text(encoding="utf-8"))
-        value["capabilities"]["batch"] = "inactive"
-        profile.write_text(
-            json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
-            encoding="utf-8",
-        )
 
-        # scenario_id: inactive_batch_capability
-        # target_invariant: the Profile must activate ordinary Batch planning
-        # mutation_seam: published Profile capabilities.batch
-        # rematerialized_nodes: Profile JSON
+        # scenario_id: coordinated_activation_fence
+        # target_invariant: Batch planning cannot enter during release activation
+        # mutation_seam: exclusive project maintenance fence
+        # rematerialized_nodes: none
         # intentionally_stale_nodes: none
-        # expected_first_gate: batch_capability
-        # expected_error_code: workflow_release_capability_inactive
+        # expected_first_gate: project_maintenance_fence
+        # expected_error_code: project_maintenance_in_progress
         # scenario_class: single_contradiction
-        completed = _run_cli(
-            "batch-plan",
-            "--project-config",
-            str(project_config),
-            "--platform",
-            "bilibili",
-            "--source-url",
-            "https://www.bilibili.com/video/BV1xx411c7mD/",
-            "--task-start",
-            "2026-08-16T09:05:00+08:00",
-            "--request-id",
-            "inactive-batch",
-        )
+        with project_maintenance_fence(control_root):
+            completed = _run_cli(
+                "batch-plan",
+                "--project-config",
+                str(project_config),
+                "--platform",
+                "bilibili",
+                "--source-url",
+                "https://www.bilibili.com/video/BV1xx411c7mD/",
+                "--task-start",
+                "2026-08-16T09:05:00+08:00",
+                "--request-id",
+                "activation-fenced-batch",
+            )
         envelope = json.loads(completed.stdout)
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(envelope["data"]["first_failing_gate"], "batch_capability")
+        self.assertEqual(
+            envelope["data"]["first_failing_gate"], "project_maintenance_fence"
+        )
         self.assertEqual(
             envelope["data"]["error_code"],
-            "workflow_release_capability_inactive",
+            "project_maintenance_in_progress",
         )
         self.assertFalse(output_root.exists())
-        self.assertFalse(control_root.exists())
+        self.assertFalse((control_root / ".workflow-control/control.sqlite3").exists())
         self.assertEqual(list(workspace.rglob("batch-record.json")), [])
 
     def test_batch_run_delegates_start_binding_to_provider(self) -> None:
@@ -278,21 +365,45 @@ class Issue15BatchCliTests(unittest.TestCase):
         )
 
     def test_batch_run_accepts_claim_before_mapping_fault_point(self) -> None:
-        args = kernel_cli._parser().parse_args(
-            [
+        workspace = new_workflow_workspace(self.id(), label="cli-run-profile")
+        project_config, _output_root, control_root, _profile = _write_batch_project(
+            workspace
+        )
+        planned = _run_cli(
+            "batch-plan",
+            "--project-config",
+            str(project_config),
+            "--platform",
+            "bilibili",
+            "--source-url",
+            "https://www.bilibili.com/video/BV1xx411c7mD/",
+            "--task-start",
+            "2026-08-16T09:05:00+08:00",
+            "--request-id",
+            "cli-profile-run",
+        )
+        self.assertEqual(planned.returncode, 0, planned.stdout)
+        batch_id = json.loads(planned.stdout)["data"]["batch_id"]
+        with patch.object(
+            BatchCutoverPublisher,
+            "require_current",
+            side_effect=AssertionError("Profile-backed run read retired Batch authority"),
+        ):
+            interrupted = _run_cli(
                 "batch-run",
                 "--batch-id",
-                "a" * 32,
+                batch_id,
                 "--control-store-root",
-                str(PROJECT_ROOT / "workspace"),
+                str(control_root),
                 "--session-id",
                 "session-cli-fault",
                 "--fault-point",
                 "after_first_task_claim_before_mapping_commit",
-            ]
-        )
+            )
+        self.assertNotEqual(interrupted.returncode, 0, interrupted.stdout)
         self.assertEqual(
-            args.fault_point, "after_first_task_claim_before_mapping_commit"
+            json.loads(interrupted.stdout)["classification"],
+            "injected_initialization_fault",
         )
 
     def test_batch_plan_requires_task_start(self) -> None:

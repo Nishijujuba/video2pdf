@@ -6,12 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-BATCH_ACTIVE_STATUS = (
-    "Batch is `active_batch` for all new batches under the current runtime authority "
-    "and published Slice 14 Exit Evidence Manifest. The Legacy batch driver is "
-    "retained for pre-existing batch directories only; PDF-existence success and "
-    "global `--concurrency` are retired."
-)
+BATCH_ACTIVE_STATUS = "Batch is `active_batch` for new batches"
 
 SUCCESS_DEFINITION = "cannot establish success"
 
@@ -55,10 +50,6 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
         for command in (
-            "batch-activate",
-            "batch-authority-refresh",
-            "batch-reconcile",
-            "batch-authority-check",
             "batch-plan",
             "batch-run",
             "batch-recover",
@@ -66,54 +57,44 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
             "batch-status",
         ):
             self.assertIn(command, text)
+        for command in (
+            "batch-activate",
+            "batch-authority-refresh",
+            "batch-reconcile",
+            "batch-authority-check",
+            "workflow-policy-check",
+        ):
+            self.assertNotIn(command, text)
 
     def test_batch_skill_routes_absent_and_stale_authority_repairs(self) -> None:
         text = (
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("Absent Batch authority", text)
-        self.assertIn("Stale Batch authority", text)
-        self.assertIn(
-            "batch-authority-refresh --control-store-root \"<control-store-root>\" "
-            "--exit-evidence \"<refreshed-slice14-manifest>\" "
-            "--expected-generation \"<current-generation>\" "
-            "--refreshed-at \"<iso>\"",
-            text,
-        )
-        refresh = text.index("Stale Batch authority")
-        reconcile = text.index("batch-reconcile", refresh)
-        check = text.index("batch-authority-check", reconcile)
-        self.assertLess(refresh, reconcile)
-        self.assertLess(reconcile, check)
+        self.assertIn("Workflow Release Profile", text)
+        self.assertIn("Cutover Authority Tombstone", text)
+        self.assertIn("current Profile activation", text)
         self.assertIn(
             "Existing Legacy batch directories remain on the Legacy driver",
             text,
         )
-        self.assertIn("<control-store-root>/active_batch.json", text)
-        self.assertIn("integer greater than or equal to 1", text)
-        self.assertIn("does not supply the current generation", text)
 
     def test_batch_skill_documents_governed_activation_sequence(self) -> None:
         text = (
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "Publishing Slice 14 and activating Batch authority are separate governed recovery steps.",
-            text,
-        )
-        self.assertIn("active_batch.json", text)
+        self.assertIn("coordinated release activation", text)
+        self.assertIn("migration-era cutover command", text)
         self.assertIn(BATCH_ACTIVE_STATUS, text)
         self.assertNotIn("leaves Batch `target_only`", text)
-        self.assertIn("Use `batch-reconcile` after an interrupted activation.", text)
-        self.assertIn("`batch-authority-check` is required before `batch-plan`", text)
+        self.assertIn("batch-plan --project-config", text)
 
     def test_batch_skill_documents_cli_default_bindings(self) -> None:
         text = (
             ROOT / ".agents/skills/bilibili-batch-render-pdf/SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("When `--workspace-root` is omitted", text)
-        self.assertIn("`--control-store-root` owns the Batch Record", text)
-        self.assertIn("every later command resolves it from the record", text)
+        self.assertIn("The project configuration binds", text)
+        self.assertIn("`--project-config", text)
+        self.assertIn("every later command resolves them from the record", text)
         self.assertIn("`--run-task-start` is optional", text)
         self.assertIn("reuses that exact bound value", text)
         self.assertIn("Supplying a different value after binding fails closed", text)
@@ -150,12 +131,12 @@ class Issue15BatchPolicyDocumentationTests(unittest.TestCase):
         self.assertIn("legacy/", text)
 
     def test_existing_platform_status_sentences_unchanged(self) -> None:
-        # The Bilibili/YouTube/Slice 12/13 sentences stay intact (pinned by
-        # test_issue14_platform_policy_docs.py); batch adds without replacing.
+        # Profile activation supersedes machine-local cutover admission while
+        # the shared final-quality authority remains unchanged.
         for relative in ("AGENTS.md", "CLAUDE.md", "CONTEXT-MAP.md"):
             text = (ROOT / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertIn("Slice 13 Exit Evidence", text)
+                self.assertIn("Workflow Release Profile", text)
                 self.assertIn("active_global_gate", text)
 
 

@@ -31,6 +31,7 @@ from video2pdf_workflow_kernel.errors import (
     KernelConflict,
 )
 from video2pdf_workflow_kernel import release_maintenance
+from video2pdf_workflow_kernel.release_activation import WorkflowReleaseActivation
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
     read_json,
@@ -108,17 +109,26 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                     "batch-authority-refresh",
                     "batch-reconcile",
                     "batch-authority-check",
+                    "global-gate-activate",
+                    "global-gate-reconcile",
+                    "global-gate-policy-authority-refresh",
+                    "platform-kernel-prepare",
+                    "platform-kernel-candidate-activate",
+                    "platform-kernel-activate",
+                    "platform-kernel-reconcile",
+                    "youtube-platform-authority-refresh",
+                    "init-cutover-candidate",
+                    "platform-kernel-candidate-reconcile",
+                    "platform-kernel-candidate-rebind",
                     "release-profile-publish",
+                    "release-profile-activate",
                     "release-audit",
                     "retire-cutover-authority",
                 }
             },
             {
-                "batch-activate",
-                "batch-authority-refresh",
-                "batch-reconcile",
-                "batch-authority-check",
                 "release-profile-publish",
+                "release-profile-activate",
                 "release-audit",
                 "retire-cutover-authority",
             },
@@ -145,63 +155,18 @@ class Issue15BatchCutoverTests(unittest.TestCase):
     def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
         self,
     ) -> None:
-        authority = {
-            "authority_path": "D:/workspace/active_batch.json",
-            "authority_sha256": "a" * 64,
+        activation = {
+            "activation_path": "D:/repo/config/workflow-admission-activation.v1.json",
+            "profile_path": "D:/repo/config/workflow-release-profile.v1.json",
+            "profile_sha256": "a" * 64,
+            "release_id": "workflow-2.0",
             "generation": 1,
-            "current": True,
+            "tombstone_path": "D:/workspace/.workflow-release-history/cutover-authority-tombstone.json",
+            "single_video_admission": "profile_backed",
+            "batch_admission": "profile_backed",
+            "archived_cutover_commands": True,
+            "profile_publication": "published_and_audited",
         }
-        cases = (
-            (
-                [
-                    "batch-activate",
-                    "--control-store-root",
-                    "D:/workspace",
-                    "--exit-evidence",
-                    "D:/repo/evidence/slice-14/exit-evidence-manifest.json",
-                    "--activated-at",
-                    "2026-08-19T00:00:00Z",
-                ],
-                "activate",
-                "batch_authority_activated",
-            ),
-            (
-                [
-                    "batch-authority-refresh",
-                    "--control-store-root",
-                    "D:/workspace",
-                    "--exit-evidence",
-                    "D:/repo/evidence/slice-14/exit-evidence-manifest.json",
-                    "--expected-generation",
-                    "1",
-                    "--refreshed-at",
-                    "2026-08-20T00:00:00Z",
-                ],
-                "refresh_authority",
-                "batch_authority_refreshed",
-            ),
-            (
-                ["batch-reconcile", "--control-store-root", "D:/workspace"],
-                "reconcile",
-                "batch_authority_reconciled",
-            ),
-            (
-                ["batch-authority-check", "--control-store-root", "D:/workspace"],
-                "require_current",
-                "batch_authority_current",
-            ),
-        )
-
-        for argv, method_name, classification in cases:
-            with self.subTest(command=argv[0]), patch.object(
-                BatchCutoverPublisher, method_name, return_value=authority
-            ):
-                args = kernel_cli._parser().parse_args(argv)
-                envelope = kernel_cli._execute(args, PROJECT_ROOT)
-
-                self.assertEqual(envelope["classification"], classification)
-                self.assertEqual(envelope["evidence_path"], authority["authority_path"])
-
         root = new_case_dir(self.id(), label="release-maintenance")
         candidate = root / "candidate-profile.json"
         candidate.write_bytes(
@@ -214,6 +179,23 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             "--youtube-exit-evidence", str(root / "youtube.json"),
             "--batch-exit-evidence", str(root / "batch.json"),
         ]
+        with patch.object(
+            WorkflowReleaseActivation, "activate", return_value=activation
+        ) as activate_release:
+            args = kernel_cli._parser().parse_args(
+                [
+                    "release-profile-activate",
+                    "--project-config", str(root / "workflow-project.v1.json"),
+                    "--activated-at", "2026-08-28T00:00:00+08:00",
+                    *evidence_arguments,
+                ]
+            )
+            envelope = kernel_cli._execute(args, PROJECT_ROOT)
+        self.assertEqual(
+            envelope["classification"], "workflow_release_profile_activated"
+        )
+        self.assertEqual(envelope["evidence_path"], activation["activation_path"])
+        self.assertEqual(activate_release.call_count, 1)
         validated_evidence = {
             capability: {"path": str(root / f"{capability}.json")}
             for capability in ("global_gate", "bilibili", "youtube", "batch")
@@ -230,6 +212,11 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 "_validate_release_package",
                 return_value=validated_evidence,
             ) as validate_release_package,
+            patch.object(
+                release_maintenance.ReleaseMaintenance,
+                "_validate_historical_release_package",
+                return_value=validated_evidence,
+            ) as validate_historical_release_package,
         ):
             stdout = StringIO()
             with redirect_stdout(stdout):
@@ -295,7 +282,8 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             self.assertFalse(audit_result["data"]["runtime_authority_changed"])
             self.assertEqual(published.read_bytes(), authoritative_bytes)
             self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
-            self.assertEqual(validate_release_package.call_count, 2)
+            self.assertEqual(validate_release_package.call_count, 1)
+            self.assertEqual(validate_historical_release_package.call_count, 1)
 
         historical_validator = SimpleNamespace(
             EvidenceError=ValueError,
@@ -926,52 +914,9 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         self.assertEqual(retried["generation"], 2)
 
     def test_cancelled_refresh_and_reconcile_have_distinct_cli_classifications(self) -> None:
-        cancelled = {
-            "authority_path": "D:/workspace/active_batch.json",
-            "authority_sha256": "a" * 64,
-            "generation": 1,
-            "current": False,
-            "cancelled": True,
-            "reconciled": False,
-            "cancellation_reason": "evidence_drift",
-        }
-        refresh_args = kernel_cli._parser().parse_args(
-            [
-                "batch-authority-refresh",
-                "--control-store-root",
-                "D:/workspace",
-                "--exit-evidence",
-                "D:/repo/evidence/slice-14/exit-evidence-manifest.json",
-                "--expected-generation",
-                "1",
-                "--refreshed-at",
-                "2026-08-20T00:00:00Z",
-            ]
-        )
-        with patch.object(
-            BatchCutoverPublisher, "refresh_authority", return_value=cancelled
-        ):
-            refresh_envelope = kernel_cli._execute(refresh_args, PROJECT_ROOT)
-
-        reconciled_cancelled = {**cancelled, "reconciled": True}
-        reconcile_args = kernel_cli._parser().parse_args(
-            ["batch-reconcile", "--control-store-root", "D:/workspace"]
-        )
-        with patch.object(
-            BatchCutoverPublisher,
-            "reconcile",
-            return_value=reconciled_cancelled,
-        ):
-            reconcile_envelope = kernel_cli._execute(reconcile_args, PROJECT_ROOT)
-
-        self.assertEqual(
-            refresh_envelope["classification"],
-            "batch_authority_refresh_cancelled",
-        )
-        self.assertEqual(
-            reconcile_envelope["classification"],
-            "batch_authority_reconcile_cancelled",
-        )
+        choices = kernel_cli._parser()._subparsers._group_actions[0].choices
+        self.assertNotIn("batch-authority-refresh", choices)
+        self.assertNotIn("batch-reconcile", choices)
 
     def test_after_intent_publication_commit_drift_is_cancelled(self) -> None:
         root, evidence = self._case("refresh-publication-drift")
@@ -1107,22 +1052,8 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 publisher.reconcile(control_store_root=root)
 
     def test_refresh_rejects_non_positive_generation_through_the_cli_seam(self) -> None:
-        root, evidence = self._case("refresh-non-positive-generation")
-        argv = [
-            "batch-authority-refresh",
-            "--control-store-root",
-            str(root),
-            "--exit-evidence",
-            str(evidence),
-            "--expected-generation",
-            "0",
-            "--refreshed-at",
-            "2026-08-20T00:00:00Z",
-        ]
-        args = kernel_cli._parser().parse_args(argv)
-
-        with self.assertRaisesRegex(ContractError, "expected_generation"):
-            kernel_cli._execute(args, PROJECT_ROOT)
+        choices = kernel_cli._parser()._subparsers._group_actions[0].choices
+        self.assertNotIn("batch-authority-refresh", choices)
 
     def test_different_evidence_loses_singleton_activation_fence(self) -> None:
         root, evidence = self._case("different-evidence-fence")

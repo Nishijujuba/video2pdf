@@ -34,7 +34,8 @@
     "batch_authority_binding": {
       "anyOf": [
         {"type": "null"},
-        {"$ref": "#/$defs/batchAuthorityBinding"}
+        {"$ref": "#/$defs/batchAuthorityBinding"},
+        {"$ref": "#/$defs/profileAuthorityBinding"}
       ]
     },
     "run_task_start": {
@@ -70,6 +71,19 @@
         "exit_evidence_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
         "generation": {"type": "integer", "minimum": 1},
         "publication_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "profileAuthorityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority_kind", "profile_path", "profile_sha256", "release_id", "activation_path", "activation_generation"],
+      "properties": {
+        "authority_kind": {"const": "workflow_release_profile"},
+        "profile_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "profile_sha256": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/sha256"},
+        "release_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "activation_path": {"$ref": "https://video2pdf.local/schemas/video-workflow/v1/common.v1.schema.json#/$defs/absolute_path"},
+        "activation_generation": {"type": "integer", "minimum": 1}
       }
     },
     "batchIdentity": {

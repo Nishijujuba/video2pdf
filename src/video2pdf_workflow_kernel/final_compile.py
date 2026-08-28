@@ -1276,14 +1276,25 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap(
                     "compiler source map object evidence is incomplete"
                 )
-            staged_sources = {
-                (recorder_cwd / Path(value["staging_path"])).resolve()
+            staged_source_hashes = {
+                (recorder_cwd / Path(value["staging_path"])).resolve(): value["sha256"]
                 for value in compile_manifest["entries"]
             }
+            staged_source_hashes.update(
+                {
+                    Path(value["path"]).resolve(): value["sha256"]
+                    for value in generated_recorder_inputs
+                }
+            )
             if any(
                 not isinstance(value, dict)
                 or Path(str(value.get("source_path", ""))).resolve()
-                not in staged_sources
+                not in staged_source_hashes
+                or not Path(str(value.get("source_path", ""))).resolve().is_file()
+                or sha256_file(Path(str(value.get("source_path", ""))).resolve())
+                != staged_source_hashes.get(
+                    Path(str(value.get("source_path", ""))).resolve()
+                )
                 or (
                     expected_source is not None
                     and Path(str(value.get("source_path", ""))).resolve()

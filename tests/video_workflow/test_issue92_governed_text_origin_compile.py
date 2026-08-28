@@ -261,6 +261,67 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         self.assertIn("declared generated text is absent", completed.stderr)
         self.assertFalse((fixture.output / "final-artifact-seal.json").exists())
 
+    def test_declared_generated_style_fails_when_one_occurrence_is_corrupted(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+        self._bind_declared_generated_style(fixture, inventory_path, "Core claim")
+        fixture.source.write_text(
+            "\\end{box1}\n\\end{box1}\n"
+            "% VIDEO2PDF_FIXTURE_SECOND_PAGE_CORRUPTED_TITLE\n",
+            encoding="utf-8",
+        )
+        manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+        manifest["entries"][0]["sha256"] = hashlib.sha256(
+            fixture.source.read_bytes()
+        ).hexdigest()
+        manifest["manifest_sha256"] = final_compile_fixture.fingerprint(
+            manifest, "manifest_sha256"
+        )
+        fixture.manifest.write_bytes(final_compile_fixture.canonical_bytes(manifest))
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        request = json.loads(fixture.request.read_text(encoding="utf-8"))
+        request["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        request["reader_facing_text_inventory_sha256"] = inventory[
+            "inventory_sha256"
+        ]
+        fixture.request.write_bytes(final_compile_fixture.canonical_bytes(request))
+
+        completed = fixture._run()
+
+        self.assertEqual(1, completed.returncode)
+        self.assertIn(
+            "generated style title occurrence is absent or ambiguous",
+            completed.stderr,
+        )
+        self.assertFalse((fixture.output / "final-artifact-seal.json").exists())
+
+    def test_declared_generated_style_fails_when_one_occurrence_is_omitted(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+        self._bind_declared_generated_style(fixture, inventory_path, "Core claim")
+        fixture.source.write_text(
+            "\\end{box1}\n\\end{box1}\n",
+            encoding="utf-8",
+        )
+        manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+        manifest["entries"][0]["sha256"] = hashlib.sha256(
+            fixture.source.read_bytes()
+        ).hexdigest()
+        manifest["manifest_sha256"] = final_compile_fixture.fingerprint(
+            manifest, "manifest_sha256"
+        )
+        fixture.manifest.write_bytes(final_compile_fixture.canonical_bytes(manifest))
+        request = json.loads(fixture.request.read_text(encoding="utf-8"))
+        request["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        fixture.request.write_bytes(final_compile_fixture.canonical_bytes(request))
+
+        completed = fixture._run()
+
+        self.assertEqual(1, completed.returncode)
+        self.assertIn(
+            "generated style title occurrence is absent or ambiguous",
+            completed.stderr,
+        )
+        self.assertFalse((fixture.output / "final-artifact-seal.json").exists())
+
     def test_declared_style_generator_preserves_repeated_outputs(self) -> None:
         generator = registered_generator_identity("latex-style-box-title-v1")
         rendered_objects = [

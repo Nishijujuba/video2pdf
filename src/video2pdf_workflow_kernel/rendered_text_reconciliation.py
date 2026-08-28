@@ -541,17 +541,34 @@ class RenderedTextReconciliationProvider:
                             + objects_by_id[value["object_id"]]["bbox"][3]
                         )
                         / 2
-                        and any(
-                            Path(value["source_path"]).resolve().is_file()
-                            and Path(value["source_path"])
-                            .resolve()
-                            .as_posix()
-                            .endswith("/" + entry["staging_path"])
-                            and sha256_file(
-                                Path(value["source_path"]).resolve()
+                        and (
+                            any(
+                                Path(value["source_path"]).resolve().is_file()
+                                and Path(value["source_path"])
+                                .resolve()
+                                .as_posix()
+                                .endswith("/" + entry["staging_path"])
+                                and sha256_file(
+                                    Path(value["source_path"]).resolve()
+                                )
+                                == entry["sha256"]
+                                for entry in compile_entry_list
                             )
-                            == entry["sha256"]
-                            for entry in compile_entry_list
+                            or any(
+                                isinstance(generated_input, dict)
+                                and generated_input.get("classification")
+                                == "attempt_generated_auxiliary"
+                                and Path(value["source_path"]).resolve()
+                                == Path(
+                                    str(generated_input.get("path", ""))
+                                ).resolve()
+                                and Path(value["source_path"]).resolve().is_file()
+                                and sha256_file(
+                                    Path(value["source_path"]).resolve()
+                                )
+                                == generated_input.get("sha256")
+                                for generated_input in reported_generated_inputs
+                            )
                         )
                         for value in object_sources
                     )

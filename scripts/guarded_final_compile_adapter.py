@@ -374,7 +374,7 @@ def compiler_source_locations(
             item["object_id"]: {
                 "object_id": item["object_id"],
                 "source_path": str(entry.resolve()),
-                "line": 1,
+                "line": item["page"],
                 "column": 1,
                 "query": {
                     "page": item["page"],
@@ -683,9 +683,39 @@ def render_and_derive(
             raise AdapterError(
                 f"declared generated text source does not declare inventory: {item_id}"
             )
-        object_ids: list[str] = []
-        expected_titles: list[str] = []
-        object_sources: list[dict[str, Any]] = []
+        expected_invocations: dict[tuple[str, int, str], str] = {}
+        for source_entry in manifest_entries:
+            source_path = staging / Path(source_entry["staging_path"])
+            if source_path.suffix.casefold() != ".tex" or not source_path.is_file():
+                continue
+            for line_number, source_line in enumerate(
+                source_path.read_text(encoding="utf-8").splitlines(), 1
+            ):
+                invocation = re.fullmatch(
+                    r"\s*\\end\{([^{}]+)\}\s*(?:%.*)?",
+                    source_line,
+                )
+                if invocation is None:
+                    continue
+                expected_title = title_by_environment.get(invocation.group(1))
+                if expected_title in declared_tokens:
+                    expected_invocations[
+                        (
+                            str(source_path.resolve()).casefold(),
+                            line_number,
+                            invocation.group(1),
+                        )
+                    ] = expected_title
+        if not expected_invocations:
+            raise AdapterError(
+                f"declared generated text is absent from compile inputs: {item_id}"
+            )
+        invocation_candidates: dict[
+            tuple[str, int, str], tuple[str, list[tuple[dict[str, Any], dict[str, Any]]]]
+        ] = {
+            key: (expected_title, [])
+            for key, expected_title in expected_invocations.items()
+        }
         for value in objects:
             location = locations.get(value["object_id"])
             if location is None:
@@ -703,13 +733,29 @@ def render_and_derive(
             )
             if invocation is None:
                 continue
-            expected_title = title_by_environment.get(invocation.group(1))
+            invocation_key = (
+                str(source_path.resolve()).casefold(),
+                line_number,
+                invocation.group(1),
+            )
+            expected_title = expected_invocations.get(invocation_key)
             if expected_title is None:
                 continue
-            if expected_title not in declared_tokens:
+            invocation_candidates[invocation_key][1].append((value, location))
+        object_ids: list[str] = []
+        expected_titles: list[str] = []
+        object_sources: list[dict[str, Any]] = []
+        for expected_title, candidates in invocation_candidates.values():
+            title_matches = [
+                (value, location)
+                for value, location in candidates
+                if value["exact_utf8_text"] == expected_title
+            ]
+            if len(title_matches) != 1:
                 raise AdapterError(
-                    f"compiled PDF contains undeclared generated style text: {item_id}"
+                    f"generated style title occurrence is absent or ambiguous: {item_id}"
                 )
+            value, location = title_matches[0]
             object_ids.append(value["object_id"])
             expected_titles.append(expected_title)
             object_sources.append(location)

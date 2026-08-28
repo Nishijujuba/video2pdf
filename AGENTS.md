@@ -48,6 +48,8 @@ The Workflow Release Profile is the sole ordinary-admission authority for comple
 
 For a newly compiled Legacy PDF, invoke `delivery-quality-final-compile` with `--input-track legacy` and the explicit `--video-root`. The canonical `<video-root>/workflow/run.json` must remain absent, every declared compile input and output must remain inside that video root, and the current Global Gate must remain unchanged through report publication. The resulting modern compile provenance enters delivery authority only through `legacy-acceptance-adopt` and Acceptance Report v2.
 
+The public Final Compile route consumes the current Precompile Text Seal, its bound complete Reader-Facing Text Inventory, the exact Final Compile Manifest, and the current Runtime Policy. Operators and coordinators must not create or pass a Text Origin Plan or predict PDF page counts, rendered object identities, coordinates, or origin edges. The governed provider derives those facts after compilation and fails closed when origin coverage cannot be proven.
+
 ## Persisted Command Contract
 
 Repository operations must use `scripts\persisted_command.py` when any qualification condition applies: the expected runtime exceeds five minutes; the active tool reports that the process is still running and requires a later wait; the process may continue beyond the initiating agent session; or re-execution is expensive or the result supports acceptance, review, or diagnosis. This repository-wide rule covers qualifying tests, downloads, transcription, rendering, compilation, migration, recovery, and batch commands.

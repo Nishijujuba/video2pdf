@@ -326,7 +326,7 @@ class RenderedTextReconciliationCliTests(unittest.TestCase):
                 "adapter_sha256": hashlib.sha256(
                     self.FINAL_COMPILE_ADAPTER.read_bytes()
                 ).hexdigest(),
-                "protocol_version": "guarded-final-compile-v1",
+                "protocol_version": "guarded-final-compile-v2",
             },
             "text_origin_plan_sha256": "8" * 64,
         }

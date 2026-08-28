@@ -200,7 +200,7 @@ class Issue43GlobalGateTests(unittest.TestCase):
             "compiler_provider": final_seal["compile_provider"],
             "compile_adapter": {
                 "adapter_path": str(adapter), "adapter_sha256": _sha(adapter),
-                "protocol_version": "guarded-final-compile-v1",
+                "protocol_version": "guarded-final-compile-v2",
             },
             "text_origin_plan_sha256": "b" * 64,
             "render_evidence_manifest_sha256": render_evidence["manifest_sha256"],

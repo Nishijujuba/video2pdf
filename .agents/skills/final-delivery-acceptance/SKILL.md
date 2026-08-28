@@ -37,6 +37,7 @@ The reviewer must not modify final artifacts, TeX source, figures, tables, crite
 ## Required Workflow
 
 1. For a newly compiled Legacy directory, run `delivery-quality-final-compile --input-track legacy --video-root <video-root>` after current precompile sealing and before rendered-text reconciliation. Every declared input and output must remain inside the explicit video root, and `workflow/run.json` must remain absent. Then run `legacy-acceptance-adopt` with explicit final-artifact, modern compile-provenance, policy, manifest, and rendered-page paths. Historical already-compiled Legacy directories may retain their current supported compile provenance. Adoption creates a fresh immutable input set and never creates `workflow/run.json`.
+   The command derives page count, rendered objects, coordinates, and origin edges inside the governed compile boundary. Never create or pass an operator-authored Text Origin Plan.
 2. For a Kernel input, use the current committed final-quality input binding from the real Run and Control Store authority.
 3. Run `acceptance-prepare` to create the Acceptance Execution Context, fixed Skeleton, one Visual Quality Task Envelope, its Claim, and one provider-created Attempt with an exact authorized read set.
 4. Launch the independent Reviewer named by that Task Envelope. The Reviewer writes one bounded Visual Quality Judgment Patch and cannot publish the report.

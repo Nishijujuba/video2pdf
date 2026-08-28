@@ -63,16 +63,16 @@ def registered_generator_identity(generator_id: str) -> dict[str, str]:
     }
 
 
-def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
-    page_count = plan.get("page_count")
-    extractors = plan.get("extractor_suite")
-    objects = plan.get("rendered_objects")
-    edges = plan.get("edges")
-    sealed_items = plan.get("sealed_items")
+def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
+    page_count = evidence.get("page_count")
+    extractors = evidence.get("extractor_suite")
+    objects = evidence.get("rendered_objects")
+    edges = evidence.get("edges")
+    sealed_items = evidence.get("sealed_items")
     if not isinstance(page_count, int) or isinstance(page_count, bool) or page_count < 1:
-        raise ContractError("Text Origin Plan page_count is invalid")
+        raise ContractError("derived Text Origin page_count is invalid")
     if not isinstance(extractors, list) or not extractors:
-        raise ContractError("Text Origin Plan extractor suite is incomplete")
+        raise ContractError("derived Text Origin extractor suite is incomplete")
     extractor_ids = [item.get("extractor_id") for item in extractors if isinstance(item, dict)]
     if (
         len(extractor_ids) != len(extractors)
@@ -85,17 +85,17 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
             for item in extractors
         )
     ):
-        raise ContractError("Text Origin Plan extractor suite is invalid")
+        raise ContractError("derived Text Origin extractor suite is invalid")
     if not isinstance(objects, list) or not objects:
-        raise ContractError("Text Origin Plan rendered objects are incomplete")
+        raise ContractError("derived Text Origin rendered objects are incomplete")
     if not isinstance(sealed_items, list) or not sealed_items or any(
         not isinstance(item, dict) for item in sealed_items
     ):
-        raise ContractError("Text Origin Plan sealed items are incomplete")
+        raise ContractError("derived Text Origin sealed items are incomplete")
     object_ids: list[str] = []
     for item in objects:
         if not isinstance(item, dict):
-            raise ContractError("Text Origin Plan rendered object is invalid")
+            raise ContractError("derived Text Origin rendered object is invalid")
         object_id = item.get("object_id")
         object_ids.append(object_id)
         if (
@@ -112,7 +112,7 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
             or not isinstance(item.get("evidence_locator"), str)
             or not item.get("evidence_locator")
         ):
-            raise ContractError("Text Origin Plan rendered object is invalid")
+            raise ContractError("derived Text Origin rendered object is invalid")
         if item["object_kind"] == "declared_raster_text":
             source_path = item.get("source_path")
             source_pure = (
@@ -139,21 +139,21 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
                 or any(part in {"", ".", ".."} for part in source_pure.parts)
             ):
                 raise ContractError(
-                    "Text Origin Plan declared raster source is invalid",
+                    "derived Text Origin declared raster source is invalid",
                     data={
-                        "first_failing_gate": "text_origin_plan_raster_source",
+                        "first_failing_gate": "derived_text_origin_raster_source",
                         "error_code": "contract_invalid",
                     },
                 )
     if len(object_ids) != len(set(object_ids)):
-        raise ContractError("Text Origin Plan rendered object identities are ambiguous")
+        raise ContractError("derived Text Origin rendered object identities are ambiguous")
     if not isinstance(edges, list) or not edges:
-        raise ContractError("Text Origin Plan origin edges are incomplete")
+        raise ContractError("derived Text Origin edges are incomplete")
     edge_ids = [item.get("edge_id") for item in edges if isinstance(item, dict)]
     if len(edge_ids) != len(edges) or len(edge_ids) != len(set(edge_ids)) or any(
         not isinstance(value, str) or not value for value in edge_ids
     ):
-        raise ContractError("Text Origin Plan origin edges are invalid")
+        raise ContractError("derived Text Origin edges are invalid")
     mapped_objects: list[str] = []
     sealed_origins: list[str] = []
     for edge in edges:
@@ -165,20 +165,41 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
             or not rendered_ids
             or any(value not in object_ids for value in rendered_ids)
         ):
-            raise ContractError("Text Origin Plan origin edge is incomplete")
+            raise ContractError("derived Text Origin edge is incomplete")
         mapped_objects.extend(rendered_ids)
         if disposition == "sealed_origin":
             sealed_item_id = edge.get("sealed_item_id")
             if not isinstance(sealed_item_id, str) or not isinstance(
                 edge.get("sealed_text_utf8"), str
             ):
-                raise ContractError("Text Origin Plan sealed origin is incomplete")
+                raise ContractError("derived Text Origin sealed origin is incomplete")
             if edge.get("recipe") not in {
                 "exact_utf8",
                 "layout_whitespace",
                 "unicode_presentation",
+                "compiler_source_map",
             }:
-                raise ContractError("Text Origin Plan sealed origin recipe is unsupported")
+                raise ContractError("derived Text Origin sealed origin recipe is unsupported")
+            if edge.get("recipe") == "compiler_source_map":
+                source_mapping = edge.get("source_mapping")
+                if (
+                    not isinstance(source_mapping, dict)
+                    or source_mapping.get("method") != "compiler_synctex_v1"
+                    or not isinstance(source_mapping.get("logical_id"), str)
+                    or not isinstance(source_mapping.get("generation"), int)
+                    or not isinstance(source_mapping.get("sha256"), str)
+                    or not isinstance(source_mapping.get("provider"), dict)
+                    or not isinstance(source_mapping.get("object_sources"), list)
+                    or {
+                        value.get("object_id")
+                        for value in source_mapping["object_sources"]
+                        if isinstance(value, dict)
+                    }
+                    != set(rendered_ids)
+                ):
+                    raise ContractError(
+                        "compiler-derived source mapping is incomplete"
+                    )
             sealed_origins.append(sealed_item_id)
         elif disposition == "generated":
             generator = edge.get("generator")
@@ -198,20 +219,20 @@ def _validate_text_origin_plan(plan: dict[str, Any]) -> None:
                 != expected_generator
                 or not isinstance(generator.get("inputs"), dict)
             ):
-                raise ContractError("Text Origin Plan generated origin is incomplete")
+                raise ContractError("derived Text Origin generated origin is incomplete")
         elif edge.get("recipe") != "exact_utf8":
-            raise ContractError("Text Origin Plan unexpected addition recipe is unsupported")
+            raise ContractError("derived Text Origin unexpected addition recipe is unsupported")
     if sorted(mapped_objects) != sorted(object_ids) or len(mapped_objects) != len(
         set(mapped_objects)
     ):
-        raise ContractError("Text Origin Plan lacks exactly one disposition per object")
+        raise ContractError("derived Text Origin lacks exactly one disposition per object")
     sealed_item_ids = [item.get("item_id") for item in sealed_items]
     if (
         any(not isinstance(value, str) or not value for value in sealed_item_ids)
         or len(sealed_item_ids) != len(set(sealed_item_ids))
         or sorted(sealed_origins) != sorted(sealed_item_ids)
     ):
-        raise ContractError("Text Origin Plan lacks exactly one origin per sealed item")
+        raise ContractError("derived Text Origin lacks exactly one origin per sealed item")
 
 
 class GuardedFinalCompileProvider:
@@ -251,8 +272,170 @@ class GuardedFinalCompileProvider:
         return {
             "adapter_path": str(adapter),
             "adapter_sha256": current_sha256,
-            "protocol_version": "guarded-final-compile-v1",
+            "protocol_version": "guarded-final-compile-v2",
         }
+
+    def reconcile_interrupted(self, *, workspace_root: Path) -> dict[str, Any]:
+        root = require_contained_path(
+            workspace_root,
+            self.project_root,
+            purpose="Final Compile workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+        )
+        operation_path = root / "final-compile-operation.json"
+        if not operation_path.is_file():
+            raise ContractError(
+                "Final Compile reconciliation requires a recorded operation",
+                data={"error_code": "final_compile_operation_missing"},
+            )
+        operation = read_json(operation_path)
+        _require_fingerprint(operation, "operation_sha256", "Final Compile operation")
+        if (root / "final-compile-report.json").is_file():
+            raise ContractError(
+                "completed Final Compile evidence cannot be reconciled as interrupted",
+                data={"error_code": "final_compile_already_completed"},
+            )
+        execution_path = root / "final-compile-execution.json"
+        if execution_path.is_file():
+            execution = read_json(execution_path)
+            _require_fingerprint(
+                execution, "execution_sha256", "Final Compile execution"
+            )
+            state = execution.get("state")
+            if state == "launch_pending":
+                raise ContractError(
+                    "Final Compile process continuity is unknown",
+                    data={"error_code": "final_compile_process_state_unknown"},
+                )
+            if state == "running":
+                process_id = execution.get("adapter_pid")
+                if not isinstance(process_id, int) or isinstance(process_id, bool):
+                    raise ContractError(
+                        "Final Compile running process identity is invalid",
+                        data={"error_code": "final_compile_process_state_unknown"},
+                    )
+                try:
+                    os.kill(process_id, 0)
+                except OSError:
+                    pass
+                else:
+                    raise ContractError(
+                        "Final Compile process is still running",
+                        data={
+                            "error_code": "final_compile_process_live",
+                            "adapter_pid": process_id,
+                        },
+                    )
+            elif state not in {"succeeded", "failed", "launch_failed"}:
+                raise ContractError(
+                    "Final Compile execution state is invalid",
+                    data={"error_code": "final_compile_process_state_unknown"},
+                )
+        archive = (
+            root.parent
+            / "待删除"
+            / "final-compile-interrupted"
+            / operation["operation_id"]
+        ).resolve()
+        require_contained_path(
+            archive.parent,
+            self.project_root,
+            purpose="Final Compile interrupted archive parent",
+            error_type=ContractError,
+            leaf_kind="directory",
+            allow_missing=True,
+        ).mkdir(parents=True, exist_ok=True)
+        if archive.exists():
+            raise ContractError(
+                "Final Compile interrupted archive already exists",
+                data={
+                    "error_code": "final_compile_reconciliation_conflict",
+                    "archive_path": str(archive),
+                },
+            )
+        root.replace(archive)
+        return {
+            "classification": "final_compile_interrupted_archived",
+            "operation_id": operation["operation_id"],
+            "archive_path": str(archive),
+            "workspace_root": str(root),
+        }
+
+    def _validate_completed_replay(
+        self,
+        *,
+        root: Path,
+        report: dict[str, Any],
+        operation: dict[str, Any],
+    ) -> None:
+        _require_fingerprint(report, "report_sha256", "Final Compile Report")
+        if (
+            report.get("precompile_text_seal_sha256")
+            != operation["precompile_text_seal_sha256"]
+            or report.get("reader_facing_text_inventory_sha256")
+            != operation["reader_facing_text_inventory_sha256"]
+            or report.get("compile_manifest_sha256")
+            != operation["compile_manifest_sha256"]
+            or report.get("compiler_provider") != operation["compile_provider"]
+            or report.get("compile_adapter") != operation["compile_adapter"]
+        ):
+            raise ContractError("completed Final Compile replay binding is stale")
+
+        def bound_file(relative: str, label: str) -> Path:
+            path = require_contained_path(
+                root / relative,
+                root,
+                purpose=label,
+                error_type=ContractError,
+                leaf_kind="file",
+            )
+            return path
+
+        pdf = report["pdf"]
+        pdf_path = bound_file(pdf["path"], "Final Compile PDF")
+        if sha256_file(pdf_path) != pdf["sha256"] or pdf_path.stat().st_size != pdf["size"]:
+            raise ContractError("completed Final Compile PDF is stale")
+        recorder_path = bound_file(
+            report["dependency_closure"]["recorder_path"],
+            "Final Compile recorder",
+        )
+        if sha256_file(recorder_path) != report["dependency_closure"]["recorder_sha256"]:
+            raise ContractError("completed Final Compile recorder is stale")
+        final_seal = read_json(bound_file("final-artifact-seal.json", "Final Artifact Seal"))
+        rendered = read_json(
+            bound_file(
+                "adapter-output/rendered-text-object-inventory.json",
+                "Rendered Text Object Inventory",
+            )
+        )
+        origins = read_json(bound_file("text-origin-manifest.json", "Text Origin Manifest"))
+        trace = read_json(
+            bound_file("adapter-output/text-origin-trace.json", "compiler Text Origin trace")
+        )
+        render_evidence = read_json(
+            bound_file("render-evidence-manifest.json", "Render Evidence Manifest")
+        )
+        for value, field, label in (
+            (final_seal, "seal_sha256", "Final Artifact Seal"),
+            (rendered, "inventory_sha256", "Rendered Text Object Inventory"),
+            (origins, "manifest_sha256", "Text Origin Manifest"),
+            (render_evidence, "manifest_sha256", "Render Evidence Manifest"),
+        ):
+            _require_fingerprint(value, field, label)
+        if (
+            final_seal["seal_sha256"] != report["final_artifact_seal_sha256"]
+            or rendered["inventory_sha256"] != report["rendered_text_inventory_sha256"]
+            or origins["manifest_sha256"] != report["text_origin_manifest_sha256"]
+            or render_evidence["manifest_sha256"]
+            != report["render_evidence_manifest_sha256"]
+            or trace.get("edges") != origins.get("edges")
+        ):
+            raise ContractError("completed Final Compile evidence graph is stale")
+        for page in render_evidence["pages"]:
+            page_path = bound_file(page["path"], "rendered Final Compile page")
+            if sha256_file(page_path) != page["sha256"]:
+                raise ContractError("completed rendered page is stale")
 
     def _validate_workspace_authority(
         self,
@@ -263,7 +446,6 @@ class GuardedFinalCompileProvider:
         input_track: str = "kernel",
         video_root: Path | None = None,
         compile_manifest_path: Path | None = None,
-        text_origin_plan_path: Path | None = None,
         entries: list[dict[str, Any]] | None = None,
     ) -> tuple[Path, dict[str, Any] | None]:
         if input_track == "legacy":
@@ -277,7 +459,6 @@ class GuardedFinalCompileProvider:
                 )
             if (
                 compile_manifest_path is None
-                or text_origin_plan_path is None
                 or entries is None
             ):
                 raise ContractError(
@@ -345,11 +526,6 @@ class GuardedFinalCompileProvider:
             require_legacy_path(
                 compile_manifest_path,
                 purpose="Legacy Final Compile Manifest",
-                leaf_kind="file",
-            )
-            require_legacy_path(
-                text_origin_plan_path,
-                purpose="Legacy Text Origin Plan",
                 leaf_kind="file",
             )
             require_legacy_path(
@@ -438,7 +614,6 @@ class GuardedFinalCompileProvider:
         video_root: Path | None = None,
         precompile_workspace_root: Path,
         compile_manifest_path: Path,
-        text_origin_plan_path: Path,
         compiler_adapter_path: Path,
         workspace_root: Path,
         compiled_at: str,
@@ -518,16 +693,6 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap("Final Compile runtime input identity is stale")
             approved_runtime_paths[identity] = item
 
-        plan_path = text_origin_plan_path.resolve()
-        plan = read_json(plan_path)
-        _require_fingerprint(plan, "plan_sha256", "Text Origin Plan")
-        if (
-            plan.get("schema_name") != "text-origin-plan"
-            or plan.get("schema_version") != "1.0.0"
-            or plan.get("precompile_text_seal_sha256") != seal["seal_sha256"]
-        ):
-            raise ContractError("Text Origin Plan is stale or unsupported")
-        _validate_text_origin_plan(plan)
         compile_entry_by_binding = {
             (
                 entry.get("logical_id"),
@@ -536,8 +701,8 @@ class GuardedFinalCompileProvider:
             ): entry
             for entry in entries
         }
-        for raster in plan["rendered_objects"]:
-            if raster["object_kind"] != "declared_raster_text":
+        for raster in inventory["items"]:
+            if raster.get("representation") != "authoritative_raster_text":
                 continue
             binding = (
                 raster["source_artifact_logical_id"],
@@ -547,7 +712,6 @@ class GuardedFinalCompileProvider:
             source_entry = compile_entry_by_binding.get(binding)
             if (
                 source_entry is None
-                or source_entry.get("staging_path") != raster["source_path"]
             ):
                 raise CompileDependencyGap(
                     "Final Compile raster source binding is stale",
@@ -556,23 +720,6 @@ class GuardedFinalCompileProvider:
                         "error_code": "compile_dependency_gap",
                     },
                 )
-        item_by_id = {item["item_id"]: item for item in inventory["items"]}
-        planned_ids: list[str] = []
-        for item in plan.get("sealed_items", []):
-            item_id = item.get("item_id")
-            planned_ids.append(item_id)
-            sealed_item = item_by_id.get(item_id)
-            text = item.get("exact_utf8_text")
-            if (
-                sealed_item is None
-                or not isinstance(text, str)
-                or hashlib.sha256(text.encode("utf-8")).hexdigest()
-                != sealed_item.get("text_sha256")
-            ):
-                raise ContractError("Text Origin Plan does not reproduce sealed text")
-        if len(planned_ids) != len(set(planned_ids)) or set(planned_ids) != set(item_by_id):
-            raise ContractError("Text Origin Plan lacks complete sealed-item coverage")
-
         runtime_policy = runtime_policy_path.resolve()
         require_contained_path(
             runtime_policy,
@@ -620,23 +767,69 @@ class GuardedFinalCompileProvider:
             input_track=input_track,
             video_root=video_root,
             compile_manifest_path=compile_manifest_path,
-            text_origin_plan_path=text_origin_plan_path,
             entries=entries,
         )
+        operation = {
+            "schema_name": "final-compile-operation",
+            "schema_version": "1.0.0",
+            "precompile_text_seal_sha256": seal["seal_sha256"],
+            "reader_facing_text_inventory_sha256": inventory["inventory_sha256"],
+            "compile_manifest_sha256": compile_manifest["manifest_sha256"],
+            "runtime_policy_sha256": sha256_file(runtime_policy),
+            "compile_provider": final_compile_provider_identity(self.project_root),
+            "compile_adapter": adapter_identity,
+        }
+        operation["operation_id"] = hashlib.sha256(
+            canonical_json_bytes(operation)
+        ).hexdigest()[:32]
+        operation["operation_sha256"] = _fingerprint_without(
+            operation, "operation_sha256"
+        )
         if root.exists() and any(root.iterdir()):
-            raise ContractError("Final Compile workspace must be empty")
-        root.mkdir(parents=True, exist_ok=True)
+            existing_operation_path = root / "final-compile-operation.json"
+            if existing_operation_path.is_file():
+                existing_operation = read_json(existing_operation_path)
+                if existing_operation == operation and (
+                    root / "final-compile-report.json"
+                ).is_file():
+                    existing_report = read_json(root / "final-compile-report.json")
+                    self._validate_completed_replay(
+                        root=root,
+                        report=existing_report,
+                        operation=operation,
+                    )
+                    return {
+                        "workspace_root": str(root),
+                        "operation_id": operation["operation_id"],
+                        "report_path": str(root / "final-compile-report.json"),
+                        "report_sha256": existing_report["report_sha256"],
+                        "status": "pass",
+                        "replayed": True,
+                    }
+            raise ContractError(
+                "Final Compile publication is interrupted or conflicts with this operation",
+                data={
+                    "error_code": "final_compile_interrupted",
+                    "operation_id": operation["operation_id"],
+                    "workspace_root": str(root),
+                    "reconcile_command": "delivery-quality-final-compile-reconcile",
+                },
+            )
+        root.mkdir(parents=True, exist_ok=False)
+        write_json_atomic(root / "final-compile-operation.json", operation)
         adapter_output = root / "adapter-output"
         adapter_output.mkdir()
         request = {
             "schema_name": "guarded-final-compile-request",
-            "schema_version": "1.0.0",
+            "schema_version": "2.0.0",
             "activation_status": "target_only",
             "precompile_text_seal_sha256": seal["seal_sha256"],
             "compile_manifest_path": str(compile_manifest_path.resolve()),
             "compile_manifest_sha256": compile_manifest["manifest_sha256"],
-            "text_origin_plan_path": str(plan_path),
-            "text_origin_plan_sha256": plan["plan_sha256"],
+            "reader_facing_text_inventory_path": str(
+                binding_root / "reader-facing-text-inventory.json"
+            ),
+            "reader_facing_text_inventory_sha256": inventory["inventory_sha256"],
             "generation_set_sha256": generations["generation_set_sha256"],
             "compile_provider": final_compile_provider_identity(self.project_root),
             "compiled_at": compiled_at,
@@ -645,21 +838,71 @@ class GuardedFinalCompileProvider:
         request["runtime_policy_path"] = str(runtime_policy)
         request["runtime_policy_sha256"] = sha256_file(runtime_policy)
         request_path = root / "compile-request.json"
-        write_json_atomic(request_path, request)
-        completed = subprocess.run(
-            [sys.executable, "-X", "utf8", "-B", str(adapter), str(request_path)],
-            cwd=self.project_root,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-            timeout=120,
-            env=adapter_env,
+        execution_path = root / "final-compile-execution.json"
+        execution = {
+            "schema_name": "final-compile-execution",
+            "schema_version": "1.0.0",
+            "operation_id": operation["operation_id"],
+            "state": "launch_pending",
+            "adapter_pid": None,
+            "exit_code": None,
+        }
+        execution["execution_sha256"] = _fingerprint_without(
+            execution, "execution_sha256"
         )
-        if completed.returncode != 0 or completed.stderr:
+        write_json_atomic(execution_path, execution)
+        request["execution_state_path"] = str(execution_path)
+        request["operation_id"] = operation["operation_id"]
+        write_json_atomic(request_path, request)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-X", "utf8", "-B", str(adapter), str(request_path)],
+                cwd=self.project_root,
+                text=True,
+                encoding="utf-8",
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=adapter_env,
+            )
+        except OSError:
+            execution["state"] = "launch_failed"
+            execution["execution_sha256"] = _fingerprint_without(
+                execution, "execution_sha256"
+            )
+            write_json_atomic(execution_path, execution)
+            raise
+        stdout, stderr = process.communicate()
+        execution = read_json(execution_path)
+        _require_fingerprint(execution, "execution_sha256", "Final Compile execution")
+        execution_pid = execution.get("adapter_pid")
+        running_identity_is_valid = (
+            execution.get("state") == "running"
+            and isinstance(execution_pid, int)
+            and not isinstance(execution_pid, bool)
+        )
+        adapter_failed_before_claiming_execution = (
+            execution.get("state") == "launch_pending"
+            and execution_pid is None
+        )
+        if (
+            execution.get("operation_id") != operation["operation_id"]
+            or not (
+                running_identity_is_valid
+                or adapter_failed_before_claiming_execution
+            )
+        ):
+            raise CompileDependencyGap("Final Compile execution identity is stale")
+        execution["state"] = "succeeded" if process.returncode == 0 else "failed"
+        execution["exit_code"] = process.returncode
+        execution["execution_sha256"] = _fingerprint_without(
+            execution, "execution_sha256"
+        )
+        write_json_atomic(execution_path, execution)
+        if process.returncode != 0 or stderr:
             raise CompileDependencyGap(
                 "guarded Final Compile adapter failed",
-                data={"exit_code": completed.returncode},
+                data={"exit_code": process.returncode},
             )
 
         pdf_path = adapter_output / "final.pdf"
@@ -700,7 +943,8 @@ class GuardedFinalCompileProvider:
             or sorted(provenance_inputs, key=lambda item: item.get("logical_id", ""))
             != sorted(expected_inputs, key=lambda item: item.get("logical_id", ""))
             or provenance_runtime_inputs != approved_runtime_inputs
-            or provenance.get("text_origin_plan_sha256") != plan["plan_sha256"]
+            or provenance.get("reader_facing_text_inventory_sha256")
+            != inventory["inventory_sha256"]
         ):
             raise CompileDependencyGap("Final Compile provenance is incomplete or stale")
         recorder_path = (adapter_output / recorder_relative_path).resolve()
@@ -812,20 +1056,9 @@ class GuardedFinalCompileProvider:
             )
         ):
             raise CompileDependencyGap("Rendered Text Object Inventory coverage is incomplete")
-        if rendered.get("extractor_suite") != plan["extractor_suite"]:
-            raise CompileDependencyGap("Rendered Text Object Inventory extractor suite drifted")
-        planned_object_ids = [item["object_id"] for item in plan["rendered_objects"]]
         rendered_object_ids: list[str] = []
-        rendered_object_projection: list[dict[str, Any]] = []
         for item in rendered["objects"]:
             rendered_object_ids.append(item["object_id"])
-            rendered_object_projection.append(
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key not in {"text_sha256", "object_sha256"}
-                }
-            )
             if (
                 item.get("text_sha256")
                 != hashlib.sha256(item["exact_utf8_text"].encode("utf-8")).hexdigest()
@@ -835,15 +1068,14 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap("Rendered Text Object Inventory object drifted")
         if (
             len(rendered_object_ids) != len(set(rendered_object_ids))
-            or sorted(rendered_object_ids) != sorted(planned_object_ids)
-            or rendered_object_projection != plan["rendered_objects"]
         ):
             raise CompileDependencyGap("Rendered Text Object Inventory object contract drifted")
         trace = read_json(trace_path)
         if (
-            trace.get("text_origin_plan_sha256") != plan["plan_sha256"]
+            trace.get("schema_version") != "2.0.0"
+            or trace.get("reader_facing_text_inventory_sha256")
+            != inventory["inventory_sha256"]
             or trace.get("final_artifact_seal_sha256") != final_seal["seal_sha256"]
-            or trace.get("edges") != plan["edges"]
         ):
             raise CompileDependencyGap("compiler Text Origin trace is stale")
 
@@ -852,8 +1084,74 @@ class GuardedFinalCompileProvider:
                 pdf_page_count = document.page_count
         except Exception as exc:
             raise CompileDependencyGap("Final Compile PDF is unreadable") from exc
-        if pdf_page_count != plan["page_count"]:
-            raise CompileDependencyGap("Final Compile PDF page count contradicts Text Origin Plan")
+        derived_contract = {
+            "page_count": pdf_page_count,
+            "extractor_suite": rendered.get("extractor_suite"),
+            "rendered_objects": [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"text_sha256", "object_sha256"}
+                }
+                for item in rendered["objects"]
+            ],
+            "edges": trace.get("edges"),
+            "sealed_items": [
+                {
+                    "item_id": item["item_id"],
+                    "exact_utf8_text": item["declared_text"],
+                }
+                for item in inventory["items"]
+            ],
+        }
+        for edge in derived_contract["edges"]:
+            if edge.get("recipe") != "compiler_source_map":
+                continue
+            source_mapping = edge["source_mapping"]
+            source_entry = compile_entry_by_binding.get(
+                (
+                    source_mapping.get("logical_id"),
+                    source_mapping.get("generation"),
+                    source_mapping.get("sha256"),
+                )
+            )
+            if source_entry is None:
+                raise CompileDependencyGap(
+                    "compiler source map cites an undeclared compile input"
+                )
+            expected_source = (
+                recorder_cwd / Path(source_entry["staging_path"])
+            ).resolve()
+            if any(
+                Path(str(value.get("source_path", ""))).resolve()
+                != expected_source
+                for value in source_mapping.get("object_sources", [])
+                if isinstance(value, dict)
+            ):
+                raise CompileDependencyGap(
+                    "compiler source map input identity is stale"
+                )
+            provider = source_mapping.get("provider", {})
+            if policy["policy_id"] == "miktex-xelatex-runtime":
+                tool = Path(str(provider.get("tool_path", ""))).resolve()
+                if (
+                    provider.get("provider_id") != "synctex-reverse-map-v1"
+                    or not tool.is_file()
+                    or sha256_file(tool) != provider.get("provider_sha256")
+                    or not any(
+                        tool == runtime_root or runtime_root in tool.parents
+                        for runtime_root in runtime_roots
+                    )
+                ):
+                    raise CompileDependencyGap(
+                        "compiler source map provider identity is stale"
+                    )
+        try:
+            _validate_derived_text_origin_evidence(derived_contract)
+        except ContractError as exc:
+            raise CompileDependencyGap(
+                "compiler-derived Text Origin evidence is incomplete"
+            ) from exc
 
         pages_root = adapter_output / "rendered_pages"
         pages = []
@@ -933,7 +1231,7 @@ class GuardedFinalCompileProvider:
             "pdf": final_seal["final_pdf"],
             "compiler_provider": provider_identity,
             "compile_adapter": adapter_identity,
-            "text_origin_plan_sha256": plan["plan_sha256"],
+            "reader_facing_text_inventory_sha256": inventory["inventory_sha256"],
             "render_evidence_manifest_sha256": render_evidence["manifest_sha256"],
             "rendered_text_inventory_sha256": rendered["inventory_sha256"],
             "text_origin_manifest_sha256": origins["manifest_sha256"],
@@ -969,6 +1267,7 @@ class GuardedFinalCompileProvider:
         write_json_atomic(root / "compiler-adapter-identity.json", adapter_identity)
         return {
             "workspace_root": str(root),
+            "operation_id": operation["operation_id"],
             "final_pdf_path": str(pdf_path),
             "final_artifact_seal_path": str(published_final_seal_path),
             "final_compile_report_path": str(report_path),

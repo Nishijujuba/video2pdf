@@ -56,6 +56,8 @@ with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
 document = fitz.open()
 page = document.new_page()
 page.insert_text((72, 72), "Core claim")
+if "VIDEO2PDF_FIXTURE_UNEXPECTED_ANNOTATION" in source:
+    page.add_text_annot((120, 120), "Unexpected annotation")
 for figure_name in ("figure.png", "figure.jpg"):
     figure = cwd / figure_name
     if figure.is_file():

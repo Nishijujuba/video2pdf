@@ -306,7 +306,7 @@ class LegacyAcceptanceProvider:
                 and sha256_file(registered_adapter) == adapter_head_sha256
                 and adapter_identity["adapter_sha256"] == adapter_head_sha256
                 and adapter_identity["protocol_version"]
-                == "guarded-final-compile-v1"
+                == "guarded-final-compile-v2"
             )
             recorder_path_value = dependency_closure["recorder_path"]
             recorder_is_current = False

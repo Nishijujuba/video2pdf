@@ -800,21 +800,6 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         )
         if include_raster:
             fixture._declare_raster([200.0, 100.0, 300.0, 200.0])
-            plan = json.loads(fixture.plan.read_text(encoding="utf-8"))
-            raster = next(
-                item
-                for item in plan["rendered_objects"]
-                if item["object_kind"] == "declared_raster_text"
-            )
-            if raster_source_path is None:
-                raster.pop("source_path")
-            else:
-                raster["source_path"] = raster_source_path
-            plan["plan_sha256"] = fingerprint(plan, "plan_sha256")
-            fixture.plan.write_bytes(canonical_bytes(plan))
-            request = json.loads(fixture.request.read_text(encoding="utf-8"))
-            request["text_origin_plan_sha256"] = plan["plan_sha256"]
-            fixture.request.write_bytes(canonical_bytes(request))
         source_sha = hashlib.sha256(fixture.source.read_bytes()).hexdigest()
         governance = fixture.root / "governance.json"
         governance.write_bytes(b'{"governed":true}\n')
@@ -836,6 +821,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             "language_profile_id": "zh-hans", "source_artifact_logical_id": "integrated_main",
             "source_generation": 1, "source_sha256": source_sha, "locator": "latex:main",
             "representation": "structured_text", "text_sha256": hashlib.sha256(b"Core claim").hexdigest(),
+            "declared_text": "Core claim",
             "applicable_rule_ids": ["no_meta_writing_content"]}
         item["item_sha256"] = fingerprint(item, "item_sha256")
         items = [item]
@@ -854,6 +840,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
                 "locator": "figure:1",
                 "representation": "authoritative_raster_text",
                 "text_sha256": hashlib.sha256(b"Raster words").hexdigest(),
+                "declared_text": "Raster words",
                 "applicable_rule_ids": ["no_meta_writing_content"],
             }
             figure_item["item_sha256"] = fingerprint(figure_item, "item_sha256")
@@ -906,10 +893,6 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         }
         manifest["manifest_sha256"] = fingerprint(manifest, "manifest_sha256")
         fixture.manifest.write_bytes(canonical_bytes(manifest))
-        plan = json.loads(fixture.plan.read_text(encoding="utf-8"))
-        plan["precompile_text_seal_sha256"] = seal["seal_sha256"]
-        plan["plan_sha256"] = fingerprint(plan, "plan_sha256")
-        fixture.plan.write_bytes(canonical_bytes(plan))
         workspace = run_dir / "review/final-compile"
         allowed_root = Path(sys.executable).resolve().parent
         valid_miktex_paths = os.pathsep.join(
@@ -936,7 +919,6 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
                 input_track="kernel",
                 precompile_workspace_root=quality,
                 compile_manifest_path=fixture.manifest,
-                text_origin_plan_path=fixture.plan,
                 compiler_adapter_path=ADAPTER,
                 workspace_root=workspace,
                 compiled_at="2026-08-11T13:00:00Z",

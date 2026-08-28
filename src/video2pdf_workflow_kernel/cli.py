@@ -216,11 +216,14 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--video-root", type=Path)
     final_compile.add_argument("--precompile-workspace-root", required=True, type=Path)
     final_compile.add_argument("--compile-manifest", required=True, type=Path)
-    final_compile.add_argument("--text-origin-plan", required=True, type=Path)
     final_compile.add_argument("--compiler-adapter", required=True, type=Path)
     final_compile.add_argument("--runtime-policy", required=True, type=Path)
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
+    final_compile_reconcile = commands.add_parser(
+        "delivery-quality-final-compile-reconcile"
+    )
+    final_compile_reconcile.add_argument("--workspace-root", required=True, type=Path)
 
     final_evidence = commands.add_parser("delivery-final-evidence-prepare")
     final_evidence.add_argument("--run-dir", required=True, type=Path)
@@ -1039,7 +1042,6 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             video_root=args.video_root,
             precompile_workspace_root=args.precompile_workspace_root,
             compile_manifest_path=args.compile_manifest,
-            text_origin_plan_path=args.text_origin_plan,
             compiler_adapter_path=args.compiler_adapter,
             runtime_policy_path=args.runtime_policy,
             workspace_root=args.workspace_root,
@@ -1050,6 +1052,16 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             "guarded_final_compile_complete",
             result,
             result["final_compile_report_path"],
+        )
+    if command == "delivery-quality-final-compile-reconcile":
+        result = GuardedFinalCompileProvider(project_root).reconcile_interrupted(
+            workspace_root=args.workspace_root
+        )
+        return _ok(
+            command,
+            "guarded_final_compile_interruption_reconciled",
+            result,
+            result["archive_path"],
         )
     if command == "delivery-quality-rendered-text-reconcile":
         result = RenderedTextReconciliationProvider(project_root).reconcile(

@@ -19,7 +19,13 @@ from .final_compile import (
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
-RECIPES = ("exact_utf8", "layout_whitespace", "unicode_presentation", "declared_generated")
+RECIPES = (
+    "exact_utf8",
+    "layout_whitespace",
+    "unicode_presentation",
+    "compiler_source_map",
+    "declared_generated",
+)
 OBJECT_KINDS = (
     "pdf_text_run",
     "text_annotation",
@@ -364,7 +370,26 @@ class RenderedTextReconciliationProvider:
                 if recipe not in RECIPES or recipe == "declared_generated":
                     contract_gaps.append({"code": "UNSUPPORTED_TRANSFORMATION_RECIPE", "edge_id": edge_id, "recipe": recipe})
                     continue
-                equivalent = _normalize(sealed_text, recipe) == _normalize(actual, recipe)
+                if recipe == "compiler_source_map":
+                    source_mapping = edge.get("source_mapping")
+                    equivalent = (
+                        isinstance(source_mapping, dict)
+                        and source_mapping.get("method") == "compiler_synctex_v1"
+                        and source_mapping.get("logical_id")
+                        == item.get("source_artifact_logical_id")
+                        and source_mapping.get("generation")
+                        == item.get("source_generation")
+                        and source_mapping.get("sha256")
+                        == item.get("source_sha256")
+                        and {
+                            value.get("object_id")
+                            for value in source_mapping.get("object_sources", [])
+                            if isinstance(value, dict)
+                        }
+                        == set(rendered_ids)
+                    )
+                else:
+                    equivalent = _normalize(sealed_text, recipe) == _normalize(actual, recipe)
                 result = {"edge_id": edge_id, "disposition": disposition, "sealed_item_id": item_id, "rendered_object_ids": rendered_ids, "recipe": recipe, "decision": "pass" if equivalent else "substitution"}
                 edge_results.append(result)
                 if not equivalent:
@@ -393,6 +418,21 @@ class RenderedTextReconciliationProvider:
                     != expected_generator
                 ):
                     contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
+                    continue
+                source_mapping = generator.get("source_mapping")
+                if (
+                    not isinstance(source_mapping, dict)
+                    or source_mapping.get("method") != "compiler_synctex_v1"
+                    or {
+                        value.get("object_id")
+                        for value in source_mapping.get("object_sources", [])
+                        if isinstance(value, dict)
+                    }
+                    != set(rendered_ids)
+                ):
+                    contract_gaps.append(
+                        {"code": "UNSUPPORTED_GENERATOR_SOURCE", "edge_id": edge_id}
+                    )
                     continue
                 try:
                     expected = _generated_texts(generator)

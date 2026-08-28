@@ -136,7 +136,7 @@ class Issue13GuardKernelCompileProvenanceTests(unittest.TestCase):
                     (PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py").resolve()
                 ),
                 "adapter_sha256": "5" * 64,
-                "protocol_version": "guarded-final-compile-v1",
+                "protocol_version": "guarded-final-compile-v2",
             },
             "text_origin_plan_sha256": "6" * 64,
             "render_evidence_manifest_sha256": "7" * 64,

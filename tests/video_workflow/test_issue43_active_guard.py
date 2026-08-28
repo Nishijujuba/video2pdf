@@ -1491,7 +1491,7 @@ class Issue43LegacyModernCompileProvenanceTests(unittest.TestCase):
                 "adapter_sha256": file_sha(
                     PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"
                 ),
-                "protocol_version": "guarded-final-compile-v1",
+                "protocol_version": "guarded-final-compile-v2",
             },
             "text_origin_plan_sha256": "3" * 64,
             "render_evidence_manifest_sha256": "4" * 64,

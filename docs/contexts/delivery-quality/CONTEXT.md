@@ -71,8 +71,11 @@ exact Compile Manifest, sealed Artifact Generations, guarded compiler provider,
 and final PDF identity.
 
 The target-only `delivery-quality-final-compile` boundary admits only a current
-Seal and exact compile-input closure, invokes a fingerprinted compiler adapter,
-and materializes the complete final evidence package before reconciliation.
+Seal, its complete Reader-Facing Text Inventory, and exact compile-input closure.
+Its fingerprinted production adapter derives page count, rendered objects,
+coordinates, and origin dispositions after compilation and materializes the
+complete final evidence package before reconciliation. Operator-authored
+postcompile origin plans are outside the public contract.
 
 ## Rendered Text Object Inventory
 

@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 from typing import Any
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import fitz
 
@@ -195,7 +197,7 @@ def compile_pdf(
     staging: Path,
     entry: Path,
     policy: dict[str, Any],
-) -> tuple[Path, Path, dict[str, str], dict[str, int | str]]:
+) -> tuple[Path, Path, Path | None, dict[str, str], dict[str, int | str]]:
     engine = policy["engine"]
     miktex_process_guards = (
         ["--miktex-disable-maintenance", "--miktex-disable-diagnose"]
@@ -204,7 +206,7 @@ def compile_pdf(
     )
     command = [str(Path(engine["executable"]).resolve()), *map(str, engine.get("prefix_args", [])),
                *miktex_process_guards, "--disable-installer", "-no-shell-escape", "-recorder",
-               "-interaction=nonstopmode", entry.name]
+               "-synctex=1", "-interaction=nonstopmode", entry.name]
     engine_temp = require_contained_path(
         staging / "engine-temp",
         staging,
@@ -310,7 +312,94 @@ def compile_pdf(
         "byte_length": len(combined_stderr),
         "sha256": hashlib.sha256(combined_stderr).hexdigest(),
     }
-    return pdf, recorder, environment, stderr_summary
+    source_map = staging / f"{entry.stem}.synctex.gz"
+    if policy["policy_id"] == "miktex-xelatex-runtime" and not source_map.is_file():
+        raise AdapterError("compiler source map is missing")
+    return pdf, recorder, source_map if source_map.is_file() else None, environment, stderr_summary
+
+
+def _synctex_source_location(
+    tool: Path, pdf: Path, staging: Path, obj: dict[str, Any]
+) -> dict[str, Any]:
+    bbox = obj["bbox"]
+    x = (float(bbox[0]) + float(bbox[2])) / 2
+    y = (float(bbox[1]) + float(bbox[3])) / 2
+    completed = subprocess.run(
+        [str(tool), "edit", "-o", f"{obj['page']}:{x}:{y}:{pdf}", "-d", str(staging)],
+        cwd=staging,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    if completed.returncode != 0 or completed.stderr:
+        raise AdapterError("compiler source map query failed")
+    fields: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key in {"Input", "Line", "Column"} and key not in fields:
+            fields[key] = value.strip()
+    if not fields.get("Input") or not fields.get("Line"):
+        raise AdapterError("compiler source map query is incomplete")
+    return {
+        "object_id": obj["object_id"],
+        "source_path": str(Path(fields["Input"]).resolve()),
+        "line": int(fields["Line"]),
+        "column": int(fields.get("Column", "-1")),
+        "query": {"page": obj["page"], "x": x, "y": y},
+    }
+
+
+def compiler_source_locations(
+    *,
+    policy: dict[str, Any],
+    pdf: Path,
+    staging: Path,
+    objects: list[dict[str, Any]],
+    entry: Path,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    text_objects = [
+        item for item in objects if item["object_kind"] == "pdf_text_run"
+    ]
+    if policy["policy_id"] == "fixture-miktex-runtime":
+        locations = {
+            item["object_id"]: {
+                "object_id": item["object_id"],
+                "source_path": str(entry.resolve()),
+                "line": 1,
+                "column": 1,
+                "query": {"page": item["page"], "x": item["bbox"][0], "y": item["bbox"][1]},
+            }
+            for item in text_objects
+        }
+        return locations, {
+            "provider_id": "fixture-compiler-source-map-v1",
+            "provider_sha256": policy["engine"]["prefix_file_fingerprints"][0]["sha256"],
+        }
+    engine = Path(policy["engine"]["executable"]).resolve()
+    tool = engine.with_name("synctex.exe")
+    runtime_roots = [Path(value).resolve() for value in policy["allowed_runtime_roots"]]
+    if (
+        not tool.is_file()
+        or not any(tool == root or root in tool.parents for root in runtime_roots)
+    ):
+        raise AdapterError("registered compiler source map extractor is unavailable")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        mapped = list(
+            executor.map(
+                lambda item: _synctex_source_location(tool, pdf, staging, item),
+                text_objects,
+            )
+        )
+    return {item["object_id"]: item for item in mapped}, {
+        "provider_id": "synctex-reverse-map-v1",
+        "provider_sha256": sha(tool),
+        "tool_path": str(tool),
+    }
 
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
@@ -333,36 +422,65 @@ def _same_bbox(actual: fitz.Rect, expected: object, tolerance: float = 0.5) -> b
     )
 
 
-def render_and_extract(
+def _normalized_layout_text(value: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", value).split())
+
+
+def _object_with_fingerprints(value: dict[str, Any]) -> dict[str, Any]:
+    value["text_sha256"] = hashlib.sha256(
+        value["exact_utf8_text"].encode("utf-8")
+    ).hexdigest()
+    value["object_sha256"] = fingerprint(value, "object_sha256")
+    return value
+
+
+def render_and_derive(
     pdf: Path,
     output: Path,
-    plan: dict[str, Any],
+    inventory: dict[str, Any],
     raster_sources: dict[tuple[str, int, str], Path],
-) -> list[dict[str, Any]]:
-    expected_pages, suite = plan.get("page_count"), plan.get("extractor_suite")
-    if not isinstance(expected_pages, int) or expected_pages < 1 or not isinstance(suite, list) or not suite:
-        raise AdapterError("text origin plan is incomplete")
+    *,
+    policy: dict[str, Any],
+    staging: Path,
+    entry: Path,
+    manifest_entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]], int]:
+    items = inventory.get("items")
+    if not isinstance(items, list) or not items:
+        raise AdapterError("reader-facing text inventory is incomplete")
+    extractor_sha = sha(Path(__file__).resolve())
+    suite = [
+        {"extractor_id": "pymupdf-text-v1", "extractor_sha256": extractor_sha},
+        {"extractor_id": "pymupdf-raster-binding-v1", "extractor_sha256": extractor_sha},
+    ]
     pages = output / "rendered_pages"
     pages.mkdir()
     objects: list[dict[str, Any]] = []
-    raster_plan = [item for item in plan.get("rendered_objects", [])
-                   if isinstance(item, dict) and item.get("object_kind") == "declared_raster_text"]
     source_identities: dict[tuple[str, int, str], tuple[int, int, str]] = {}
     for identity, source in raster_sources.items():
         try:
             source_identities[identity] = _pixmap_identity(fitz.Pixmap(source))
         except Exception as exc:
             raise AdapterError("declared raster source is unreadable") from exc
-    if raster_plan and not source_identities:
+    raster_items = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and item.get("representation") == "authoritative_raster_text"
+    ]
+    if raster_items and not source_identities:
         raise AdapterError("declared raster source is absent from compile manifest")
+    raster_object_ids: dict[str, list[str]] = {
+        str(item.get("item_id")): [] for item in raster_items
+    }
     try:
         with fitz.open(pdf) as document:
-            if document.page_count != expected_pages:
-                raise AdapterError("compiled PDF page count contradicts text origin plan")
             sequence = 0
+            raster_sequence = 0
             for page_index, page in enumerate(document):
                 page_number = page_index + 1
                 page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).save(pages / f"page_{page_number:03d}.png")
+                page_text_objects: list[dict[str, Any]] = []
                 for block_index, block in enumerate(page.get_text("dict").get("blocks", []), 1):
                     for line_index, line in enumerate(block.get("lines", []), 1):
                         for span_index, span in enumerate(line.get("spans", []), 1):
@@ -373,9 +491,43 @@ def render_and_extract(
                                     "object_kind": "pdf_text_run", "bbox": list(span["bbox"]),
                                     "exact_utf8_text": span["text"], "extractor_id": suite[0]["extractor_id"],
                                     "evidence_locator": f"page:{page_number}/block:{block_index}/line:{line_index}/span:{span_index}"}
-                            item["text_sha256"] = hashlib.sha256(item["exact_utf8_text"].encode("utf-8")).hexdigest()
-                            item["object_sha256"] = fingerprint(item, "object_sha256")
-                            objects.append(item)
+                            materialized = _object_with_fingerprints(item)
+                            objects.append(materialized)
+                            page_text_objects.append(materialized)
+                traced_text = "".join(
+                    chr(character[0])
+                    for span in page.get_texttrace()
+                    for character in span.get("chars", [])
+                )
+                extracted_text = "".join(
+                    item["exact_utf8_text"] for item in page_text_objects
+                )
+                if _normalized_layout_text(traced_text) != _normalized_layout_text(
+                    extracted_text
+                ):
+                    raise AdapterError("PDF text extractor coverage is incomplete")
+                annotations = page.annots()
+                if annotations is not None:
+                    for annotation_index, annotation in enumerate(annotations, 1):
+                        content = annotation.info.get("content", "")
+                        if not content:
+                            continue
+                        sequence += 1
+                        objects.append(
+                            _object_with_fingerprints(
+                                {
+                                    "object_id": f"page-{page_number}-annotation-{sequence}",
+                                    "page": page_number,
+                                    "object_kind": "text_annotation",
+                                    "bbox": list(annotation.rect),
+                                    "exact_utf8_text": content,
+                                    "extractor_id": "pymupdf-text-v1",
+                                    "evidence_locator": (
+                                        f"page:{page_number}/annotation:{annotation_index}"
+                                    ),
+                                }
+                            )
+                        )
                 actual_images: list[tuple[fitz.Rect, tuple[int, int, str]]] = []
                 for image in page.get_images(full=True):
                     xref, soft_mask_xref = image[0], image[1]
@@ -387,7 +539,7 @@ def render_and_extract(
                     )
                     identity = _pixmap_identity(embedded)
                     actual_images.extend((rect, identity) for rect in page.get_image_rects(xref))
-                for declared in [item for item in raster_plan if item.get("page") == page_number]:
+                for declared in raster_items:
                     source_identity = (
                         declared.get("source_artifact_logical_id"),
                         declared.get("source_generation"),
@@ -400,41 +552,227 @@ def render_and_extract(
                         or source_identity not in source_identities
                     ):
                         raise AdapterError("declared raster source identity is absent from compile manifest")
-                    bbox_matches = [item for item in actual_images if _same_bbox(item[0], declared.get("bbox"))]
-                    if not bbox_matches:
-                        raise AdapterError("declared raster bbox does not match a PDF image")
-                    if not any(identity == source_identities[source_identity] for _, identity in bbox_matches):
-                        raise AdapterError("declared raster source identity does not match the embedded PDF image")
-                    item = dict(declared)
-                    item["text_sha256"] = hashlib.sha256(item["exact_utf8_text"].encode("utf-8")).hexdigest()
-                    item["object_sha256"] = fingerprint(item, "object_sha256")
-                    objects.append(item)
+                    for bbox, actual_identity in actual_images:
+                        if actual_identity != source_identities[source_identity]:
+                            continue
+                        raster_sequence += 1
+                        item = {
+                            "object_id": f"page-{page_number}-raster-{raster_sequence}",
+                            "page": page_number,
+                            "object_kind": "declared_raster_text",
+                            "bbox": list(bbox),
+                            "exact_utf8_text": declared.get("declared_text", ""),
+                            "extractor_id": "pymupdf-raster-binding-v1",
+                            "evidence_locator": f"page:{page_number}/image:{raster_sequence}",
+                            "source_artifact_logical_id": source_identity[0],
+                            "source_generation": source_identity[1],
+                            "source_sha256": source_identity[2],
+                            "source_path": next(
+                                path.name
+                                for identity, path in raster_sources.items()
+                                if identity == source_identity
+                            ),
+                        }
+                        objects.append(_object_with_fingerprints(item))
+                        raster_object_ids[str(declared.get("item_id"))].append(
+                            item["object_id"]
+                        )
+            page_count = document.page_count
     except AdapterError:
         raise
     except Exception as exc:
         raise AdapterError("compiled PDF is unreadable") from exc
-    projection = [{k: v for k, v in item.items() if k not in {"text_sha256", "object_sha256"}} for item in objects]
-    if projection != plan.get("rendered_objects"):
-        raise AdapterError("rendered text objects drift from text origin plan")
-    return objects
+    locations, source_map_provider = compiler_source_locations(
+        policy=policy,
+        pdf=pdf,
+        staging=staging,
+        objects=objects,
+        entry=entry,
+    )
+    entry_by_staged_path = {
+        str((staging / Path(item["staging_path"])).resolve()).casefold(): item
+        for item in manifest_entries
+    }
+    items_by_binding: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+    for item in items:
+        binding = (
+            item.get("source_artifact_logical_id"),
+            item.get("source_generation"),
+            item.get("source_sha256"),
+        )
+        items_by_binding.setdefault(binding, []).append(item)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    used_objects: set[str] = set()
+    mapped_items: set[str] = set()
+    for object_id, location in locations.items():
+        source_entry = entry_by_staged_path.get(location["source_path"].casefold())
+        if source_entry is None:
+            continue
+        binding = (
+            source_entry.get("logical_id"),
+            source_entry.get("generation"),
+            source_entry.get("sha256"),
+        )
+        candidates = items_by_binding.get(binding, [])
+        if len(candidates) > 1:
+            raise AdapterError("compiler source mapping is ambiguous")
+        if not candidates:
+            continue
+        item_id = str(candidates[0]["item_id"])
+        grouped.setdefault(item_id, []).append(location)
+        used_objects.add(object_id)
+    edges: list[dict[str, Any]] = []
+    for item in items:
+        item_id = str(item.get("item_id"))
+        if item.get("representation") == "authoritative_raster_text":
+            continue
+        object_sources = grouped.get(item_id)
+        if not object_sources:
+            continue
+        edges.append(
+            {
+                "edge_id": f"sealed.{len(edges) + 1}",
+                "disposition": "sealed_origin",
+                "sealed_item_id": item_id,
+                "sealed_text_utf8": item.get("declared_text", ""),
+                "rendered_object_ids": [
+                    value["object_id"] for value in object_sources
+                ],
+                "recipe": "compiler_source_map",
+                "source_mapping": {
+                    "logical_id": item.get("source_artifact_logical_id"),
+                    "generation": item.get("source_generation"),
+                    "sha256": item.get("source_sha256"),
+                    "method": "compiler_synctex_v1",
+                    "provider": source_map_provider,
+                    "object_sources": object_sources,
+                },
+            }
+        )
+        mapped_items.add(item_id)
+    for item in raster_items:
+        item_id = str(item.get("item_id"))
+        object_ids = raster_object_ids[item_id]
+        if not object_ids:
+            raise AdapterError("declared raster text is absent from compiled PDF")
+        edges.append(
+            {
+                "edge_id": f"sealed.{len(edges) + 1}",
+                "disposition": "sealed_origin",
+                "sealed_item_id": item_id,
+                "sealed_text_utf8": item.get("declared_text", ""),
+                "rendered_object_ids": object_ids,
+                "recipe": "exact_utf8",
+            }
+        )
+        used_objects.update(object_ids)
+        mapped_items.add(item_id)
+    missing_items = sorted(
+        str(item.get("item_id"))
+        for item in items
+        if str(item.get("item_id")) not in mapped_items
+    )
+    if missing_items:
+        raise AdapterError("sealed text origin coverage is incomplete")
+    page_number_objects = [
+        item
+        for item in objects
+        if item["object_id"] not in used_objects
+        and item["object_id"] in locations
+        and item["exact_utf8_text"].isdigit()
+        and int(item["exact_utf8_text"]) == item["page"]
+    ]
+    if page_number_objects:
+        numbers = [int(item["exact_utf8_text"]) for item in page_number_objects]
+        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+            generator_contract = {
+                "generator_id": "page-number-v1",
+                "generator_version": "1.0.0",
+                "kind": "page_number",
+            }
+            edges.append(
+                {
+                    "edge_id": f"generated.{len(edges) + 1}",
+                    "disposition": "generated",
+                    "rendered_object_ids": [
+                        item["object_id"] for item in page_number_objects
+                    ],
+                    "recipe": "declared_generated",
+                    "generator": {
+                        **generator_contract,
+                        "generator_sha256": hashlib.sha256(
+                            canonical_json_bytes(generator_contract)
+                        ).hexdigest(),
+                        "inputs": {
+                            "first_page_number": numbers[0],
+                            "page_count": len(numbers),
+                        },
+                        "source_mapping": {
+                            "method": "compiler_synctex_v1",
+                            "provider": source_map_provider,
+                            "object_sources": [
+                                locations[item["object_id"]]
+                                for item in page_number_objects
+                            ],
+                        },
+                    },
+                }
+            )
+            used_objects.update(
+                item["object_id"] for item in page_number_objects
+            )
+    for item in objects:
+        if item["object_id"] in used_objects:
+            continue
+        edges.append(
+            {
+                "edge_id": f"unexpected.{len(edges) + 1}",
+                "disposition": "unexpected_addition",
+                "rendered_object_ids": [item["object_id"]],
+                "recipe": "exact_utf8",
+            }
+        )
+    return objects, edges, suite, page_count
 
 
 def run(request_path: Path) -> None:
     request = read_object(contained(request_path, "compile request"), "compile request")
-    if (request.get("schema_name"), request.get("schema_version")) != ("guarded-final-compile-request", "1.0.0"):
+    if (request.get("schema_name"), request.get("schema_version")) != ("guarded-final-compile-request", "2.0.0"):
         raise AdapterError("compile request protocol is unsupported")
+    execution_path = contained(
+        Path(str(request.get("execution_state_path", ""))),
+        "Final Compile execution state",
+    )
+    execution = read_object(execution_path, "Final Compile execution state")
+    if (
+        execution.get("operation_id") != request.get("operation_id")
+        or execution.get("state") != "launch_pending"
+        or execution.get("execution_sha256")
+        != fingerprint(execution, "execution_sha256")
+    ):
+        raise AdapterError("Final Compile execution identity is stale")
+    execution["state"] = "running"
+    execution["adapter_pid"] = os.getpid()
+    execution["execution_sha256"] = fingerprint(execution, "execution_sha256")
+    write_object(execution_path, execution)
     manifest_path = contained(Path(str(request.get("compile_manifest_path", ""))), "compile manifest")
     manifest = read_object(manifest_path, "compile manifest")
     if manifest.get("manifest_sha256") != request.get("compile_manifest_sha256") or fingerprint(manifest, "manifest_sha256") != manifest.get("manifest_sha256"):
         raise AdapterError("compile manifest identity is stale")
     if manifest.get("mode") != "final" or manifest.get("precompile_text_seal_sha256") != request.get("precompile_text_seal_sha256"):
         raise AdapterError("compile manifest authority is stale")
-    plan_path = contained(Path(str(request.get("text_origin_plan_path", ""))), "text origin plan")
-    plan = read_object(plan_path, "text origin plan")
-    if plan.get("plan_sha256") != request.get("text_origin_plan_sha256") or fingerprint(plan, "plan_sha256") != plan.get("plan_sha256"):
-        raise AdapterError("text origin plan identity is stale")
-    if plan.get("precompile_text_seal_sha256") != request.get("precompile_text_seal_sha256"):
-        raise AdapterError("text origin plan authority is stale")
+    inventory_path = contained(
+        Path(str(request.get("reader_facing_text_inventory_path", ""))),
+        "reader-facing text inventory",
+    )
+    inventory = read_object(inventory_path, "reader-facing text inventory")
+    if (
+        inventory.get("inventory_sha256")
+        != request.get("reader_facing_text_inventory_sha256")
+        or fingerprint(inventory, "inventory_sha256")
+        != inventory.get("inventory_sha256")
+    ):
+        raise AdapterError("reader-facing text inventory identity is stale")
     policy_path = contained(Path(str(request.get("runtime_policy_path", ""))), "runtime policy")
     policy_binding = manifest.get("runtime_policy")
     if (not isinstance(policy_binding, dict)
@@ -449,18 +787,27 @@ def run(request_path: Path) -> None:
     staging = output / "compiler-staging"
     staging.mkdir()
     inputs, entry, raster_sources = stage(manifest, staging, policy)
-    built_pdf, built_recorder, runtime_environment, engine_stderr = compile_pdf(
+    built_pdf, built_recorder, _, runtime_environment, engine_stderr = compile_pdf(
         staging, entry, policy
     )
     final_pdf, recorder = output / "final.pdf", output / "compile-recorder.fls"
     shutil.copyfile(built_pdf, final_pdf)
     shutil.copyfile(built_recorder, recorder)
-    objects = render_and_extract(final_pdf, output, plan, raster_sources)
+    objects, edges, extractor_suite, page_count = render_and_derive(
+        built_pdf,
+        output,
+        inventory,
+        raster_sources,
+        policy=policy,
+        staging=staging,
+        entry=entry,
+        manifest_entries=manifest["entries"],
+    )
     pdf_sha = sha(final_pdf)
     rendered = {"schema_name": "rendered-text-object-inventory", "schema_version": "1.0.0",
                 "activation_status": request.get("activation_status"), "final_pdf_sha256": pdf_sha,
-                "extractor_suite": plan["extractor_suite"],
-                "coverage": {"page_count": plan["page_count"], "pages_scanned": list(range(1, plan["page_count"] + 1)),
+                "extractor_suite": extractor_suite,
+                "coverage": {"page_count": page_count, "pages_scanned": list(range(1, page_count + 1)),
                              "content_streams_complete": True, "annotations_complete": True,
                              "form_xobjects_complete": True, "declared_raster_text_complete": True}, "objects": objects}
     rendered["inventory_sha256"] = fingerprint(rendered, "inventory_sha256")
@@ -473,11 +820,13 @@ def run(request_path: Path) -> None:
             "final_pdf": {"path": "adapter-output/final.pdf", "sha256": pdf_sha, "size": final_pdf.stat().st_size}}
     seal["seal_sha256"] = fingerprint(seal, "seal_sha256")
     write_object(output / "final-artifact-seal.json", seal)
-    write_object(output / "text-origin-trace.json", {"schema_name": "text-origin-trace", "schema_version": "1.0.0",
-                 "activation_status": request.get("activation_status"), "text_origin_plan_sha256": plan["plan_sha256"],
-                 "final_artifact_seal_sha256": seal["seal_sha256"], "edges": plan["edges"]})
+    write_object(output / "text-origin-trace.json", {"schema_name": "text-origin-trace", "schema_version": "2.0.0",
+                 "activation_status": request.get("activation_status"),
+                 "reader_facing_text_inventory_sha256": inventory["inventory_sha256"],
+                 "final_artifact_seal_sha256": seal["seal_sha256"], "edges": edges})
     write_object(output / "compile-provenance.json", {"schema_name": "compile-provenance", "schema_version": "1.0.0",
-                 "compile_manifest_sha256": manifest["manifest_sha256"], "text_origin_plan_sha256": plan["plan_sha256"],
+                 "compile_manifest_sha256": manifest["manifest_sha256"],
+                 "reader_facing_text_inventory_sha256": inventory["inventory_sha256"],
                  "final_artifact_seal_sha256": seal["seal_sha256"],
                  "invocation": {"recorder": True, "shell_escape": False, "automatic_package_install": False},
                  "engine_stderr": engine_stderr,

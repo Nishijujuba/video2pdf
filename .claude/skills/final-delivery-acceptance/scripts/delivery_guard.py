@@ -975,7 +975,7 @@ def _ensure_legacy_modern_compile_closure(
     worktree_adapter_sha = _file_sha256(expected_adapter)
     if (
         adapter_path != expected_adapter
-        or adapter.get("protocol_version") != "guarded-final-compile-v1"
+        or adapter.get("protocol_version") != "guarded-final-compile-v2"
         or worktree_adapter_sha != head_adapter_sha
         or adapter.get("adapter_sha256") != head_adapter_sha
     ):

@@ -21,10 +21,12 @@ Cutover or change active Legacy Final Acceptance authority.
 ### Public operation
 
 `delivery-quality-final-compile` validates the current Precompile Text Seal,
-exact compile-input closure, and complete Text Origin Plan before invoking a
-fingerprinted compiler adapter. The adapter must produce the final PDF, compile
+its complete Reader-Facing Text Inventory, and the exact compile-input closure
+before invoking a fingerprinted compiler adapter. The adapter derives page,
+object, coordinate, and origin facts only after compilation. It must produce the final PDF, compile
 provenance with recorder inputs, every rendered page, the object-level rendered
 inventory, the Final Artifact Seal, and a text-origin trace bound to that seal.
+Operators and coordinators never provide postcompile Text Origin Plans.
 The guarded provider validates and publishes those outputs into the Render
 Evidence Manifest, compiler-produced Text Origin Manifest, and Final Compile
 Report. The Final Artifact Seal is formed after the PDF identity is known. The
@@ -73,7 +75,10 @@ string similarity.
 ### Closed reconciliation behavior
 
 The registered recipes are `exact_utf8`, `layout_whitespace`,
-`unicode_presentation`, and `declared_generated`. Generated text is reproduced
+`unicode_presentation`, `compiler_source_map`, and `declared_generated`.
+`compiler_source_map` is admissible only with per-object reverse SyncTeX records
+bound to the exact staged source identity and the fingerprinted source-map tool;
+it performs no similarity matching. Generated text is reproduced
 only from a registered deterministic generator and its declared inputs.
 Unsupported recipes, generators, object kinds, stale identities, ambiguous
 edges, unmapped text, missing pages, and incomplete raster or extractor

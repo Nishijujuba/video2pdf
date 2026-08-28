@@ -596,6 +596,116 @@ def _complete_toc_source_locations(
         }
 
 
+def _complete_compiler_source_locations(
+    objects: list[dict[str, Any]],
+    locations: dict[str, dict[str, Any]],
+    authenticated_sources: set[Path],
+) -> None:
+    objects_by_id = {item["object_id"]: item for item in objects}
+    source_lines: dict[Path, list[str]] = {
+        path.resolve(): path.read_text(encoding="utf-8").splitlines()
+        for path in authenticated_sources
+        if path.is_file() and path.suffix.casefold() in {".tex", ".toc"}
+    }
+
+    def source_identity(location: dict[str, Any]) -> tuple[Path, int] | None:
+        path = Path(str(location.get("source_path", ""))).resolve()
+        line = location.get("line")
+        if path not in source_lines or not isinstance(line, int):
+            return None
+        if not 1 <= line <= len(source_lines[path]):
+            return None
+        return path, line
+
+    anchors_by_page: dict[
+        int, list[tuple[dict[str, Any], tuple[Path, int]]]
+    ] = {}
+    for object_id, location in list(locations.items()):
+        anchor = objects_by_id.get(object_id)
+        identity = source_identity(location)
+        if anchor is not None and identity is not None:
+            anchors_by_page.setdefault(anchor["page"], []).append(
+                (anchor, identity)
+            )
+
+    for obj in objects:
+        if obj["object_id"] in locations:
+            continue
+        bbox = obj["bbox"]
+        center_y = (bbox[1] + bbox[3]) / 2
+        visual_anchors: list[
+            tuple[dict[str, Any], tuple[Path, int]]
+        ] = []
+        for anchor, identity in anchors_by_page.get(obj["page"], []):
+            anchor_center_y = (anchor["bbox"][1] + anchor["bbox"][3]) / 2
+            if abs(anchor_center_y - center_y) <= 1.2:
+                visual_anchors.append((anchor, identity))
+        if not visual_anchors:
+            continue
+        left = [
+            value
+            for value in visual_anchors
+            if value[0]["bbox"][2] <= bbox[0] + 0.5
+        ]
+        right = [
+            value
+            for value in visual_anchors
+            if value[0]["bbox"][0] >= bbox[2] - 0.5
+        ]
+        nearest_left = max(left, key=lambda value: value[0]["bbox"][2]) if left else None
+        nearest_right = min(right, key=lambda value: value[0]["bbox"][0]) if right else None
+        identity: tuple[Path, int] | None = None
+        if (
+            nearest_left is not None
+            and nearest_right is not None
+            and nearest_left[1] == nearest_right[1]
+        ):
+            identity = nearest_left[1]
+        else:
+            identities = {value[1] for value in visual_anchors}
+            if len(identities) == 1:
+                only_identity = next(iter(identities))
+                nearest_gap = min(
+                    (
+                        max(0.0, bbox[0] - anchor["bbox"][2])
+                        if anchor["bbox"][2] <= bbox[0]
+                        else max(0.0, anchor["bbox"][0] - bbox[2])
+                    )
+                    for anchor, _ in visual_anchors
+                )
+                if nearest_gap <= 25:
+                    identity = only_identity
+            if identity is None and obj["exact_utf8_text"].strip():
+                normalized_token = _normalized_layout_text(
+                    obj["exact_utf8_text"]
+                )
+                matching = {
+                    candidate
+                    for _, candidate in visual_anchors
+                    if normalized_token
+                    in _normalized_layout_text(
+                        source_lines[candidate[0]][candidate[1] - 1]
+                    ).replace("--", "–")
+                }
+                if len(matching) == 1:
+                    identity = next(iter(matching))
+        if identity is None:
+            continue
+        source_path, line_number = identity
+        locations[obj["object_id"]] = {
+            "object_id": obj["object_id"],
+            "source_path": str(source_path),
+            "line": line_number,
+            "column": -1,
+            "query": {
+                "page": obj["page"],
+                "x": (bbox[0] + bbox[2]) / 2,
+                "y": center_y,
+            },
+            "completion": "compiler-line-layout-v1",
+        }
+
+
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
     normalized = pixmap
     if pixmap.alpha or pixmap.colorspace is None or pixmap.colorspace.n != 3:
@@ -791,6 +901,11 @@ def render_and_derive(
         objects,
         locations,
         stable_final_round_auxiliaries,
+    )
+    _complete_compiler_source_locations(
+        objects,
+        locations,
+        observed_declared_paths | set(stable_final_round_auxiliaries),
     )
     entry_by_staged_path = {
         str((staging / Path(item["staging_path"])).resolve()).casefold(): item

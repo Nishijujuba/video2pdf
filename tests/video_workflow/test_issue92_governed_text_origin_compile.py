@@ -22,7 +22,10 @@ from video2pdf_workflow_kernel.final_compile import (
     validate_latex_toc_generated_text,
 )
 from video2pdf_workflow_kernel.errors import ContractError
-from scripts.guarded_final_compile_adapter import _complete_toc_source_locations
+from scripts.guarded_final_compile_adapter import (
+    _complete_compiler_source_locations,
+    _complete_toc_source_locations,
+)
 
 from tests.video_workflow import test_guarded_final_compile_adapter as final_compile_fixture
 from tests.video_workflow import test_precompile_quality as precompile_fixture
@@ -701,6 +704,48 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
 
         self.assertEqual(1, locations["missing"]["line"])
         self.assertEqual(str(toc.resolve()), locations["missing"]["source_path"])
+
+    def test_compiler_location_completion_uses_authenticated_visual_line(self) -> None:
+        fixture, _, _ = self._inventory_bound_adapter_fixture()
+        source = fixture.root / "section.tex"
+        source.write_text(
+            "Source (source\\_timestamp): 00:00:58--00:01:06\n",
+            encoding="utf-8",
+        )
+        objects = [
+            {
+                "object_id": "anchor",
+                "page": 2,
+                "bbox": [80, 100, 200, 111],
+                "exact_utf8_text": "Source (source_timestamp):",
+            },
+            {
+                "object_id": "missing",
+                "page": 2,
+                "bbox": [204, 100, 300, 111],
+                "exact_utf8_text": "00:00:58–00:01:06",
+            },
+        ]
+        locations = {
+            "anchor": {
+                "object_id": "anchor",
+                "source_path": str(source),
+                "line": 1,
+                "column": -1,
+                "query": {"page": 2, "x": 140, "y": 105.5},
+            }
+        }
+
+        _complete_compiler_source_locations(
+            objects,
+            locations,
+            {source.resolve()},
+        )
+
+        self.assertEqual(1, locations["missing"]["line"])
+        self.assertEqual(
+            "compiler-line-layout-v1", locations["missing"]["completion"]
+        )
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

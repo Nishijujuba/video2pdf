@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,9 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
     GuardedCompileProvider,
     _MIKTEX_DURABLE_DIRECTORIES,
     _MIKTEX_RUNTIME_ROOTS,
+)
+from video2pdf_workflow_kernel.final_compile import (  # noqa: E402
+    registered_generator_identity,
 )
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
@@ -372,7 +376,11 @@ def compiler_source_locations(
                 "source_path": str(entry.resolve()),
                 "line": 1,
                 "column": 1,
-                "query": {"page": item["page"], "x": item["bbox"][0], "y": item["bbox"][1]},
+                "query": {
+                    "page": item["page"],
+                    "x": (item["bbox"][0] + item["bbox"][2]) / 2,
+                    "y": (item["bbox"][1] + item["bbox"][3]) / 2,
+                },
             }
             for item in text_objects
         }
@@ -620,13 +628,135 @@ def render_and_derive(
             continue
         item_id = str(candidates[0]["item_id"])
         grouped.setdefault(item_id, []).append(location)
-        used_objects.add(object_id)
     edges: list[dict[str, Any]] = []
     for item in items:
-        item_id = str(item.get("item_id"))
-        if item.get("representation") == "authoritative_raster_text":
+        if item.get("representation") != "declared_generated_text":
             continue
-        object_sources = grouped.get(item_id)
+        item_id = str(item.get("item_id"))
+        declared_tokens = [
+            value
+            for value in str(item.get("declared_text", "")).splitlines()
+            if value
+        ]
+        if not declared_tokens or len(declared_tokens) != len(set(declared_tokens)):
+            raise AdapterError(
+                f"declared generated text inventory is ambiguous: {item_id}"
+            )
+        binding = (
+            item.get("source_artifact_logical_id"),
+            item.get("source_generation"),
+            item.get("source_sha256"),
+        )
+        source_entries = [
+            value
+            for value in manifest_entries
+            if (
+                value.get("logical_id"),
+                value.get("generation"),
+                value.get("sha256"),
+            )
+            == binding
+        ]
+        if len(source_entries) != 1:
+            raise AdapterError(
+                f"declared generated text source is ambiguous: {item_id}"
+            )
+        style_path = staging / Path(source_entries[0]["staging_path"])
+        if style_path.suffix.casefold() != ".sty" or not style_path.is_file():
+            raise AdapterError(
+                f"declared generated text source is unsupported: {item_id}"
+            )
+        title_by_environment: dict[str, str] = {}
+        for source_line in style_path.read_text(encoding="utf-8").splitlines():
+            declaration = re.fullmatch(
+                r"\s*\\newtcolorbox\{([^{}]+)\}\{([^{}]*)\}\s*",
+                source_line,
+            )
+            if declaration is None:
+                continue
+            title = re.search(
+                r"(?:^|,)\s*title=([^,]+)(?:,|$)", declaration.group(2)
+            )
+            if title is not None:
+                title_by_environment[declaration.group(1)] = title.group(1).strip()
+        if not set(declared_tokens) <= set(title_by_environment.values()):
+            raise AdapterError(
+                f"declared generated text source does not declare inventory: {item_id}"
+            )
+        object_ids: list[str] = []
+        expected_titles: list[str] = []
+        object_sources: list[dict[str, Any]] = []
+        for value in objects:
+            location = locations.get(value["object_id"])
+            if location is None:
+                continue
+            source_path = Path(location["source_path"])
+            if not source_path.is_file():
+                raise AdapterError("compiler source map path is stale")
+            source_lines = source_path.read_text(encoding="utf-8").splitlines()
+            line_number = location["line"]
+            if line_number < 1 or line_number > len(source_lines):
+                raise AdapterError("compiler source map line is invalid")
+            invocation = re.fullmatch(
+                r"\s*\\end\{([^{}]+)\}\s*(?:%.*)?",
+                source_lines[line_number - 1],
+            )
+            if invocation is None:
+                continue
+            expected_title = title_by_environment.get(invocation.group(1))
+            if expected_title is None:
+                continue
+            if expected_title not in declared_tokens:
+                raise AdapterError(
+                    f"compiled PDF contains undeclared generated style text: {item_id}"
+                )
+            object_ids.append(value["object_id"])
+            expected_titles.append(expected_title)
+            object_sources.append(location)
+        if not object_ids or set(expected_titles) != set(declared_tokens):
+            raise AdapterError(
+                f"declared generated text is absent from compiled PDF: {item_id}"
+            )
+        generator = registered_generator_identity("latex-style-box-title-v1")
+        edges.append(
+            {
+                "edge_id": f"generated.{len(edges) + 1}",
+                "disposition": "generated",
+                "sealed_item_id": item_id,
+                "rendered_object_ids": object_ids,
+                "recipe": "declared_generated",
+                "generator": {
+                    **generator,
+                    "inputs": {
+                        "texts": expected_titles,
+                        "source_artifact": {
+                            "logical_id": binding[0],
+                            "generation": binding[1],
+                            "sha256": binding[2],
+                        },
+                    },
+                    "source_mapping": {
+                        "method": "compiler_synctex_v1",
+                        "provider": source_map_provider,
+                        "object_sources": object_sources,
+                    },
+                },
+            }
+        )
+        used_objects.update(object_ids)
+        mapped_items.add(item_id)
+    for item in items:
+        item_id = str(item.get("item_id"))
+        if item.get("representation") in {
+            "authoritative_raster_text",
+            "declared_generated_text",
+        }:
+            continue
+        object_sources = [
+            value
+            for value in grouped.get(item_id, [])
+            if value["object_id"] not in used_objects
+        ]
         if not object_sources:
             continue
         edges.append(
@@ -648,6 +778,9 @@ def render_and_derive(
                     "object_sources": object_sources,
                 },
             }
+        )
+        used_objects.update(
+            value["object_id"] for value in object_sources
         )
         mapped_items.add(item_id)
     for item in raster_items:
@@ -673,7 +806,10 @@ def render_and_derive(
         if str(item.get("item_id")) not in mapped_items
     )
     if missing_items:
-        raise AdapterError("sealed text origin coverage is incomplete")
+        raise AdapterError(
+            "sealed text origin coverage is incomplete: "
+            + ", ".join(missing_items)
+        )
     page_number_objects = [
         item
         for item in objects

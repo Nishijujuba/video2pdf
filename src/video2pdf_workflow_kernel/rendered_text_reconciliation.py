@@ -81,6 +81,26 @@ def _generated_texts(generator: dict[str, Any]) -> tuple[str, ...]:
         return tuple(
             str(page) for page in range(first_page_number, first_page_number + page_count)
         )
+    if kind == "latex_style_box_title":
+        texts = inputs.get("texts")
+        source_artifact = inputs.get("source_artifact")
+        if (
+            set(inputs) != {"texts", "source_artifact"}
+            or not isinstance(texts, list)
+            or not texts
+            or any(not isinstance(value, str) or not value for value in texts)
+            or not isinstance(source_artifact, dict)
+            or set(source_artifact) != {"logical_id", "generation", "sha256"}
+            or not isinstance(source_artifact.get("logical_id"), str)
+            or not source_artifact["logical_id"]
+            or not isinstance(source_artifact.get("generation"), int)
+            or isinstance(source_artifact.get("generation"), bool)
+            or source_artifact["generation"] < 1
+            or not isinstance(source_artifact.get("sha256"), str)
+            or len(source_artifact["sha256"]) != 64
+        ):
+            raise ValueError("invalid LaTeX style text generator")
+        return tuple(texts)
     raise ValueError("unsupported generator")
 
 
@@ -150,6 +170,19 @@ class RenderedTextReconciliationProvider:
             (origins, "manifest_sha256", "Text Origin Manifest"),
         ):
             _require_fingerprint(value, field, label)
+
+        runtime_policy_binding = compile_manifest.get("runtime_policy", {})
+        runtime_policy_path = Path(
+            str(runtime_policy_binding.get("path", ""))
+        ).resolve()
+        runtime_policy_current = (
+            runtime_policy_path.is_file()
+            and sha256_file(runtime_policy_path)
+            == runtime_policy_binding.get("sha256")
+        )
+        runtime_policy = (
+            read_json(runtime_policy_path) if runtime_policy_current else {}
+        )
 
         pdf_path = final_pdf_path.resolve()
         pdf_sha256 = sha256_file(pdf_path)
@@ -250,6 +283,7 @@ class RenderedTextReconciliationProvider:
             "compile_generated_inputs_current": generated_inputs_current,
             "compile_recorder_current": compile_recorder_current,
             "compile_adapter_current": compile_adapter_current,
+            "compile_runtime_policy_current": runtime_policy_current,
             "compile_report_mode_final": compile_report.get("mode") == "final",
             "compile_report_target_only": compile_report.get("delivery_authority") is False,
             "final_seal_binds_precompile_seal": final_seal.get("precompile_text_seal_sha256") == seal["seal_sha256"],
@@ -419,16 +453,144 @@ class RenderedTextReconciliationProvider:
                 ):
                     contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
                     continue
+                if generator.get("kind") == "latex_style_box_title":
+                    item_id = edge.get("sealed_item_id")
+                    item = sealed_by_id.get(item_id)
+                    inputs = generator.get("inputs", {})
+                    source_artifact = inputs.get("source_artifact")
+                    generated_titles = inputs.get("texts")
+                    declared_titles = (
+                        [
+                            value
+                            for value in item.get("declared_text", "").splitlines()
+                            if value
+                        ]
+                        if isinstance(item, dict)
+                        else []
+                    )
+                    if (
+                        item is None
+                        or item.get("representation")
+                        != "declared_generated_text"
+                        or not declared_titles
+                        or len(declared_titles) != len(set(declared_titles))
+                        or not isinstance(generated_titles, list)
+                        or any(
+                            not isinstance(value, str) or not value
+                            for value in generated_titles
+                        )
+                        or set(generated_titles) != set(declared_titles)
+                        or source_artifact
+                        != {
+                            "logical_id": item.get(
+                                "source_artifact_logical_id"
+                            ),
+                            "generation": item.get("source_generation"),
+                            "sha256": item.get("source_sha256"),
+                        }
+                    ):
+                        contract_gaps.append(
+                            {
+                                "code": "UNSUPPORTED_GENERATOR_SOURCE",
+                                "edge_id": edge_id,
+                            }
+                        )
+                        continue
+                    sealed_edges[item_id].append(edge_id)
                 source_mapping = generator.get("source_mapping")
+                object_sources = (
+                    source_mapping.get("object_sources")
+                    if isinstance(source_mapping, dict)
+                    else None
+                )
+                source_provider = (
+                    source_mapping.get("provider")
+                    if isinstance(source_mapping, dict)
+                    else None
+                )
+                source_records_complete = (
+                    isinstance(object_sources, list)
+                    and bool(object_sources)
+                    and all(
+                        isinstance(value, dict)
+                        and isinstance(value.get("object_id"), str)
+                        and isinstance(value.get("source_path"), str)
+                        and value["source_path"]
+                        and isinstance(value.get("line"), int)
+                        and not isinstance(value.get("line"), bool)
+                        and value["line"] >= 1
+                        and isinstance(value.get("column"), int)
+                        and not isinstance(value.get("column"), bool)
+                        and isinstance(value.get("query"), dict)
+                        and isinstance(value["query"].get("page"), int)
+                        and not isinstance(value["query"].get("page"), bool)
+                        and isinstance(value["query"].get("x"), (int, float))
+                        and isinstance(value["query"].get("y"), (int, float))
+                        and value.get("object_id") in objects_by_id
+                        and value["query"].get("page")
+                        == objects_by_id[value["object_id"]].get("page")
+                        and value["query"].get("x")
+                        == (
+                            objects_by_id[value["object_id"]]["bbox"][0]
+                            + objects_by_id[value["object_id"]]["bbox"][2]
+                        )
+                        / 2
+                        and value["query"].get("y")
+                        == (
+                            objects_by_id[value["object_id"]]["bbox"][1]
+                            + objects_by_id[value["object_id"]]["bbox"][3]
+                        )
+                        / 2
+                        and any(
+                            Path(value["source_path"]).resolve().is_file()
+                            and Path(value["source_path"])
+                            .resolve()
+                            .as_posix()
+                            .endswith("/" + entry["staging_path"])
+                            and sha256_file(
+                                Path(value["source_path"]).resolve()
+                            )
+                            == entry["sha256"]
+                            for entry in compile_entry_list
+                        )
+                        for value in object_sources
+                    )
+                )
+                provider_current = (
+                    isinstance(source_provider, dict)
+                    and isinstance(source_provider.get("provider_id"), str)
+                    and bool(source_provider["provider_id"])
+                    and isinstance(source_provider.get("provider_sha256"), str)
+                    and len(source_provider["provider_sha256"]) == 64
+                    and all(
+                        character in "0123456789abcdef"
+                        for character in source_provider["provider_sha256"]
+                    )
+                )
+                if provider_current and runtime_policy.get("policy_id") == "miktex-xelatex-runtime":
+                    tool = Path(str(source_provider.get("tool_path", ""))).resolve()
+                    runtime_roots = [
+                        Path(value).resolve()
+                        for value in runtime_policy.get("allowed_runtime_roots", [])
+                    ]
+                    provider_current = (
+                        source_provider.get("provider_id")
+                        == "synctex-reverse-map-v1"
+                        and tool.is_file()
+                        and sha256_file(tool)
+                        == source_provider.get("provider_sha256")
+                        and any(
+                            tool == root or root in tool.parents
+                            for root in runtime_roots
+                        )
+                    )
                 if (
                     not isinstance(source_mapping, dict)
                     or source_mapping.get("method") != "compiler_synctex_v1"
-                    or {
-                        value.get("object_id")
-                        for value in source_mapping.get("object_sources", [])
-                        if isinstance(value, dict)
-                    }
-                    != set(rendered_ids)
+                    or not source_records_complete
+                    or not provider_current
+                    or [value.get("object_id") for value in object_sources]
+                    != rendered_ids
                 ):
                     contract_gaps.append(
                         {"code": "UNSUPPORTED_GENERATOR_SOURCE", "edge_id": edge_id}

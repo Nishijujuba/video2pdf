@@ -44,6 +44,11 @@ def final_compile_provider_identity(project_root: Path) -> dict[str, str]:
 
 
 REGISTERED_GENERATORS = {
+    "latex-style-box-title-v1": {
+        "generator_id": "latex-style-box-title-v1",
+        "generator_version": "1.0.0",
+        "kind": "latex_style_box_title",
+    },
     "page-number-v1": {
         "generator_id": "page-number-v1",
         "generator_version": "1.0.0",
@@ -147,6 +152,9 @@ def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
                 )
     if len(object_ids) != len(set(object_ids)):
         raise ContractError("derived Text Origin rendered object identities are ambiguous")
+    objects_by_id = {
+        item["object_id"]: item for item in objects
+    }
     if not isinstance(edges, list) or not edges:
         raise ContractError("derived Text Origin edges are incomplete")
     edge_ids = [item.get("edge_id") for item in edges if isinstance(item, dict)]
@@ -220,6 +228,124 @@ def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
                 or not isinstance(generator.get("inputs"), dict)
             ):
                 raise ContractError("derived Text Origin generated origin is incomplete")
+            source_mapping = generator.get("source_mapping")
+            object_sources = (
+                source_mapping.get("object_sources")
+                if isinstance(source_mapping, dict)
+                else None
+            )
+            provider = (
+                source_mapping.get("provider")
+                if isinstance(source_mapping, dict)
+                else None
+            )
+            if (
+                not isinstance(source_mapping, dict)
+                or source_mapping.get("method") != "compiler_synctex_v1"
+                or not isinstance(provider, dict)
+                or not isinstance(provider.get("provider_id"), str)
+                or not provider["provider_id"]
+                or not isinstance(provider.get("provider_sha256"), str)
+                or len(provider["provider_sha256"]) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in provider["provider_sha256"]
+                )
+                or not isinstance(object_sources, list)
+                or any(
+                    not isinstance(value, dict)
+                    or not isinstance(value.get("object_id"), str)
+                    or not isinstance(value.get("source_path"), str)
+                    or not value["source_path"]
+                    or not isinstance(value.get("line"), int)
+                    or isinstance(value.get("line"), bool)
+                    or value["line"] < 1
+                    or not isinstance(value.get("column"), int)
+                    or isinstance(value.get("column"), bool)
+                    or not isinstance(value.get("query"), dict)
+                    or not isinstance(value["query"].get("page"), int)
+                    or not isinstance(value["query"].get("x"), (int, float))
+                    or not isinstance(value["query"].get("y"), (int, float))
+                    or value.get("object_id") not in objects_by_id
+                    or value["query"].get("page")
+                    != objects_by_id[value["object_id"]].get("page")
+                    or value["query"].get("x")
+                    != (
+                        objects_by_id[value["object_id"]]["bbox"][0]
+                        + objects_by_id[value["object_id"]]["bbox"][2]
+                    )
+                    / 2
+                    or value["query"].get("y")
+                    != (
+                        objects_by_id[value["object_id"]]["bbox"][1]
+                        + objects_by_id[value["object_id"]]["bbox"][3]
+                    )
+                    / 2
+                    for value in object_sources
+                )
+                or [value.get("object_id") for value in object_sources]
+                != rendered_ids
+            ):
+                raise ContractError(
+                    "derived Text Origin generated origin is incomplete"
+                )
+            if generator.get("kind") == "latex_style_box_title":
+                sealed_item_id = edge.get("sealed_item_id")
+                sealed_item = next(
+                    (
+                        item
+                        for item in sealed_items
+                        if item.get("item_id") == sealed_item_id
+                    ),
+                    None,
+                )
+                inputs = generator.get("inputs")
+                declared_titles = (
+                    [
+                        value
+                        for value in sealed_item.get(
+                            "exact_utf8_text", ""
+                        ).splitlines()
+                        if value
+                    ]
+                    if isinstance(sealed_item, dict)
+                    else []
+                )
+                generated_titles = (
+                    inputs.get("texts") if isinstance(inputs, dict) else None
+                )
+                source_artifact = (
+                    inputs.get("source_artifact")
+                    if isinstance(inputs, dict)
+                    else None
+                )
+                if (
+                    not isinstance(sealed_item_id, str)
+                    or not sealed_item_id
+                    or sealed_item is None
+                    or sealed_item.get("representation")
+                    != "declared_generated_text"
+                    or not declared_titles
+                    or len(declared_titles) != len(set(declared_titles))
+                    or not isinstance(generated_titles, list)
+                    or any(
+                        not isinstance(value, str) or not value
+                        for value in generated_titles
+                    )
+                    or set(generated_titles) != set(declared_titles)
+                    or source_artifact
+                    != {
+                        "logical_id": sealed_item.get(
+                            "source_artifact_logical_id"
+                        ),
+                        "generation": sealed_item.get("source_generation"),
+                        "sha256": sealed_item.get("source_sha256"),
+                    }
+                ):
+                    raise ContractError(
+                        "derived Text Origin generated origin is incomplete"
+                    )
+                sealed_origins.append(sealed_item_id)
         elif edge.get("recipe") != "exact_utf8":
             raise ContractError("derived Text Origin unexpected addition recipe is unsupported")
     if sorted(mapped_objects) != sorted(object_ids) or len(mapped_objects) != len(
@@ -1100,33 +1226,80 @@ class GuardedFinalCompileProvider:
                 {
                     "item_id": item["item_id"],
                     "exact_utf8_text": item["declared_text"],
+                    "representation": item.get("representation"),
+                    "source_artifact_logical_id": item.get(
+                        "source_artifact_logical_id"
+                    ),
+                    "source_generation": item.get("source_generation"),
+                    "source_sha256": item.get("source_sha256"),
                 }
                 for item in inventory["items"]
             ],
         }
         for edge in derived_contract["edges"]:
-            if edge.get("recipe") != "compiler_source_map":
+            expected_source = None
+            if edge.get("recipe") == "compiler_source_map":
+                source_mapping = edge.get("source_mapping")
+                if not isinstance(source_mapping, dict):
+                    raise CompileDependencyGap(
+                        "compiler source map evidence is incomplete"
+                    )
+                source_entry = compile_entry_by_binding.get(
+                    (
+                        source_mapping.get("logical_id"),
+                        source_mapping.get("generation"),
+                        source_mapping.get("sha256"),
+                    )
+                )
+                if source_entry is None:
+                    raise CompileDependencyGap(
+                        "compiler source map cites an undeclared compile input"
+                    )
+                expected_source = (
+                    recorder_cwd / Path(source_entry["staging_path"])
+                ).resolve()
+            elif edge.get("disposition") == "generated":
+                generator = edge.get("generator")
+                source_mapping = (
+                    generator.get("source_mapping")
+                    if isinstance(generator, dict)
+                    else None
+                )
+                if not isinstance(source_mapping, dict):
+                    raise CompileDependencyGap(
+                        "generated compiler source map evidence is incomplete"
+                    )
+            else:
                 continue
-            source_mapping = edge["source_mapping"]
-            source_entry = compile_entry_by_binding.get(
-                (
-                    source_mapping.get("logical_id"),
-                    source_mapping.get("generation"),
-                    source_mapping.get("sha256"),
-                )
-            )
-            if source_entry is None:
+            object_sources = source_mapping.get("object_sources")
+            if not isinstance(object_sources, list) or not object_sources:
                 raise CompileDependencyGap(
-                    "compiler source map cites an undeclared compile input"
+                    "compiler source map object evidence is incomplete"
                 )
-            expected_source = (
-                recorder_cwd / Path(source_entry["staging_path"])
-            ).resolve()
+            staged_sources = {
+                (recorder_cwd / Path(value["staging_path"])).resolve()
+                for value in compile_manifest["entries"]
+            }
             if any(
-                Path(str(value.get("source_path", ""))).resolve()
-                != expected_source
-                for value in source_mapping.get("object_sources", [])
-                if isinstance(value, dict)
+                not isinstance(value, dict)
+                or Path(str(value.get("source_path", ""))).resolve()
+                not in staged_sources
+                or (
+                    expected_source is not None
+                    and Path(str(value.get("source_path", ""))).resolve()
+                    != expected_source
+                )
+                or not isinstance(value.get("line"), int)
+                or isinstance(value.get("line"), bool)
+                or value["line"] < 1
+                or not isinstance(value.get("column"), int)
+                or isinstance(value.get("column"), bool)
+                or not isinstance(value.get("query"), dict)
+                or not isinstance(value["query"].get("page"), int)
+                or isinstance(value["query"].get("page"), bool)
+                or not isinstance(value["query"].get("x"), (int, float))
+                or not isinstance(value["query"].get("y"), (int, float))
+                for value in object_sources
             ):
                 raise CompileDependencyGap(
                     "compiler source map input identity is stale"

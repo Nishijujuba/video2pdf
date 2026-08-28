@@ -15,6 +15,9 @@ from .final_compile import (
     REGISTERED_GENERATORS,
     final_compile_provider_identity,
     registered_generator_identity,
+    validate_latex_toc_generated_text,
+    validate_latex_running_header,
+    validate_latex_toc_heading,
 )
 from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
@@ -101,6 +104,32 @@ def _generated_texts(generator: dict[str, Any]) -> tuple[str, ...]:
         ):
             raise ValueError("invalid LaTeX style text generator")
         return tuple(texts)
+    if kind == "latex_table_of_contents":
+        source_sha256 = inputs.get("source_sha256")
+        if (
+            set(inputs) != {"source_sha256"}
+            or not isinstance(source_sha256, str)
+            or len(source_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in source_sha256)
+        ):
+            raise ValueError("invalid LaTeX table-of-contents generator")
+        return ()
+    if kind == "latex_running_header":
+        if (
+            set(inputs) != {"page_count", "toc_source_path", "toc_source_sha256"}
+            or not isinstance(inputs.get("page_count"), int)
+            or isinstance(inputs.get("page_count"), bool)
+            or inputs["page_count"] < 2
+            or not isinstance(inputs.get("toc_source_path"), str)
+            or not isinstance(inputs.get("toc_source_sha256"), str)
+            or len(inputs["toc_source_sha256"]) != 64
+        ):
+            raise ValueError("invalid LaTeX running-header generator")
+        return ()
+    if kind == "latex_toc_heading":
+        if inputs:
+            raise ValueError("invalid LaTeX table-of-contents heading generator")
+        return ()
     raise ValueError("unsupported generator")
 
 
@@ -497,6 +526,66 @@ class RenderedTextReconciliationProvider:
                         )
                         continue
                     sealed_edges[item_id].append(edge_id)
+                elif generator.get("kind") == "latex_table_of_contents":
+                    inputs = generator.get("inputs", {})
+                    source_paths = {
+                        Path(value["source_path"]).resolve()
+                        for value in generator.get("source_mapping", {}).get(
+                            "object_sources", []
+                        )
+                        if isinstance(value, dict)
+                        and isinstance(value.get("source_path"), str)
+                    }
+                    if (
+                        len(source_paths) != 1
+                        or next(iter(source_paths)).suffix.casefold() != ".toc"
+                        or not next(iter(source_paths)).is_file()
+                        or sha256_file(next(iter(source_paths)))
+                        != inputs.get("source_sha256")
+                    ):
+                        contract_gaps.append(
+                            {
+                                "code": "UNSUPPORTED_GENERATOR_SOURCE",
+                                "edge_id": edge_id,
+                            }
+                        )
+                        continue
+                elif generator.get("kind") == "latex_running_header":
+                    inputs = generator.get("inputs", {})
+                    toc_path = Path(str(inputs.get("toc_source_path", ""))).resolve()
+                    toc_identity_current = any(
+                        isinstance(value, dict)
+                        and value.get("classification")
+                        == "attempt_generated_auxiliary"
+                        and Path(str(value.get("path", ""))).resolve() == toc_path
+                        and value.get("sha256") == inputs.get("toc_source_sha256")
+                        for value in reported_generated_inputs
+                    )
+                    if not toc_identity_current or not validate_latex_running_header(
+                        generator,
+                        objects_by_id,
+                        rendered_ids,
+                        list(inventory.get("items", [])),
+                        page_count,
+                    ):
+                        contract_gaps.append(
+                            {
+                                "code": "UNSUPPORTED_GENERATOR_SOURCE",
+                                "edge_id": edge_id,
+                            }
+                        )
+                        continue
+                elif generator.get("kind") == "latex_toc_heading":
+                    if not validate_latex_toc_heading(
+                        generator, objects_by_id, rendered_ids
+                    ):
+                        contract_gaps.append(
+                            {
+                                "code": "UNSUPPORTED_GENERATOR_SOURCE",
+                                "edge_id": edge_id,
+                            }
+                        )
+                        continue
                 source_mapping = generator.get("source_mapping")
                 object_sources = (
                     source_mapping.get("object_sources")
@@ -613,19 +702,39 @@ class RenderedTextReconciliationProvider:
                         {"code": "UNSUPPORTED_GENERATOR_SOURCE", "edge_id": edge_id}
                     )
                     continue
-                try:
-                    expected = _generated_texts(generator)
-                except ValueError:
-                    contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
-                    continue
-                if len(expected) != len(rendered_ids):
-                    contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
-                    continue
                 actual_generated_texts = tuple(
                     objects_by_id[object_id]["exact_utf8_text"]
                     for object_id in rendered_ids
                 )
-                equivalent = expected == actual_generated_texts
+                if generator.get("kind") == "latex_table_of_contents":
+                    equivalent = validate_latex_toc_generated_text(
+                        generator,
+                        objects_by_id,
+                        rendered_ids,
+                        list(inventory.get("items", [])),
+                    )
+                elif generator.get("kind") == "latex_running_header":
+                    equivalent = validate_latex_running_header(
+                        generator,
+                        objects_by_id,
+                        rendered_ids,
+                        list(inventory.get("items", [])),
+                        page_count,
+                    )
+                elif generator.get("kind") == "latex_toc_heading":
+                    equivalent = validate_latex_toc_heading(
+                        generator, objects_by_id, rendered_ids
+                    )
+                else:
+                    try:
+                        expected = _generated_texts(generator)
+                    except ValueError:
+                        contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
+                        continue
+                    if len(expected) != len(rendered_ids):
+                        contract_gaps.append({"code": "UNSUPPORTED_GENERATOR_RECIPE", "edge_id": edge_id})
+                        continue
+                    equivalent = expected == actual_generated_texts
                 result = {"edge_id": edge_id, "disposition": disposition, "rendered_object_ids": rendered_ids, "generator_id": generator["generator_id"], "decision": "pass" if equivalent else "generated_mismatch"}
                 edge_results.append(result)
                 if not equivalent:

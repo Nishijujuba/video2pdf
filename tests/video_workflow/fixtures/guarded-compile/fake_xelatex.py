@@ -22,6 +22,11 @@ if "VIDEO2PDF_FIXTURE_NONZERO_EXIT" in source:
     raise SystemExit(7)
 if "VIDEO2PDF_FIXTURE_UNDECLARED_RECORDER_INPUT" in source:
     (cwd / "undeclared.tex").write_text("undeclared", encoding="utf-8")
+if "VIDEO2PDF_FIXTURE_STABLE_TOC" in source:
+    (cwd / f"{stem}.toc").write_text(
+        "\\contentsline {section}{\\numberline {1}Core claim}{1}{section.1}%",
+        encoding="utf-8",
+    )
 inputs = sorted(
     path.relative_to(cwd)
     for path in cwd.rglob("*")

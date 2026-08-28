@@ -201,7 +201,14 @@ def compile_pdf(
     staging: Path,
     entry: Path,
     policy: dict[str, Any],
-) -> tuple[Path, Path, Path | None, dict[str, str], dict[str, int | str]]:
+) -> tuple[
+    Path,
+    Path,
+    Path | None,
+    dict[str, str],
+    dict[str, int | str],
+    dict[Path, str],
+]:
     engine = policy["engine"]
     miktex_process_guards = (
         ["--miktex-disable-maintenance", "--miktex-disable-diagnose"]
@@ -301,7 +308,12 @@ def compile_pdf(
         staging / f"{entry.stem}.log",
         staging / f"{entry.stem}.fls",
     )
-    for _ in range(3):
+    stable_final_round_auxiliaries: dict[Path, str] = {}
+    for round_index in range(3):
+        toc_path = staging / f"{entry.stem}.toc"
+        consumed_toc_sha = (
+            sha(toc_path) if round_index == 2 and toc_path.is_file() else None
+        )
         previous_state = _compile_output_state((pdf, log, recorder))
         completed = subprocess.run(command, cwd=staging, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
@@ -311,6 +323,12 @@ def compile_pdf(
         if not all(path.is_file() for path in (pdf, log, recorder)):
             raise AdapterError("guarded compile omitted required output")
         _wait_for_completed_compile_output(pdf, log, recorder, previous_state)
+        if round_index == 2 and toc_path.is_file():
+            if consumed_toc_sha is None or sha(toc_path) != consumed_toc_sha:
+                raise AdapterError(
+                    "final compile table-of-contents input changed after consumption"
+                )
+            stable_final_round_auxiliaries[toc_path.resolve()] = consumed_toc_sha
     combined_stderr = b"".join(stderr_parts)
     stderr_summary = {
         "byte_length": len(combined_stderr),
@@ -319,12 +337,24 @@ def compile_pdf(
     source_map = staging / f"{entry.stem}.synctex.gz"
     if policy["policy_id"] == "miktex-xelatex-runtime" and not source_map.is_file():
         raise AdapterError("compiler source map is missing")
-    return pdf, recorder, source_map if source_map.is_file() else None, environment, stderr_summary
+    return (
+        pdf,
+        recorder,
+        source_map if source_map.is_file() else None,
+        environment,
+        stderr_summary,
+        stable_final_round_auxiliaries,
+    )
 
 
 def _synctex_source_location(
-    tool: Path, pdf: Path, staging: Path, obj: dict[str, Any]
-) -> dict[str, Any]:
+    tool: Path,
+    pdf: Path,
+    staging: Path,
+    obj: dict[str, Any],
+    manifest_entries: list[dict[str, Any]],
+    observed_declared_paths: set[Path],
+) -> dict[str, Any] | None:
     bbox = obj["bbox"]
     x = (float(bbox[0]) + float(bbox[2])) / 2
     y = (float(bbox[1]) + float(bbox[3])) / 2
@@ -340,15 +370,94 @@ def _synctex_source_location(
     )
     if completed.returncode != 0 or completed.stderr:
         raise AdapterError("compiler source map query failed")
+    records: list[dict[str, str]] = []
     fields: dict[str, str] = {}
     for line in completed.stdout.splitlines():
+        if line.startswith("Output:") and fields:
+            records.append(fields)
+            fields = {}
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
         if key in {"Input", "Line", "Column"} and key not in fields:
             fields[key] = value.strip()
-    if not fields.get("Input") or not fields.get("Line"):
+    if fields:
+        records.append(fields)
+    candidates = [
+        value
+        for value in records
+        if value.get("Input") and value.get("Line")
+    ]
+    if not candidates:
         raise AdapterError("compiler source map query is incomplete")
+    toc_candidates = [
+        value
+        for value in candidates
+        if Path(value["Input"]).resolve().suffix.casefold() == ".toc"
+        and Path(value["Input"]).resolve().is_file()
+    ]
+    exact_candidates: list[dict[str, str]] = []
+    for value in candidates:
+        source_path = Path(value["Input"]).resolve()
+        line_number = int(value["Line"])
+        if not source_path.is_file():
+            continue
+        source_lines = source_path.read_text(encoding="utf-8").splitlines()
+        if (
+            1 <= line_number <= len(source_lines)
+            and obj["exact_utf8_text"] in source_lines[line_number - 1]
+        ):
+            exact_candidates.append(value)
+    virtual_candidates: list[dict[str, str]] = []
+    for value in candidates:
+        line_number = int(value["Line"])
+        for entry_value in manifest_entries:
+            source_path = staging / Path(entry_value["staging_path"])
+            if (
+                source_path.resolve() not in observed_declared_paths
+                or source_path.suffix.casefold() != ".tex"
+                or not source_path.is_file()
+            ):
+                continue
+            source_lines = source_path.read_text(encoding="utf-8").splitlines()
+            if (
+                1 <= line_number <= len(source_lines)
+                and obj["exact_utf8_text"] in source_lines[line_number - 1]
+            ):
+                virtual_candidates.append(
+                    {
+                        "Input": str(source_path.resolve()),
+                        "Line": str(line_number),
+                        "Column": value.get("Column", "-1"),
+                    }
+                )
+    resolved_candidates = {
+        (value["Input"].casefold(), value["Line"], value.get("Column", "-1")): value
+        for value in exact_candidates + virtual_candidates
+    }
+    if len(toc_candidates) == 1:
+        fields = toc_candidates[0]
+    elif len(resolved_candidates) == 1:
+        fields = next(iter(resolved_candidates.values()))
+    elif len(candidates) == 1:
+        direct_path = Path(candidates[0]["Input"]).resolve()
+        direct_line = int(candidates[0]["Line"])
+        manifest_paths = {
+            (staging / Path(value["staging_path"])).resolve()
+            for value in manifest_entries
+        }
+        if (
+            direct_path not in manifest_paths
+            or direct_path not in observed_declared_paths
+            or not direct_path.is_file()
+        ):
+            return None
+        direct_lines = direct_path.read_text(encoding="utf-8").splitlines()
+        if not 1 <= direct_line <= len(direct_lines):
+            return None
+        fields = candidates[0]
+    else:
+        return None
     return {
         "object_id": obj["object_id"],
         "source_path": str(Path(fields["Input"]).resolve()),
@@ -365,6 +474,8 @@ def compiler_source_locations(
     staging: Path,
     objects: list[dict[str, Any]],
     entry: Path,
+    manifest_entries: list[dict[str, Any]],
+    observed_declared_paths: set[Path],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     text_objects = [
         item for item in objects if item["object_kind"] == "pdf_text_run"
@@ -399,11 +510,18 @@ def compiler_source_locations(
     with ThreadPoolExecutor(max_workers=8) as executor:
         mapped = list(
             executor.map(
-                lambda item: _synctex_source_location(tool, pdf, staging, item),
+                lambda item: _synctex_source_location(
+                    tool,
+                    pdf,
+                    staging,
+                    item,
+                    manifest_entries,
+                    observed_declared_paths,
+                ),
                 text_objects,
             )
         )
-    return {item["object_id"]: item for item in mapped}, {
+    return {item["object_id"]: item for item in mapped if item is not None}, {
         "provider_id": "synctex-reverse-map-v1",
         "provider_sha256": sha(tool),
         "tool_path": str(tool),
@@ -452,6 +570,8 @@ def render_and_derive(
     staging: Path,
     entry: Path,
     manifest_entries: list[dict[str, Any]],
+    stable_final_round_auxiliaries: dict[Path, str],
+    observed_declared_paths: set[Path],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]], int]:
     items = inventory.get("items")
     if not isinstance(items, list) or not items:
@@ -596,6 +716,8 @@ def render_and_derive(
         staging=staging,
         objects=objects,
         entry=entry,
+        manifest_entries=manifest_entries,
+        observed_declared_paths=observed_declared_paths,
     )
     entry_by_staged_path = {
         str((staging / Path(item["staging_path"])).resolve()).casefold(): item
@@ -791,6 +913,110 @@ def render_and_derive(
         )
         used_objects.update(object_ids)
         mapped_items.add(item_id)
+    stable_toc_sources = [
+        (path, source_sha256)
+        for path, source_sha256 in stable_final_round_auxiliaries.items()
+        if path.suffix.casefold() == ".toc"
+    ]
+    toc_expected = (
+        len(stable_toc_sources) == 1
+        and bool(stable_toc_sources[0][0].read_text(encoding="utf-8").splitlines())
+    )
+    running_header_objects = [
+        item
+        for item in objects
+        if item["object_id"] not in used_objects
+        and item["object_id"] in locations
+        and item["page"] >= 2
+        and item["bbox"][3] <= 45
+    ]
+    if page_count >= 2 and toc_expected and not running_header_objects:
+        raise AdapterError("running header objects are absent")
+    if running_header_objects:
+        if len(stable_toc_sources) != 1:
+            raise AdapterError("running header authority is incomplete")
+        toc_source, toc_source_sha256 = stable_toc_sources[0]
+        generator = registered_generator_identity("latex-running-header-v1")
+        edges.append(
+            {
+                "edge_id": f"generated.{len(edges) + 1}",
+                "disposition": "generated",
+                "rendered_object_ids": [
+                    item["object_id"] for item in running_header_objects
+                ],
+                "recipe": "declared_generated",
+                "generator": {
+                    **generator,
+                    "inputs": {
+                        "page_count": page_count,
+                        "toc_source_path": str(toc_source),
+                        "toc_source_sha256": toc_source_sha256,
+                    },
+                    "source_mapping": {
+                        "method": "compiler_synctex_v1",
+                        "provider": source_map_provider,
+                        "object_sources": [
+                            locations[item["object_id"]]
+                            for item in running_header_objects
+                        ],
+                    },
+                },
+            }
+        )
+        used_objects.update(
+            item["object_id"] for item in running_header_objects
+        )
+    toc_heading_invocations = [
+        (source_path, line_number)
+        for source_path in observed_declared_paths
+        if source_path.suffix.casefold() == ".tex" and source_path.is_file()
+        for line_number, source_line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        )
+        if source_line.strip() == r"\tableofcontents"
+    ]
+    toc_heading_objects: list[dict[str, Any]] = []
+    for item in objects:
+        if (
+            item["object_id"] in used_objects
+            or item["object_id"] not in locations
+            or item["exact_utf8_text"] != "目录"
+        ):
+            continue
+        location = locations[item["object_id"]]
+        source_path = Path(location["source_path"])
+        line_number = location["line"]
+        if not source_path.is_file():
+            continue
+        source_lines = source_path.read_text(encoding="utf-8").splitlines()
+        if (
+            1 <= line_number <= len(source_lines)
+            and source_lines[line_number - 1].strip() == r"\tableofcontents"
+        ):
+            toc_heading_objects.append(item)
+    if len(toc_heading_objects) != len(toc_heading_invocations):
+        raise AdapterError("table-of-contents heading is absent or ambiguous")
+    if toc_heading_objects:
+        generator = registered_generator_identity("latex-toc-heading-v1")
+        heading = toc_heading_objects[0]
+        edges.append(
+            {
+                "edge_id": f"generated.{len(edges) + 1}",
+                "disposition": "generated",
+                "rendered_object_ids": [heading["object_id"]],
+                "recipe": "declared_generated",
+                "generator": {
+                    **generator,
+                    "inputs": {},
+                    "source_mapping": {
+                        "method": "compiler_synctex_v1",
+                        "provider": source_map_provider,
+                        "object_sources": [locations[heading["object_id"]]],
+                    },
+                },
+            }
+        )
+        used_objects.add(heading["object_id"])
     for item in items:
         item_id = str(item.get("item_id"))
         if item.get("representation") in {
@@ -861,6 +1087,8 @@ def render_and_derive(
         for item in objects
         if item["object_id"] not in used_objects
         and item["object_id"] in locations
+        and Path(locations[item["object_id"]]["source_path"]).suffix.casefold()
+        != ".toc"
         and item["exact_utf8_text"].isdigit()
         and int(item["exact_utf8_text"]) == item["page"]
     ]
@@ -903,6 +1131,54 @@ def render_and_derive(
             used_objects.update(
                 item["object_id"] for item in page_number_objects
             )
+    toc_objects = [
+        item
+        for item in objects
+        if item["object_id"] not in used_objects
+        and item["object_id"] in locations
+        and Path(locations[item["object_id"]]["source_path"]).suffix.casefold()
+        == ".toc"
+    ]
+    if toc_expected and not toc_objects:
+        raise AdapterError("table-of-contents objects are absent")
+    if toc_objects:
+        toc_sources = {
+            Path(locations[item["object_id"]]["source_path"]).resolve()
+            for item in toc_objects
+        }
+        if (
+            len(toc_sources) != 1
+            or not next(iter(toc_sources)).is_file()
+            or stable_final_round_auxiliaries.get(next(iter(toc_sources)))
+            != sha(next(iter(toc_sources)))
+        ):
+            raise AdapterError("compiler-generated table of contents is ambiguous")
+        toc_source = next(iter(toc_sources))
+        generator = registered_generator_identity("latex-table-of-contents-v1")
+        edges.append(
+            {
+                "edge_id": f"generated.{len(edges) + 1}",
+                "disposition": "generated",
+                "rendered_object_ids": [
+                    item["object_id"] for item in toc_objects
+                ],
+                "recipe": "declared_generated",
+                "generator": {
+                    **generator,
+                    "inputs": {
+                        "source_sha256": sha(toc_source),
+                    },
+                    "source_mapping": {
+                        "method": "compiler_synctex_v1",
+                        "provider": source_map_provider,
+                        "object_sources": [
+                            locations[item["object_id"]] for item in toc_objects
+                        ],
+                    },
+                },
+            }
+        )
+        used_objects.update(item["object_id"] for item in toc_objects)
     for item in objects:
         if item["object_id"] in used_objects:
             continue
@@ -969,12 +1245,31 @@ def run(request_path: Path) -> None:
     staging = output / "compiler-staging"
     staging.mkdir()
     inputs, entry, raster_sources = stage(manifest, staging, policy)
-    built_pdf, built_recorder, _, runtime_environment, engine_stderr = compile_pdf(
-        staging, entry, policy
-    )
+    (
+        built_pdf,
+        built_recorder,
+        _,
+        runtime_environment,
+        engine_stderr,
+        stable_final_round_auxiliaries,
+    ) = compile_pdf(staging, entry, policy)
     final_pdf, recorder = output / "final.pdf", output / "compile-recorder.fls"
     shutil.copyfile(built_pdf, final_pdf)
     shutil.copyfile(built_recorder, recorder)
+    declared_staged_paths = {
+        (staging / Path(value["staging_path"])).resolve()
+        for value in manifest["entries"]
+    }
+    observed_declared_paths: set[Path] = set()
+    for line in built_recorder.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("INPUT "):
+            continue
+        observed_path = Path(line[6:])
+        if not observed_path.is_absolute():
+            observed_path = staging / observed_path
+        observed_path = observed_path.resolve()
+        if observed_path in declared_staged_paths:
+            observed_declared_paths.add(observed_path)
     objects, edges, extractor_suite, page_count = render_and_derive(
         built_pdf,
         output,
@@ -984,6 +1279,8 @@ def run(request_path: Path) -> None:
         staging=staging,
         entry=entry,
         manifest_entries=manifest["entries"],
+        stable_final_round_auxiliaries=stable_final_round_auxiliaries,
+        observed_declared_paths=observed_declared_paths,
     )
     pdf_sha = sha(final_pdf)
     rendered = {"schema_name": "rendered-text-object-inventory", "schema_version": "1.0.0",

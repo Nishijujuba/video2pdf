@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 from typing import Any
@@ -54,6 +55,21 @@ REGISTERED_GENERATORS = {
         "generator_version": "1.0.0",
         "kind": "page_number",
     },
+    "latex-table-of-contents-v1": {
+        "generator_id": "latex-table-of-contents-v1",
+        "generator_version": "1.0.0",
+        "kind": "latex_table_of_contents",
+    },
+    "latex-running-header-v1": {
+        "generator_id": "latex-running-header-v1",
+        "generator_version": "1.0.0",
+        "kind": "latex_running_header",
+    },
+    "latex-toc-heading-v1": {
+        "generator_id": "latex-toc-heading-v1",
+        "generator_version": "1.0.0",
+        "kind": "latex_toc_heading",
+    },
 }
 GENERATED_RECORDER_SUFFIXES = frozenset(
     {".aux", ".toc", ".out", ".log", ".xdv", ".bcf", ".run.xml"}
@@ -66,6 +82,225 @@ def registered_generator_identity(generator_id: str) -> dict[str, str]:
         **contract,
         "generator_sha256": hashlib.sha256(canonical_json_bytes(contract)).hexdigest(),
     }
+
+
+def validate_latex_toc_generated_text(
+    generator: dict[str, Any],
+    objects_by_id: dict[str, dict[str, Any]],
+    rendered_ids: list[str],
+    sealed_items: list[dict[str, Any]],
+) -> bool:
+    inputs = generator.get("inputs")
+    source_mapping = generator.get("source_mapping")
+    object_sources = (
+        source_mapping.get("object_sources")
+        if isinstance(source_mapping, dict)
+        else None
+    )
+    if (
+        not isinstance(inputs, dict)
+        or set(inputs) != {"source_sha256"}
+        or not isinstance(inputs.get("source_sha256"), str)
+        or len(inputs["source_sha256"]) != 64
+        or not isinstance(object_sources, list)
+        or [value.get("object_id") for value in object_sources]
+        != rendered_ids
+    ):
+        return False
+    source_paths = {
+        Path(value["source_path"]).resolve()
+        for value in object_sources
+        if isinstance(value, dict) and isinstance(value.get("source_path"), str)
+    }
+    if len(source_paths) != 1:
+        return False
+    source_path = next(iter(source_paths))
+    if (
+        source_path.suffix.casefold() != ".toc"
+        or not source_path.is_file()
+        or sha256_file(source_path) != inputs["source_sha256"]
+    ):
+        return False
+    source_lines = source_path.read_text(encoding="utf-8").splitlines()
+    heading_pattern = re.compile(r"\\(section|subsection)\{([^{}]+)\}")
+    declared_headings = [
+        match.groups()
+        for item in sealed_items
+        if item.get("representation") == "structured_text"
+        for match in heading_pattern.finditer(
+            str(item.get("exact_utf8_text", item.get("declared_text", "")))
+        )
+    ]
+    toc_line_pattern = re.compile(
+        r"^\\contentsline \{(?:section|subsection)\}"
+        r"\{\\numberline \{([^{}]+)\}([^{}]+)\}"
+        r"\{([^{}]+)\}\{[^{}]+\}%$"
+    )
+    parsed_lines: dict[int, tuple[str, str, str, str]] = {}
+    for line_number, source_line in enumerate(source_lines, 1):
+        match = toc_line_pattern.fullmatch(source_line)
+        if match is None:
+            return False
+        kind = "subsection" if "{subsection}" in source_line else "section"
+        number, title, page = match.groups()
+        parsed_lines[line_number] = (kind, number, title, page)
+    if [(kind, title) for kind, _, title, _ in parsed_lines.values()] != declared_headings:
+        return False
+    grouped: dict[int, list[str]] = {}
+    for object_id, source_record in zip(rendered_ids, object_sources, strict=True):
+        line_number = source_record.get("line")
+        if not isinstance(line_number, int) or not 1 <= line_number <= len(source_lines):
+            return False
+        grouped.setdefault(line_number, []).append(object_id)
+    if set(grouped) != set(parsed_lines):
+        return False
+    for line_number, object_id_group in grouped.items():
+        _, number, title, page = parsed_lines[line_number]
+        tokens = [objects_by_id[value]["exact_utf8_text"] for value in object_id_group]
+        if "".join(value for value in tokens if value not in {".", " "}) != (
+            number + title + page
+        ):
+            return False
+        decorations = [value for value in tokens if value in {".", " "}]
+        if (
+            not decorations
+            or len(decorations) > 128
+            or any(
+                value == decorations[index - 1]
+                for index, value in enumerate(decorations)
+                if index
+            )
+        ):
+            return False
+        decoration_objects = [
+            objects_by_id[value]
+            for value in object_id_group
+            if objects_by_id[value]["exact_utf8_text"] in {".", " "}
+        ]
+        if any(
+            decoration_objects[index - 1]["bbox"][2]
+            > decoration_objects[index]["bbox"][0] + 0.01
+            for index in range(1, len(decoration_objects))
+        ):
+            return False
+    return True
+
+
+def validate_latex_running_header(
+    generator: dict[str, Any],
+    objects_by_id: dict[str, dict[str, Any]],
+    rendered_ids: list[str],
+    sealed_items: list[dict[str, Any]],
+    expected_page_count: int,
+) -> bool:
+    inputs = generator.get("inputs")
+    if (
+        not isinstance(inputs, dict)
+        or set(inputs) != {"page_count", "toc_source_path", "toc_source_sha256"}
+        or not isinstance(inputs.get("page_count"), int)
+        or isinstance(inputs.get("page_count"), bool)
+        or inputs["page_count"] < 2
+        or inputs["page_count"] != expected_page_count
+    ):
+        return False
+    toc_path = Path(str(inputs.get("toc_source_path", ""))).resolve()
+    if (
+        toc_path.suffix.casefold() != ".toc"
+        or not toc_path.is_file()
+        or sha256_file(toc_path) != inputs.get("toc_source_sha256")
+    ):
+        return False
+    section_pattern = re.compile(r"\\section\{([^{}]+)\}")
+    section_marks = [
+        (str(index), match.group(1))
+        for index, match in enumerate(
+            (
+                match
+                for item in sealed_items
+                if item.get("representation") == "structured_text"
+                for match in section_pattern.finditer(
+                    str(item.get("exact_utf8_text", item.get("declared_text", "")))
+                )
+            ),
+            1,
+        )
+    ]
+    toc_section_pattern = re.compile(
+        r"^\\contentsline \{section\}\{\\numberline \{([^{}]+)\}([^{}]+)\}"
+        r"\{([^{}]+)\}\{[^{}]+\}%$"
+    )
+    toc_sections = [
+        match.groups()
+        for line in toc_path.read_text(encoding="utf-8").splitlines()
+        if (match := toc_section_pattern.fullmatch(line)) is not None
+    ]
+    if [(number, title) for number, title, _ in toc_sections] != section_marks:
+        return False
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for object_id in rendered_ids:
+        obj = objects_by_id[object_id]
+        if obj.get("page", 0) < 2 or obj.get("bbox", [0, 0, 0, 999])[3] > 45:
+            return False
+        grouped.setdefault(obj["page"], []).append(obj)
+    if set(grouped) != set(range(2, inputs["page_count"] + 1)):
+        return False
+    for page, values in grouped.items():
+        left = "".join(
+            str(value["exact_utf8_text"])
+            for value in values
+            if value["bbox"][0] < 500
+        ).replace(" ", "")
+        right = "".join(
+            str(value["exact_utf8_text"])
+            for value in values
+            if value["bbox"][0] >= 500
+        )
+        display_page = page - 1
+        active_sections = [
+            (number + title).replace(" ", "")
+            for number, title, start_page in toc_sections
+            if int(start_page) <= display_page
+        ]
+        expected_left = active_sections[-1] if active_sections else "目录"
+        if left != expected_left or right != str(display_page):
+            return False
+    return True
+
+
+def validate_latex_toc_heading(
+    generator: dict[str, Any],
+    objects_by_id: dict[str, dict[str, Any]],
+    rendered_ids: list[str],
+) -> bool:
+    source_mapping = generator.get("source_mapping")
+    object_sources = (
+        source_mapping.get("object_sources")
+        if isinstance(source_mapping, dict)
+        else None
+    )
+    if (
+        generator.get("inputs") != {}
+        or rendered_ids is None
+        or len(rendered_ids) != 1
+        or objects_by_id[rendered_ids[0]]["exact_utf8_text"] != "目录"
+        or not isinstance(object_sources, list)
+        or len(object_sources) != 1
+    ):
+        return False
+    source = object_sources[0]
+    source_path = Path(str(source.get("source_path", ""))).resolve()
+    line_number = source.get("line")
+    if (
+        source_path.suffix.casefold() != ".tex"
+        or not source_path.is_file()
+        or not isinstance(line_number, int)
+    ):
+        return False
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    return (
+        1 <= line_number <= len(lines)
+        and lines[line_number - 1].strip() == r"\tableofcontents"
+    )
 
 
 def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
@@ -164,6 +399,8 @@ def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
         raise ContractError("derived Text Origin edges are invalid")
     mapped_objects: list[str] = []
     sealed_origins: list[str] = []
+    toc_generator_identities: set[tuple[str, str]] = set()
+    running_header_identities: set[tuple[str, str]] = set()
     for edge in edges:
         disposition = edge.get("disposition")
         rendered_ids = edge.get("rendered_object_ids")
@@ -346,12 +583,56 @@ def _validate_derived_text_origin_evidence(evidence: dict[str, Any]) -> None:
                         "derived Text Origin generated origin is incomplete"
                     )
                 sealed_origins.append(sealed_item_id)
+            elif generator.get("kind") == "latex_table_of_contents":
+                if not validate_latex_toc_generated_text(
+                    generator, objects_by_id, rendered_ids, sealed_items
+                ):
+                    raise ContractError(
+                        "derived Text Origin generated origin is incomplete"
+                    )
+                toc_sources = {
+                    str(Path(value["source_path"]).resolve())
+                    for value in object_sources
+                }
+                if len(toc_sources) == 1:
+                    toc_generator_identities.add(
+                        (
+                            next(iter(toc_sources)),
+                            str(generator["inputs"].get("source_sha256", "")),
+                        )
+                    )
+            elif generator.get("kind") == "latex_running_header":
+                if not validate_latex_running_header(
+                    generator,
+                    objects_by_id,
+                    rendered_ids,
+                    sealed_items,
+                    page_count,
+                ):
+                    raise ContractError(
+                        "derived Text Origin generated origin is incomplete"
+                    )
+                running_header_identities.add(
+                    (
+                        str(Path(generator["inputs"]["toc_source_path"]).resolve()),
+                        str(generator["inputs"]["toc_source_sha256"]),
+                    )
+                )
+            elif generator.get("kind") == "latex_toc_heading":
+                if not validate_latex_toc_heading(
+                    generator, objects_by_id, rendered_ids
+                ):
+                    raise ContractError(
+                        "derived Text Origin generated origin is incomplete"
+                    )
         elif edge.get("recipe") != "exact_utf8":
             raise ContractError("derived Text Origin unexpected addition recipe is unsupported")
     if sorted(mapped_objects) != sorted(object_ids) or len(mapped_objects) != len(
         set(mapped_objects)
     ):
         raise ContractError("derived Text Origin lacks exactly one disposition per object")
+    if running_header_identities and running_header_identities != toc_generator_identities:
+        raise ContractError("derived Text Origin generated origin is incomplete")
     sealed_item_ids = [item.get("item_id") for item in sealed_items]
     if (
         any(not isinstance(value, str) or not value for value in sealed_item_ids)
@@ -1315,6 +1596,23 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap(
                     "compiler source map input identity is stale"
                 )
+            if (
+                edge.get("disposition") == "generated"
+                and isinstance(edge.get("generator"), dict)
+                and edge["generator"].get("kind") == "latex_running_header"
+            ):
+                inputs = edge["generator"].get("inputs", {})
+                toc_path = Path(str(inputs.get("toc_source_path", ""))).resolve()
+                if (
+                    toc_path not in staged_source_hashes
+                    or staged_source_hashes[toc_path]
+                    != inputs.get("toc_source_sha256")
+                    or not toc_path.is_file()
+                    or sha256_file(toc_path) != inputs.get("toc_source_sha256")
+                ):
+                    raise CompileDependencyGap(
+                        "generated running-header authority is stale"
+                    )
             provider = source_mapping.get("provider", {})
             if policy["policy_id"] == "miktex-xelatex-runtime":
                 tool = Path(str(provider.get("tool_path", ""))).resolve()

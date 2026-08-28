@@ -18,6 +18,8 @@ from video2pdf_workflow_kernel.final_compile import (
     GuardedFinalCompileProvider,
     _validate_derived_text_origin_evidence,
     registered_generator_identity,
+    validate_latex_running_header,
+    validate_latex_toc_generated_text,
 )
 from video2pdf_workflow_kernel.errors import ContractError
 
@@ -151,6 +153,37 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         )
         item["item_sha256"] = final_compile_fixture.fingerprint(
             item, "item_sha256"
+        )
+        inventory["inventory_sha256"] = final_compile_fixture.fingerprint(
+            inventory, "inventory_sha256"
+        )
+        inventory_path.write_bytes(final_compile_fixture.canonical_bytes(inventory))
+        request = json.loads(fixture.request.read_text(encoding="utf-8"))
+        request["compile_manifest_sha256"] = manifest["manifest_sha256"]
+        request["reader_facing_text_inventory_sha256"] = inventory[
+            "inventory_sha256"
+        ]
+        fixture.request.write_bytes(final_compile_fixture.canonical_bytes(request))
+
+    def _replace_fixture_source(
+        self,
+        fixture: object,
+        inventory_path: Path,
+        source_text: str,
+    ) -> None:
+        fixture.source.write_text(source_text, encoding="utf-8")
+        manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+        manifest["entries"][0]["sha256"] = hashlib.sha256(
+            fixture.source.read_bytes()
+        ).hexdigest()
+        manifest["manifest_sha256"] = final_compile_fixture.fingerprint(
+            manifest, "manifest_sha256"
+        )
+        fixture.manifest.write_bytes(final_compile_fixture.canonical_bytes(manifest))
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory["items"][0]["source_sha256"] = manifest["entries"][0]["sha256"]
+        inventory["items"][0]["item_sha256"] = final_compile_fixture.fingerprint(
+            inventory["items"][0], "item_sha256"
         )
         inventory["inventory_sha256"] = final_compile_fixture.fingerprint(
             inventory, "inventory_sha256"
@@ -434,6 +467,229 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             ContractError, "generated origin is incomplete"
         ):
             _validate_derived_text_origin_evidence(duplicated_source)
+
+    def test_compiler_generated_toc_text_uses_current_auxiliary(self) -> None:
+        fixture, _, _ = self._inventory_bound_adapter_fixture()
+        toc = fixture.root / "main.toc"
+        toc.write_text(
+            "\\contentsline {section}{\\numberline {1}Core claim}{1}{section.1}%",
+            encoding="utf-8",
+        )
+        generator = registered_generator_identity("latex-table-of-contents-v1")
+        rendered_objects = [
+            {
+                "object_id": "sealed",
+                "page": 1,
+                "object_kind": "pdf_text_run",
+                "bbox": [0, 0, 10, 10],
+                "exact_utf8_text": "Core claim",
+                "extractor_id": "fixture",
+                "evidence_locator": "page:1/object:1",
+            },
+            *[
+                {
+                    "object_id": f"toc-{index}",
+                    "page": 1,
+                    "object_kind": "pdf_text_run",
+                    "bbox": [index * 10, 10, index * 10 + 9, 20],
+                    "exact_utf8_text": text,
+                    "extractor_id": "fixture",
+                    "evidence_locator": f"page:1/object:{index + 2}",
+                }
+                for index, text in enumerate(
+                    ("1", "Core claim", ".", " ", "1")
+                )
+            ],
+        ]
+        evidence = {
+            "page_count": 1,
+            "extractor_suite": [
+                {"extractor_id": "fixture", "extractor_sha256": "1" * 64}
+            ],
+            "rendered_objects": rendered_objects,
+            "sealed_items": [
+                {
+                    "item_id": "main",
+                    "exact_utf8_text": "\\section{Core claim}",
+                    "representation": "structured_text",
+                }
+            ],
+            "edges": [
+                {
+                    "edge_id": "sealed",
+                    "disposition": "sealed_origin",
+                    "sealed_item_id": "main",
+                    "sealed_text_utf8": "\\section{Core claim}",
+                    "rendered_object_ids": ["sealed"],
+                    "recipe": "exact_utf8",
+                },
+                {
+                    "edge_id": "toc",
+                    "disposition": "generated",
+                    "rendered_object_ids": [
+                        f"toc-{index}" for index in range(5)
+                    ],
+                    "recipe": "declared_generated",
+                    "generator": {
+                        **generator,
+                        "inputs": {
+                            "source_sha256": hashlib.sha256(
+                                toc.read_bytes()
+                            ).hexdigest(),
+                        },
+                        "source_mapping": {
+                            "method": "compiler_synctex_v1",
+                            "provider": {
+                                "provider_id": "fixture-source-map",
+                                "provider_sha256": "2" * 64,
+                            },
+                            "object_sources": [
+                                {
+                                    "object_id": f"toc-{index}",
+                                    "source_path": str(toc),
+                                    "line": 1,
+                                    "column": 1,
+                                    "query": {
+                                        "page": 1,
+                                        "x": index * 10 + 4.5,
+                                        "y": 15,
+                                    },
+                                }
+                                for index in range(5)
+                            ],
+                        },
+                    },
+                },
+            ],
+        }
+
+        _validate_derived_text_origin_evidence(evidence)
+
+        toc_generator = evidence["edges"][1]["generator"]
+        objects_by_id = {
+            value["object_id"]: value for value in rendered_objects
+        }
+        self.assertTrue(
+            validate_latex_toc_generated_text(
+                toc_generator,
+                objects_by_id,
+                evidence["edges"][1]["rendered_object_ids"],
+                evidence["sealed_items"],
+            )
+        )
+        duplicated_objects = json.loads(json.dumps(objects_by_id))
+        duplicated_objects["toc-duplicate"] = {
+            **duplicated_objects["toc-1"],
+            "object_id": "toc-duplicate",
+        }
+        duplicated_generator = json.loads(json.dumps(toc_generator))
+        duplicated_generator["source_mapping"]["object_sources"].insert(
+            2,
+            {
+                **duplicated_generator["source_mapping"]["object_sources"][1],
+                "object_id": "toc-duplicate",
+            },
+        )
+        self.assertFalse(
+            validate_latex_toc_generated_text(
+                duplicated_generator,
+                duplicated_objects,
+                ["toc-0", "toc-1", "toc-duplicate", "toc-2", "toc-3", "toc-4"],
+                evidence["sealed_items"],
+            )
+        )
+
+        evidence["edges"][1]["generator"]["inputs"]["source_sha256"] = "0" * 64
+        with self.assertRaisesRegex(
+            ContractError, "generated origin is incomplete"
+        ):
+            _validate_derived_text_origin_evidence(evidence)
+
+    def test_running_header_rejects_mark_from_wrong_section(self) -> None:
+        fixture, _, _ = self._inventory_bound_adapter_fixture()
+        toc = fixture.root / "main.toc"
+        toc.write_text(
+            "\\contentsline {section}{\\numberline {1}First}{1}{section.1}%\n"
+            "\\contentsline {section}{\\numberline {2}Second}{2}{section.2}%\n",
+            encoding="utf-8",
+        )
+        generator = {
+            **registered_generator_identity("latex-running-header-v1"),
+            "inputs": {
+                "page_count": 2,
+                "toc_source_path": str(toc),
+                "toc_source_sha256": hashlib.sha256(toc.read_bytes()).hexdigest(),
+            },
+        }
+        objects = {
+            "left": {
+                "object_id": "left",
+                "page": 2,
+                "bbox": [60, 20, 200, 35],
+                "exact_utf8_text": "2 Second",
+            },
+            "right": {
+                "object_id": "right",
+                "page": 2,
+                "bbox": [510, 20, 530, 35],
+                "exact_utf8_text": "1",
+            },
+        }
+        sealed_items = [
+            {
+                "representation": "structured_text",
+                "exact_utf8_text": "\\section{First}\n\\section{Second}",
+            }
+        ]
+
+        self.assertFalse(
+            validate_latex_running_header(
+                generator, objects, ["left", "right"], sealed_items, 2
+            )
+        )
+
+    def test_adapter_fails_when_complete_toc_object_family_is_absent(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+        self._replace_fixture_source(
+            fixture,
+            inventory_path,
+            "Core claim\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n",
+        )
+
+        completed = fixture._run()
+
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("table-of-contents objects are absent", completed.stderr)
+
+    def test_adapter_fails_when_toc_heading_family_is_absent(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+        self._replace_fixture_source(
+            fixture,
+            inventory_path,
+            "\\tableofcontents\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n",
+        )
+
+        completed = fixture._run()
+
+        self.assertEqual(1, completed.returncode)
+        self.assertIn(
+            "table-of-contents heading is absent or ambiguous",
+            completed.stderr,
+        )
+
+    def test_adapter_fails_when_running_header_family_is_absent(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+        self._replace_fixture_source(
+            fixture,
+            inventory_path,
+            "Core claim\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n"
+            "% VIDEO2PDF_FIXTURE_SECOND_PAGE_CORRUPTED_TITLE\n",
+        )
+
+        completed = fixture._run()
+
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("running header objects are absent", completed.stderr)
 
     def test_adapter_fails_closed_on_ambiguous_sealed_origin(self) -> None:
         fixture, inventory_path, inventory = self._inventory_bound_adapter_fixture()

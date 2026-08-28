@@ -463,7 +463,14 @@ class PrecompileQualityProvider:
                     "skeleton_sha256": patch["skeleton_sha256"],
                     "patch_sha256": patch["patch_sha256"],
                     "commit_sha256": commit["commit_sha256"],
-                    "reviewer": patch["reviewer"],
+                    "reviewer": {
+                        key: patch["reviewer"][key]
+                        for key in (
+                            "reviewer_id",
+                            "runtime_sha256",
+                            "independent_from_generation_producers",
+                        )
+                    },
                     "result_count": len(patch["results"]),
                     "decision": "fail" if owner_failures else "pass",
                 }

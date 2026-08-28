@@ -21,6 +21,7 @@ from video2pdf_workflow_kernel.final_compile import (
 from video2pdf_workflow_kernel.errors import ContractError
 
 from tests.video_workflow import test_guarded_final_compile_adapter as final_compile_fixture
+from tests.video_workflow import test_precompile_quality as precompile_fixture
 
 
 class GovernedTextOriginFinalCompileTests(unittest.TestCase):
@@ -296,6 +297,52 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 (PROJECT_ROOT / "delivery-quality/v1/final-compile-report.example.v1.json")
                 .read_text(encoding="utf-8")
             ),
+        )
+
+    def test_precompile_report_projects_only_registered_reviewer_identity(self) -> None:
+        fixture = precompile_fixture.PrecompileQualityCliTests(
+            methodName="test_independent_complete_patches_materialize_pass_and_create_initial_seal"
+        )
+        workspace, completed, _ = fixture.prepare_case()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        for owner in (
+            "source-faithfulness-reviewer",
+            "writing-quality-reviewer",
+            "pyramid-reviewer",
+        ):
+            committed, _ = fixture.commit_patch(
+                workspace,
+                owner,
+                reviewer_runtime_descriptor="openai:gpt-5.6-sol;reasoning=medium",
+            )
+            self.assertEqual(0, committed.returncode, committed.stderr)
+        materialized, _ = precompile_fixture.run_cli(
+            "delivery-quality-precompile-materialize",
+            "--workspace-root",
+            str(workspace),
+            "--provider-id",
+            "precompile-quality-provider",
+            "--provider-version",
+            "1.0.0",
+            "--materialized-at",
+            "2026-08-28T08:12:00Z",
+        )
+        self.assertEqual(0, materialized.returncode, materialized.stderr)
+        report = json.loads(
+            (workspace / "precompile-quality-report.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertTrue(
+            all(
+                set(item["reviewer"])
+                == {
+                    "reviewer_id",
+                    "runtime_sha256",
+                    "independent_from_generation_producers",
+                }
+                for item in report["owner_reports"]
+            )
         )
 
     def test_public_provider_compiles_without_operator_authored_postcompile_facts(self) -> None:

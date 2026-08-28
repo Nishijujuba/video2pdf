@@ -223,6 +223,7 @@ class PrecompileQualityCliTests(unittest.TestCase):
         contract_gap: bool = False,
         fault_point: str | None = None,
         reviewer_id: str | None = None,
+        reviewer_runtime_descriptor: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
         skeleton_path = (
             workspace
@@ -276,6 +277,8 @@ class PrecompileQualityCliTests(unittest.TestCase):
                 else []
             ),
         }
+        if reviewer_runtime_descriptor is not None:
+            patch["reviewer"]["runtime_descriptor"] = reviewer_runtime_descriptor
         patch["patch_sha256"] = canonical_sha(patch)
         patch_path = write_json(
             workspace.parent / f"{owner}.patch.json",

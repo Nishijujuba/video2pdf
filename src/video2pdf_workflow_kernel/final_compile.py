@@ -262,7 +262,7 @@ def validate_latex_running_header(
             if int(start_page) <= display_page
         ]
         expected_left = active_sections[-1] if active_sections else "目录"
-        if left != expected_left or right != str(display_page):
+        if left.casefold() != expected_left.casefold() or right != str(display_page):
             return False
     return True
 

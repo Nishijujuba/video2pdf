@@ -648,6 +648,48 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             )
         )
 
+    def test_running_header_accepts_compiler_case_presentation(self) -> None:
+        fixture, _, _ = self._inventory_bound_adapter_fixture()
+        toc = fixture.root / "main.toc"
+        toc.write_text(
+            "\\contentsline {section}{\\numberline {1}EchoLeak and Replit}{1}{section.1}%\n",
+            encoding="utf-8",
+        )
+        generator = {
+            **registered_generator_identity("latex-running-header-v1"),
+            "inputs": {
+                "page_count": 2,
+                "toc_source_path": str(toc),
+                "toc_source_sha256": hashlib.sha256(toc.read_bytes()).hexdigest(),
+            },
+        }
+        objects = {
+            "left": {
+                "object_id": "left",
+                "page": 2,
+                "bbox": [60, 20, 200, 35],
+                "exact_utf8_text": "1 ECHOLEAK AND REPLIT",
+            },
+            "right": {
+                "object_id": "right",
+                "page": 2,
+                "bbox": [510, 20, 530, 35],
+                "exact_utf8_text": "1",
+            },
+        }
+        sealed_items = [
+            {
+                "representation": "structured_text",
+                "exact_utf8_text": "\\section{EchoLeak and Replit}",
+            }
+        ]
+
+        self.assertTrue(
+            validate_latex_running_header(
+                generator, objects, ["left", "right"], sealed_items, 2
+            )
+        )
+
     def test_adapter_fails_when_complete_toc_object_family_is_absent(self) -> None:
         fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
         self._replace_fixture_source(

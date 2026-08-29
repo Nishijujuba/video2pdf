@@ -697,7 +697,11 @@ def _complete_compiler_source_locations(
         nearest_left = max(left, key=lambda value: value[0]["bbox"][2]) if left else None
         nearest_right = min(right, key=lambda value: value[0]["bbox"][0]) if right else None
         identity: tuple[Path, int] | None = None
-        if (
+        if not normalized_token and nearest_right is not None:
+            identity = nearest_right[1]
+        elif not normalized_token and nearest_left is not None:
+            identity = nearest_left[1]
+        elif (
             nearest_left is not None
             and nearest_right is not None
             and nearest_left[1] == nearest_right[1]

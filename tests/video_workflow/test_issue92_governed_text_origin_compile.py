@@ -738,6 +738,12 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "exact_utf8_text": "2",
             },
             {
+                "object_id": "space",
+                "page": 3,
+                "bbox": [90, 99, 105, 113],
+                "exact_utf8_text": " ",
+            },
+            {
                 "object_id": "heading",
                 "page": 3,
                 "bbox": [105, 99, 170, 113],
@@ -789,6 +795,11 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         self.assertEqual(2, locations["number"]["line"])
         self.assertEqual(str(source.resolve()), locations["heading"]["source_path"])
         self.assertEqual(2, locations["heading"]["line"])
+        self.assertEqual(str(source.resolve()), locations["space"]["source_path"])
+        self.assertEqual(2, locations["space"]["line"])
+        self.assertEqual(
+            "compiler-line-layout-v1", locations["space"]["completion"]
+        )
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

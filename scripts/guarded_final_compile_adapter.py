@@ -637,23 +637,31 @@ def _complete_compiler_source_locations(
             if current_location is not None
             else None
         )
+        normalized_token = _normalized_layout_text(obj["exact_utf8_text"])
+        current_source_matches = False
         if current_identity is not None:
-            normalized_token = _normalized_layout_text(obj["exact_utf8_text"])
             current_source = _normalized_layout_text(
                 source_lines[current_identity[0]][current_identity[1] - 1]
             ).replace("--", "–")
-            if not normalized_token or normalized_token in current_source:
-                continue
+            current_source_matches = (
+                not normalized_token or normalized_token in current_source
+            )
         bbox = obj["bbox"]
         center_y = (bbox[1] + bbox[3]) / 2
         visual_anchors: list[
             tuple[dict[str, Any], tuple[Path, int]]
         ] = []
         for anchor, identity in anchors_by_page.get(obj["page"], []):
+            if anchor["object_id"] == obj["object_id"]:
+                continue
             anchor_center_y = (anchor["bbox"][1] + anchor["bbox"][3]) / 2
             if abs(anchor_center_y - center_y) <= 1.2:
                 visual_anchors.append((anchor, identity))
         if not visual_anchors:
+            continue
+        if current_source_matches and any(
+            identity == current_identity for _, identity in visual_anchors
+        ):
             continue
         left = [
             value

@@ -709,11 +709,15 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         fixture, _, _ = self._inventory_bound_adapter_fixture()
         source = fixture.root / "section.tex"
         source.write_text(
-            "Source (source\\_timestamp): 00:00:58--00:01:06\n",
+            "Source (source\\_timestamp): 00:00:58--00:01:06\n"
+            "\\section{Core}\n",
             encoding="utf-8",
         )
         dispatcher = fixture.root / "main.tex"
-        dispatcher.write_text("\\input{section.tex}\n", encoding="utf-8")
+        dispatcher.write_text(
+            "\\documentclass{video2pdfcourse}\\input{section.tex}\n",
+            encoding="utf-8",
+        )
         objects = [
             {
                 "object_id": "anchor",
@@ -726,6 +730,18 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "page": 2,
                 "bbox": [204, 100, 300, 111],
                 "exact_utf8_text": "00:00:58–00:01:06",
+            },
+            {
+                "object_id": "number",
+                "page": 3,
+                "bbox": [80, 100, 90, 114],
+                "exact_utf8_text": "2",
+            },
+            {
+                "object_id": "heading",
+                "page": 3,
+                "bbox": [105, 99, 170, 113],
+                "exact_utf8_text": "Core",
             },
         ]
         locations = {
@@ -743,6 +759,20 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "column": -1,
                 "query": {"page": 2, "x": 252, "y": 105.5},
             },
+            "number": {
+                "object_id": "number",
+                "source_path": str(dispatcher),
+                "line": 1,
+                "column": -1,
+                "query": {"page": 3, "x": 85, "y": 107},
+            },
+            "heading": {
+                "object_id": "heading",
+                "source_path": str(source),
+                "line": 2,
+                "column": -1,
+                "query": {"page": 3, "x": 137.5, "y": 106},
+            },
         }
 
         _complete_compiler_source_locations(
@@ -755,6 +785,8 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         self.assertEqual(
             "compiler-line-layout-v1", locations["missing"]["completion"]
         )
+        self.assertEqual(str(source.resolve()), locations["number"]["source_path"])
+        self.assertEqual(2, locations["number"]["line"])
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

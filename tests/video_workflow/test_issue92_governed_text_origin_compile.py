@@ -787,6 +787,8 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         )
         self.assertEqual(str(source.resolve()), locations["number"]["source_path"])
         self.assertEqual(2, locations["number"]["line"])
+        self.assertEqual(str(source.resolve()), locations["heading"]["source_path"])
+        self.assertEqual(2, locations["heading"]["line"])
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

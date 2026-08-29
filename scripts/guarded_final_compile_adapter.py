@@ -619,13 +619,38 @@ def _complete_compiler_source_locations(
             return None
         return path, line
 
+    def source_line_supports(
+        obj: dict[str, Any],
+        identity: tuple[Path, int],
+        location: dict[str, Any],
+    ) -> bool:
+        if location.get("completion") == "compiler-line-layout-v1":
+            return True
+        token = _normalized_layout_text(obj["exact_utf8_text"])
+        if not token:
+            return True
+        source_text = _normalized_layout_text(
+            source_lines[identity[0]][identity[1] - 1]
+        ).replace("--", "–")
+        source_text = re.sub(r"\\([_%&#])", r"\1", source_text)
+        if len(token) <= 2 and token.isascii() and token.isalnum():
+            return re.search(
+                rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
+                source_text,
+            ) is not None
+        return token in source_text
+
     anchors_by_page: dict[
         int, list[tuple[dict[str, Any], tuple[Path, int]]]
     ] = {}
     for object_id, location in list(locations.items()):
         anchor = objects_by_id.get(object_id)
         identity = source_identity(location)
-        if anchor is not None and identity is not None:
+        if (
+            anchor is not None
+            and identity is not None
+            and source_line_supports(anchor, identity, location)
+        ):
             anchors_by_page.setdefault(anchor["page"], []).append(
                 (anchor, identity)
             )
@@ -638,14 +663,10 @@ def _complete_compiler_source_locations(
             else None
         )
         normalized_token = _normalized_layout_text(obj["exact_utf8_text"])
-        current_source_matches = False
-        if current_identity is not None:
-            current_source = _normalized_layout_text(
-                source_lines[current_identity[0]][current_identity[1] - 1]
-            ).replace("--", "–")
-            current_source_matches = (
-                not normalized_token or normalized_token in current_source
-            )
+        current_source_matches = (
+            current_identity is not None
+            and source_line_supports(obj, current_identity, current_location)
+        )
         bbox = obj["bbox"]
         center_y = (bbox[1] + bbox[3]) / 2
         visual_anchors: list[

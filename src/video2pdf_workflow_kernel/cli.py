@@ -221,9 +221,26 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
     final_compile_reconcile = commands.add_parser(
-        "delivery-quality-final-compile-reconcile"
+        "delivery-quality-final-compile-reconcile",
+        help=(
+            "archive one interrupted Final Compile workspace without changing "
+            "its operation identity"
+        ),
+        description=(
+            "Reconcile one interrupted Final Compile workspace into a deterministic "
+            "operation-and-workspace archive. Repeating the command for the same "
+            "already-archived workspace returns the validated archive unchanged."
+        ),
     )
-    final_compile_reconcile.add_argument("--workspace-root", required=True, type=Path)
+    final_compile_reconcile.add_argument(
+        "--workspace-root",
+        required=True,
+        type=Path,
+        help=(
+            "interrupted Final Compile workspace, including its original path "
+            "on replay"
+        ),
+    )
 
     final_evidence = commands.add_parser("delivery-final-evidence-prepare")
     final_evidence.add_argument("--run-dir", required=True, type=Path)

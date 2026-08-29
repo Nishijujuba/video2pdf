@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Literal
 import unicodedata
 
 import fitz
@@ -31,9 +31,56 @@ def _fingerprint_without(value: dict[str, Any], field: str) -> str:
     ).hexdigest()
 
 
-def _require_fingerprint(value: dict[str, Any], field: str, label: str) -> None:
+def _require_fingerprint(
+    value: dict[str, Any],
+    field: str,
+    label: str,
+    *,
+    error_code: str | None = None,
+) -> None:
     if value.get(field) != _fingerprint_without(value, field):
-        raise ContractError(f"{label} {field} is stale or invalid")
+        raise ContractError(
+            f"{label} {field} is stale or invalid",
+            data={"error_code": error_code} if error_code else None,
+        )
+
+
+def _observe_process_state(
+    process_id: int,
+) -> Literal["live", "missing", "unknown"]:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        get_exit_code.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        handle = open_process(0x1000, False, process_id)
+        if not handle:
+            return "missing" if ctypes.get_last_error() == 87 else "unknown"
+        try:
+            exit_code = wintypes.DWORD()
+            if not get_exit_code(handle, ctypes.byref(exit_code)):
+                return "unknown"
+            return "live" if exit_code.value == 259 else "missing"
+        finally:
+            close_handle(handle)
+
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return "missing"
+    except (PermissionError, OSError):
+        return "unknown"
+    return "live"
 
 
 def final_compile_provider_identity(project_root: Path) -> dict[str, str]:
@@ -686,14 +733,7 @@ class GuardedFinalCompileProvider:
             "protocol_version": "guarded-final-compile-v2",
         }
 
-    def reconcile_interrupted(self, *, workspace_root: Path) -> dict[str, Any]:
-        root = require_contained_path(
-            workspace_root,
-            self.project_root,
-            purpose="Final Compile workspace",
-            error_type=ContractError,
-            leaf_kind="directory",
-        )
+    def _load_reconcilable_operation(self, root: Path) -> dict[str, Any]:
         operation_path = root / "final-compile-operation.json"
         if not operation_path.is_file():
             raise ContractError(
@@ -701,56 +741,108 @@ class GuardedFinalCompileProvider:
                 data={"error_code": "final_compile_operation_missing"},
             )
         operation = read_json(operation_path)
-        _require_fingerprint(operation, "operation_sha256", "Final Compile operation")
+        _require_fingerprint(
+            operation,
+            "operation_sha256",
+            "Final Compile operation",
+            error_code="final_compile_operation_fingerprint_invalid",
+        )
         if (root / "final-compile-report.json").is_file():
             raise ContractError(
                 "completed Final Compile evidence cannot be reconciled as interrupted",
                 data={"error_code": "final_compile_already_completed"},
             )
         execution_path = root / "final-compile-execution.json"
-        if execution_path.is_file():
-            execution = read_json(execution_path)
-            _require_fingerprint(
-                execution, "execution_sha256", "Final Compile execution"
+        if not execution_path.is_file():
+            return operation
+
+        execution = read_json(execution_path)
+        _require_fingerprint(
+            execution,
+            "execution_sha256",
+            "Final Compile execution",
+            error_code="final_compile_execution_fingerprint_invalid",
+        )
+        state = execution.get("state")
+        if state == "launch_pending":
+            raise ContractError(
+                "Final Compile process continuity is unknown",
+                data={"error_code": "final_compile_process_state_unknown"},
             )
-            state = execution.get("state")
-            if state == "launch_pending":
+        if state == "running":
+            process_id = execution.get("adapter_pid")
+            if not isinstance(process_id, int) or isinstance(process_id, bool):
+                raise ContractError(
+                    "Final Compile running process identity is invalid",
+                    data={"error_code": "final_compile_process_state_unknown"},
+                )
+            process_state = _observe_process_state(process_id)
+            if process_state == "live":
+                raise ContractError(
+                    "Final Compile process is still running",
+                    data={
+                        "error_code": "final_compile_process_live",
+                        "adapter_pid": process_id,
+                    },
+                )
+            if process_state == "unknown":
                 raise ContractError(
                     "Final Compile process continuity is unknown",
                     data={"error_code": "final_compile_process_state_unknown"},
                 )
-            if state == "running":
-                process_id = execution.get("adapter_pid")
-                if not isinstance(process_id, int) or isinstance(process_id, bool):
-                    raise ContractError(
-                        "Final Compile running process identity is invalid",
-                        data={"error_code": "final_compile_process_state_unknown"},
-                    )
-                try:
-                    os.kill(process_id, 0)
-                except OSError:
-                    pass
-                else:
-                    raise ContractError(
-                        "Final Compile process is still running",
-                        data={
-                            "error_code": "final_compile_process_live",
-                            "adapter_pid": process_id,
-                        },
-                    )
-            elif state not in {"succeeded", "failed", "launch_failed"}:
-                raise ContractError(
-                    "Final Compile execution state is invalid",
-                    data={"error_code": "final_compile_process_state_unknown"},
-                )
-        archive = (
-            root.parent
-            / "待删除"
-            / "final-compile-interrupted"
-            / operation["operation_id"]
+        elif state not in {"succeeded", "failed", "launch_failed"}:
+            raise ContractError(
+                "Final Compile execution state is invalid",
+                data={"error_code": "final_compile_process_state_unknown"},
+            )
+        return operation
+
+    def reconcile_interrupted(self, *, workspace_root: Path) -> dict[str, Any]:
+        root = require_contained_path(
+            workspace_root,
+            self.project_root,
+            purpose="Final Compile workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+            allow_missing=True,
+        )
+        archive_root = (
+            root.parent / "待删除" / "final-compile-interrupted-by-workspace"
         ).resolve()
+        archive = (archive_root / root.name).resolve()
+        if not root.exists():
+            if not archive.is_dir():
+                raise ContractError(
+                    "Final Compile workspace is missing and has no reconciled archive",
+                    data={"error_code": "final_compile_workspace_missing"},
+                )
+            archive = require_contained_path(
+                archive,
+                self.project_root,
+                purpose="Final Compile interrupted archive",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+            operation = self._load_reconcilable_operation(archive)
+            operation_id = operation.get("operation_id")
+            return {
+                "classification": "final_compile_interruption_already_reconciled",
+                "operation_id": operation_id,
+                "archive_path": str(archive),
+                "workspace_root": str(root),
+            }
+
+        root = require_contained_path(
+            root,
+            self.project_root,
+            purpose="Final Compile workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+        )
+        operation = self._load_reconcilable_operation(root)
+        operation_id = operation.get("operation_id")
         require_contained_path(
-            archive.parent,
+            archive_root,
             self.project_root,
             purpose="Final Compile interrupted archive parent",
             error_type=ContractError,
@@ -768,7 +860,7 @@ class GuardedFinalCompileProvider:
         root.replace(archive)
         return {
             "classification": "final_compile_interrupted_archived",
-            "operation_id": operation["operation_id"],
+            "operation_id": operation_id,
             "archive_path": str(archive),
             "workspace_root": str(root),
         }

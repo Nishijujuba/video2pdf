@@ -712,6 +712,8 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             "Source (source\\_timestamp): 00:00:58--00:01:06\n",
             encoding="utf-8",
         )
+        dispatcher = fixture.root / "main.tex"
+        dispatcher.write_text("\\input{section.tex}\n", encoding="utf-8")
         objects = [
             {
                 "object_id": "anchor",
@@ -736,7 +738,7 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             },
             "missing": {
                 "object_id": "missing",
-                "source_path": str(fixture.root / "untrusted.aux"),
+                "source_path": str(dispatcher),
                 "line": 1,
                 "column": -1,
                 "query": {"page": 2, "x": 252, "y": 105.5},
@@ -746,7 +748,7 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         _complete_compiler_source_locations(
             objects,
             locations,
-            {source.resolve()},
+            {dispatcher.resolve(), source.resolve()},
         )
 
         self.assertEqual(1, locations["missing"]["line"])

@@ -632,8 +632,18 @@ def _complete_compiler_source_locations(
 
     for obj in objects:
         current_location = locations.get(obj["object_id"])
-        if current_location is not None and source_identity(current_location) is not None:
-            continue
+        current_identity = (
+            source_identity(current_location)
+            if current_location is not None
+            else None
+        )
+        if current_identity is not None:
+            normalized_token = _normalized_layout_text(obj["exact_utf8_text"])
+            current_source = _normalized_layout_text(
+                source_lines[current_identity[0]][current_identity[1] - 1]
+            ).replace("--", "–")
+            if not normalized_token or normalized_token in current_source:
+                continue
         bbox = obj["bbox"]
         center_y = (bbox[1] + bbox[3]) / 2
         visual_anchors: list[

@@ -733,7 +733,14 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "line": 1,
                 "column": -1,
                 "query": {"page": 2, "x": 140, "y": 105.5},
-            }
+            },
+            "missing": {
+                "object_id": "missing",
+                "source_path": str(fixture.root / "untrusted.aux"),
+                "line": 1,
+                "column": -1,
+                "query": {"page": 2, "x": 252, "y": 105.5},
+            },
         }
 
         _complete_compiler_source_locations(

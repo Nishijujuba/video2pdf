@@ -602,10 +602,12 @@ def _complete_compiler_source_locations(
     authenticated_sources: set[Path],
 ) -> None:
     objects_by_id = {item["object_id"]: item for item in objects}
+    authenticated_sources = {path.resolve() for path in authenticated_sources}
     source_lines: dict[Path, list[str]] = {
         path.resolve(): path.read_text(encoding="utf-8").splitlines()
         for path in authenticated_sources
-        if path.is_file() and path.suffix.casefold() in {".tex", ".toc"}
+        if path.is_file()
+        and path.suffix.casefold() in {".tex", ".toc", ".sty", ".cls"}
     }
 
     def source_identity(location: dict[str, Any]) -> tuple[Path, int] | None:
@@ -629,7 +631,8 @@ def _complete_compiler_source_locations(
             )
 
     for obj in objects:
-        if obj["object_id"] in locations:
+        current_location = locations.get(obj["object_id"])
+        if current_location is not None and source_identity(current_location) is not None:
             continue
         bbox = obj["bbox"]
         center_y = (bbox[1] + bbox[3]) / 2

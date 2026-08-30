@@ -115,6 +115,16 @@ def _project_file(project_root: Path, value: str, *, gate: str, missing_code: st
     return candidate
 
 
+def _project_path(project_root: Path, value: str, *, gate: str) -> Path:
+    """Resolve and escape-check a declared evidence path without touching the worktree."""
+    candidate = (project_root / value).resolve()
+    try:
+        candidate.relative_to(project_root)
+    except ValueError:
+        _fail(f"evidence path escapes project root: {value}", gate, "evidence_path_escape")
+    return candidate
+
+
 def _evidence_bytes(
     project_root: Path,
     value: str,
@@ -301,7 +311,11 @@ def _validate_bindings(
     marker = f"EVIDENCE_IMPLEMENTATION_COMMIT: {value['implementation_commit']}".encode("ascii")
     for command in value["commands"]:
         log = command["log"]
-        path = _project_file(project_root, log["path"], gate="command_log", missing_code="command_log_missing")
+        path = (
+            _project_path(project_root, log["path"], gate="command_log")
+            if anchor is not None
+            else _project_file(project_root, log["path"], gate="command_log", missing_code="command_log_missing")
+        )
         identity = str(path).casefold()
         if identity in seen:
             _fail("command log path is duplicated", "command_log", "command_log_duplicated")
@@ -325,12 +339,19 @@ def _validate_bindings(
             artifact = persisted[artifact_name]
             if artifact["role"] != expected_role:
                 _fail("persisted evidence role is stale", "persisted_command_evidence", "persisted_command_role_stale")
-            _project_file(
-                project_root,
-                artifact["path"],
-                gate="persisted_command_evidence",
-                missing_code="persisted_command_artifact_missing",
-            )
+            if anchor is None:
+                _project_file(
+                    project_root,
+                    artifact["path"],
+                    gate="persisted_command_evidence",
+                    missing_code="persisted_command_artifact_missing",
+                )
+            else:
+                _project_path(
+                    project_root,
+                    artifact["path"],
+                    gate="persisted_command_evidence",
+                )
             artifact_bytes = _evidence_bytes(
                 project_root, artifact["path"], anchor=anchor,
                 gate="persisted_command_evidence",

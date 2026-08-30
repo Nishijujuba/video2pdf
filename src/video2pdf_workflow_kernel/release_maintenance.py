@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+import re
+import subprocess
+import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, Iterator
+import uuid
 
 from .errors import ContractError
 from .cutover_retirement import project_maintenance_fence
@@ -167,10 +171,13 @@ class ReleaseMaintenance:
         """Audit the complete release package against its publication tree.
 
         The package is validated with the same full validator set as candidate
-        publication, but every file-content gate reads the immutable
-        publication tree instead of the worktree: a valid historical package is
-        never rejected because the worktree drifted after publication, and an
-        incomplete or tampered manifest can never pass on shallow git checks
+        publication, executed inside a detached worktree snapshot of each
+        publication commit: every file-content gate (schema registry, schema,
+        slice constants, mirror files, command logs, persisted terminal
+        artifacts, guarded-delivery reports) reads the publication state,
+        never the drifting worktree. A valid historical package therefore
+        cannot be rejected because current files moved or evolved, and an
+        incomplete or tampered manifest cannot pass on shallow git checks
         alone.
         """
 
@@ -198,6 +205,15 @@ class ReleaseMaintenance:
                     "--",
                     relative,
                 )
+                publication = git_output(
+                    self.project_root,
+                    "log",
+                    "-1",
+                    "--format=%H",
+                    "HEAD",
+                    "--",
+                    relative,
+                )
             except (
                 OSError,
                 UnicodeError,
@@ -216,53 +232,120 @@ class ReleaseMaintenance:
                     "historical_evidence",
                     f"{capability}_exit_evidence_invalid",
                 )
-            evidence[capability] = {
-                "path": str(path),
-                "implementation_commit": str(value["implementation_commit"]),
-            }
-
-        try:
-            validate_global_gate_exit_evidence(
-                paths["global_gate"].resolve(),
-                project_root=self.project_root,
-                purpose="release_audit",
-            )
-        except ExitEvidenceValidationError as exc:
-            _reject(str(exc), exc.first_failing_gate, exc.error_code)
-
-        validator = self._load_slice_validator()
-        for capability in ("bilibili", "youtube", "batch"):
-            path = paths[capability].resolve()
-            try:
-                validator.validate_manifest(
-                    path,
-                    schema_only=False,
-                    pre_publication=False,
-                    verify_at="publication",
-                )
-            except validator.EvidenceError as exc:
-                _reject(str(exc), exc.first_failing_gate, exc.error_code)
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            implementation_commit = value.get("implementation_commit")
+            if not isinstance(implementation_commit, str):
                 _reject(
-                    f"{capability} Exit Evidence is unavailable: {exc}",
+                    f"{capability} historical Exit Evidence lacks an implementation commit",
                     "exit_evidence_schema",
                     f"{capability}_exit_evidence_invalid",
                 )
+            evidence[capability] = {
+                "path": str(path),
+                "publication_commit": publication,
+                "implementation_commit": implementation_commit,
+            }
 
-        for capability in ("global_gate", "bilibili", "youtube", "batch"):
-            path = paths[capability].resolve()
-            relative = path.relative_to(self.project_root).as_posix()
-            try:
-                evidence[capability]["publication_commit"] = git_output(
-                    self.project_root, "log", "-1", "--format=%H", "HEAD", "--", relative
-                )
-            except EvidenceSupportError as exc:
+        for capability, item in evidence.items():
+            relative = Path(item["path"]).relative_to(self.project_root).as_posix()
+            with self._publication_snapshot(
+                item["publication_commit"], capability
+            ) as snapshot:
+                target = snapshot / relative
+                validator_script = snapshot / "scripts" / "validate_slice_exit_evidence.py"
+                try:
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            str(validator_script),
+                            str(target),
+                        ],
+                        cwd=snapshot,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=600,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    _reject(
+                        f"{capability} historical publication validator is unavailable: {exc}",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
+                if completed.returncode == 0:
+                    continue
+                gate, code = self._parse_validator_failure(completed.stderr)
+                if gate is None or code is None:
+                    _reject(
+                        f"{capability} historical release package is invalid",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
                 _reject(
-                    f"{capability} historical Exit Evidence lineage is unavailable: {exc}",
-                    "historical_evidence",
-                    f"{capability}_exit_evidence_invalid",
+                    f"{capability} historical release package is invalid: "
+                    f"{completed.stderr.strip()[:400]}",
+                    gate,
+                    code,
                 )
         return evidence
+
+    @staticmethod
+    def _parse_validator_failure(stderr: str) -> tuple[str | None, str | None]:
+        """Extract the stable gate/code pair from the validator CLI failure line."""
+        text = stderr.replace("\n", " ")
+        match = re.search(
+            r"first_failing_gate=([^;]+); error_code=([^;]+)",
+            text,
+        )
+        if match is None:
+            return None, None
+        return match.group(1).strip(), match.group(2).strip()
+
+    @contextmanager
+    def _publication_snapshot(
+        self, publication: str, capability: str
+    ) -> Iterator[Path]:
+        """Detached worktree of one publication commit for release audit.
+
+        The snapshot is a real worktree of the immutable publication commit, so
+        the publication-era validator (scripts/validate_slice_exit_evidence.py
+        as published in that tree) observes the publication state for every
+        check, including contract registries, slice constants, mirror files,
+        persisted qualification artifacts, and guarded-delivery reports.
+        Snapshots live under the repository 待删除 staging area and are
+        force-removed after validation.
+        """
+        snapshot_dir = self.project_root / "待删除" / (
+            f"release-audit-snapshot-{capability}-"
+            f"{publication[:12]}-{uuid.uuid4().hex[:8]}"
+        )
+        try:
+            git_output(
+                self.project_root,
+                "worktree",
+                "add",
+                "--detach",
+                str(snapshot_dir),
+                publication,
+            )
+        except EvidenceSupportError as exc:
+            _reject(
+                f"{capability} historical publication snapshot is unavailable: {exc}",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        try:
+            yield snapshot_dir
+        finally:
+            try:
+                git_output(
+                    self.project_root,
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(snapshot_dir),
+                )
+            except EvidenceSupportError:
+                pass
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
         global_gate = paths.pop("global_gate").resolve()

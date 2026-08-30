@@ -214,10 +214,6 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.binding = json.loads((self.workspace / "input-binding.json").read_text(encoding="utf-8"))
         self.final_pdf = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "final_pdf"))
         self.main_tex = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "main_tex"))
-        rendered_dir = self.workspace / "rendered_pages"
-        rendered_dir.mkdir(parents=True, exist_ok=True)
-        for item in self.binding["rendered_pages"]:
-            shutil.copy2(item["path"], rendered_dir / f"page_{item['page']:04d}.png")
         self.manifest = create_allowed_artifacts_manifest(
             self.video_root,
             PROJECT_ROOT / "docs/acceptance/acceptance_criteria.v1.json",
@@ -651,12 +647,6 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             "2026-08-11T02:04:00Z",
         )
         self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
-
-        rendered_dir = acceptance_root / "rendered_pages"
-        rendered_dir.mkdir(parents=True, exist_ok=True)
-        for page in sorted((run_dir / "artifacts").glob("page_*.png")):
-            number = int(page.stem.removeprefix("page_"))
-            shutil.copy2(page, rendered_dir / f"page_{number:04d}.png")
 
         # Re-point the harness attributes at the real committed chain.
         self.project_root = run_dir.parents[1]

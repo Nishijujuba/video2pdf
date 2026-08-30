@@ -307,6 +307,21 @@ class FinalDeliveryEvidenceProvider:
             if page.get("page") != expected_page:
                 raise ContractError("Render Evidence pages must exactly cover 1..page_count")
             page_path = self._resolve_manifest_path(page.get("path", ""), render_manifest_path)
+            expected_path = (
+                root
+                / "review"
+                / "acceptance"
+                / "rendered_pages"
+                / f"page_{expected_page:04d}.png"
+            ).resolve()
+            if page_path != expected_path:
+                raise ContractError(
+                    "Render Evidence page path is not canonical",
+                    data={
+                        "first_failing_gate": "rendered_page_authority",
+                        "error_code": "rendered_page_path_noncanonical",
+                    },
+                )
             page_binding = self._fingerprinted(page_path, root, f"Rendered page {expected_page}")
             if page_binding["sha256"] != page.get("sha256"):
                 raise ArtifactDrift("Rendered page evidence drifted")

@@ -12,6 +12,7 @@ SCENARIOS = {
     "acceptance-v2-input-binding": ("activation_status", "active"),
     "acceptance-v2-review-skeleton": ("aggregation_policy", "unsupported"),
     "acceptance-v2-judgment-patch": ("dimension", "text"),
+    "acceptance-v2-judgment-patch-authoring-contract": ("schema_version", "2.0.0"),
     "acceptance-v2-execution-context": ("state", "delivered"),
     "acceptance-report-v2": ("overall_status", "unknown"),
     "acceptance-v2-attempt-record": ("overall_status", "unknown"),

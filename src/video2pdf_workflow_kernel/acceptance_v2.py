@@ -1794,6 +1794,18 @@ class AcceptanceV2Provider:
         prompt_path = (
             self.project_root / projection["generated_prompt"]["path"]
         ).resolve()
+        patch_schema_path = (
+            self.project_root
+            / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json"
+        ).resolve()
+        patch_contract_path = (
+            self.project_root
+            / "delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.json"
+        ).resolve()
+        self.registry.validate(
+            "acceptance-v2-judgment-patch-authoring-contract",
+            read_json(patch_contract_path),
+        )
         skeleton_path = (execution_root / "acceptance_report.skeleton.json").resolve()
         binding_path = (execution_root / "input-binding.json").resolve()
         gate = domain.global_gate_authority
@@ -1839,6 +1851,16 @@ class AcceptanceV2Provider:
                 "logical_id": "role_projection:visual-quality-evaluation",
                 "path": str(prompt_path),
                 "sha256": sha256_file(prompt_path),
+            },
+            {
+                "logical_id": "judgment_patch_schema",
+                "path": str(patch_schema_path),
+                "sha256": sha256_file(patch_schema_path),
+            },
+            {
+                "logical_id": "judgment_patch_authoring_contract",
+                "path": str(patch_contract_path),
+                "sha256": sha256_file(patch_contract_path),
             },
             {
                 "logical_id": "acceptance_review_skeleton",
@@ -2223,6 +2245,15 @@ class AcceptanceV2Provider:
         pages = [item.get("page") for item in binding["rendered_pages"]]
         if pages != list(range(1, len(pages) + 1)) or not pages:
             _reject("rendered pages must exactly cover 1..page_count", "input_page_coverage", "acceptance_input_page_coverage")
+        canonical_rendered_root = video_root / "review" / "acceptance" / "rendered_pages"
+        for item in binding["rendered_pages"]:
+            expected_path = canonical_rendered_root / f"page_{item['page']:04d}.png"
+            if Path(item.get("path", "")).resolve() != expected_path.resolve():
+                _reject(
+                    "rendered page path is not canonical",
+                    "input_page_authority",
+                    "acceptance_rendered_page_path_noncanonical",
+                )
         logical_ids = [item.get("logical_id") for item in binding["artifacts"]]
         if len(logical_ids) != len(set(logical_ids)) or not {"final_pdf", "main_tex"} <= set(logical_ids):
             _reject("Acceptance artifacts are incomplete or duplicated", "input_membership", "acceptance_input_membership_invalid")

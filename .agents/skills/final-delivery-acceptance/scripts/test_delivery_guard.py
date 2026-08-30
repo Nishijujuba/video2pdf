@@ -150,8 +150,6 @@ class DeliveryGuardTests(unittest.TestCase):
         self.binding = json.loads((self.acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
         self.final_pdf = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "final_pdf"))
         self.main_tex = Path(next(item["path"] for item in self.binding["artifacts"] if item["logical_id"] == "main_tex"))
-        for item in self.binding["rendered_pages"]:
-            shutil.copy2(item["path"], self.rendered_dir / f"page_{item['page']:04d}.png")
         self.write_compile_report(self.valid_compile_report())
 
     def write_pdf(self, path: Path, *, pages: int) -> None:
@@ -677,8 +675,6 @@ class DeliveryGuardTests(unittest.TestCase):
         binding = json.loads((acceptance_dir / "input-binding.json").read_text(encoding="utf-8"))
         final_pdf = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "final_pdf"))
         main_tex = Path(next(item["path"] for item in binding["artifacts"] if item["logical_id"] == "main_tex"))
-        for item in binding["rendered_pages"]:
-            shutil.copy2(item["path"], rendered_dir / f"page_{item['page']:04d}.png")
         compile_report_path = video_dir / "review" / "latex" / "compile_report.json"
         compile_report_path.parent.mkdir(parents=True, exist_ok=True)
         compile_report_path.write_text(

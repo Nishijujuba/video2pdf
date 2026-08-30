@@ -254,6 +254,16 @@
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-judgment-patch.invalid.json"
     },
     {
+      "schema_name": "acceptance-v2-judgment-patch-authoring-contract",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.json",
+      "canonical_sha256": "02e6ab7b31e28af348ad37f31fb6e405efa4a5dee22605e56fca3ecd85cadbd6",
+      "positive_example": "delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-judgment-patch-authoring-contract.invalid.json"
+    },
+    {
       "schema_name": "acceptance-v2-task-envelope",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",

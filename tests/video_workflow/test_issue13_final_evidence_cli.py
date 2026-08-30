@@ -662,7 +662,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "final_compile_report": final_workspace / "final-compile-report.json",
             "final_artifact_seal": final_workspace / "final-artifact-seal.json",
             "final_pdf": final_workspace / "adapter-output" / "final.pdf",
-            "render_evidence_manifest": final_workspace / "render-evidence-manifest.json",
+            "render_evidence_manifest": run_dir / "review/acceptance/render-evidence-manifest.json",
             "rendered_text_inventory": final_workspace / "adapter-output" / "rendered-text-object-inventory.json",
             "text_origin_manifest": final_workspace / "text-origin-manifest.json",
             "reconciliation": final_workspace / "rendered-text-reconciliation-report.json",

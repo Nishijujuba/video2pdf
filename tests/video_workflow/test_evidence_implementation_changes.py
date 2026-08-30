@@ -48,6 +48,28 @@ class ImplementationChangeEvidenceTests(unittest.TestCase):
         _git(repository, "commit", "-m", "base")
         return repository, _git(repository, "rev-parse", "HEAD")
 
+    def _repository_with_gitlink(self) -> tuple[Path, str, str]:
+        repository, parent = self._repository()
+        _git(repository, "read-tree", parent)
+        _git(
+            repository,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{parent},linked-authority",
+        )
+        tree = _git(repository, "write-tree")
+        base = _git(
+            repository,
+            "commit-tree",
+            tree,
+            "-p",
+            parent,
+            "-m",
+            "base with gitlink authority",
+        )
+        return repository, base, parent
+
     def test_rename_fingerprints_target_and_records_source_tombstone(self) -> None:
         repository, base = self._repository()
         (repository / "old.txt").rename(repository / "new.txt")
@@ -166,6 +188,99 @@ class ImplementationChangeEvidenceTests(unittest.TestCase):
                     "sha256": hashlib.sha256(
                         f"gitlink {base}\n".encode("ascii")
                     ).hexdigest(),
+                }
+            ],
+        )
+
+    def test_deleted_gitlink_records_a_complete_tombstone_without_changing_blob_bytes(
+        self,
+    ) -> None:
+        repository, base, linked_commit = self._repository_with_gitlink()
+        _git(repository, "read-tree", base)
+        _git(repository, "update-index", "--force-remove", "--", "linked-authority")
+        _git(repository, "update-index", "--force-remove", "--", "old.txt")
+        tree = _git(repository, "write-tree")
+        implementation = _git(
+            repository,
+            "commit-tree",
+            tree,
+            "-p",
+            base,
+            "-m",
+            "delete gitlink authority",
+        )
+
+        self.assertEqual(
+            fingerprint_implementation_changes(repository, base, implementation), []
+        )
+        self.assertEqual(
+            implementation_change_tombstones(repository, base, implementation),
+            [
+                {
+                    "role": "implementation_tombstone",
+                    "path": "linked-authority",
+                    "base_sha256": hashlib.sha256(
+                        f"gitlink {linked_commit}\n".encode("ascii")
+                    ).hexdigest(),
+                    "change": "deleted",
+                    "target_path": None,
+                },
+                {
+                    "role": "implementation_tombstone",
+                    "path": "old.txt",
+                    "base_sha256": hashlib.sha256(b"old authority\n").hexdigest(),
+                    "change": "deleted",
+                    "target_path": None,
+                }
+            ],
+        )
+
+    def test_renamed_gitlink_fingerprints_target_and_records_source_tombstone(
+        self,
+    ) -> None:
+        repository, base, linked_commit = self._repository_with_gitlink()
+        _git(repository, "read-tree", base)
+        _git(repository, "update-index", "--force-remove", "--", "linked-authority")
+        _git(
+            repository,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{linked_commit},renamed-authority",
+        )
+        tree = _git(repository, "write-tree")
+        implementation = _git(
+            repository,
+            "commit-tree",
+            tree,
+            "-p",
+            base,
+            "-m",
+            "rename gitlink authority",
+        )
+        gitlink_sha256 = hashlib.sha256(
+            f"gitlink {linked_commit}\n".encode("ascii")
+        ).hexdigest()
+
+        self.assertEqual(
+            fingerprint_implementation_changes(repository, base, implementation),
+            [
+                {
+                    "role": "implementation_artifact",
+                    "path": "renamed-authority",
+                    "sha256": gitlink_sha256,
+                }
+            ],
+        )
+        self.assertEqual(
+            implementation_change_tombstones(repository, base, implementation),
+            [
+                {
+                    "role": "implementation_tombstone",
+                    "path": "linked-authority",
+                    "base_sha256": gitlink_sha256,
+                    "change": "renamed",
+                    "target_path": "renamed-authority",
                 }
             ],
         )

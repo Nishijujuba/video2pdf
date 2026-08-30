@@ -102,6 +102,7 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
             ("acceptance-v2-input-binding", "activation_status", "active"),
             ("acceptance-v2-review-skeleton", "aggregation_policy", "unsupported"),
             ("acceptance-v2-judgment-patch", "dimension", "text"),
+            ("acceptance-v2-judgment-patch-authoring-contract", "schema_version", "2.0.0"),
             ("acceptance-v2-execution-context", "state", "delivered"),
             ("acceptance-v2-task-envelope", "input_access", "read_write"),
             ("acceptance-report-v2", "overall_status", "unknown"),
@@ -192,9 +193,9 @@ class DeliveryQualityContractsCliTests(unittest.TestCase):
         self.assertEqual(envelope["command"], "delivery-quality-contracts-check")
         self.assertEqual(envelope["classification"], "delivery_quality_contracts_valid")
         self.assertEqual(envelope["data"]["authority"], "target_only")
-        self.assertEqual(envelope["data"]["contract_count"], 30)
-        self.assertEqual(envelope["data"]["positive_examples_validated"], 30)
-        self.assertEqual(envelope["data"]["negative_examples_rejected"], 30)
+        self.assertEqual(envelope["data"]["contract_count"], 31)
+        self.assertEqual(envelope["data"]["positive_examples_validated"], 31)
+        self.assertEqual(envelope["data"]["negative_examples_rejected"], 31)
         self.assertTrue(envelope["data"]["registry_complete"])
         self.assertTrue(envelope["data"]["primary_semantic_ownership_complete"])
         self.assertTrue(envelope["data"]["generated_prompts_current"])

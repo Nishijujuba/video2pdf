@@ -145,6 +145,46 @@ def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _sha256_gitlink(object_id: str) -> str:
+    return hashlib.sha256(f"gitlink {object_id}\n".encode("ascii")).hexdigest()
+
+
+def _sha256_git_tombstone_source(
+    project_root: Path,
+    commit: str,
+    path: str,
+) -> str:
+    canonical_path = _canonical_git_path(path)
+    raw = _run_git(
+        project_root,
+        ("ls-tree", "-z", commit, "--", canonical_path),
+    )
+    records = [record for record in raw.split(b"\0") if record]
+    if len(records) != 1:
+        raise EvidenceSupportError(
+            f"implementation tombstone source is absent from its Git commit: {path}"
+        )
+    try:
+        authority, raw_path = records[0].split(b"\t", 1)
+        mode, object_type, object_id = authority.decode("ascii").split(" ")
+        tree_path = _canonical_git_path(raw_path.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise EvidenceSupportError(
+            "implementation tombstone Git tree returned an invalid record"
+        ) from exc
+    if tree_path != canonical_path:
+        raise EvidenceSupportError(
+            f"implementation tombstone source has an unexpected Git path: {path}"
+        )
+    if mode == "160000" and object_type == "commit":
+        return _sha256_gitlink(object_id)
+    if object_type == "blob":
+        return sha256_git_blob(project_root, commit, canonical_path)
+    raise EvidenceSupportError(
+        f"implementation tombstone source has unsupported Git type {object_type}: {path}"
+    )
+
+
 def _canonical_git_path(value: str) -> str:
     relative = PurePosixPath(value)
     if (
@@ -240,7 +280,7 @@ def _implementation_change_authority(
                     {
                         "role": "implementation_tombstone",
                         "path": source_path,
-                        "base_sha256": sha256_git_blob(
+                        "base_sha256": _sha256_git_tombstone_source(
                             project_root, slice_base_commit, source_path
                         ),
                         "change": "deleted",
@@ -258,7 +298,7 @@ def _implementation_change_authority(
                     {
                         "role": "implementation_tombstone",
                         "path": source_path,
-                        "base_sha256": sha256_git_blob(
+                        "base_sha256": _sha256_git_tombstone_source(
                             project_root, slice_base_commit, source_path
                         ),
                         "change": "renamed" if not target_excluded else "deleted",
@@ -406,9 +446,7 @@ def fingerprint_implementation_changes(
                         )
                     mode, object_type, object_id = entry
                     if mode == "160000" and object_type == "commit":
-                        fingerprints[path] = hashlib.sha256(
-                            f"gitlink {object_id}\n".encode("ascii")
-                        ).hexdigest()
+                        fingerprints[path] = _sha256_gitlink(object_id)
                         continue
                     if object_type != "blob":
                         raise EvidenceSupportError(

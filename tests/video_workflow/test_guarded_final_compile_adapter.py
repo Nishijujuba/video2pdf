@@ -791,6 +791,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         *,
         include_raster: bool = False,
         raster_source_path: str | None = "figure.png",
+        via_cli: bool = False,
     ) -> Path:
         fixture = GuardedFinalCompileAdapterTests(methodName="test_public_adapter_compiles_and_derives_complete_evidence")
         fixture.setUp()
@@ -908,22 +909,55 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
             "ORDINARY_SECRET": "SHOULD_NOT_CROSS",
             "PYTHONUTF8": "1",
         })
-        with (
-            mock.patch.dict(os.environ, invocation_environment, clear=True),
-            mock.patch(
-                "video2pdf_workflow_kernel.final_compile.sha256_git_blob",
-                return_value=hashlib.sha256(ADAPTER.read_bytes()).hexdigest(),
-            ),
-        ):
-            self.provider.compile(
-                input_track="kernel",
-                precompile_workspace_root=quality,
-                compile_manifest_path=fixture.manifest,
-                compiler_adapter_path=ADAPTER,
-                workspace_root=workspace,
-                compiled_at="2026-08-11T13:00:00Z",
-                runtime_policy_path=runtime_policy,
+        if via_cli:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-X",
+                    "utf8",
+                    "-B",
+                    str(PROJECT_ROOT / "scripts/video_workflow.py"),
+                    "delivery-quality-final-compile",
+                    "--input-track",
+                    "kernel",
+                    "--precompile-workspace-root",
+                    str(quality),
+                    "--compile-manifest",
+                    str(fixture.manifest),
+                    "--compiler-adapter",
+                    str(ADAPTER),
+                    "--runtime-policy",
+                    str(runtime_policy),
+                    "--workspace-root",
+                    str(workspace),
+                    "--compiled-at",
+                    "2026-08-11T13:00:00Z",
+                ],
+                cwd=PROJECT_ROOT,
+                env=invocation_environment,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=False,
             )
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        else:
+            with (
+                mock.patch.dict(os.environ, invocation_environment, clear=True),
+                mock.patch(
+                    "video2pdf_workflow_kernel.final_compile.sha256_git_blob",
+                    return_value=hashlib.sha256(ADAPTER.read_bytes()).hexdigest(),
+                ),
+            ):
+                self.provider.compile(
+                    input_track="kernel",
+                    precompile_workspace_root=quality,
+                    compile_manifest_path=fixture.manifest,
+                    compiler_adapter_path=ADAPTER,
+                    workspace_root=workspace,
+                    compiled_at="2026-08-11T13:00:00Z",
+                    runtime_policy_path=runtime_policy,
+                )
         self.assertTrue((workspace / "final-compile-report.json").is_file())
         provenance = json.loads(
             (workspace / "adapter-output/compile-provenance.json").read_text(encoding="utf-8")

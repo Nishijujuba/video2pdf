@@ -1092,7 +1092,10 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             (workspace / "final-compile-operation.json").read_text(encoding="utf-8")
         )
         page = workspace / report["pdf"]["path"]
-        rendered_page = workspace / "adapter-output/rendered_pages/page_001.png"
+        rendered_page = (
+            workspace.parents[1]
+            / "review/acceptance/rendered_pages/page_0001.png"
+        )
         self.assertTrue(page.is_file())
         with rendered_page.open("ab") as stream:
             stream.write(b"issue92-drift")

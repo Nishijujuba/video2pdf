@@ -441,6 +441,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             {"logical_id": "delivery_quality_catalog", "path": str((PROJECT_ROOT / "delivery-quality/v1/rule-catalog.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/rule-catalog.v1.json")},
             {"logical_id": "delivery_quality_role_projections", "path": str((PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json")},
             {"logical_id": "role_projection:visual-quality-evaluation", "path": str((PROJECT_ROOT / visual_projection["generated_prompt"]["path"]).resolve()), "sha256": visual_projection["generated_prompt"]["sha256"]},
+            {"logical_id": "judgment_patch_schema", "path": str((PROJECT_ROOT / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json")},
             {"logical_id": "acceptance_review_skeleton", "path": str((execution_root / "acceptance_report.skeleton.json").resolve()), "sha256": file_sha(execution_root / "acceptance_report.skeleton.json")},
             {"logical_id": "acceptance_input_binding", "path": str((execution_root / "input-binding.json").resolve()), "sha256": file_sha(execution_root / "input-binding.json")},
             {"logical_id": "global_gate_authority", "path": str(Path(binding["global_gate_authority"]["path"]).resolve()), "sha256": binding["global_gate_authority"]["file_sha256"]},
@@ -468,6 +469,106 @@ class AcceptanceV2CliTests(unittest.TestCase):
             ),
             claim,
         )
+
+    def test_reviewer_can_commit_valid_patch_using_only_task_envelope_contract(self) -> None:
+        workspace, _ = self.prepare()
+        current = json.loads((workspace / "current.json").read_text(encoding="utf-8"))
+        task_path = next((Path(current["execution_root"]) / "tasks").glob("*/task.json"))
+        task = json.loads(task_path.read_text(encoding="utf-8"))
+        output = task["required_output"]
+        contract = output["contract"]
+        schema_binding = next(
+            item
+            for item in task["authorized_read_set"]
+            if item["logical_id"] == "judgment_patch_schema"
+        )
+        self.assertEqual(contract["schema"]["path"], schema_binding["path"])
+        self.assertEqual(contract["schema"]["sha256"], schema_binding["sha256"])
+        self.assertEqual(file_sha(Path(schema_binding["path"])), schema_binding["sha256"])
+        patch_schema = json.loads(Path(schema_binding["path"]).read_text(encoding="utf-8"))
+        ownership = contract["field_ownership"]
+        self.assertEqual(
+            set(patch_schema["required"]),
+            set(ownership["provider_bound"])
+            | set(ownership["reviewer_judgment"])
+            | set(ownership["mechanically_derived"]),
+        )
+        self.assertEqual([], ownership["optional"])
+        self.assertEqual("all_fields_not_declared_by_schema", ownership["forbidden"])
+        self.assertFalse(patch_schema["additionalProperties"])
+
+        skeleton_binding = next(
+            item
+            for item in task["authorized_read_set"]
+            if item["logical_id"] == "acceptance_review_skeleton"
+        )
+        skeleton = json.loads(Path(skeleton_binding["path"]).read_text(encoding="utf-8"))
+        page_bindings = {
+            int(item["logical_id"].split(":", 1)[1]): item
+            for item in task["authorized_read_set"]
+            if item["logical_id"].startswith("rendered_page:")
+        }
+        patch = {
+            "schema_name": contract["schema"]["name"],
+            "schema_version": contract["schema"]["version"],
+            "dimension": task["dimension"],
+            "task_id": task["task_id"],
+            "attempt_id": task["attempt_id"],
+            "claim_generation": task["claim_generation"],
+            "fencing_token": task["fencing_token"],
+            "skeleton_sha256": task["skeleton_sha256"],
+            "reviewer": {"reviewer_id": "envelope-only-reviewer", "independent": True},
+            "actual_read_set": task["authorized_read_set"],
+            "criterion_results": [
+                {
+                    "criterion_id": criterion,
+                    "decision": "pass",
+                    "evidence": [{"artifact_logical_id": "final_pdf", "location": f"page:1:{criterion}"}],
+                    "violation_id": None,
+                    "required_change": None,
+                    "allowed_repair_types": [],
+                }
+                for criterion in task["criterion_ids"]
+            ],
+            "visual_scan_evidence": {
+                "pages_checked": [
+                    {
+                        "page": page,
+                        "path": page_bindings[page]["path"],
+                        "sha256": page_bindings[page]["sha256"],
+                        "decision": "pass",
+                        "evidence": [{"artifact_logical_id": f"rendered_page:{page}", "location": f"page:{page}"}],
+                    }
+                    for page in skeleton["required_visual_pages"]
+                ]
+            },
+            "cross_phase_findings": [],
+            "contract_gaps": [],
+        }
+        self.assertEqual("sha256", contract["fingerprint"]["algorithm"])
+        self.assertEqual("acceptance_v2_provider", contract["fingerprint"]["owner"])
+        self.assertEqual("canonical_json_without_patch_sha256", contract["fingerprint"]["input"])
+        patch[contract["fingerprint"]["field"]] = canonical_sha(patch)
+        serialization = contract["serialization"]
+        self.assertEqual(
+            {
+                "encoding": "utf-8",
+                "ensure_ascii": False,
+                "sort_keys": True,
+                "item_separator": ",",
+                "key_separator": ":",
+                "trailing_newline": "required",
+            },
+            serialization,
+        )
+        staged = write_json(Path(output["path"]), patch)
+        completed, envelope = run_cli(
+            "acceptance-patch-commit", "--workspace-root", str(workspace),
+            "--dimension", "visual_quality", "--patch", str(staged),
+            "--committed-at", "2026-08-02T00:10:00Z",
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual(patch["patch_sha256"], envelope["data"]["patch_sha256"])
 
     def test_claim_key_rejects_each_single_stale_authority_component(self) -> None:
         scenarios = (

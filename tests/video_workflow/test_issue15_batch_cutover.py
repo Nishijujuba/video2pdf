@@ -370,7 +370,10 @@ def validate_manifest(
 ) -> None:
     value = json.loads(manifest.read_text(encoding="utf-8"))
     command_record = json.loads(
-        (PROJECT_ROOT / value["command_record"]["path"]).read_text(encoding="utf-8")
+        (
+            PROJECT_ROOT
+            / value["commands"][0]["persisted_run"]["command_record"]["path"]
+        ).read_text(encoding="utf-8")
     )
     expected = EXPECTED.get(manifest.parent.name)
     valid = (
@@ -457,11 +460,18 @@ def main(argv=None):
                 "published_path": str(contract.resolve()),
             },
         }
+        commands = [{
+            "persisted_run": {
+                "command_record": {"path": command_record_relative},
+            },
+        }]
         mirror_checks = [{
             "source_path": str(contract.resolve()),
             "mirror_path": str(contract.resolve()),
         }]
         for value in manifests.values():
+            value.pop("command_record")
+            value["commands"] = commands
             value["mirror_checks"] = mirror_checks
         for relative, value in manifests.items():
             path = repository / relative

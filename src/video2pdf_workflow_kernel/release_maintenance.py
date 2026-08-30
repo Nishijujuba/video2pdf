@@ -47,37 +47,31 @@ if "verify_at" not in inspect.signature(validator).parameters:
     manifest_path = Path(sys.argv[2]).resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     recorded_roots = []
-    referenced_json = []
-
-    def collect_records(node):
-        if isinstance(node, dict):
-            cwd = node.get("cwd")
-            if isinstance(cwd, str) and Path(cwd).is_absolute():
-                recorded_roots.append(Path(cwd))
-            for key, value in node.items():
-                if (
-                    key == "path"
-                    and isinstance(value, str)
-                    and not Path(value).is_absolute()
-                    and value.endswith(".json")
-                ):
-                    referenced_json.append(snapshot_root / value)
-                collect_records(value)
-        elif isinstance(node, list):
-            for value in node:
-                collect_records(value)
-
-    collect_records(manifest)
-    inspected = set()
-    while referenced_json:
-        record_path = referenced_json.pop()
-        if record_path in inspected or not record_path.is_file():
+    identity_records = []
+    slice_number = manifest.get("slice", {}).get("number")
+    if slice_number == 11:
+        identity_records.extend(
+            command.get("persisted_run", {}).get("command_record", {}).get("path")
+            for command in manifest.get("commands", ())
+        )
+    if slice_number == 12:
+        identity_records.append(
+            manifest.get("guarded_delivery_evidence", {})
+            .get("qualification_run", {})
+            .get("command_record", {})
+            .get("path")
+        )
+    for relative in identity_records:
+        if not isinstance(relative, str) or Path(relative).is_absolute():
             continue
-        inspected.add(record_path)
+        record_path = snapshot_root / relative
         try:
-            collect_records(json.loads(record_path.read_text(encoding="utf-8")))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
-            pass
+            continue
+        cwd = record.get("cwd")
+        if isinstance(cwd, str) and Path(cwd).is_absolute():
+            recorded_roots.append(Path(cwd))
 
     global_validator = namespace.get("validate_global_gate_exit_evidence")
     if global_validator is not None:
@@ -112,7 +106,7 @@ if "verify_at" not in inspect.signature(validator).parameters:
         os.path.normcase(os.path.normpath(str(root))): root
         for root in recorded_roots
     }
-    if len(roots_by_identity) != 1:
+    if len(roots_by_identity) > 1:
         print(
             "INVALID: first_failing_gate=historical_evidence; "
             "error_code=historical_evidence_location_inconsistent; "
@@ -120,6 +114,8 @@ if "verify_at" not in inspect.signature(validator).parameters:
             file=sys.stderr,
         )
         raise SystemExit(1)
+    if not roots_by_identity:
+        raise SystemExit(namespace["main"]([sys.argv[2]]))
     original_root = next(iter(roots_by_identity.values()))
 
     def relocate(node):

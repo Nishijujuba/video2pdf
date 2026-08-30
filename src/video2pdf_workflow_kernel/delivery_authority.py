@@ -6,9 +6,7 @@ from typing import Any
 
 from .cutover_retirement import tombstone_path
 from .errors import ContractError
-from .platform_kernel import (
-    BilibiliPlatformCutoverPublisher as PlatformKernelCutoverPublisher,
-)
+from .platform_kernel import PlatformCutoverPublisher
 from .release_activation import ACTIVATION_FILE, WorkflowReleaseActivation
 from .release_maintenance import PROFILE_RELATIVE_PATH, ReleaseMaintenance
 from .utils import read_json
@@ -49,7 +47,7 @@ class DeliveryTransitionAuthority:
             )
             return
 
-        PlatformKernelCutoverPublisher().authorize_delivery_transition(
+        PlatformCutoverPublisher().authorize_delivery_transition(
             platform=platform,
             control_store_root=root,
             run_dir=run_dir,

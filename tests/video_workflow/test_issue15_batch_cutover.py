@@ -674,6 +674,10 @@ def main(argv=None):
             failed["data"]["error_code"],
             "historical_evidence_location_inconsistent",
         )
+        self.assertIn(
+            "bilibili historical release package",
+            failed["data"]["message"],
+        )
         self.assertEqual(profile.read_bytes(), profile_bytes)
         self.assertEqual(activation.read_bytes(), activation_bytes)
 

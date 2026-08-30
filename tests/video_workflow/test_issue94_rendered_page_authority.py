@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 
-import fitz
-
 from tests.video_workflow import test_guarded_final_compile_adapter as final_compile_tests
-from tests.video_workflow._test_run import new_case_dir
+from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
+from tests.video_workflow import test_issue100_final_evidence_page_publication as issue100_tests
+from tests.video_workflow import test_issue13_candidate_confirmation as candidate_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GUARD_SCRIPTS = (
@@ -17,9 +17,6 @@ GUARD_SCRIPTS = (
 )
 if str(GUARD_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(GUARD_SCRIPTS))
-
-import delivery_guard as delivery_guard_module
-
 
 class Issue94RenderedPageAuthorityTests(unittest.TestCase):
     def test_final_compile_materializes_staged_rendered_pages(self) -> None:
@@ -52,74 +49,146 @@ class Issue94RenderedPageAuthorityTests(unittest.TestCase):
         )
 
     def test_kernel_multi_page_guard_passes_without_coordinator_page_copy(self) -> None:
-        video_root = new_case_dir(self.id(), label="issue94-guard") / "video"
-        acceptance_root = video_root / "review" / "acceptance"
-        rendered_root = acceptance_root / "rendered_pages"
-        rendered_root.mkdir(parents=True)
-        final_pdf = video_root / "final.pdf"
-        document = fitz.open()
-        for page_number in (1, 2):
-            page = document.new_page(width=300, height=300)
-            page.insert_text((72, 72), f"Page {page_number}")
-        document.save(final_pdf)
-        document.close()
-        rendered_pages = []
-        for page_number in (1, 2):
-            page_path = rendered_root / f"page_{page_number:04d}.png"
-            page_path.write_bytes(f"page-{page_number}".encode())
-            rendered_pages.append(
-                {
-                    "page": page_number,
-                    "path": str(page_path),
-                    "sha256": hashlib.sha256(page_path.read_bytes()).hexdigest(),
-                }
-            )
-        (acceptance_root / "input-binding.json").write_text(
-            json.dumps({"rendered_pages": rendered_pages}),
-            encoding="utf-8",
+        fixture = issue100_tests.Issue100FinalEvidencePagePublicationTests(
+            methodName="test_final_evidence_publishes_pages_before_reviewer_dispatch"
+        )._fixture()
+        run_dir, control_root = fixture._source_ready_v4_run()
+        fixture._production_complete(
+            run_dir,
+            second_blank_page=True,
         )
-        target = delivery_guard_module.DeliveryTarget(
-            project_root=video_root.parent,
-            current_target_path=video_root / "current.json",
-            current_target={},
-            video_target={},
-            video_output_dir=video_root,
-            target_file=acceptance_root / "delivery_target.json",
-            final_pdf=final_pdf,
-            main_tex=video_root / "main.tex",
-            manifest_path=acceptance_root / "allowed_artifacts_manifest.json",
-            acceptance_report_path=acceptance_root / "acceptance_report.json",
-            guard_report_path=acceptance_root / "delivery_guard_report.json",
-            compile_report_path=video_root / "review" / "latex" / "compile_report.json",
-            global_gate_authority_path=video_root.parent / "active_global_gate.json",
-            global_gate_authority_sha256="0" * 64,
-            attempt_limit=3,
-            stage="accepted",
-            final_pdf_relative="final.pdf",
-            main_tex_relative="main.tex",
-            manifest_relative="review/acceptance/allowed_artifacts_manifest.json",
-            acceptance_report_relative="review/acceptance/acceptance_report.json",
-            guard_report_relative="review/acceptance/delivery_guard_report.json",
-            compile_report_relative="review/latex/compile_report.json",
-            target_file_relative="review/acceptance/delivery_target.json",
-            compile_provenance_required=True,
-            legacy_existing_pdf=False,
-            recompiled=True,
-            kernel_authority=True,
+        evidence = fixture._current_quality_evidence(run_dir)
+        evidence["render_evidence_manifest"] = (
+            evidence["final_compile_report"].parent / "render-evidence-manifest.json"
         )
 
-        delivery_guard_module._ensure_rendered_page_coverage(target)
+        transition_fixture = candidate_tests.Issue13CandidateConfirmationTests(
+            methodName="test_candidate_activation_rejects_generating_candidate"
+        )
+        ready_evidence = transition_fixture._transition_evidence(
+            run_dir,
+            from_stage="generating",
+            to_stage="ready_for_delivery",
+            artifacts={
+                "final_pdf": evidence["final_pdf"],
+                "main_tex": evidence["main_tex"],
+                "final_compile_report": evidence["final_compile_report"],
+                "render_evidence_manifest": evidence["render_evidence_manifest"],
+            },
+        )
+        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        fixture._require_ok(
+            "delivery-transition",
+            "--run-dir", str(run_dir),
+            "--from-stage", "generating",
+            "--to-stage", "ready_for_delivery",
+            "--session-id", "session-issue100",
+            "--expected-run-revision", str(run["coordination_revision"]),
+            "--expected-ownership-generation", str(run["delivery"]["ownership"]["generation"]),
+            "--evidence", str(ready_evidence),
+            "--transitioned-at", "2026-08-30T01:00:00Z",
+        )
 
-        binding_path = acceptance_root / "input-binding.json"
-        binding = json.loads(binding_path.read_text(encoding="utf-8"))
-        binding["rendered_pages"][1] = dict(binding["rendered_pages"][0])
-        binding["rendered_pages"][1]["page"] = 2
-        binding_path.write_text(json.dumps(binding), encoding="utf-8")
-        with self.assertRaises(delivery_guard_module.GuardError) as raised:
-            delivery_guard_module._ensure_rendered_page_coverage(target)
-        self.assertEqual("rendered_page_authority", raised.exception.first_failing_gate)
+        prepared_command, prepared = fixture._invoke_prepare(
+            run_dir, control_root, evidence
+        )
         self.assertEqual(
-            "rendered_page_authority_mismatch", raised.exception.error_code
+            0,
+            prepared_command.returncode,
+            prepared_command.stdout + prepared_command.stderr,
+        )
+        input_binding = Path(prepared["data"]["input_binding_path"])
+        fixture._require_ok(
+            "acceptance-final-authority-publish",
+            "--input-binding", str(input_binding),
+        )
+        acceptance_root = run_dir / "review" / "acceptance"
+        fixture._require_ok(
+            "acceptance-prepare",
+            "--workspace-root", str(acceptance_root),
+            "--input-binding", str(input_binding),
+            "--attempt-number", "1",
+            "--prepared-at", "2026-08-30T01:01:00Z",
+            "--coordinator-session", "session-issue100",
+        )
+        acceptance_fixture = acceptance_v2_tests.AcceptanceV2CliTests(
+            methodName="test_complete_current_evidence_materializes_all_catalog_rules_and_guard_eligibility"
+        )
+        patch_path = acceptance_fixture.patch(acceptance_root)
+        fixture._require_ok(
+            "acceptance-patch-commit",
+            "--workspace-root", str(acceptance_root),
+            "--dimension", "visual_quality",
+            "--patch", str(patch_path),
+            "--committed-at", "2026-08-30T01:02:00Z",
+        )
+        fixture._require_ok(
+            "acceptance-materialize",
+            "--workspace-root", str(acceptance_root),
+            "--provider-id", "acceptance-v2-provider",
+            "--provider-version", "1.0.0",
+            "--materialized-at", "2026-08-30T01:03:00Z",
+        )
+        report_path = acceptance_root / "acceptance_report.json"
+        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        fixture._require_ok(
+            "delivery-acceptance-bind",
+            "--run-dir", str(run_dir),
+            "--session-id", "session-issue100",
+            "--acceptance-report", str(report_path),
+            "--expected-run-revision", str(run["coordination_revision"]),
+            "--expected-ownership-generation", str(run["delivery"]["ownership"]["generation"]),
+            "--bound-at", "2026-08-30T01:04:00Z",
+        )
+        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        accepted_evidence = transition_fixture._transition_evidence(
+            run_dir,
+            from_stage="ready_for_delivery",
+            to_stage="accepted",
+            artifacts={"acceptance_report": report_path},
+        )
+        fixture._require_ok(
+            "delivery-transition",
+            "--run-dir", str(run_dir),
+            "--from-stage", "ready_for_delivery",
+            "--to-stage", "accepted",
+            "--session-id", "session-issue100",
+            "--expected-run-revision", str(run["coordination_revision"]),
+            "--expected-ownership-generation", str(run["delivery"]["ownership"]["generation"]),
+            "--evidence", str(accepted_evidence),
+            "--transitioned-at", "2026-08-30T01:05:00Z",
+        )
+
+        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        current_target = Path(run["delivery"]["projections"]["session_target"]["path"])
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-X", "utf8", "-B",
+                str(GUARD_SCRIPTS / "delivery_guard.py"),
+                "check",
+                "--project-root", str(current_target.parents[4]),
+                "--current-target", str(current_target),
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        guard_report = json.loads(
+            (acceptance_root / "delivery_guard_report.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("pass", guard_report["status"])
+        self.assertEqual(
+            [1, 2],
+            [
+                page["page"]
+                for page in json.loads(input_binding.read_text(encoding="utf-8"))[
+                    "rendered_pages"
+                ]
+            ],
         )
 
 

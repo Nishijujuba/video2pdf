@@ -1190,7 +1190,7 @@ def _ensure_kernel_compile_provenance(target: DeliveryTarget) -> None:
         main_tex_sha = _file_sha256(target.main_tex)
         if not any(
             isinstance(item, dict)
-            and item.get("logical_id") == "integrated_main"
+            and item.get("logical_id") == "integrated_main_tex"
             and item.get("sha256") == main_tex_sha
             for item in inputs
         ):

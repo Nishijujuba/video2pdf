@@ -76,10 +76,18 @@ for name, rect in (("figure_a.png", fitz.Rect(200, 100, 300, 200)),
     figure = cwd / name
     if figure.is_file():
         page.insert_image(rect, filename=figure)
+if any(
+    "VIDEO2PDF_FIXTURE_SECOND_BLANK_PAGE"
+    in path.read_text(encoding="utf-8")
+    for path in cwd.rglob("*.tex")
+):
+    document.new_page()
 if "VIDEO2PDF_FIXTURE_OMIT_PDF" not in source:
     document.save(cwd / f"{stem}.pdf")
+page_count = document.page_count
 document.close()
 (cwd / f"{stem}.log").write_text(
-    f"Output written on {stem}.pdf (1 page).\n",
+    f"Output written on {stem}.pdf ({page_count} "
+    f"{'page' if page_count == 1 else 'pages'}).\n",
     encoding="utf-8",
 )

@@ -188,7 +188,9 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
         self.assertEqual("current", run["checkpoints"]["source_ready"]["status"])
         return run_dir, control_root
 
-    def _production_complete(self, run_dir: Path) -> None:
+    def _production_complete(
+        self, run_dir: Path, *, second_blank_page: bool = False
+    ) -> None:
         plan = self._require_ok("production-plan", "--run-dir", str(run_dir))
         outline = plan["data"]["runnable_tasks"][0]
         self._advance(
@@ -216,11 +218,14 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             },
             sort_keys=True,
         ).encode()
+        section_source = b"\\section{Core claim}\n% FIGURE_SLOT:figure_01\n"
+        if second_blank_page:
+            section_source += b"% VIDEO2PDF_FIXTURE_SECOND_BLANK_PAGE\n"
         self._advance(
             run_dir,
             writer,
             {
-                "section_01.tex": b"\\section{Core claim}\n% FIGURE_SLOT:figure_01\n",
+                "section_01.tex": section_source,
                 "writer-result.json": writer_result,
             },
         )

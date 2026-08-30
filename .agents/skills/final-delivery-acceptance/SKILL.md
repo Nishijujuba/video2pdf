@@ -63,8 +63,8 @@ The three precompile semantic owners complete semantic review before final compi
 
 The Acceptance Reviewer evaluates only the `visual_quality` criteria named by the provider-created Task Envelope. It must:
 
-- verify the Task Envelope identity, Claim fencing fields, `criterion_ids`, exact path-and-SHA `authorized_read_set`, sole `declared_write_set` entry, and complete `required_output` contract
-- load the exact `judgment_patch_schema` authorized read and follow `required_output.contract` for field ownership, canonical UTF-8 JSON bytes, the required trailing newline, and the provider-owned fingerprint rule
+- verify the Task Envelope identity, Claim fencing fields, `criterion_ids`, exact path-and-SHA `authorized_read_set`, sole `declared_write_set` entry, and `required_output.path`
+- load the exact `judgment_patch_authoring_contract` and `judgment_patch_schema` authorized reads; follow their JSON Pointer field ownership, canonical UTF-8 JSON bytes, required trailing newline, and provider-owned fingerprint rule
 - read only the exact `authorized_read_set` and reproduce those reads as `actual_read_set`
 - inspect every rendered PDF page image for the visual criteria, even after finding a failure
 - write one `criterion_results[]` entry for every `criterion_ids` entry in the Task Envelope

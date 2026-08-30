@@ -216,6 +216,7 @@ class DeliveryQualityRegistry:
             "acceptance-v2-input-binding",
             "acceptance-v2-review-skeleton",
             "acceptance-v2-judgment-patch",
+            "acceptance-v2-judgment-patch-authoring-contract",
             "acceptance-v2-task-envelope",
             "acceptance-v2-execution-context",
             "acceptance-report-v2",

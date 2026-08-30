@@ -93,12 +93,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _run_git(
-    project_root: Path,
-    arguments: tuple[str, ...],
-    *,
-    input_bytes: bytes | None = None,
-) -> bytes:
+def _run_git(project_root: Path, arguments: tuple[str, ...]) -> bytes:
     root = project_root.resolve()
     git_executable = _trusted_git_executable()
     environment = {
@@ -123,7 +118,6 @@ def _run_git(
         capture_output=True,
         check=False,
         env=environment,
-        input=input_bytes,
     )
     if completed.returncode != 0:
         message = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -171,24 +165,6 @@ def clone_shared_repository(project_root: Path, destination: Path) -> None:
         raise EvidenceSupportError(
             f"git clone --shared --no-checkout failed: {message or 'git command failed'}"
         )
-
-
-def materialize_sparse_checkout(
-    project_root: Path,
-    patterns: tuple[str, ...],
-    *,
-    initialize: bool,
-) -> None:
-    """Materialize declared paths without replacing an existing sparse set."""
-    if initialize:
-        _run_git(project_root, ("sparse-checkout", "init", "--no-cone"))
-    action = "set" if initialize else "add"
-    payload = ("\n".join(patterns) + "\n").encode("utf-8")
-    _run_git(
-        project_root,
-        ("sparse-checkout", action, "--stdin"),
-        input_bytes=payload,
-    )
 
 
 def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:

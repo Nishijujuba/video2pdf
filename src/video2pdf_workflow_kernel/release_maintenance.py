@@ -16,7 +16,6 @@ from .evidence import (
     EvidenceSupportError,
     clone_shared_repository,
     git_output,
-    materialize_sparse_checkout,
 )
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
@@ -32,6 +31,34 @@ EXPECTED_EVIDENCE_SLICES = {
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},
     "batch": {"number": 14, "name": "batch-projection-cutover"},
 }
+
+_PUBLICATION_VALIDATOR_RUNNER = """\
+from pathlib import Path
+import inspect
+import runpy
+import sys
+
+namespace = runpy.run_path(sys.argv[1])
+validator = namespace["validate_manifest"]
+if "verify_at" not in inspect.signature(validator).parameters:
+    raise SystemExit(namespace["main"]([sys.argv[2]]))
+try:
+    validator(
+        Path(sys.argv[2]).resolve(),
+        schema_only=False,
+        pre_publication=False,
+        verify_at="publication",
+    )
+except namespace["EvidenceError"] as exc:
+    print(
+        "INVALID: "
+        f"first_failing_gate={exc.first_failing_gate}; "
+        f"error_code={exc.error_code}; {exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print(f"VALID: {Path(sys.argv[2]).resolve()}")
+"""
 
 
 def _reject(message: str, gate: str, code: str) -> None:
@@ -251,11 +278,9 @@ class ReleaseMaintenance:
 
         for capability, item in evidence.items():
             relative = Path(item["path"]).relative_to(self.project_root).as_posix()
-            value = read_json(Path(item["path"]))
             with self._publication_snapshot(
                 item["publication_commit"],
                 capability,
-                patterns=self._snapshot_patterns(value, relative),
             ) as snapshot:
                 target = snapshot / relative
                 validator_script = snapshot / "scripts" / "validate_slice_exit_evidence.py"
@@ -266,6 +291,8 @@ class ReleaseMaintenance:
                             "-X",
                             "utf8",
                             "-B",
+                            "-c",
+                            _PUBLICATION_VALIDATOR_RUNNER,
                             str(validator_script),
                             str(target),
                         ],
@@ -316,8 +343,6 @@ class ReleaseMaintenance:
         self,
         publication: str,
         capability: str,
-        *,
-        patterns: tuple[str, ...],
     ) -> Iterator[Path]:
         """Reusable repository snapshot of one publication commit.
 
@@ -344,7 +369,6 @@ class ReleaseMaintenance:
                 clone_shared_repository(self.project_root, snapshot_dir)
                 git_output(snapshot_dir, "config", "core.autocrlf", "false")
                 git_output(snapshot_dir, "config", "core.longpaths", "true")
-                materialize_sparse_checkout(snapshot_dir, patterns, initialize=True)
                 git_output(snapshot_dir, "checkout", "--detach", publication)
             except EvidenceSupportError as exc:
                 _reject(
@@ -354,14 +378,16 @@ class ReleaseMaintenance:
                 )
         else:
             self._require_clean_snapshot(snapshot_dir, capability)
-            try:
-                materialize_sparse_checkout(snapshot_dir, patterns, initialize=False)
-            except EvidenceSupportError as exc:
-                _reject(
-                    f"{capability} historical publication snapshot cannot expand: {exc}",
-                    "historical_evidence",
-                    f"{capability}_exit_evidence_invalid",
-                )
+            sparse_file = snapshot_dir / ".git" / "info" / "sparse-checkout"
+            if sparse_file.is_file():
+                try:
+                    git_output(snapshot_dir, "sparse-checkout", "disable")
+                except EvidenceSupportError as exc:
+                    _reject(
+                        f"{capability} historical publication snapshot cannot materialize: {exc}",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
         try:
             snapshot_head = git_output(snapshot_dir, "rev-parse", "HEAD")
         except EvidenceSupportError as exc:
@@ -378,44 +404,6 @@ class ReleaseMaintenance:
             )
         self._require_clean_snapshot(snapshot_dir, capability)
         yield snapshot_dir
-
-    @staticmethod
-    def _snapshot_patterns(
-        value: dict[str, Any], manifest_relative: str
-    ) -> tuple[str, ...]:
-        declared = {manifest_relative}
-
-        def collect(node: Any, key: str | None = None) -> None:
-            if isinstance(node, dict):
-                for child_key, child in node.items():
-                    collect(child, str(child_key))
-                return
-            if isinstance(node, list):
-                for child in node:
-                    collect(child, key)
-                return
-            if not isinstance(node, str) or key is None:
-                return
-            if key != "path" and not key.endswith("_path") and key != "evidence_paths":
-                return
-            candidate = Path(node)
-            if candidate.is_absolute() or ".." in candidate.parts:
-                return
-            normalized = candidate.as_posix().lstrip("/")
-            if normalized:
-                declared.add(normalized)
-
-        collect(value)
-        fixed = (
-            "/config/",
-            "/delivery-quality/",
-            "/requirements/",
-            "/schemas/",
-            "/scripts/",
-            "/src/",
-            "/tests/video_workflow/fixtures/",
-        )
-        return (*fixed, *(f"/{path}" for path in sorted(declared)))
 
     def _require_clean_snapshot(self, snapshot: Path, capability: str) -> None:
         try:

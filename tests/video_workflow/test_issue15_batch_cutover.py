@@ -4,6 +4,7 @@ import hashlib
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -311,47 +312,31 @@ class Issue15BatchCutoverTests(unittest.TestCase):
 
     def _prepare_release_audit_repository(self, root: Path) -> Path:
         repository = root / "release-audit-repository"
-        source_head = git_output(PROJECT_ROOT, "rev-parse", "HEAD")
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--shared",
-                "--no-checkout",
-                str(PROJECT_ROOT),
-                str(repository),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
+        repository.mkdir(parents=True)
+        self._fixture_git(repository, "init")
         self._fixture_git(repository, "config", "user.name", "Release Audit Fixture")
         self._fixture_git(repository, "config", "user.email", "fixture@example.invalid")
         self._fixture_git(repository, "config", "core.autocrlf", "false")
         self._fixture_git(repository, "config", "core.longpaths", "true")
-        self._fixture_git(repository, "sparse-checkout", "init", "--cone")
-        self._fixture_git(
-            repository,
-            "sparse-checkout",
-            "set",
-            "config",
-            "evidence",
-            "requirements",
-            "schemas",
-            "tests/video_workflow/fixtures",
-            "src",
-            "scripts",
-        )
-        self._fixture_git(repository, "checkout", "--detach", source_head)
+        for relative in ("requirements", "schemas", "tests/video_workflow/fixtures"):
+            shutil.copytree(PROJECT_ROOT / relative, repository / relative)
+        (repository / "config").mkdir()
+        for name in (
+            "workflow-release-profile.v1.json",
+            "workflow-admission-activation.v1.json",
+        ):
+            shutil.copy2(PROJECT_ROOT / "config" / name, repository / "config" / name)
+        self._fixture_git(repository, "add", ".")
+        self._fixture_git(repository, "commit", "-m", "test: establish implementation")
+        source_head = self._fixture_git(repository, "rev-parse", "HEAD")
 
         validator = repository / "scripts/validate_slice_exit_evidence.py"
+        validator.parent.mkdir()
         validator.write_text(
             """from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
@@ -361,51 +346,60 @@ EXPECTED = {
     "slice-14": {"number": 14, "name": "batch-projection-cutover"},
 }
 
-manifest = Path(sys.argv[1]).resolve()
-value = json.loads(manifest.read_text(encoding="utf-8"))
-expected = EXPECTED.get(manifest.parent.name)
-valid = (
-    value.get("slice") == expected
-    and isinstance(value.get("implementation_commit"), str)
-    and len(value["implementation_commit"]) == 40
-    and (PROJECT_ROOT / "release-audit-contract.txt").read_text(encoding="utf-8")
-    == "published\\n"
-)
-if not valid:
-    print(
-        "INVALID: first_failing_gate=fixture_contract; "
-        "error_code=fixture_contract_invalid; fixture package is invalid",
-        file=sys.stderr,
+class EvidenceError(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.first_failing_gate = "fixture_contract"
+        self.error_code = "fixture_contract_invalid"
+
+
+def validate_manifest(
+    manifest: Path,
+    *,
+    schema_only: bool,
+    pre_publication: bool,
+    verify_at: str,
+) -> None:
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    expected = EXPECTED.get(manifest.parent.name)
+    valid = (
+        verify_at == "publication"
+        and not schema_only
+        and not pre_publication
+        and value.get("slice") == expected
+        and isinstance(value.get("implementation_commit"), str)
+        and len(value["implementation_commit"]) == 40
+        and (PROJECT_ROOT / "historical-contracts/policy.txt").read_text(
+            encoding="utf-8"
+        ) == "published\\n"
     )
-    raise SystemExit(1)
-print(f"VALID: {manifest}")
+    if not valid:
+        raise EvidenceError("fixture package is invalid")
 """,
             encoding="utf-8",
             newline="\n",
         )
-        (repository / "release-audit-contract.txt").write_text(
+        contract = repository / "historical-contracts/policy.txt"
+        contract.parent.mkdir()
+        contract.write_text(
             "published\n", encoding="utf-8", newline="\n"
         )
         manifests = {
             "evidence/global-gate/exit-evidence-manifest.json": {
                 "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
                 "implementation_commit": source_head,
-                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-12/exit-evidence-manifest.json": {
                 "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
                 "implementation_commit": source_head,
-                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-13/exit-evidence-manifest.json": {
                 "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
                 "implementation_commit": source_head,
-                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-14/exit-evidence-manifest.json": {
                 "slice": {"number": 14, "name": "batch-projection-cutover"},
                 "implementation_commit": source_head,
-                "contract_path": "release-audit-contract.txt",
             },
         }
         for relative, value in manifests.items():
@@ -420,7 +414,7 @@ print(f"VALID: {manifest}")
             repository,
             "add",
             "scripts/validate_slice_exit_evidence.py",
-            "release-audit-contract.txt",
+            "historical-contracts/policy.txt",
             *manifests,
         )
         self._fixture_git(
@@ -432,7 +426,7 @@ print(f"VALID: {manifest}")
 
         # The audit must use the committed publication generation. Both the
         # current contract data and current validator are deliberately drifted.
-        (repository / "release-audit-contract.txt").write_text(
+        contract.write_text(
             "drifted\n", encoding="utf-8", newline="\n"
         )
         validator.write_text(
@@ -477,7 +471,9 @@ print(f"VALID: {manifest}")
         self.assertEqual(len(snapshots), 1)
         self.assertTrue((snapshots[0] / ".git").is_dir())
         self.assertFalse((snapshots[0] / "workspace").exists())
-        self.assertTrue((snapshots[0] / "release-audit-contract.txt").is_file())
+        self.assertTrue(
+            (snapshots[0] / "historical-contracts/policy.txt").is_file()
+        )
         self.assertNotIn(
             "release-audit-snapshots",
             self._fixture_git(repository, "worktree", "list", "--porcelain"),

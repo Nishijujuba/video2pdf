@@ -36,6 +36,7 @@ _PUBLICATION_VALIDATOR_RUNNER = """\
 from pathlib import Path
 import inspect
 import json
+import os
 import runpy
 import sys
 
@@ -45,14 +46,14 @@ if "verify_at" not in inspect.signature(validator).parameters:
     snapshot_root = Path(sys.argv[1]).resolve().parents[1]
     manifest_path = Path(sys.argv[2]).resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    original_roots = set()
+    recorded_roots = []
     referenced_json = []
 
     def collect_records(node):
         if isinstance(node, dict):
             cwd = node.get("cwd")
             if isinstance(cwd, str) and Path(cwd).is_absolute():
-                original_roots.add(Path(cwd))
+                recorded_roots.append(Path(cwd))
             for key, value in node.items():
                 if (
                     key == "path"
@@ -89,10 +90,37 @@ if "verify_at" not in inspect.signature(validator).parameters:
                 recorded = check.get(field)
                 if not isinstance(recorded, str) or not Path(recorded).is_absolute():
                     continue
-                root = Path(recorded)
-                for _ in Path(relative).parts:
+                relative_parts = Path(relative).parts
+                recorded_path = Path(recorded)
+                if tuple(
+                    os.path.normcase(part)
+                    for part in recorded_path.parts[-len(relative_parts):]
+                ) != tuple(os.path.normcase(part) for part in relative_parts):
+                    print(
+                        "INVALID: first_failing_gate=historical_evidence; "
+                        "error_code=historical_evidence_location_inconsistent; "
+                        "recorded mirror path contradicts publication authority",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                root = recorded_path
+                for _ in relative_parts:
                     root = root.parent
-                original_roots.add(root)
+                recorded_roots.append(root)
+
+    roots_by_identity = {
+        os.path.normcase(os.path.normpath(str(root))): root
+        for root in recorded_roots
+    }
+    if len(roots_by_identity) != 1:
+        print(
+            "INVALID: first_failing_gate=historical_evidence; "
+            "error_code=historical_evidence_location_inconsistent; "
+            "publication evidence does not bind one historical project root",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    original_root = next(iter(roots_by_identity.values()))
 
     def relocate(node):
         if isinstance(node, dict):
@@ -102,13 +130,11 @@ if "verify_at" not in inspect.signature(validator).parameters:
         if not isinstance(node, str) or not Path(node).is_absolute():
             return node
         candidate = Path(node)
-        for original_root in sorted(original_roots, key=lambda item: len(str(item)), reverse=True):
-            try:
-                relative = candidate.relative_to(original_root)
-            except ValueError:
-                continue
-            return str(snapshot_root / relative)
-        return node
+        try:
+            relative = candidate.relative_to(original_root)
+        except ValueError:
+            return node
+        return str(snapshot_root / relative)
 
     class RelocatingJson:
         def __getattr__(self, name):

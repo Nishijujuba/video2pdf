@@ -346,6 +346,14 @@ EXPECTED = {
     "slice-13": {"number": 13, "name": "youtube-platform-kernel-cutover"},
     "slice-14": {"number": 14, "name": "batch-projection-cutover"},
 }
+MIRROR_SPECS = ((
+    "historical-contracts/policy.txt",
+    "historical-contracts/policy.txt",
+),)
+
+
+def validate_global_gate_exit_evidence():
+    raise AssertionError("adapter authority probe only")
 
 class EvidenceError(Exception):
     def __init__(self, message: str) -> None:
@@ -374,6 +382,10 @@ def validate_manifest(
         and command_record.get("cwd") == str(PROJECT_ROOT)
         and value.get("published_path")
         == str(PROJECT_ROOT / "historical-contracts/policy.txt")
+        and value.get("mirror_checks") == [{
+            "source_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+            "mirror_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+        }]
         and (PROJECT_ROOT / "historical-contracts/policy.txt").read_text(
             encoding="utf-8"
         ) == "published\\n"
@@ -445,6 +457,12 @@ def main(argv=None):
                 "published_path": str(contract.resolve()),
             },
         }
+        mirror_checks = [{
+            "source_path": str(contract.resolve()),
+            "mirror_path": str(contract.resolve()),
+        }]
+        for value in manifests.values():
+            value["mirror_checks"] = mirror_checks
         for relative, value in manifests.items():
             path = repository / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,6 +540,77 @@ def main(argv=None):
             "release-audit-snapshots",
             self._fixture_git(repository, "worktree", "list", "--porcelain"),
         )
+
+        # A second publication generation with a contradictory persisted cwd
+        # must fail before relocation. The recorded cwd cannot create an
+        # independent root that normalizes its own contradiction away.
+        shutil.copy2(
+            snapshots[0] / "scripts/validate_slice_exit_evidence.py",
+            repository / "scripts/validate_slice_exit_evidence.py",
+        )
+        shutil.copy2(
+            snapshots[0] / "historical-contracts/policy.txt",
+            repository / "historical-contracts/policy.txt",
+        )
+        command_record = repository / "evidence/release-audit-command-record.json"
+        command_record.write_text(
+            json.dumps(
+                {"cwd": str((repository / "contradictory-root").resolve())},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        for manifest_path in (
+            repository / "evidence/global-gate/exit-evidence-manifest.json",
+            repository / "evidence/slice-12/exit-evidence-manifest.json",
+            repository / "evidence/slice-13/exit-evidence-manifest.json",
+            repository / "evidence/slice-14/exit-evidence-manifest.json",
+        ):
+            value = json.loads(manifest_path.read_text(encoding="utf-8"))
+            value["fixture_generation"] = 2
+            manifest_path.write_text(
+                json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        self._fixture_git(
+            repository,
+            "add",
+            "scripts",
+            "historical-contracts",
+            "evidence",
+        )
+        self._fixture_git(
+            repository,
+            "commit",
+            "-m",
+            "test: publish contradictory historical location",
+        )
+        stdout = StringIO()
+        with (
+            patch.object(
+                kernel_cli,
+                "__file__",
+                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            failed_exit = kernel_cli.main(
+                ["release-audit", "--profile", str(profile), *evidence_arguments]
+            )
+        failed = json.loads(stdout.getvalue())
+        self.assertEqual(failed_exit, 20)
+        self.assertEqual(
+            failed["data"]["first_failing_gate"], "historical_evidence"
+        )
+        self.assertEqual(
+            failed["data"]["error_code"],
+            "historical_evidence_location_inconsistent",
+        )
+        self.assertEqual(profile.read_bytes(), profile_bytes)
+        self.assertEqual(activation.read_bytes(), activation_bytes)
 
     def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
         self,

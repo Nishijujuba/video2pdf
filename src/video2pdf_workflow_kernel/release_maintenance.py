@@ -164,12 +164,16 @@ class ReleaseMaintenance:
     def _validate_historical_release_package(
         self, **paths: Path
     ) -> dict[str, Any]:
-        """Audit immutable release evidence at its publication commit."""
+        """Audit the complete release package against its publication tree.
 
-        expected = {
-            "global_gate": {"number": 11, "name": "global-acceptance-v2-gate"},
-            **EXPECTED_EVIDENCE_SLICES,
-        }
+        The package is validated with the same full validator set as candidate
+        publication, but every file-content gate reads the immutable
+        publication tree instead of the worktree: a valid historical package is
+        never rejected because the worktree drifted after publication, and an
+        incomplete or tampered manifest can never pass on shallow git checks
+        alone.
+        """
+
         evidence: dict[str, Any] = {}
         for capability in ("global_gate", "bilibili", "youtube", "batch"):
             path = paths[capability].resolve()
@@ -194,36 +198,10 @@ class ReleaseMaintenance:
                     "--",
                     relative,
                 )
-                implementation = str(value["implementation_commit"])
-                publication = git_output(
-                    self.project_root,
-                    "log",
-                    "-1",
-                    "--format=%H",
-                    "HEAD",
-                    "--",
-                    relative,
-                )
-                parents = git_output(
-                    self.project_root,
-                    "rev-list",
-                    "--parents",
-                    "-n",
-                    "1",
-                    publication,
-                ).split()
-                git_output(
-                    self.project_root,
-                    "merge-base",
-                    "--is-ancestor",
-                    implementation,
-                    publication,
-                )
             except (
                 OSError,
                 UnicodeError,
                 json.JSONDecodeError,
-                KeyError,
                 EvidenceSupportError,
                 TypeError,
             ) as exc:
@@ -232,23 +210,58 @@ class ReleaseMaintenance:
                     "historical_evidence",
                     f"{capability}_exit_evidence_invalid",
                 )
-            if (
-                value.get("slice") != expected[capability]
-                or value.get("overall_decision") != "pass"
-                or head_blob != worktree_blob
-                or len(parents) != 2
-                or parents[1] != implementation
-            ):
+            if head_blob != worktree_blob:
                 _reject(
-                    f"{capability} historical Exit Evidence publication is stale",
+                    f"{capability} historical Exit Evidence is uncommitted or dirty",
                     "historical_evidence",
                     f"{capability}_exit_evidence_invalid",
                 )
             evidence[capability] = {
                 "path": str(path),
-                "publication_commit": publication,
-                "implementation_commit": implementation,
+                "implementation_commit": str(value["implementation_commit"]),
             }
+
+        try:
+            validate_global_gate_exit_evidence(
+                paths["global_gate"].resolve(),
+                project_root=self.project_root,
+                purpose="release_audit",
+            )
+        except ExitEvidenceValidationError as exc:
+            _reject(str(exc), exc.first_failing_gate, exc.error_code)
+
+        validator = self._load_slice_validator()
+        for capability in ("bilibili", "youtube", "batch"):
+            path = paths[capability].resolve()
+            try:
+                validator.validate_manifest(
+                    path,
+                    schema_only=False,
+                    pre_publication=False,
+                    verify_at="publication",
+                )
+            except validator.EvidenceError as exc:
+                _reject(str(exc), exc.first_failing_gate, exc.error_code)
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                _reject(
+                    f"{capability} Exit Evidence is unavailable: {exc}",
+                    "exit_evidence_schema",
+                    f"{capability}_exit_evidence_invalid",
+                )
+
+        for capability in ("global_gate", "bilibili", "youtube", "batch"):
+            path = paths[capability].resolve()
+            relative = path.relative_to(self.project_root).as_posix()
+            try:
+                evidence[capability]["publication_commit"] = git_output(
+                    self.project_root, "log", "-1", "--format=%H", "HEAD", "--", relative
+                )
+            except EvidenceSupportError as exc:
+                _reject(
+                    f"{capability} historical Exit Evidence lineage is unavailable: {exc}",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
         return evidence
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
@@ -257,7 +270,7 @@ class ReleaseMaintenance:
             validated_global_gate = validate_global_gate_exit_evidence(
                 global_gate,
                 project_root=self.project_root,
-                require_current_publication=False,
+                purpose="candidate_publication",
             )
         except ExitEvidenceValidationError as exc:
             _reject(str(exc), exc.first_failing_gate, exc.error_code)

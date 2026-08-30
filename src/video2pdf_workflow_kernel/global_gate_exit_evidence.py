@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -13,10 +13,30 @@ from .evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
     implementation_change_tombstones,
+    git_blob_bytes,
     git_output,
     sha256_file,
     sha256_git_blob,
 )
+
+
+VerificationPurpose = Literal["activation", "candidate_publication", "release_audit"]
+"""Why the evidence manifest is being validated.
+
+``activation`` validates that the evidence is the current committed authority:
+the worktree schema and qualification contract must equal the running
+constants, and the publication must be HEAD.
+
+``candidate_publication`` validates a complete release package against the
+worktree: manifest-bound schema and contract semantics, worktree mirror and
+persisted-artifact consistency with the declared fingerprints, and a proven
+publication lineage.
+
+``release_audit`` validates the same complete package against its historical
+publication tree: manifest-bound schema and contract semantics, mirrors and
+persisted artifacts read from the publication commit, and the same proven
+publication lineage. No authentication depends on later worktree drift.
+"""
 
 
 SLICE = {"number": 11, "name": "global-acceptance-v2-gate"}
@@ -93,6 +113,41 @@ def _project_file(project_root: Path, value: str, *, gate: str, missing_code: st
     if not candidate.is_file():
         _fail(f"evidence path is missing: {value}", gate, missing_code)
     return candidate
+
+
+def _evidence_bytes(
+    project_root: Path,
+    value: str,
+    *,
+    anchor: str | None,
+    gate: str,
+    missing_code: str,
+) -> bytes:
+    """Read evidence file bytes from the worktree or a committed tree.
+
+    ``anchor=None`` reads the current worktree (publication-gate semantics).
+    A commit anchor reads the immutable publication tree (release-audit
+    semantics) so a valid historical package is never rejected because the
+    worktree drifted after publication.
+    """
+    candidate = (project_root / value).resolve()
+    try:
+        candidate.relative_to(project_root)
+    except ValueError:
+        _fail(f"evidence path escapes project root: {value}", gate, "evidence_path_escape")
+    if anchor is None:
+        if not candidate.is_file():
+            _fail(f"evidence path is missing: {value}", gate, missing_code)
+        return candidate.read_bytes()
+    try:
+        relative = candidate.relative_to(project_root).as_posix()
+        return git_blob_bytes(project_root, anchor, relative)
+    except EvidenceSupportError as exc:
+        _fail(
+            f"evidence path is unavailable in the publication tree: {value}",
+            gate,
+            missing_code,
+        )
 
 
 def _commit_paths(project_root: Path, commit: str) -> set[str]:
@@ -232,7 +287,13 @@ def _validate_implementation(project_root: Path, value: dict[str, Any]) -> None:
         _fail("implementation_tombstones do not equal the removed implementation paths", "implementation_tombstones", "implementation_tombstones_stale")
 
 
-def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path: Path) -> None:
+def _validate_bindings(
+    project_root: Path,
+    value: dict[str, Any],
+    manifest_path: Path,
+    *,
+    anchor: str | None,
+) -> None:
     relative_manifest = manifest_path.relative_to(project_root).as_posix()
     log_paths = {item["log"]["path"] for item in value["commands"]}
     persisted_paths: set[str] = set()
@@ -245,14 +306,17 @@ def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path:
         if identity in seen:
             _fail("command log path is duplicated", "command_log", "command_log_duplicated")
         seen.add(identity)
-        if sha256_file(path) != log["sha256"]:
+        log_bytes = _evidence_bytes(
+            project_root, log["path"], anchor=anchor,
+            gate="command_log", missing_code="command_log_missing",
+        )
+        if log["sha256"] != hashlib.sha256(log_bytes).hexdigest():
             _fail("command log fingerprint is stale", "command_log", "command_log_sha256_stale")
-        if [line for line in path.read_bytes().splitlines() if line == marker] != [marker]:
+        if [line for line in log_bytes.splitlines() if line == marker] != [marker]:
             _fail("command log implementation marker is missing, duplicated, or stale", "command_log_provenance", "command_log_provenance_invalid")
         persisted = command.get("persisted_run")
         if not isinstance(persisted, dict):
             _fail("qualification command lacks persisted terminal evidence", "persisted_command_evidence", "persisted_command_evidence_missing")
-        artifacts: dict[str, Path] = {}
         for artifact_name, expected_role in (
             ("command_record", "persisted_command_record"),
             ("terminal_status", "persisted_terminal_status"),
@@ -261,20 +325,42 @@ def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path:
             artifact = persisted[artifact_name]
             if artifact["role"] != expected_role:
                 _fail("persisted evidence role is stale", "persisted_command_evidence", "persisted_command_role_stale")
-            artifact_path = _project_file(
+            _project_file(
                 project_root,
                 artifact["path"],
                 gate="persisted_command_evidence",
                 missing_code="persisted_command_artifact_missing",
             )
-            if artifact["path"] in persisted_paths or sha256_file(artifact_path) != artifact["sha256"]:
+            artifact_bytes = _evidence_bytes(
+                project_root, artifact["path"], anchor=anchor,
+                gate="persisted_command_evidence",
+                missing_code="persisted_command_artifact_missing",
+            )
+            if artifact["path"] in persisted_paths or hashlib.sha256(artifact_bytes).hexdigest() != artifact["sha256"]:
                 _fail("persisted evidence fingerprint is stale or duplicated", "persisted_command_evidence", "persisted_command_artifact_stale")
             persisted_paths.add(artifact["path"])
-            artifacts[artifact_name] = artifact_path
         try:
-            command_record = json.loads(artifacts["command_record"].read_text(encoding="utf-8"))
-            terminal_status = json.loads(artifacts["terminal_status"].read_text(encoding="utf-8"))
-            exit_code = int(artifacts["exit_code"].read_text(encoding="utf-8").strip())
+            command_record = json.loads(
+                _evidence_bytes(
+                    project_root, persisted["command_record"]["path"], anchor=anchor,
+                    gate="persisted_command_evidence",
+                    missing_code="persisted_command_artifact_missing",
+                ).decode("utf-8")
+            )
+            terminal_status = json.loads(
+                _evidence_bytes(
+                    project_root, persisted["terminal_status"]["path"], anchor=anchor,
+                    gate="persisted_command_evidence",
+                    missing_code="persisted_command_artifact_missing",
+                ).decode("utf-8")
+            )
+            exit_code = int(
+                _evidence_bytes(
+                    project_root, persisted["exit_code"]["path"], anchor=anchor,
+                    gate="persisted_command_evidence",
+                    missing_code="persisted_command_artifact_missing",
+                ).decode("utf-8").strip()
+            )
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise ExitEvidenceValidationError(
                 "persisted evidence cannot be decoded",
@@ -308,17 +394,59 @@ def _validate_bindings(project_root: Path, value: dict[str, Any], manifest_path:
         _fail("evidence_paths differ from canonical manifest and logs", "evidence_paths", "evidence_paths_stale")
 
 
-def _validate_mirrors(project_root: Path, value: dict[str, Any]) -> None:
+def _validate_mirrors(
+    project_root: Path, value: dict[str, Any], *, anchor: str | None = None
+) -> None:
     checks = value["mirror_checks"]
     if len(checks) != len(MIRROR_SPECS):
         _fail("Global Gate mirror checks are incomplete", "mirror_checks", "global_gate_mirror_stale")
     for check, (source_relative, mirror_relative) in zip(checks, MIRROR_SPECS, strict=True):
-        source = _project_file(project_root, source_relative, gate="mirror_checks", missing_code="mirror_missing")
-        mirror = _project_file(project_root, mirror_relative, gate="mirror_checks", missing_code="mirror_missing")
-        source_sha = sha256_file(source)
-        mirror_sha = sha256_file(mirror)
-        if check != {"source_path": str(source), "mirror_path": str(mirror), "source_sha256": source_sha, "mirror_sha256": mirror_sha, "status": "equal"} or source_sha != mirror_sha:
+        source_sha = hashlib.sha256(
+            _evidence_bytes(
+                project_root, source_relative, anchor=anchor,
+                gate="mirror_checks", missing_code="mirror_missing",
+            )
+        ).hexdigest()
+        mirror_sha = hashlib.sha256(
+            _evidence_bytes(
+                project_root, mirror_relative, anchor=anchor,
+                gate="mirror_checks", missing_code="mirror_missing",
+            )
+        ).hexdigest()
+        if anchor is None:
+            source = _project_file(project_root, source_relative, gate="mirror_checks", missing_code="mirror_missing")
+            mirror = _project_file(project_root, mirror_relative, gate="mirror_checks", missing_code="mirror_missing")
+            if check != {"source_path": str(source), "mirror_path": str(mirror), "source_sha256": source_sha, "mirror_sha256": mirror_sha, "status": "equal"} or source_sha != mirror_sha:
+                _fail("Global Gate mirror is stale or unequal", "mirror_checks", "global_gate_mirror_stale")
+        elif (
+            check.get("source_sha256") != source_sha
+            or check.get("mirror_sha256") != mirror_sha
+            or check.get("status") != "equal"
+            or source_sha != mirror_sha
+        ):
             _fail("Global Gate mirror is stale or unequal", "mirror_checks", "global_gate_mirror_stale")
+
+
+def _find_publication_commit(
+    project_root: Path, relative: str, head_blob: str
+) -> str:
+    """Locate the commit whose tree holds the identical canonical blob."""
+    for candidate in _git(
+        project_root, "log", "--format=%H", "HEAD", "--", relative,
+        gate="historical_evidence", code="historical_evidence_lineage_invalid",
+    ).splitlines():
+        try:
+            if _git(
+                project_root, "rev-parse", f"{candidate}:{relative}",
+                gate="historical_evidence", code="historical_evidence_lineage_invalid",
+            ) == head_blob:
+                return candidate
+        except ExitEvidenceValidationError:
+            continue
+    _fail(
+        "canonical manifest publication commit is absent",
+        "historical_evidence", "historical_evidence_lineage_invalid",
+    )
 
 
 def _validate_publication(
@@ -333,16 +461,7 @@ def _validate_publication(
     worktree_blob = _git(project_root, "hash-object", f"--path={relative}", "--", relative, gate="historical_evidence", code="canonical_manifest_uncommitted")
     if head_blob != worktree_blob:
         _fail("canonical manifest differs from committed HEAD", "historical_evidence", "canonical_manifest_uncommitted")
-    publication = None
-    for candidate in _git(project_root, "log", "--format=%H", "HEAD", "--", relative, gate="historical_evidence", code="historical_evidence_lineage_invalid").splitlines():
-        try:
-            if _git(project_root, "rev-parse", f"{candidate}:{relative}", gate="historical_evidence", code="historical_evidence_lineage_invalid") == head_blob:
-                publication = candidate
-                break
-        except ExitEvidenceValidationError:
-            continue
-    if publication is None:
-        _fail("canonical manifest publication commit is absent", "historical_evidence", "historical_evidence_lineage_invalid")
+    publication = _find_publication_commit(project_root, relative, head_blob)
     if require_current_publication:
         head = _git(
             project_root, "rev-parse", "HEAD",
@@ -421,9 +540,9 @@ def validate_global_gate_exit_evidence(
     manifest_path: Path,
     *,
     project_root: Path,
-    require_current_publication: bool = True,
+    purpose: VerificationPurpose = "activation",
 ) -> ValidatedExitEvidence:
-    """Validate committed Issue 43 evidence for activation or explicit audit."""
+    """Validate committed Issue 43 evidence for activation, publication, or release audit."""
     root = project_root.resolve()
     path = manifest_path.resolve()
     try:
@@ -434,23 +553,33 @@ def validate_global_gate_exit_evidence(
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ExitEvidenceValidationError(str(exc), first_failing_gate="exit_evidence_schema", error_code="exit_evidence_unavailable") from exc
-    _validate_schema(
-        root,
-        value,
-        use_historical_schema=not require_current_publication,
-    )
-    _validate_closed_policy(
-        root,
-        value,
-        use_historical_contract=not require_current_publication,
-    )
-    _validate_mirrors(root, value)
+    manifest_generation = purpose in ("candidate_publication", "release_audit")
+    anchor: str | None = None
+    if purpose == "release_audit":
+        relative = path.relative_to(root).as_posix()
+        head_blob = _git(
+            root, "rev-parse", f"HEAD:{relative}",
+            gate="historical_evidence", code="canonical_manifest_uncommitted",
+        )
+        worktree_blob = _git(
+            root, "hash-object", f"--path={relative}", "--", relative,
+            gate="historical_evidence", code="canonical_manifest_uncommitted",
+        )
+        if head_blob != worktree_blob:
+            _fail(
+                "canonical manifest differs from committed HEAD",
+                "historical_evidence", "canonical_manifest_uncommitted",
+            )
+        anchor = _find_publication_commit(root, relative, head_blob)
+    _validate_schema(root, value, use_historical_schema=manifest_generation)
+    _validate_closed_policy(root, value, use_historical_contract=manifest_generation)
+    _validate_mirrors(root, value, anchor=anchor)
     _validate_implementation(root, value)
-    _validate_bindings(root, value, path)
+    _validate_bindings(root, value, path, anchor=anchor)
     _validate_publication(
         root,
         value,
         path,
-        require_current_publication=require_current_publication,
+        require_current_publication=purpose == "activation",
     )
     return ValidatedExitEvidence(path=path, sha256=sha256_file(path), value=value)

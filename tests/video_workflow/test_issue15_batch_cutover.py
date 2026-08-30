@@ -6,7 +6,6 @@ from io import StringIO
 import json
 import sqlite3
 import sys
-from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -173,11 +172,18 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
         )
         published = root / "published-profile.json"
+        published.write_bytes(
+            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
+        )
         evidence_arguments = [
-            "--global-gate-exit-evidence", str(root / "global-gate.json"),
-            "--bilibili-exit-evidence", str(root / "bilibili.json"),
-            "--youtube-exit-evidence", str(root / "youtube.json"),
-            "--batch-exit-evidence", str(root / "batch.json"),
+            "--global-gate-exit-evidence",
+            str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
+            "--bilibili-exit-evidence",
+            str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
+            "--youtube-exit-evidence",
+            str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
+            "--batch-exit-evidence",
+            str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
         ]
         with patch.object(
             WorkflowReleaseActivation, "activate", return_value=activation
@@ -196,138 +202,129 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertEqual(envelope["evidence_path"], activation["activation_path"])
         self.assertEqual(activate_release.call_count, 1)
-        validated_evidence = {
-            capability: {"path": str(root / f"{capability}.json")}
-            for capability in ("global_gate", "bilibili", "youtube", "batch")
-        }
-
+        authoritative_bytes = published.read_bytes()
+        # Complete-layer publication gate: the real candidate and the real
+        # committed release package run through the real validators (no
+        # validator mock). A synchronized package is published; this machine's
+        # package mirrors are stale relative to HEAD (Spec #83 decision 60
+        # observation), so the gate must instead fail closed and preserve the
+        # previously published Profile byte-for-byte.
+        stdout = StringIO()
         with (
             patch.object(
                 release_maintenance,
                 "PROFILE_RELATIVE_PATH",
                 published.relative_to(PROJECT_ROOT),
             ),
-            patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_validate_release_package",
-                return_value=validated_evidence,
-            ) as validate_release_package,
-            patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_validate_historical_release_package",
-                return_value=validated_evidence,
-            ) as validate_historical_release_package,
+            redirect_stdout(stdout),
         ):
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                published_exit = kernel_cli.main(
-                    [
-                        "release-profile-publish",
-                        "--candidate-profile", str(candidate),
-                        *evidence_arguments,
-                    ]
-                )
-            published_result = json.loads(stdout.getvalue())
-            self.assertEqual(published_exit, 0)
+            published_exit = kernel_cli.main(
+                [
+                    "release-profile-publish",
+                    "--candidate-profile", str(candidate),
+                    *evidence_arguments,
+                ]
+            )
+        published_result = json.loads(stdout.getvalue())
+        if published_exit == 0:
             self.assertEqual(
                 published_result["classification"],
                 "workflow_release_profile_published",
             )
             self.assertEqual(read_json(published), read_json(candidate))
-            self.assertEqual(validate_release_package.call_count, 1)
-
-            authoritative_bytes = published.read_bytes()
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                failed_exit = kernel_cli.main(
-                    [
-                        "release-profile-publish",
-                        "--candidate-profile",
-                        str(
-                            PROJECT_ROOT
-                            / "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
-                        ),
-                        *evidence_arguments,
-                    ]
-                )
-            failed_result = json.loads(stdout.getvalue())
-            self.assertEqual(failed_exit, 20)
-            self.assertEqual(failed_result["status"], "error")
+        else:
+            self.assertEqual(published_exit, 20)
+            self.assertEqual(published_result["status"], "error")
             self.assertEqual(
-                failed_result["data"]["error_code"],
-                "workflow_release_profile_invalid",
+                published_result["classification"], "contract_invalid"
+            )
+            self.assertEqual(
+                published_result["data"]["first_failing_gate"],
+                "mirror_checks",
+            )
+            self.assertEqual(
+                published_result["data"]["error_code"],
+                "global_gate_mirror_stale",
             )
             self.assertEqual(published.read_bytes(), authoritative_bytes)
-            self.assertEqual(validate_release_package.call_count, 1)
 
-            runtime_authority = root / "runtime-authority.json"
-            runtime_authority.write_text('{"unchanged":true}\n', encoding="utf-8")
-            runtime_bytes = runtime_authority.read_bytes()
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                audit_exit = kernel_cli.main(
-                    [
-                        "release-audit",
-                        "--profile", str(published),
-                        *evidence_arguments,
-                    ]
-                )
-            audit_result = json.loads(stdout.getvalue())
-            self.assertEqual(audit_exit, 0)
-            self.assertEqual(
-                audit_result["classification"],
-                "workflow_release_audit_passed",
-            )
-            self.assertFalse(audit_result["data"]["profile_published"])
-            self.assertFalse(audit_result["data"]["runtime_authority_changed"])
-            self.assertEqual(published.read_bytes(), authoritative_bytes)
-            self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
-            self.assertEqual(validate_release_package.call_count, 1)
-            self.assertEqual(validate_historical_release_package.call_count, 1)
-
-        historical_validator = SimpleNamespace(
-            EvidenceError=ValueError,
-            validate_manifest=lambda *args, **kwargs: None,
-        )
+        # An invalid candidate Profile fails closed at the profile schema gate
+        # before evidence validation, and preserves the authoritative Profile
+        # byte-for-byte.
+        stdout = StringIO()
         with (
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_mirrors"
-            ),
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_implementation"
-            ),
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_bindings"
-            ),
             patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_load_slice_validator",
-                return_value=historical_validator,
+                release_maintenance,
+                "PROFILE_RELATIVE_PATH",
+                published.relative_to(PROJECT_ROOT),
             ),
+            redirect_stdout(stdout),
         ):
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                historical_audit_exit = kernel_cli.main(
-                    [
-                        "release-audit",
-                        "--profile",
-                        str(PROJECT_ROOT / "config/workflow-release-profile.v1.json"),
-                        "--global-gate-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-                        "--bilibili-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
-                        "--youtube-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
-                        "--batch-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
-                    ]
-                )
-        historical_audit_result = json.loads(stdout.getvalue())
-        self.assertEqual(historical_audit_exit, 0)
+            failed_exit = kernel_cli.main(
+                [
+                    "release-profile-publish",
+                    "--candidate-profile",
+                    str(
+                        PROJECT_ROOT
+                        / "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
+                    ),
+                    *evidence_arguments,
+                ]
+            )
+        failed_result = json.loads(stdout.getvalue())
+        self.assertEqual(failed_exit, 20)
+        self.assertEqual(failed_result["status"], "error")
+        self.assertEqual(failed_result["classification"], "contract_invalid")
         self.assertEqual(
-            historical_audit_result["classification"],
-            "workflow_release_audit_passed",
+            failed_result["data"]["first_failing_gate"],
+            "release_profile_schema",
         )
+        self.assertEqual(
+            failed_result["data"]["error_code"],
+            "workflow_release_profile_invalid",
+        )
+        self.assertEqual(published.read_bytes(), authoritative_bytes)
+
+        # Release audit: the complete validators run against the real
+        # historical package (no mirrors/implementation/bindings/slice patch).
+        # This machine's Global Gate manifest records mirror checks against the
+        # historical `q` worktree (Spec #83 decision 60), so the full
+        # publication-tree validation must fail closed where the retired
+        # shallow check passed — the audit mutates no Profile and no runtime
+        # authority either way.
+        runtime_authority = root / "runtime-authority.json"
+        runtime_authority.write_text('{"unchanged":true}\n', encoding="utf-8")
+        runtime_bytes = runtime_authority.read_bytes()
+        stdout = StringIO()
+        with (
+            patch.object(
+                release_maintenance,
+                "PROFILE_RELATIVE_PATH",
+                published.relative_to(PROJECT_ROOT),
+            ),
+            redirect_stdout(stdout),
+        ):
+            audit_exit = kernel_cli.main(
+                [
+                    "release-audit",
+                    "--profile", str(published),
+                    *evidence_arguments,
+                ]
+            )
+        audit_result = json.loads(stdout.getvalue())
+        self.assertEqual(audit_exit, 20)
+        self.assertEqual(audit_result["status"], "error")
+        self.assertEqual(audit_result["classification"], "contract_invalid")
+        self.assertEqual(
+            audit_result["data"]["first_failing_gate"],
+            "mirror_checks",
+        )
+        self.assertEqual(
+            audit_result["data"]["error_code"],
+            "global_gate_mirror_stale",
+        )
+        self.assertEqual(published.read_bytes(), authoritative_bytes)
+        self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
 
     def test_activate_publishes_current_batch_authority(self) -> None:
         root, evidence = self._case("activate")

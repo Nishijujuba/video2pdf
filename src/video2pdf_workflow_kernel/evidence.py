@@ -145,6 +145,25 @@ def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def git_blob_bytes(project_root: Path, commit: str, path: str) -> bytes:
+    """Read one blob from a committed tree as raw bytes.
+
+    Blob reads are the immutable publication-tree counterpart of worktree file
+    reads: a release audit anchored at a publication commit never depends on
+    later worktree drift.
+    """
+    canonical_path = _canonical_git_path(path)
+    try:
+        return _run_git(
+            project_root,
+            ("cat-file", "blob", f"{commit}:{canonical_path}"),
+        )
+    except EvidenceSupportError as exc:
+        raise EvidenceSupportError(
+            f"git blob {commit}:{canonical_path} is unavailable: {exc}"
+        ) from exc
+
+
 def _sha256_gitlink(object_id: str) -> str:
     return hashlib.sha256(f"gitlink {object_id}\n".encode("ascii")).hexdigest()
 

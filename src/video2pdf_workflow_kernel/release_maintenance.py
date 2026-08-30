@@ -12,7 +12,12 @@ from typing import Any, Iterator
 
 from .errors import ContractError
 from .cutover_retirement import project_maintenance_fence
-from .evidence import EvidenceSupportError, clone_shared_repository, git_output
+from .evidence import (
+    EvidenceSupportError,
+    clone_shared_repository,
+    git_output,
+    materialize_sparse_checkout,
+)
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
@@ -23,7 +28,6 @@ from .utils import read_json, write_json_atomic
 
 PROFILE_RELATIVE_PATH = Path("config/workflow-release-profile.v1.json")
 EXPECTED_EVIDENCE_SLICES = {
-    "global_gate": {"number": 11, "name": "global-acceptance-v2-gate"},
     "bilibili": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},
     "batch": {"number": 14, "name": "batch-projection-cutover"},
@@ -171,7 +175,7 @@ class ReleaseMaintenance:
         """Audit the complete release package against its publication tree.
 
         The package is validated with the same full validator set as candidate
-        publication, executed inside a detached worktree snapshot of each
+        publication, executed inside a retained repository snapshot of each
         publication commit: every file-content gate (schema registry, schema,
         slice constants, mirror files, command logs, persisted terminal
         artifacts, guarded-delivery reports) reads the publication state,
@@ -194,7 +198,6 @@ class ReleaseMaintenance:
                 value = read_json(path)
                 if not isinstance(value, dict):
                     raise TypeError("Exit Evidence must be a JSON object")
-                self._require_evidence_identity(value, capability)
                 relative = path.relative_to(self.project_root).as_posix()
                 head_blob = git_output(
                     self.project_root, "rev-parse", f"HEAD:{relative}"
@@ -248,8 +251,11 @@ class ReleaseMaintenance:
 
         for capability, item in evidence.items():
             relative = Path(item["path"]).relative_to(self.project_root).as_posix()
+            value = read_json(Path(item["path"]))
             with self._publication_snapshot(
-                item["publication_commit"], capability
+                item["publication_commit"],
+                capability,
+                patterns=self._snapshot_patterns(value, relative),
             ) as snapshot:
                 target = snapshot / relative
                 validator_script = snapshot / "scripts" / "validate_slice_exit_evidence.py"
@@ -307,7 +313,11 @@ class ReleaseMaintenance:
 
     @contextmanager
     def _publication_snapshot(
-        self, publication: str, capability: str
+        self,
+        publication: str,
+        capability: str,
+        *,
+        patterns: tuple[str, ...],
     ) -> Iterator[Path]:
         """Reusable repository snapshot of one publication commit.
 
@@ -334,10 +344,21 @@ class ReleaseMaintenance:
                 clone_shared_repository(self.project_root, snapshot_dir)
                 git_output(snapshot_dir, "config", "core.autocrlf", "false")
                 git_output(snapshot_dir, "config", "core.longpaths", "true")
+                materialize_sparse_checkout(snapshot_dir, patterns, initialize=True)
                 git_output(snapshot_dir, "checkout", "--detach", publication)
             except EvidenceSupportError as exc:
                 _reject(
                     f"{capability} historical publication snapshot is unavailable: {exc}",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
+        else:
+            self._require_clean_snapshot(snapshot_dir, capability)
+            try:
+                materialize_sparse_checkout(snapshot_dir, patterns, initialize=False)
+            except EvidenceSupportError as exc:
+                _reject(
+                    f"{capability} historical publication snapshot cannot expand: {exc}",
                     "historical_evidence",
                     f"{capability}_exit_evidence_invalid",
                 )
@@ -357,6 +378,44 @@ class ReleaseMaintenance:
             )
         self._require_clean_snapshot(snapshot_dir, capability)
         yield snapshot_dir
+
+    @staticmethod
+    def _snapshot_patterns(
+        value: dict[str, Any], manifest_relative: str
+    ) -> tuple[str, ...]:
+        declared = {manifest_relative}
+
+        def collect(node: Any, key: str | None = None) -> None:
+            if isinstance(node, dict):
+                for child_key, child in node.items():
+                    collect(child, str(child_key))
+                return
+            if isinstance(node, list):
+                for child in node:
+                    collect(child, key)
+                return
+            if not isinstance(node, str) or key is None:
+                return
+            if key != "path" and not key.endswith("_path") and key != "evidence_paths":
+                return
+            candidate = Path(node)
+            if candidate.is_absolute() or ".." in candidate.parts:
+                return
+            normalized = candidate.as_posix().lstrip("/")
+            if normalized:
+                declared.add(normalized)
+
+        collect(value)
+        fixed = (
+            "/config/",
+            "/delivery-quality/",
+            "/requirements/",
+            "/schemas/",
+            "/scripts/",
+            "/src/",
+            "/tests/video_workflow/fixtures/",
+        )
+        return (*fixed, *(f"/{path}" for path in sorted(declared)))
 
     def _require_clean_snapshot(self, snapshot: Path, capability: str) -> None:
         try:

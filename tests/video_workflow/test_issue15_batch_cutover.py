@@ -390,18 +390,22 @@ print(f"VALID: {manifest}")
             "evidence/global-gate/exit-evidence-manifest.json": {
                 "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
                 "implementation_commit": source_head,
+                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-12/exit-evidence-manifest.json": {
                 "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
                 "implementation_commit": source_head,
+                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-13/exit-evidence-manifest.json": {
                 "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
                 "implementation_commit": source_head,
+                "contract_path": "release-audit-contract.txt",
             },
             "evidence/slice-14/exit-evidence-manifest.json": {
                 "slice": {"number": 14, "name": "batch-projection-cutover"},
                 "implementation_commit": source_head,
+                "contract_path": "release-audit-contract.txt",
             },
         }
         for relative, value in manifests.items():
@@ -472,6 +476,8 @@ print(f"VALID: {manifest}")
         )
         self.assertEqual(len(snapshots), 1)
         self.assertTrue((snapshots[0] / ".git").is_dir())
+        self.assertFalse((snapshots[0] / "workspace").exists())
+        self.assertTrue((snapshots[0] / "release-audit-contract.txt").is_file())
         self.assertNotIn(
             "release-audit-snapshots",
             self._fixture_git(repository, "worktree", "list", "--porcelain"),

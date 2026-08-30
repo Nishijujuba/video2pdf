@@ -6,6 +6,7 @@ from typing import Any
 
 from .cutover_retirement import tombstone_path
 from .errors import ContractError
+from .guarded_delivery import require_current_kernel_guarded_decision
 from .platform_kernel import PlatformCutoverPublisher
 from .release_activation import ACTIVATION_FILE, WorkflowReleaseActivation
 from .release_maintenance import PROFILE_RELATIVE_PATH, ReleaseMaintenance
@@ -26,6 +27,7 @@ class DeliveryTransitionAuthority:
         run_dir: Path,
         run_id: str,
         to_stage: str,
+        artifacts: dict[str, Any],
     ) -> None:
         if to_stage not in {"accepted", "delivered"}:
             return
@@ -40,11 +42,18 @@ class DeliveryTransitionAuthority:
         activation_path = profile_path.parent / ACTIVATION_FILE
 
         if committed_tombstone.is_file() or activation_path.is_file():
-            self._require_profile_authority(
+            self._require_profile_activation(
                 platform=platform,
                 control_store_root=root,
                 profile_path=profile_path,
             )
+            if to_stage == "delivered":
+                self._require_current_guard(
+                    platform=platform,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    artifacts=artifacts,
+                )
             return
 
         PlatformCutoverPublisher().authorize_delivery_transition(
@@ -55,7 +64,7 @@ class DeliveryTransitionAuthority:
             to_stage=to_stage,
         )
 
-    def _require_profile_authority(
+    def _require_profile_activation(
         self,
         *,
         platform: str,
@@ -85,6 +94,47 @@ class DeliveryTransitionAuthority:
             raise ContractError(
                 f"{platform} ordinary delivery transition requires current "
                 f"Workflow Release Profile authority: {exc}",
+                data=data,
+            ) from exc
+
+    @staticmethod
+    def _require_current_guard(
+        *,
+        platform: str,
+        run_dir: Path,
+        run_id: str,
+        artifacts: dict[str, Any],
+    ) -> None:
+        try:
+            guarded = require_current_kernel_guarded_decision(
+                project_root=run_dir.resolve().parents[1],
+                run_dir=run_dir,
+            )
+            guard_binding = artifacts.get("delivery_guard_report")
+            if (
+                guarded.get("run_id") != run_id
+                or not isinstance(guard_binding, dict)
+                or guarded.get("delivery_guard_report") != guard_binding
+            ):
+                raise ContractError(
+                    "Ordinary delivery transition Guard authority differs "
+                    "from its transition evidence",
+                    data={
+                        "first_failing_gate": "delivery_guard_decision",
+                        "error_code": "delivery_guard_report_not_current",
+                    },
+                )
+        except ContractError as exc:
+            data = dict(exc.data)
+            data.update(
+                {
+                    "platform": platform,
+                    "authority_boundary": "delivery_guard",
+                }
+            )
+            raise ContractError(
+                f"{platform} ordinary delivered transition requires current "
+                f"Delivery Guard authority: {exc}",
                 data=data,
             ) from exc
 

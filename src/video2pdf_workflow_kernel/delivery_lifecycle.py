@@ -678,6 +678,7 @@ class DeliveryLifecycleProvider:
                 run_dir=run_dir,
                 run_id=run_record["run_id"],
                 to_stage=to_stage,
+                artifacts=evidence["artifacts"],
             )
         task_index_path = self._validate_task_index_binding(
             projections["task_index"],

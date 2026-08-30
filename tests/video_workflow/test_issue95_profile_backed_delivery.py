@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from src.video2pdf_workflow_kernel.cli import main as workflow_main
+import src.video2pdf_workflow_kernel.delivery_authority as delivery_authority_module
 import src.video2pdf_workflow_kernel.delivery_lifecycle as delivery_lifecycle_module
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow.test_issue13_delivery_lifecycle import (
@@ -24,7 +25,12 @@ from tests.video_workflow.test_issue13_run_initialization import (
 )
 
 
-def _run_cli(*arguments: str, acceptance_authority: bool = False) -> tuple[
+def _run_cli(
+    *arguments: str,
+    acceptance_authority: bool = False,
+    guard_authority: bool = False,
+    guarded_delivery_calls: list[tuple[Path, Path]] | None = None,
+) -> tuple[
     subprocess.CompletedProcess[str], dict
 ]:
     stdout = io.StringIO()
@@ -48,21 +54,41 @@ def _run_cli(*arguments: str, acceptance_authority: bool = False) -> tuple[
             "run_record_sha256": _sha256(run_path),
         }
 
-    patches = (
-        patch.object(
-            delivery_lifecycle_module.AcceptanceV2Provider,
-            "guard_eligibility",
-            side_effect=guard_eligibility,
-        ),
-        patch.object(
-            delivery_lifecycle_module.AcceptanceV2Provider,
-            "require_committed_delivery_successor",
-            side_effect=committed_successor,
-        ),
+    def guarded_delivery(*, project_root: Path, run_dir: Path) -> dict[str, object]:
+        if guarded_delivery_calls is not None:
+            guarded_delivery_calls.append((project_root, run_dir))
+        guard_path = run_dir / "review" / "acceptance" / "delivery_guard_report.json"
+        return {
+            "run_id": json.loads(
+                (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+            )["run_id"],
+            "delivery_guard_report": {
+                "path": str(guard_path.resolve()),
+                "sha256": _sha256(guard_path),
+            },
+        }
+
+    acceptance_eligibility_patch = patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "guard_eligibility",
+        side_effect=guard_eligibility,
+    )
+    acceptance_successor_patch = patch.object(
+        delivery_lifecycle_module.AcceptanceV2Provider,
+        "require_committed_delivery_successor",
+        side_effect=committed_successor,
+    )
+    guard_authority_patch = patch.object(
+        delivery_authority_module,
+        "require_current_kernel_guarded_decision",
+        side_effect=guarded_delivery,
     )
     with redirect_stdout(stdout):
         if acceptance_authority:
-            with patches[0], patches[1]:
+            with acceptance_eligibility_patch, acceptance_successor_patch:
+                returncode = workflow_main(list(arguments))
+        elif guard_authority:
+            with guard_authority_patch:
                 returncode = workflow_main(list(arguments))
         else:
             returncode = workflow_main(list(arguments))
@@ -124,6 +150,8 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
         expected_revision: int,
         evidence: Path,
         acceptance_authority: bool = False,
+        guard_authority: bool = False,
+        guarded_delivery_calls: list[tuple[Path, Path]] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
         return _run_cli(
             "delivery-transition",
@@ -144,6 +172,8 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
             "--transitioned-at",
             "2026-08-30T00:00:00Z",
             acceptance_authority=acceptance_authority,
+            guard_authority=guard_authority,
+            guarded_delivery_calls=guarded_delivery_calls,
         )
 
     def test_profile_backed_youtube_run_reaches_accepted_and_delivered_after_retirement(
@@ -307,15 +337,40 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
             to_stage="delivered",
             artifacts={"delivery_guard_report": guard_report},
         )
-        delivered, delivered_envelope = self._transition(
+        stale_guard, stale_guard_envelope = self._transition(
             run_dir,
             from_stage="accepted",
             to_stage="delivered",
             expected_revision=3,
             evidence=delivered_evidence,
         )
+        self.assertNotEqual(0, stale_guard.returncode)
+        self.assertEqual(
+            {
+                "platform": "youtube",
+                "authority_boundary": "delivery_guard",
+            },
+            {
+                key: stale_guard_envelope["data"][key]
+                for key in ("platform", "authority_boundary")
+            },
+        )
+        guarded_delivery_calls: list[tuple[Path, Path]] = []
+        delivered, delivered_envelope = self._transition(
+            run_dir,
+            from_stage="accepted",
+            to_stage="delivered",
+            expected_revision=3,
+            evidence=delivered_evidence,
+            guard_authority=True,
+            guarded_delivery_calls=guarded_delivery_calls,
+        )
         self.assertEqual(0, delivered.returncode, delivered.stdout + delivered.stderr)
         self.assertEqual("delivered", delivered_envelope["data"]["stage"])
+        self.assertEqual(
+            [(run_dir.resolve().parents[1], run_dir.resolve())],
+            guarded_delivery_calls,
+        )
 
 
 if __name__ == "__main__":

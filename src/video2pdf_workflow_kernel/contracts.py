@@ -1713,23 +1713,32 @@ def _validate_control_store_reinitialization_eligibility(
         )
     if instance["maintenance_fence_id"] != instance["snapshot_id"]:
         raise ContractError(
-            "Control Store reinitialization snapshot and maintenance fence disagree"
+            "Control Store reinitialization snapshot and maintenance fence disagree",
+            data={"gate": "reinitialization_snapshot_maintenance_fence"},
         )
     if (
         instance["proposed_replacement_epoch"]
         != instance["current_store_epoch"] + 1
     ):
         raise ContractError(
-            "Control Store reinitialization replacement epoch is not the successor"
+            "Control Store reinitialization replacement epoch is not the successor",
+            data={"gate": "reinitialization_snapshot_replacement_epoch"},
         )
     workspace = instance["workspace_identity"]
-    _validate_canonical_absolute_path(workspace["workspace_path"])
+    try:
+        _validate_canonical_absolute_path(workspace["workspace_path"])
+    except ContractError as exc:
+        raise ContractError(
+            str(exc),
+            data={"gate": "reinitialization_snapshot_workspace_identity"},
+        ) from exc
     expected_normalized = os.path.normcase(
         os.path.abspath(workspace["workspace_path"])
     ).casefold()
     if workspace["normalized_workspace_path"] != expected_normalized:
         raise ContractError(
-            "Control Store reinitialization workspace identity is not canonical"
+            "Control Store reinitialization workspace identity is not canonical",
+            data={"gate": "reinitialization_snapshot_workspace_identity"},
         )
 
     inventory = instance["authority_inventory"]
@@ -1767,7 +1776,8 @@ def _validate_control_store_reinitialization_eligibility(
     if missing_tables:
         raise ContractError(
             "Control Store reinitialization snapshot omits authority tables: "
-            f"{missing_tables}"
+            f"{missing_tables}",
+            data={"gate": "reinitialization_snapshot_authority_tables"},
         )
 
     direct_bindings = {
@@ -1784,17 +1794,20 @@ def _validate_control_store_reinitialization_eligibility(
         if inventory[inventory_name] != complete[table_name]:
             raise ContractError(
                 "Control Store reinitialization named inventory disagrees with "
-                f"complete Store rows: {inventory_name}"
+                f"complete Store rows: {inventory_name}",
+                data={"gate": "reinitialization_snapshot_named_inventory"},
             )
     for table_name, rows in inventory["mutation_intents"].items():
         if rows != complete.get(table_name):
             raise ContractError(
-                "Control Store reinitialization Mutation Intent inventory disagrees"
+                "Control Store reinitialization Mutation Intent inventory disagrees",
+                data={"gate": "reinitialization_snapshot_mutation_intents"},
             )
     for table_name, rows in inventory["resource_state"].items():
         if rows != complete.get(table_name):
             raise ContractError(
-                "Control Store reinitialization resource inventory disagrees"
+                "Control Store reinitialization resource inventory disagrees",
+                data={"gate": "reinitialization_snapshot_resource_state"},
             )
     bound_run_ids = {row["run_id"] for row in inventory["run_bindings"]}
     chain_run_ids = {
@@ -1802,7 +1815,8 @@ def _validate_control_store_reinitialization_eligibility(
     }
     if bound_run_ids != chain_run_ids:
         raise ContractError(
-            "Control Store reinitialization Run bindings and mutation chains disagree"
+            "Control Store reinitialization Run bindings and mutation chains disagree",
+            data={"gate": "reinitialization_snapshot_run_mutation_chains"},
         )
 
 

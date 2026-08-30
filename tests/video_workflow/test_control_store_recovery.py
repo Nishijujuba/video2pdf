@@ -1896,6 +1896,146 @@ module.ControlStoreRecovery(Path({str(kernel.workspace_root)!r})).restore_select
             "reinitialization_snapshot_unresolved_ownership",
         )
 
+        missing_table = object()
+        reinitialization_gate_scenarios = (
+            {
+                "scenario_id": "reinitialization_snapshot_maintenance_fence",
+                "target_invariant": "the snapshot owns its maintenance fence",
+                "mutation_seam": ("maintenance_fence_id",),
+                "replacement": "reinitialize-11111111111111111111111111111111",
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_maintenance_fence",
+                "expected_error_code": "reinitialization_snapshot_maintenance_fence",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_replacement_epoch",
+                "target_invariant": "the replacement epoch is the current successor",
+                "mutation_seam": ("proposed_replacement_epoch",),
+                "replacement": 2,
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_replacement_epoch",
+                "expected_error_code": "reinitialization_snapshot_replacement_epoch",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_workspace_identity",
+                "target_invariant": "the normalized workspace path binds the workspace",
+                "mutation_seam": (
+                    "workspace_identity",
+                    "normalized_workspace_path",
+                ),
+                "replacement": "d:\\another-workspace",
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_workspace_identity",
+                "expected_error_code": "reinitialization_snapshot_workspace_identity",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_authority_tables",
+                "target_invariant": "the complete Store inventory names every authority table",
+                "mutation_seam": (
+                    "authority_inventory",
+                    "complete_store_rows",
+                    "schema_migrations",
+                ),
+                "replacement": missing_table,
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_authority_tables",
+                "expected_error_code": "reinitialization_snapshot_authority_tables",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_named_inventory",
+                "target_invariant": "named inventories bind the complete Store rows",
+                "mutation_seam": ("authority_inventory", "claims"),
+                "replacement": ({"claim_id": "unbound-claim"},),
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_named_inventory",
+                "expected_error_code": "reinitialization_snapshot_named_inventory",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_mutation_intents",
+                "target_invariant": "Mutation Intent inventories bind the complete Store rows",
+                "mutation_seam": (
+                    "authority_inventory",
+                    "mutation_intents",
+                    "run_state_mutation_intents",
+                ),
+                "replacement": ({"intent_id": "unbound-intent"},),
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_mutation_intents",
+                "expected_error_code": "reinitialization_snapshot_mutation_intents",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_resource_state",
+                "target_invariant": "resource inventories bind the complete Store rows",
+                "mutation_seam": (
+                    "authority_inventory",
+                    "resource_state",
+                    "resource_configurations",
+                ),
+                "replacement": ({"resource": "unbound-resource"},),
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_resource_state",
+                "expected_error_code": "reinitialization_snapshot_resource_state",
+                "scenario_class": "single_contradiction",
+            },
+            {
+                "scenario_id": "reinitialization_snapshot_run_mutation_chains",
+                "target_invariant": "every Run binding has one committed mutation chain",
+                "mutation_seam": ("authority_inventory", "run_bindings"),
+                "replacement": ({"run_id": "unbound-run"},),
+                "rematerialized_nodes": (),
+                "intentionally_stale_nodes": (),
+                "expected_first_gate": "reinitialization_snapshot_run_mutation_chains",
+                "expected_error_code": "reinitialization_snapshot_run_mutation_chains",
+                "scenario_class": "single_contradiction",
+            },
+        )
+        valid_eligibility = read_json(
+            eligibility_fixture_root
+            / "control-store-reinitialization-eligibility-snapshot.valid.json"
+        )
+        for scenario in reinitialization_gate_scenarios:
+            with self.subTest(scenario_id=scenario["scenario_id"]):
+                self.assertEqual(scenario["scenario_class"], "single_contradiction")
+                self.assertEqual(scenario["rematerialized_nodes"], ())
+                self.assertEqual(scenario["intentionally_stale_nodes"], ())
+                contradiction = json.loads(json.dumps(valid_eligibility))
+                target = contradiction
+                for path_component in scenario["mutation_seam"][:-1]:
+                    target = target[path_component]
+                leaf = scenario["mutation_seam"][-1]
+                if scenario["replacement"] is missing_table:
+                    target.pop(leaf)
+                else:
+                    target[leaf] = list(scenario["replacement"]) if isinstance(
+                        scenario["replacement"], tuple
+                    ) else scenario["replacement"]
+                with self.assertRaises(ContractError) as rejected:
+                    kernel.contracts.validate(
+                        "control-store-reinitialization-eligibility-snapshot",
+                        contradiction,
+                    )
+                self.assertEqual(
+                    rejected.exception.data["gate"],
+                    scenario["expected_first_gate"],
+                )
+                self.assertEqual(
+                    rejected.exception.data["gate"],
+                    scenario["expected_error_code"],
+                )
+
         active_kernel, active_run_dir = self.traced_kernel(
             "reinitialization-active-authority"
         )

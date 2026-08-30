@@ -10,7 +10,6 @@ from .cutover_retirement import (
     CutoverAuthorityRetirement,
     project_maintenance_fence,
     require_project_admission_open,
-    tombstone_path,
 )
 from .errors import ContractError
 from .release_maintenance import ReleaseMaintenance
@@ -96,11 +95,6 @@ class WorkflowReleaseActivation:
                 historical_release=True,
                 **evidence,
             )
-            audit = self.maintenance.audit(
-                profile=profile_path,
-                historical_release=True,
-                **evidence,
-            )
             profile = self.maintenance.require_for_admission(
                 profile=profile_path,
                 capability="batch",
@@ -110,24 +104,28 @@ class WorkflowReleaseActivation:
                     profile=profile_path,
                     capability=capability,
                 )
-            retirement = self.retirement.retire(project_config=config_path)
-            self._require_tombstone(
-                control_root=control_root,
+            activation_path = profile_path.parent / ACTIVATION_FILE
+            activation = self._activation_record(
+                activation_path=activation_path,
                 profile_path=profile_path,
                 profile=profile,
+                activated_at=activated_at,
             )
-            activation_path = profile_path.parent / ACTIVATION_FILE
+            self.contracts.validate("workflow-admission-activation", activation)
+            write_json_atomic(activation_path, activation)
+            retirement = self.retirement.retire(project_config=config_path)
+            committed_tombstone = self.retirement.require_committed(
+                root=control_root.resolve(),
+                profile_path=profile_path.resolve(),
+                profile=profile,
+            )
             activation = self._activation_record(
                 activation_path=activation_path,
                 profile_path=profile_path,
                 profile=profile,
                 activated_at=self._ordered_activation_timestamp(
                     requested=activated_at,
-                    retired_at=self._require_tombstone(
-                        control_root=control_root,
-                        profile_path=profile_path,
-                        profile=profile,
-                    )["retired_at"],
+                    retired_at=committed_tombstone["retired_at"],
                 ),
             )
             self.contracts.validate("workflow-admission-activation", activation)
@@ -143,7 +141,7 @@ class WorkflowReleaseActivation:
                 "batch_admission": "profile_backed",
                 "archived_cutover_commands": True,
                 "profile_publication": "published_and_audited",
-                "historical_evidence": audit["historical_evidence"],
+                "historical_evidence": publication["historical_evidence"],
                 "publication_release_id": publication["release_id"],
             }
 
@@ -156,9 +154,9 @@ class WorkflowReleaseActivation:
     ) -> dict[str, Any]:
         root = control_store_root.resolve()
         require_project_admission_open(root)
-        self._require_tombstone(
-            control_root=root,
-            profile_path=profile_path,
+        self.retirement.require_committed(
+            root=root,
+            profile_path=profile_path.resolve(),
             profile=profile,
         )
         activation_path = profile_path.resolve().parent / ACTIVATION_FILE
@@ -189,37 +187,6 @@ class WorkflowReleaseActivation:
             )
         require_project_admission_open(root)
         return activation
-
-    def _require_tombstone(
-        self,
-        *,
-        control_root: Path,
-        profile_path: Path,
-        profile: dict[str, Any],
-    ) -> dict[str, Any]:
-        path = tombstone_path(control_root)
-        try:
-            value = read_json(path)
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            _reject(
-                f"Cutover Authority Tombstone is unavailable or malformed: {exc}",
-                "cutover_authority_tombstone",
-                "cutover_authority_not_retired",
-            )
-        if (
-            not isinstance(value, dict)
-            or value.get("state") != "RETIRED"
-            or value.get("release_id") != profile["release_id"]
-            or value.get("contract_compatibility")
-            != profile["contract_compatibility"]
-            or value.get("profile_path") != str(profile_path.resolve())
-        ):
-            _reject(
-                "Cutover Authority Tombstone conflicts with the selected Profile",
-                "cutover_authority_tombstone",
-                "cutover_authority_tombstone_invalid",
-            )
-        return value
 
     @staticmethod
     def _load_project_config(path: Path) -> dict[str, Any]:

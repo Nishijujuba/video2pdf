@@ -15,7 +15,10 @@ SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from tests.video_workflow._test_run import new_workflow_workspace
+from tests.video_workflow._test_run import (
+    new_workflow_workspace,
+    write_committed_cutover_retirement,
+)
 from video2pdf_workflow_kernel import cli as kernel_cli
 from video2pdf_workflow_kernel.batch_authority import BatchCutoverPublisher
 from video2pdf_workflow_kernel.batch_projection import BatchProjectionProvider
@@ -100,21 +103,8 @@ def _write_batch_project(case_root: Path) -> tuple[Path, Path, Path, Path]:
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     control_root.mkdir(parents=True)
     _write_current_global_gate(control_root)
-    history = control_root / ".workflow-release-history"
-    history.mkdir()
-    (history / "cutover-authority-tombstone.json").write_text(
-        json.dumps(
-            {
-                "state": "RETIRED",
-                "release_id": profile["release_id"],
-                "contract_compatibility": profile["contract_compatibility"],
-                "profile_path": str(profile_path.resolve()),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n",
-        encoding="utf-8",
+    write_committed_cutover_retirement(
+        control_root, profile=profile, profile_path=profile_path
     )
     (config_root / "workflow-admission-activation.v1.json").write_text(
         json.dumps(

@@ -309,7 +309,7 @@ class CutoverAuthorityRetirement:
             profile = WorkflowReleaseProfile(self.project_root).load(profile_path)
             committed = tombstone_path(root)
             if committed.is_file():
-                return self._validate_committed(
+                return self.require_committed(
                     root=root, profile=profile, profile_path=profile_path
                 )
 
@@ -796,17 +796,27 @@ class CutoverAuthorityRetirement:
             if path.is_file():
                 path.chmod(stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
 
-    def _validate_committed(
+    def require_committed(
         self, *, root: Path, profile: dict[str, Any], profile_path: Path
     ) -> dict[str, Any]:
         path = tombstone_path(root)
-        value = read_json(path)
+        try:
+            value = read_json(path)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ContractError(
+                f"Cutover Authority Tombstone is unavailable or malformed: {exc}",
+                data={
+                    "first_failing_gate": "cutover_authority_tombstone",
+                    "error_code": "cutover_authority_not_retired",
+                },
+            ) from exc
         if (
             not isinstance(value, dict)
             or value.get("state") != "RETIRED"
             or value.get("release_id") != profile["release_id"]
             or value.get("contract_compatibility") != profile["contract_compatibility"]
             or value.get("profile_path") != str(profile_path)
+            or not isinstance(value.get("retired_at"), str)
         ):
             self._reject(
                 "Cutover Authority Tombstone conflicts with the selected Profile",
@@ -855,6 +865,7 @@ class CutoverAuthorityRetirement:
             "audit_bundle_path": str(bundle),
             "retirement_record_path": str(record_path),
             "migration_id": value["migration_id"],
+            "retired_at": value["retired_at"],
             "state": "RETIRED",
             "idempotent": True,
             "live_control_store_unchanged": True,

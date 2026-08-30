@@ -15,7 +15,10 @@ from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from tests.video_workflow._test_run import new_case_dir
+from tests.video_workflow._test_run import (
+    new_case_dir,
+    write_committed_cutover_retirement,
+)
 from tests.video_workflow.test_issue13_platform_cutover import (
     _run_cli as _run_platform_cli,
 )
@@ -200,22 +203,10 @@ def _write_start_run_project(case_root: Path) -> tuple[Path, Path, Path]:
         + "\n",
         encoding="utf-8",
     )
-    history = workspace_root / ".workflow-release-history"
-    history.mkdir(parents=True)
+    workspace_root.mkdir(parents=True)
     _write_current_global_gate(workspace_root)
-    (history / "cutover-authority-tombstone.json").write_text(
-        json.dumps(
-            {
-                "state": "RETIRED",
-                "release_id": profile["release_id"],
-                "contract_compatibility": profile["contract_compatibility"],
-                "profile_path": str(profile_path.resolve()),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n",
-        encoding="utf-8",
+    write_committed_cutover_retirement(
+        workspace_root, profile=profile, profile_path=profile_path
     )
     credential = case_root / "private" / "cookies.txt"
     credential.parent.mkdir(parents=True)

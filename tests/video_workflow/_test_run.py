@@ -149,3 +149,58 @@ def child_environment(test_id: str) -> dict[str, str]:
     environment["PYTHONIOENCODING"] = "utf-8"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
+
+
+def write_committed_cutover_retirement(
+    control_root: Path, *, profile: dict[str, object], profile_path: Path
+) -> None:
+    """Materialize the smallest coherent committed-retirement fixture."""
+
+    retired_at = "2026-08-27T00:00:00Z"
+    migration_id = "fixture-profile-activation"
+    history = control_root / ".workflow-release-history"
+    bundle = history / "cutover-authority-retirement" / migration_id
+    (bundle / "original").mkdir(parents=True)
+    record = {
+        "schema_name": "cutover-authority-retirement-record",
+        "schema_version": "1.0.0",
+        "migration_id": migration_id,
+        "state": "RETIRED",
+        "profile": {
+            "path": str(profile_path.resolve()),
+            "release_id": profile["release_id"],
+            "contract_compatibility": profile["contract_compatibility"],
+        },
+        "inventory": [],
+        "dispositions": [],
+        "historical_evidence": [],
+        "live_control_store": {
+            "path": str(control_root / "global-gate-control.sqlite3"),
+            "status": "healthy",
+            "schema_version": 1,
+        },
+        "prepared_at": retired_at,
+        "retired_at": retired_at,
+    }
+    (bundle / "retirement-record.json").write_text(
+        json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    tombstone = {
+        "schema_name": "cutover-authority-tombstone",
+        "schema_version": "1.0.0",
+        "migration_id": migration_id,
+        "state": "RETIRED",
+        "release_id": profile["release_id"],
+        "contract_compatibility": profile["contract_compatibility"],
+        "profile_path": str(profile_path.resolve()),
+        "audit_bundle_path": str(bundle),
+        "capabilities_retired": ["batch", "bilibili", "youtube"],
+        "disposition_counts": {},
+        "historical_limitation_count": 0,
+        "retired_at": retired_at,
+    }
+    (history / "cutover-authority-tombstone.json").write_text(
+        json.dumps(tombstone, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )

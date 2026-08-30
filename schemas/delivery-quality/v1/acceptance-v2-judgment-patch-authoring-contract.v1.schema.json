@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "patch_schema", "output_boundary", "field_ownership", "serialization", "fingerprint"],
+  "properties": {
+    "schema_name": {"const": "acceptance-v2-judgment-patch-authoring-contract"},
+    "schema_version": {"const": "1.0.0"},
+    "patch_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorized_read_logical_id", "schema_name", "schema_version"],
+      "properties": {
+        "authorized_read_logical_id": {"const": "judgment_patch_schema"},
+        "schema_name": {"const": "acceptance-v2-judgment-patch"},
+        "schema_version": {"const": "1.0.0"}
+      }
+    },
+    "output_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_id", "path_pointer", "write_set_pointer"],
+      "properties": {
+        "logical_id": {"const": "judgment_patch"},
+        "path_pointer": {"const": "/required_output/path"},
+        "write_set_pointer": {"const": "/declared_write_set/0/path"}
+      }
+    },
+    "field_ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer_mode", "provider_bound", "reviewer_authored", "mechanically_derived", "optional", "forbidden"],
+      "properties": {
+        "pointer_mode": {"const": "json_pointer_leaf_patterns"},
+        "provider_bound": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/pointer"}},
+        "reviewer_authored": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/pointer"}},
+        "mechanically_derived": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/pointer"}},
+        "optional": {"type": "array", "maxItems": 0},
+        "forbidden": {"const": "any_json_pointer_not_declared_by_patch_schema"}
+      }
+    },
+    "serialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["encoding", "ensure_ascii", "sort_keys", "item_separator", "key_separator", "trailing_newline"],
+      "properties": {
+        "encoding": {"const": "utf-8"},
+        "ensure_ascii": {"const": false},
+        "sort_keys": {"const": true},
+        "item_separator": {"const": ","},
+        "key_separator": {"const": ":"},
+        "trailing_newline": {"const": "required"}
+      }
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "field_pointer", "algorithm", "input"],
+      "properties": {
+        "owner": {"const": "acceptance_v2_provider"},
+        "field_pointer": {"const": "/patch_sha256"},
+        "algorithm": {"const": "sha256"},
+        "input": {"const": "canonical_json_without_patch_sha256"}
+      }
+    }
+  },
+  "$defs": {
+    "pointer": {"type": "string", "pattern": "^/[^ ]+$"}
+  }
+}

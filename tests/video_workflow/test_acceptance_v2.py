@@ -442,6 +442,7 @@ class AcceptanceV2CliTests(unittest.TestCase):
             {"logical_id": "delivery_quality_role_projections", "path": str((PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json")},
             {"logical_id": "role_projection:visual-quality-evaluation", "path": str((PROJECT_ROOT / visual_projection["generated_prompt"]["path"]).resolve()), "sha256": visual_projection["generated_prompt"]["sha256"]},
             {"logical_id": "judgment_patch_schema", "path": str((PROJECT_ROOT / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json")},
+            {"logical_id": "judgment_patch_authoring_contract", "path": str((PROJECT_ROOT / "delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.json").resolve()), "sha256": file_sha(PROJECT_ROOT / "delivery-quality/v1/acceptance-v2-judgment-patch-authoring-contract.v1.json")},
             {"logical_id": "acceptance_review_skeleton", "path": str((execution_root / "acceptance_report.skeleton.json").resolve()), "sha256": file_sha(execution_root / "acceptance_report.skeleton.json")},
             {"logical_id": "acceptance_input_binding", "path": str((execution_root / "input-binding.json").resolve()), "sha256": file_sha(execution_root / "input-binding.json")},
             {"logical_id": "global_gate_authority", "path": str(Path(binding["global_gate_authority"]["path"]).resolve()), "sha256": binding["global_gate_authority"]["file_sha256"]},
@@ -476,26 +477,39 @@ class AcceptanceV2CliTests(unittest.TestCase):
         task_path = next((Path(current["execution_root"]) / "tasks").glob("*/task.json"))
         task = json.loads(task_path.read_text(encoding="utf-8"))
         output = task["required_output"]
-        contract = output["contract"]
+        contract_binding = next(
+            item
+            for item in task["authorized_read_set"]
+            if item["logical_id"] == "judgment_patch_authoring_contract"
+        )
+        self.assertEqual(file_sha(Path(contract_binding["path"])), contract_binding["sha256"])
+        contract = json.loads(Path(contract_binding["path"]).read_text(encoding="utf-8"))
         schema_binding = next(
             item
             for item in task["authorized_read_set"]
-            if item["logical_id"] == "judgment_patch_schema"
+            if item["logical_id"] == contract["patch_schema"]["authorized_read_logical_id"]
         )
-        self.assertEqual(contract["schema"]["path"], schema_binding["path"])
-        self.assertEqual(contract["schema"]["sha256"], schema_binding["sha256"])
         self.assertEqual(file_sha(Path(schema_binding["path"])), schema_binding["sha256"])
         patch_schema = json.loads(Path(schema_binding["path"]).read_text(encoding="utf-8"))
         ownership = contract["field_ownership"]
+        owned_top_level_fields = {
+            pointer.split("/", 2)[1]
+            for category in ("provider_bound", "reviewer_authored", "mechanically_derived")
+            for pointer in ownership[category]
+        }
         self.assertEqual(
             set(patch_schema["required"]),
-            set(ownership["provider_bound"])
-            | set(ownership["reviewer_judgment"])
-            | set(ownership["mechanically_derived"]),
+            owned_top_level_fields,
         )
         self.assertEqual([], ownership["optional"])
-        self.assertEqual("all_fields_not_declared_by_schema", ownership["forbidden"])
+        self.assertEqual("any_json_pointer_not_declared_by_patch_schema", ownership["forbidden"])
         self.assertFalse(patch_schema["additionalProperties"])
+        self.assertIn("/criterion_results/*/criterion_id", ownership["provider_bound"])
+        self.assertIn("/visual_scan_evidence/pages_checked/*/path", ownership["provider_bound"])
+        self.assertIn("/visual_scan_evidence/pages_checked/*/decision", ownership["reviewer_authored"])
+        self.assertEqual(output["path"], task["declared_write_set"][0]["path"])
+        self.assertEqual("/required_output/path", contract["output_boundary"]["path_pointer"])
+        self.assertEqual("/declared_write_set/0/path", contract["output_boundary"]["write_set_pointer"])
 
         skeleton_binding = next(
             item
@@ -509,8 +523,8 @@ class AcceptanceV2CliTests(unittest.TestCase):
             if item["logical_id"].startswith("rendered_page:")
         }
         patch = {
-            "schema_name": contract["schema"]["name"],
-            "schema_version": contract["schema"]["version"],
+            "schema_name": patch_schema["properties"]["schema_name"]["const"],
+            "schema_version": patch_schema["properties"]["schema_version"]["const"],
             "dimension": task["dimension"],
             "task_id": task["task_id"],
             "attempt_id": task["attempt_id"],
@@ -548,7 +562,8 @@ class AcceptanceV2CliTests(unittest.TestCase):
         self.assertEqual("sha256", contract["fingerprint"]["algorithm"])
         self.assertEqual("acceptance_v2_provider", contract["fingerprint"]["owner"])
         self.assertEqual("canonical_json_without_patch_sha256", contract["fingerprint"]["input"])
-        patch[contract["fingerprint"]["field"]] = canonical_sha(patch)
+        fingerprint_field = contract["fingerprint"]["field_pointer"].removeprefix("/")
+        patch[fingerprint_field] = canonical_sha(patch)
         serialization = contract["serialization"]
         self.assertEqual(
             {

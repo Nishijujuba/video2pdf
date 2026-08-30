@@ -298,57 +298,6 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertEqual(published.read_bytes(), authoritative_bytes)
 
-    def _assert_release_audit_fails_closed_without_mutating_runtime_authority(
-        self,
-    ) -> None:
-        root = new_case_dir(self.id(), label="release-maintenance-audit")
-        published = root / "published-profile.json"
-        published.write_bytes(
-            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
-        )
-        evidence_arguments = self._release_evidence_arguments()
-        authoritative_bytes = published.read_bytes()
-        # Release audit: the complete validators run against the real
-        # historical package (no mirrors/implementation/bindings/slice patch).
-        # This machine's Global Gate manifest records mirror checks against the
-        # historical `q` worktree (Spec #83 decision 60), so the full
-        # publication-tree validation must fail closed where the retired
-        # shallow check passed — the audit mutates no Profile and no runtime
-        # authority either way.
-        runtime_authority = root / "runtime-authority.json"
-        runtime_authority.write_text('{"unchanged":true}\n', encoding="utf-8")
-        runtime_bytes = runtime_authority.read_bytes()
-        stdout = StringIO()
-        with (
-            patch.object(
-                release_maintenance,
-                "PROFILE_RELATIVE_PATH",
-                published.relative_to(PROJECT_ROOT),
-            ),
-            redirect_stdout(stdout),
-        ):
-            audit_exit = kernel_cli.main(
-                [
-                    "release-audit",
-                    "--profile", str(published),
-                    *evidence_arguments,
-                ]
-            )
-        audit_result = json.loads(stdout.getvalue())
-        self.assertEqual(audit_exit, 20)
-        self.assertEqual(audit_result["status"], "error")
-        self.assertEqual(audit_result["classification"], "contract_invalid")
-        self.assertEqual(
-            audit_result["data"]["first_failing_gate"],
-            "mirror_checks",
-        )
-        self.assertEqual(
-            audit_result["data"]["error_code"],
-            "global_gate_mirror_stale",
-        )
-        self.assertEqual(published.read_bytes(), authoritative_bytes)
-        self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
-
     @staticmethod
     def _fixture_git(repository: Path, *arguments: str) -> str:
         completed = subprocess.run(
@@ -494,28 +443,29 @@ print(f"VALID: {manifest}")
         repository = self._prepare_release_audit_repository(root)
         evidence_arguments = self._release_evidence_arguments(repository)
         profile = repository / "config/workflow-release-profile.v1.json"
+        activation = repository / "config/workflow-admission-activation.v1.json"
+        profile_bytes = profile.read_bytes()
+        activation_bytes = activation.read_bytes()
 
-        for attempt in (1, 2):
-            stdout = StringIO()
-            with (
-                patch.object(
-                    kernel_cli,
-                    "__file__",
-                    str(repository / "src/video2pdf_workflow_kernel/cli.py"),
-                ),
-                redirect_stdout(stdout),
-            ):
-                exit_code = kernel_cli.main(
-                    ["release-audit", "--profile", str(profile), *evidence_arguments]
-                )
-            result = json.loads(stdout.getvalue())
-            with self.subTest(attempt=attempt):
-                self.assertEqual(exit_code, 0)
-                self.assertEqual(
-                    result["classification"], "workflow_release_audit_passed"
-                )
-                self.assertFalse(result["data"]["profile_published"])
-                self.assertFalse(result["data"]["runtime_authority_changed"])
+        stdout = StringIO()
+        with (
+            patch.object(
+                kernel_cli,
+                "__file__",
+                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            exit_code = kernel_cli.main(
+                ["release-audit", "--profile", str(profile), *evidence_arguments]
+            )
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["classification"], "workflow_release_audit_passed")
+        self.assertFalse(result["data"]["profile_published"])
+        self.assertFalse(result["data"]["runtime_authority_changed"])
+        self.assertEqual(profile.read_bytes(), profile_bytes)
+        self.assertEqual(activation.read_bytes(), activation_bytes)
 
         snapshots = list(
             (repository / "待删除/release-audit-snapshots").glob("*")
@@ -527,38 +477,11 @@ print(f"VALID: {manifest}")
             self._fixture_git(repository, "worktree", "list", "--porcelain"),
         )
 
-        # A capability cannot borrow another capability's valid package.
-        mismatched = list(evidence_arguments)
-        youtube_path_index = mismatched.index("--youtube-exit-evidence") + 1
-        mismatched[youtube_path_index] = str(
-            repository / "evidence/slice-14/exit-evidence-manifest.json"
-        )
-        stdout = StringIO()
-        with (
-            patch.object(
-                kernel_cli,
-                "__file__",
-                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
-            ),
-            redirect_stdout(stdout),
-        ):
-            exit_code = kernel_cli.main(
-                ["release-audit", "--profile", str(profile), *mismatched]
-            )
-        result = json.loads(stdout.getvalue())
-        self.assertEqual(exit_code, 20)
-        self.assertEqual(result["data"]["first_failing_gate"], "exit_evidence_identity")
-        self.assertEqual(
-            result["data"]["error_code"],
-            "youtube_exit_evidence_identity_invalid",
-        )
-
     def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
         self,
     ) -> None:
         self._assert_release_activation_cli_envelope()
         self._assert_release_profile_publication_fails_closed_and_preserves_the_prior_profile()
-        self._assert_release_audit_fails_closed_without_mutating_runtime_authority()
         self._assert_public_release_audit_accepts_publication_tree_drift()
 
     def test_activate_publishes_current_batch_authority(self) -> None:

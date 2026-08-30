@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterator, TypeVar
 from .acceptance_v2 import AcceptanceV2Provider
 from .contracts import ContractRegistry
 from .control_store import ControlStore
+from .delivery_authority import DeliveryTransitionAuthority
 from .errors import (
     ArtifactDrift,
     CliUsageError,
@@ -671,7 +672,7 @@ class DeliveryLifecycleProvider:
                     "global_gate_authority",
                     "delivery_global_gate_binding_invalid",
                 )
-            BilibiliPlatformCutoverPublisher().authorize_delivery_transition(
+            DeliveryTransitionAuthority(self.repository_root).require_current(
                 platform=run_record["canonical_platform"],
                 control_store_root=Path(committed_gate["path"]).resolve().parent,
                 run_dir=run_dir,

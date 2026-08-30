@@ -76,7 +76,7 @@ The completed cutover lifecycle followed `PREPARED` -> `INITIALIZED` -> `source_
 
 ## Workflow Release Profile
 
-The single atomic, versioned, repository-owned machine-readable authority that declares which completed Workflow 2.0 releases are available to ordinary Runs. It binds contract-compatibility identities rather than a Git commit or tag and partitions the coherent release state by Global Gate, platform, and Batch capability. It contains no historical Exit Evidence path, fingerprint, or lineage reference. Ordinary admission validates the Profile and its compatibility with the running workflow contracts. Complete historical Exit Evidence validation runs only as a Profile-publication gate or an explicit release-maintenance audit; it carries no continuing ordinary-run admission authority.
+The single atomic, versioned, repository-owned machine-readable authority that declares which completed Workflow 2.0 releases are available to ordinary Runs. It carries no Run, Claim, Lease, output binding, fencing, Mutation Intent, promotion, Batch coordination, delivery, or current-PDF quality authority; the Cross-Run Control Store and Delivery Quality keep their own live authority. It binds contract-compatibility identities rather than a Git commit or tag and partitions the coherent release state by Global Gate, platform, and Batch capability. It contains no historical Exit Evidence path, fingerprint, or lineage reference. Ordinary admission validates the Profile and its compatibility with the running workflow contracts. Complete historical Exit Evidence validation runs only as a Profile-publication gate or an explicit release-maintenance audit; it carries no continuing ordinary-run admission authority.
 
 ## Retired Cutover Authority State
 
@@ -89,6 +89,18 @@ The project-local migration record that binds one Workflow Release Profile to th
 ## Cutover Authority Tombstone
 
 The project-local terminal marker showing that retired cutover state was archived under one Cutover Authority Retirement Record and cannot be recreated through old cutover commands. Ordinary single-video and Batch admission require its identity to match the current Workflow Release Profile.
+
+## Release Maintenance
+
+The repository-owned module that owns complete historical Exit Evidence validation. It exposes two public interfaces: a Profile publication gate that validates the complete applicable Global Gate, platform, and Batch release package before atomically publishing or replacing the Workflow Release Profile, and an explicit release audit that validates the same historical evidence without publishing a Profile, changing ordinary admission, or mutating live runtime authority. Historical validation remains local to this module and never becomes an ordinary-admission dependency.
+
+## Profile Publication Gate
+
+The release-maintenance candidate-publication gate. It validates the candidate Workflow Release Profile and the complete applicable Global Gate, Bilibili, YouTube, and Batch release package before any Profile write. A failed candidate publication returns a machine-readable failure and preserves the previously published compatible Profile byte-for-byte as the authoritative Profile.
+
+## Release Audit
+
+The explicit release-maintenance audit operation. It validates historical release evidence at its publication commit without publishing a Profile, changing ordinary admission, or mutating live runtime authority.
 
 ## Contract Schema Version
 

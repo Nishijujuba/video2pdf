@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+import re
+import subprocess
+import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, Iterator
 
 from .errors import ContractError
 from .cutover_retirement import project_maintenance_fence
-from .evidence import EvidenceSupportError, git_output
+from .evidence import (
+    EvidenceSupportError,
+    clone_shared_repository,
+    git_output,
+)
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
@@ -24,6 +31,182 @@ EXPECTED_EVIDENCE_SLICES = {
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},
     "batch": {"number": 14, "name": "batch-projection-cutover"},
 }
+
+_PUBLICATION_VALIDATOR_RUNNER = """\
+from pathlib import Path
+import inspect
+import json
+import os
+import runpy
+import sys
+
+namespace = runpy.run_path(sys.argv[1])
+validator = namespace["validate_manifest"]
+if "verify_at" not in inspect.signature(validator).parameters:
+    snapshot_root = Path(sys.argv[1]).resolve().parents[1]
+    manifest_path = Path(sys.argv[2]).resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    authority_roots = []
+    identity_roots = []
+    identity_records = []
+    slice_number = manifest.get("slice", {}).get("number")
+    if slice_number == 11:
+        identity_records.extend(
+            command.get("persisted_run", {}).get("command_record", {}).get("path")
+            for command in manifest.get("commands", ())
+        )
+    if slice_number == 12:
+        identity_records.append(
+            manifest.get("guarded_delivery_evidence", {})
+            .get("qualification_run", {})
+            .get("command_record", {})
+            .get("path")
+        )
+    for relative in identity_records:
+        if not isinstance(relative, str) or Path(relative).is_absolute():
+            continue
+        record_path = snapshot_root / relative
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        cwd = record.get("cwd")
+        if isinstance(cwd, str) and Path(cwd).is_absolute():
+            identity_roots.append(Path(cwd))
+
+    def add_authority_root(recorded, relative, label):
+        if not isinstance(recorded, str) or not Path(recorded).is_absolute():
+            return
+        relative_parts = Path(relative).parts
+        recorded_path = Path(recorded)
+        if tuple(
+            os.path.normcase(part)
+            for part in recorded_path.parts[-len(relative_parts):]
+        ) != tuple(os.path.normcase(part) for part in relative_parts):
+            print(
+                "INVALID: first_failing_gate=historical_evidence; "
+                "error_code=historical_evidence_location_inconsistent; "
+                f"recorded {label} path contradicts publication authority",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        root = recorded_path
+        for _ in relative_parts:
+            root = root.parent
+        authority_roots.append(root)
+
+    global_validator = namespace.get("validate_global_gate_exit_evidence")
+    if global_validator is not None:
+        mirror_specs = global_validator.__globals__.get("MIRROR_SPECS", ())
+        for check, spec in zip(manifest.get("mirror_checks", ()), mirror_specs):
+            for field, relative in (
+                ("source_path", spec[0]),
+                ("mirror_path", spec[1]),
+            ):
+                add_authority_root(check.get(field), relative, "mirror")
+
+    if slice_number == 12:
+        guarded = manifest.get("guarded_delivery_evidence", {})
+        collection_relative = guarded.get("collection", {}).get("path")
+        if isinstance(collection_relative, str) and not Path(collection_relative).is_absolute():
+            try:
+                collection = json.loads(
+                    (snapshot_root / collection_relative).read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                collection = {}
+            collection_artifacts = collection.get("artifacts", {})
+            for artifact in guarded.get("artifacts", ()):
+                role = artifact.get("role")
+                collected = collection_artifacts.get(role, {})
+                add_authority_root(
+                    collected.get("path"),
+                    artifact.get("path", ""),
+                    "guarded-delivery artifact",
+                )
+
+    roots_by_identity = {
+        os.path.normcase(os.path.normpath(str(root))): root
+        for root in (*authority_roots, *identity_roots)
+    }
+    if identity_roots and not authority_roots:
+        print(
+            "INVALID: first_failing_gate=historical_evidence; "
+            "error_code=historical_evidence_location_inconsistent; "
+            "historical project root lacks independent publication authority",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if len(roots_by_identity) > 1:
+        print(
+            "INVALID: first_failing_gate=historical_evidence; "
+            "error_code=historical_evidence_location_inconsistent; "
+            "publication evidence does not bind one historical project root",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if not roots_by_identity:
+        raise SystemExit(namespace["main"]([sys.argv[2]]))
+    original_root = next(iter(roots_by_identity.values()))
+
+    def relocate(node):
+        if isinstance(node, dict):
+            return {key: relocate(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [relocate(value) for value in node]
+        if not isinstance(node, str) or not Path(node).is_absolute():
+            return node
+        candidate = Path(node)
+        try:
+            relative = candidate.relative_to(original_root)
+        except ValueError:
+            return node
+        return str(snapshot_root / relative)
+
+    class RelocatingJson:
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(value, *args, **kwargs):
+            return relocate(json.loads(value, *args, **kwargs))
+
+        @staticmethod
+        def load(value, *args, **kwargs):
+            return relocate(json.load(value, *args, **kwargs))
+
+    relocating_json = RelocatingJson()
+    namespace["json"] = relocating_json
+    validator.__globals__["json"] = relocating_json
+    namespace["main"].__globals__["json"] = relocating_json
+    for module in tuple(sys.modules.values()):
+        module_file = getattr(module, "__file__", None)
+        if not isinstance(module_file, str):
+            continue
+        try:
+            Path(module_file).resolve().relative_to(snapshot_root)
+        except (OSError, ValueError):
+            continue
+        if getattr(module, "json", None) is json:
+            module.json = relocating_json
+    raise SystemExit(namespace["main"]([sys.argv[2]]))
+try:
+    validator(
+        Path(sys.argv[2]).resolve(),
+        schema_only=False,
+        pre_publication=False,
+        verify_at="publication",
+    )
+except namespace["EvidenceError"] as exc:
+    print(
+        "INVALID: "
+        f"first_failing_gate={exc.first_failing_gate}; "
+        f"error_code={exc.error_code}; {exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print(f"VALID: {Path(sys.argv[2]).resolve()}")
+"""
 
 
 def _reject(message: str, gate: str, code: str) -> None:
@@ -164,12 +347,19 @@ class ReleaseMaintenance:
     def _validate_historical_release_package(
         self, **paths: Path
     ) -> dict[str, Any]:
-        """Audit immutable release evidence at its publication commit."""
+        """Audit the complete release package against its publication tree.
 
-        expected = {
-            "global_gate": {"number": 11, "name": "global-acceptance-v2-gate"},
-            **EXPECTED_EVIDENCE_SLICES,
-        }
+        The package is validated with the same full validator set as candidate
+        publication, executed inside a retained repository snapshot of each
+        publication commit: every file-content gate (schema registry, schema,
+        slice constants, mirror files, command logs, persisted terminal
+        artifacts, guarded-delivery reports) reads the publication state,
+        never the drifting worktree. A valid historical package therefore
+        cannot be rejected because current files moved or evolved, and an
+        incomplete or tampered manifest cannot pass on shallow git checks
+        alone.
+        """
+
         evidence: dict[str, Any] = {}
         for capability in ("global_gate", "bilibili", "youtube", "batch"):
             path = paths[capability].resolve()
@@ -194,7 +384,6 @@ class ReleaseMaintenance:
                     "--",
                     relative,
                 )
-                implementation = str(value["implementation_commit"])
                 publication = git_output(
                     self.project_root,
                     "log",
@@ -204,26 +393,10 @@ class ReleaseMaintenance:
                     "--",
                     relative,
                 )
-                parents = git_output(
-                    self.project_root,
-                    "rev-list",
-                    "--parents",
-                    "-n",
-                    "1",
-                    publication,
-                ).split()
-                git_output(
-                    self.project_root,
-                    "merge-base",
-                    "--is-ancestor",
-                    implementation,
-                    publication,
-                )
             except (
                 OSError,
                 UnicodeError,
                 json.JSONDecodeError,
-                KeyError,
                 EvidenceSupportError,
                 TypeError,
             ) as exc:
@@ -232,24 +405,171 @@ class ReleaseMaintenance:
                     "historical_evidence",
                     f"{capability}_exit_evidence_invalid",
                 )
-            if (
-                value.get("slice") != expected[capability]
-                or value.get("overall_decision") != "pass"
-                or head_blob != worktree_blob
-                or len(parents) != 2
-                or parents[1] != implementation
-            ):
+            if head_blob != worktree_blob:
                 _reject(
-                    f"{capability} historical Exit Evidence publication is stale",
+                    f"{capability} historical Exit Evidence is uncommitted or dirty",
                     "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
+            implementation_commit = value.get("implementation_commit")
+            if not isinstance(implementation_commit, str):
+                _reject(
+                    f"{capability} historical Exit Evidence lacks an implementation commit",
+                    "exit_evidence_schema",
                     f"{capability}_exit_evidence_invalid",
                 )
             evidence[capability] = {
                 "path": str(path),
                 "publication_commit": publication,
-                "implementation_commit": implementation,
+                "implementation_commit": implementation_commit,
             }
+
+        for capability, item in evidence.items():
+            relative = Path(item["path"]).relative_to(self.project_root).as_posix()
+            with self._publication_snapshot(
+                item["publication_commit"],
+                capability,
+            ) as snapshot:
+                target = snapshot / relative
+                validator_script = snapshot / "scripts" / "validate_slice_exit_evidence.py"
+                try:
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            "-X",
+                            "utf8",
+                            "-B",
+                            "-c",
+                            _PUBLICATION_VALIDATOR_RUNNER,
+                            str(validator_script),
+                            str(target),
+                        ],
+                        cwd=snapshot,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=600,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    _reject(
+                        f"{capability} historical publication validator is unavailable: {exc}",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
+                if completed.returncode == 0:
+                    self._require_clean_snapshot(snapshot, capability)
+                    continue
+                gate, code = self._parse_validator_failure(completed.stderr)
+                if gate is None or code is None:
+                    _reject(
+                        f"{capability} historical release package is invalid",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
+                _reject(
+                    f"{capability} historical release package is invalid: "
+                    f"{completed.stderr.strip()[:400]}",
+                    gate,
+                    code,
+                )
         return evidence
+
+    @staticmethod
+    def _parse_validator_failure(stderr: str) -> tuple[str | None, str | None]:
+        """Extract the stable gate/code pair from the validator CLI failure line."""
+        text = stderr.replace("\n", " ")
+        match = re.search(
+            r"first_failing_gate=([^;]+); error_code=([^;]+)",
+            text,
+        )
+        if match is None:
+            return None, None
+        return match.group(1).strip(), match.group(2).strip()
+
+    @contextmanager
+    def _publication_snapshot(
+        self,
+        publication: str,
+        capability: str,
+    ) -> Iterator[Path]:
+        """Reusable repository snapshot of one publication commit.
+
+        The snapshot is a local shared clone of the immutable publication commit, so
+        the publication-era validator (scripts/validate_slice_exit_evidence.py
+        as published in that tree) observes the publication state for every
+        check, including contract registries, slice constants, mirror files,
+        persisted qualification artifacts, and guarded-delivery reports.
+        Snapshots remain under the repository 待删除 staging area for manual
+        cleanup and are never registered as linked worktrees of the source
+        repository.
+        """
+        if not re.fullmatch(r"[0-9a-f]{40}", publication):
+            _reject(
+                f"{capability} historical publication identity is invalid",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        snapshot_root = self.project_root / "待删除" / "release-audit-snapshots"
+        snapshot_dir = snapshot_root / publication
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        if not snapshot_dir.exists():
+            try:
+                clone_shared_repository(self.project_root, snapshot_dir)
+                git_output(snapshot_dir, "config", "core.autocrlf", "false")
+                git_output(snapshot_dir, "config", "core.longpaths", "true")
+                git_output(snapshot_dir, "checkout", "--detach", publication)
+            except EvidenceSupportError as exc:
+                _reject(
+                    f"{capability} historical publication snapshot is unavailable: {exc}",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
+                )
+        else:
+            self._require_clean_snapshot(snapshot_dir, capability)
+            sparse_file = snapshot_dir / ".git" / "info" / "sparse-checkout"
+            if sparse_file.is_file():
+                try:
+                    git_output(snapshot_dir, "sparse-checkout", "disable")
+                except EvidenceSupportError as exc:
+                    _reject(
+                        f"{capability} historical publication snapshot cannot materialize: {exc}",
+                        "historical_evidence",
+                        f"{capability}_exit_evidence_invalid",
+                    )
+        try:
+            snapshot_head = git_output(snapshot_dir, "rev-parse", "HEAD")
+        except EvidenceSupportError as exc:
+            _reject(
+                f"{capability} historical publication snapshot is invalid: {exc}",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        if snapshot_head != publication:
+            _reject(
+                f"{capability} historical publication snapshot has the wrong commit",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        self._require_clean_snapshot(snapshot_dir, capability)
+        yield snapshot_dir
+
+    def _require_clean_snapshot(self, snapshot: Path, capability: str) -> None:
+        try:
+            status = git_output(
+                snapshot, "status", "--porcelain", "--untracked-files=all"
+            )
+        except EvidenceSupportError as exc:
+            _reject(
+                f"{capability} historical publication snapshot cannot be inspected: {exc}",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        if status:
+            _reject(
+                f"{capability} historical publication snapshot is dirty",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
         global_gate = paths.pop("global_gate").resolve()
@@ -257,7 +577,7 @@ class ReleaseMaintenance:
             validated_global_gate = validate_global_gate_exit_evidence(
                 global_gate,
                 project_root=self.project_root,
-                require_current_publication=False,
+                purpose="candidate_publication",
             )
         except ExitEvidenceValidationError as exc:
             _reject(str(exc), exc.first_failing_gate, exc.error_code)
@@ -318,6 +638,10 @@ class ReleaseMaintenance:
                 "exit_evidence_schema",
                 f"{capability}_exit_evidence_invalid",
             )
+        self._require_evidence_identity(value, capability)
+
+    @staticmethod
+    def _require_evidence_identity(value: dict[str, Any], capability: str) -> None:
         if value.get("slice") != EXPECTED_EVIDENCE_SLICES[capability]:
             _reject(
                 f"{capability} Exit Evidence has the wrong release identity",

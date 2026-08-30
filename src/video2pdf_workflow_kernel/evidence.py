@@ -136,6 +136,37 @@ def git_output(project_root: Path, *arguments: str) -> str:
         ) from exc
 
 
+def clone_shared_repository(project_root: Path, destination: Path) -> None:
+    """Create a no-checkout local clone through the trusted Git boundary."""
+    root = project_root.resolve()
+    _run_git(root, ("rev-parse", "HEAD"))
+    git_executable = _trusted_git_executable()
+    environment = {
+        key: os.environ[key]
+        for key in ("SYSTEMROOT", "WINDIR")
+        if key in os.environ
+    }
+    completed = subprocess.run(
+        [
+            str(git_executable),
+            "clone",
+            "--shared",
+            "--no-checkout",
+            str(root),
+            str(destination.resolve()),
+        ],
+        cwd=root,
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+    if completed.returncode != 0:
+        message = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise EvidenceSupportError(
+            f"git clone --shared --no-checkout failed: {message or 'git command failed'}"
+        )
+
+
 def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:
     canonical_path = _canonical_git_path(path)
     raw = _run_git(
@@ -143,6 +174,25 @@ def sha256_git_blob(project_root: Path, commit: str, path: str) -> str:
         ("cat-file", "blob", f"{commit}:{canonical_path}"),
     )
     return hashlib.sha256(raw).hexdigest()
+
+
+def git_blob_bytes(project_root: Path, commit: str, path: str) -> bytes:
+    """Read one blob from a committed tree as raw bytes.
+
+    Blob reads are the immutable publication-tree counterpart of worktree file
+    reads: a release audit anchored at a publication commit never depends on
+    later worktree drift.
+    """
+    canonical_path = _canonical_git_path(path)
+    try:
+        return _run_git(
+            project_root,
+            ("cat-file", "blob", f"{commit}:{canonical_path}"),
+        )
+    except EvidenceSupportError as exc:
+        raise EvidenceSupportError(
+            f"git blob {commit}:{canonical_path} is unavailable: {exc}"
+        ) from exc
 
 
 def _sha256_gitlink(object_id: str) -> str:

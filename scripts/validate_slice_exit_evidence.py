@@ -38,8 +38,9 @@ from video2pdf_workflow_kernel.guarded_delivery import (
 from video2pdf_workflow_kernel.evidence import (
     EvidenceSupportError,
     fingerprint_implementation_changes,
-    implementation_change_tombstones,
+    git_blob_bytes,
     git_output,
+    implementation_change_tombstones,
     sha256_file,
     sha256_git_blob,
 )
@@ -483,6 +484,30 @@ def resolve_project_path(value: str) -> Path:
     return path
 
 
+def _evidence_path_bytes(path: Path, anchor: str | None) -> bytes:
+    """Read persisted evidence bytes from the worktree or a publication tree."""
+    if anchor is None:
+        return path.read_bytes()
+    relative = path.relative_to(PROJECT_ROOT).as_posix()
+    try:
+        return git_blob_bytes(PROJECT_ROOT, anchor, relative)
+    except EvidenceSupportError as exc:
+        raise EvidenceError(str(exc)) from exc
+
+
+def _tree_path_present(path: Path, anchor: str) -> bool:
+    """True when the resolved path is present in the publication tree."""
+    try:
+        git(
+            "cat-file",
+            "-e",
+            f"{anchor}:{path.relative_to(PROJECT_ROOT.resolve()).as_posix()}",
+        )
+    except EvidenceError:
+        return False
+    return True
+
+
 def resolve_slice13_project_path(value: str) -> Path:
     """Resolve a Slice 13 evidence path under the closed repo-relative contract.
 
@@ -639,7 +664,9 @@ def slice_config(manifest: dict[str, Any]) -> dict[str, Any]:
         raise EvidenceError(f"unsupported Slice Exit Evidence number: {number}") from exc
 
 
-def validate_issue43_cutover(manifest: dict[str, Any]) -> None:
+def validate_issue43_cutover(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
     if manifest.get("slice", {}).get("number") != 11:
         return
 
@@ -683,16 +710,31 @@ def validate_issue43_cutover(manifest: dict[str, Any]) -> None:
     ):
         source = (PROJECT_ROOT / source_relative).resolve()
         mirror = (PROJECT_ROOT / mirror_relative).resolve()
-        source_sha256 = sha256_file(source)
-        mirror_sha256 = sha256_file(mirror)
-        if (
-            check.get("source_path") != str(source)
-            or check.get("mirror_path") != str(mirror)
-            or check.get("source_sha256") != source_sha256
-            or check.get("mirror_sha256") != mirror_sha256
-            or check.get("status") != "equal"
-            or source_sha256 != mirror_sha256
-        ):
+        if anchor is None:
+            source_sha256 = sha256_file(source)
+            mirror_sha256 = sha256_file(mirror)
+            stale = (
+                check.get("source_path") != str(source)
+                or check.get("mirror_path") != str(mirror)
+                or check.get("source_sha256") != source_sha256
+                or check.get("mirror_sha256") != mirror_sha256
+                or check.get("status") != "equal"
+                or source_sha256 != mirror_sha256
+            )
+        else:
+            source_sha256 = hashlib.sha256(
+                _evidence_path_bytes(source, anchor)
+            ).hexdigest()
+            mirror_sha256 = hashlib.sha256(
+                _evidence_path_bytes(mirror, anchor)
+            ).hexdigest()
+            stale = (
+                check.get("source_sha256") != source_sha256
+                or check.get("mirror_sha256") != mirror_sha256
+                or check.get("status") != "equal"
+                or source_sha256 != mirror_sha256
+            )
+        if stale:
             raise EvidenceError(
                 f"Global Gate mirror check is stale: {source_relative}",
                 first_failing_gate="mirror_checks",
@@ -755,7 +797,9 @@ def validate_issue43_cutover(manifest: dict[str, Any]) -> None:
         )
 
 
-def validate_issue13_cutover(manifest: dict[str, Any]) -> None:
+def validate_issue13_cutover(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
     if manifest.get("slice", {}).get("number") != 12:
         return
     if manifest.get("activation_scope") != ISSUE13_ACTIVATION_SCOPE:
@@ -828,7 +872,9 @@ def validate_issue13_cutover(manifest: dict[str, Any]) -> None:
         )
 
 
-def validate_issue14_cutover(manifest: dict[str, Any]) -> None:
+def validate_issue14_cutover(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
     if manifest.get("slice", {}).get("number") != 13:
         return
     if manifest.get("activation_scope") != ISSUE14_ACTIVATION_SCOPE:
@@ -902,7 +948,10 @@ def validate_issue14_cutover(manifest: dict[str, Any]) -> None:
 
 
 def validate_batch_exit_evidence(
-    manifest: Path | dict[str, Any], *, project_root: Path = PROJECT_ROOT
+    manifest: Path | dict[str, Any],
+    *,
+    project_root: Path = PROJECT_ROOT,
+    anchor: str | None = None,
 ) -> dict[str, Any]:
     """Validate the closed Batch projection cutover (Slice 14) exit evidence.
 
@@ -976,16 +1025,31 @@ def validate_batch_exit_evidence(
     ):
         source = (project_root / source_relative).resolve()
         mirror = (project_root / mirror_relative).resolve()
-        source_sha256 = sha256_file(source)
-        mirror_sha256 = sha256_file(mirror)
-        if (
-            check.get("source_path") != source_relative
-            or check.get("mirror_path") != mirror_relative
-            or check.get("source_sha256") != source_sha256
-            or check.get("mirror_sha256") != mirror_sha256
-            or check.get("status") != "equal"
-            or source_sha256 != mirror_sha256
-        ):
+        if anchor is None:
+            source_sha256 = sha256_file(source)
+            mirror_sha256 = sha256_file(mirror)
+            stale = (
+                check.get("source_path") != source_relative
+                or check.get("mirror_path") != mirror_relative
+                or check.get("source_sha256") != source_sha256
+                or check.get("mirror_sha256") != mirror_sha256
+                or check.get("status") != "equal"
+                or source_sha256 != mirror_sha256
+            )
+        else:
+            source_sha256 = hashlib.sha256(
+                _evidence_path_bytes(source, anchor)
+            ).hexdigest()
+            mirror_sha256 = hashlib.sha256(
+                _evidence_path_bytes(mirror, anchor)
+            ).hexdigest()
+            stale = (
+                check.get("source_sha256") != source_sha256
+                or check.get("mirror_sha256") != mirror_sha256
+                or check.get("status") != "equal"
+                or source_sha256 != mirror_sha256
+            )
+        if stale:
             raise EvidenceError(
                 f"Batch mirror check is stale: {source_relative}",
                 first_failing_gate="mirror_checks",
@@ -1079,7 +1143,9 @@ def validate_batch_exit_evidence(
                     error_code="batch_evidence_invalid",
                 ) from exc
             try:
-                decoded = json.loads(resolved.read_text(encoding="utf-8"))
+                decoded = json.loads(
+                    _evidence_path_bytes(resolved, anchor).decode("utf-8")
+                )
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 raise EvidenceError(
                     f"Batch {label} binding cannot be decoded",
@@ -1088,7 +1154,8 @@ def validate_batch_exit_evidence(
                 ) from exc
             if (
                 not isinstance(decoded, dict)
-                or binding.get("sha256") != sha256_file(resolved)
+                or binding.get("sha256")
+                != hashlib.sha256(_evidence_path_bytes(resolved, anchor)).hexdigest()
             ):
                 raise EvidenceError(
                     f"Batch {label} binding is stale",
@@ -1119,11 +1186,18 @@ def validate_batch_exit_evidence(
                 error_code="batch_collection_mismatch",
             )
 
+        def _contract_sha256(path: Path) -> str:
+            if anchor is None:
+                return sha256_file(path)
+            return hashlib.sha256(
+                _evidence_path_bytes(path.resolve(), anchor)
+            ).hexdigest()
+
         expected_contract_hashes = {
-            "batch_record_contract_sha256": sha256_file(
+            "batch_record_contract_sha256": _contract_sha256(
                 project_root / "schemas/video-workflow/v5/batch-record.v1.schema.json"
             ),
-            "batch_item_projection_contract_sha256": sha256_file(
+            "batch_item_projection_contract_sha256": _contract_sha256(
                 project_root / "schemas/video-workflow/v5/batch-item-projection.v1.schema.json"
             ),
         }
@@ -1222,12 +1296,16 @@ def validate_batch_exit_evidence(
     return value
 
 
-def validate_semantics(manifest: dict[str, Any]) -> None:
-    validate_issue43_cutover(manifest)
-    validate_issue13_cutover(manifest)
-    validate_issue14_cutover(manifest)
+def validate_semantics(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
+    validate_issue43_cutover(manifest, anchor=anchor)
+    validate_issue13_cutover(manifest, anchor=anchor)
+    validate_issue14_cutover(manifest, anchor=anchor)
     if manifest.get("slice", {}).get("number") == 14:
-        validate_batch_exit_evidence(manifest, project_root=PROJECT_ROOT)
+        validate_batch_exit_evidence(
+            manifest, project_root=PROJECT_ROOT, anchor=anchor
+        )
     commands = manifest["commands"]
     identities = [command["test_id"] for command in commands]
     if len(identities) != len(set(identities)):
@@ -1375,7 +1453,7 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
                 first_failing_gate="qualification_result_binding",
                 error_code="result_binding_authority_stale",
             )
-    validate_platform_smokes(manifest, config)
+    validate_platform_smokes(manifest, config, anchor=anchor)
     derived_pass = (
         all(command["conforms"] for command in commands)
         and all(manifest["results"][kind] for kind in config["result_kinds"])
@@ -1388,7 +1466,7 @@ def validate_semantics(manifest: dict[str, Any]) -> None:
 
 
 def validate_platform_smokes(
-    manifest: dict[str, Any], config: dict[str, Any]
+    manifest: dict[str, Any], config: dict[str, Any], *, anchor: str | None = None
 ) -> None:
     expected_specs = config.get("platform_smoke_specs")
     provided = manifest.get("platform_smokes")
@@ -1522,24 +1600,30 @@ def _decode_persisted_run_evidence(
     qualification: dict[str, Any],
     *,
     issue_label: str,
+    anchor: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], int]:
     try:
         command_record = json.loads(
-            resolve_project_path(qualification["command_record"]["path"]).read_text(
-                encoding="utf-8"
-            )
+            _evidence_path_bytes(
+                resolve_project_path(qualification["command_record"]["path"]),
+                anchor,
+            ).decode("utf-8")
         )
         terminal_status = json.loads(
-            resolve_project_path(qualification["terminal_status"]["path"]).read_text(
-                encoding="utf-8"
-            )
+            _evidence_path_bytes(
+                resolve_project_path(qualification["terminal_status"]["path"]),
+                anchor,
+            ).decode("utf-8")
         )
         exit_code = int(
-            resolve_project_path(qualification["exit_code"]["path"])
-            .read_text(encoding="utf-8")
+            _evidence_path_bytes(
+                resolve_project_path(qualification["exit_code"]["path"]),
+                anchor,
+            )
+            .decode("utf-8")
             .strip()
         )
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, EvidenceSupportError) as exc:
         raise EvidenceError(
             f"{issue_label} persisted qualification evidence cannot be decoded",
             first_failing_gate="guarded_delivery_evidence",
@@ -1553,11 +1637,12 @@ def _validate_slice12_guarded_qualification(
     *,
     issue_commands: tuple,
     issue_label: str,
+    anchor: str | None = None,
 ) -> None:
     guarded = manifest["guarded_delivery_evidence"]
     qualification = guarded["qualification_run"]
     command_record, terminal_status, exit_code = _decode_persisted_run_evidence(
-        qualification, issue_label=issue_label
+        qualification, issue_label=issue_label, anchor=anchor
     )
     expected_argv = list(issue_commands[1][1])
     recorded_argv = command_record.get("argv")
@@ -1609,6 +1694,7 @@ def _validate_slice13_guarded_qualification(
     *,
     issue_commands: tuple,
     issue_label: str,
+    anchor: str | None = None,
 ) -> None:
     """Validate every closed command's persisted qualification run.
 
@@ -1648,7 +1734,7 @@ def _validate_slice13_guarded_qualification(
                 error_code="guarded_delivery_qualification_invalid",
             )
         command_record, terminal_status, exit_code = _decode_persisted_run_evidence(
-            persisted, issue_label=issue_label
+            persisted, issue_label=issue_label, anchor=anchor
         )
         recorded_argv = command_record.get("argv")
         interpreter_path = (
@@ -1716,7 +1802,11 @@ def _validate_slice13_guarded_qualification(
                 error_code="guarded_delivery_qualification_identity_stale",
             )
         log_path = resolve_slice13_project_path(entry["log"]["path"])
-        if not log_path.is_file():
+        if anchor is None:
+            log_present = log_path.is_file()
+        else:
+            log_present = _tree_path_present(log_path, anchor)
+        if not log_present:
             raise EvidenceError(
                 f"{issue_label} qualification command log is missing: {command_id}",
                 first_failing_gate="guarded_delivery_evidence",
@@ -1727,7 +1817,7 @@ def _validate_slice13_guarded_qualification(
                 "ascii"
             )
         )
-        log_lines = log_path.read_bytes().splitlines()
+        log_lines = _evidence_path_bytes(log_path, anchor).splitlines()
         if sum(1 for line in log_lines if line == marker) != 1:
             raise EvidenceError(
                 f"{issue_label} qualification command log marker is missing, duplicated, or stale: {command_id}",
@@ -1739,7 +1829,9 @@ def _validate_slice13_guarded_qualification(
             or isinstance(entry.get("published_log_sha256"), str)
         ):
             _validate_command_log_source_chain(
-                entry, implementation_commit=implementation_commit
+                entry,
+                implementation_commit=implementation_commit,
+                anchor=anchor,
             )
 
 
@@ -1748,6 +1840,7 @@ def _validate_guarded_delivery_qualification(
     *,
     issue_commands: tuple,
     issue_label: str,
+    anchor: str | None = None,
 ) -> None:
     """Shared guarded-delivery decision and qualification authority for
     platform cutover slices (12 Bilibili, 13 YouTube)."""
@@ -1773,19 +1866,30 @@ def _validate_guarded_delivery_qualification(
         ) from exc
     if manifest.get("slice", {}).get("number") == 12:
         _validate_slice12_guarded_qualification(
-            manifest, issue_commands=issue_commands, issue_label=issue_label
+            manifest,
+            issue_commands=issue_commands,
+            issue_label=issue_label,
+            anchor=anchor,
         )
         return
     _validate_slice13_guarded_qualification(
-        manifest, issue_commands=issue_commands, issue_label=issue_label
+        manifest,
+        issue_commands=issue_commands,
+        issue_label=issue_label,
+        anchor=anchor,
     )
 
 
-def _validate_slice13_evidence_paths(manifest: dict[str, Any]) -> None:
+def _validate_slice13_evidence_paths(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
     """Enforce the repo-relative Slice 13 evidence path contract.
 
     Every declared evidence path, guarded artifact binding, and persisted-run
     artifact must be project-relative, stay inside the repository, and exist.
+    At a publication anchor, existence means membership in the immutable
+    publication tree: published evidence files may legitimately be absent from
+    the validating worktree (for example archived 待删除 long-running logs).
     """
     guarded = manifest.get("guarded_delivery_evidence")
     bound_paths: list[tuple[str, str]] = []
@@ -1818,7 +1922,11 @@ def _validate_slice13_evidence_paths(manifest: dict[str, Any]) -> None:
             bound_paths.append(("evidence_path", path))
     for role, path in bound_paths:
         resolved = resolve_slice13_project_path(path)
-        if not resolved.is_file():
+        if anchor is None:
+            present = resolved.is_file()
+        else:
+            present = _tree_path_present(resolved, anchor)
+        if not present:
             raise EvidenceError(
                 f"Slice 13 evidence path does not exist: {path}",
                 first_failing_gate="evidence_paths",
@@ -1844,7 +1952,12 @@ def _persisted_artifact_repeated(
     )
 
 
-def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
+def validate_bindings(
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    *,
+    anchor: str | None = None,
+) -> None:
     manifest_relative = manifest_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
     log_paths = {command["log"]["path"] for command in manifest["commands"]}
     persisted_artifacts = [
@@ -1942,7 +2055,12 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             except EvidenceSupportError as exc:
                 raise EvidenceError(str(exc)) from exc
         else:
-            actual = sha256_file(path) if path.is_file() else None
+            if anchor is None:
+                actual = sha256_file(path) if path.is_file() else None
+            else:
+                actual = hashlib.sha256(
+                    _evidence_path_bytes(path, anchor)
+                ).hexdigest()
             if actual != item["sha256"]:
                 # Delivery projections legitimately evolve or are archived
                 # after a delivered cutover (session archival, task-index
@@ -1994,15 +2112,26 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
                 )
             try:
                 command_record = json.loads(
-                    resolve_project_path(persisted["command_record"]["path"]).read_text(encoding="utf-8")
+                    _evidence_path_bytes(
+                        resolve_project_path(persisted["command_record"]["path"]),
+                        anchor,
+                    ).decode("utf-8")
                 )
                 terminal_status = json.loads(
-                    resolve_project_path(persisted["terminal_status"]["path"]).read_text(encoding="utf-8")
+                    _evidence_path_bytes(
+                        resolve_project_path(persisted["terminal_status"]["path"]),
+                        anchor,
+                    ).decode("utf-8")
                 )
                 exit_code = int(
-                    resolve_project_path(persisted["exit_code"]["path"]).read_text(encoding="utf-8").strip()
+                    _evidence_path_bytes(
+                        resolve_project_path(persisted["exit_code"]["path"]),
+                        anchor,
+                    )
+                    .decode("utf-8")
+                    .strip()
                 )
-            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError, EvidenceSupportError) as exc:
                 raise EvidenceError(
                     "Issue #43 persisted evidence cannot be decoded",
                     first_failing_gate="persisted_command_evidence",
@@ -2048,21 +2177,24 @@ def validate_bindings(manifest: dict[str, Any], manifest_path: Path) -> None:
             manifest,
             issue_commands=ISSUE13_COMMANDS,
             issue_label="Issue #13",
+            anchor=anchor,
         )
     if manifest.get("slice", {}).get("number") == 13:
         _validate_guarded_delivery_qualification(
             manifest,
             issue_commands=ISSUE14_COMMANDS,
             issue_label="Issue #14",
+            anchor=anchor,
         )
-        _validate_slice13_evidence_paths(manifest)
+        _validate_slice13_evidence_paths(manifest, anchor=anchor)
     if manifest.get("slice", {}).get("number") == 14:
         _validate_slice13_guarded_qualification(
             manifest,
             issue_commands=ISSUE15_COMMANDS,
             issue_label="Issue #15",
+            anchor=anchor,
         )
-        _validate_slice13_evidence_paths(manifest)
+        _validate_slice13_evidence_paths(manifest, anchor=anchor)
 
 
 def _strip_log_marker_suffix(
@@ -2086,6 +2218,7 @@ def _validate_command_log_source_chain(
     command: dict[str, Any],
     *,
     implementation_commit: str,
+    anchor: str | None = None,
 ) -> None:
     """Validate one command's collect -> finalize log hash chain.
 
@@ -2106,7 +2239,9 @@ def _validate_command_log_source_chain(
         published_log_sha256, str
     ):
         return
-    log_bytes = resolve_project_path(command["log"]["path"]).read_bytes()
+    log_bytes = _evidence_path_bytes(
+        resolve_project_path(command["log"]["path"]), anchor
+    )
     if hashlib.sha256(log_bytes).hexdigest() != published_log_sha256:
         raise EvidenceError(
             f"command log source chain is broken: {command['test_id']}",
@@ -2124,7 +2259,9 @@ def _validate_command_log_source_chain(
         )
 
 
-def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
+def validate_command_log_provenance(
+    manifest: dict[str, Any], *, anchor: str | None = None
+) -> None:
     marker = (
         f"EVIDENCE_IMPLEMENTATION_COMMIT: {manifest['implementation_commit']}".encode(
             "ascii"
@@ -2132,7 +2269,11 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
     )
     for command in manifest["commands"]:
         path = resolve_project_path(command["log"]["path"])
-        marker_lines = [line for line in path.read_bytes().splitlines() if line == marker]
+        marker_lines = [
+            line
+            for line in _evidence_path_bytes(path, anchor).splitlines()
+            if line == marker
+        ]
         if len(marker_lines) != 1:
             raise EvidenceError(
                 "command log implementation commit marker is missing, duplicated, or stale: "
@@ -2143,7 +2284,9 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
             or isinstance(command.get("published_log_sha256"), str)
         ):
             _validate_command_log_source_chain(
-                command, implementation_commit=manifest["implementation_commit"]
+                command,
+                implementation_commit=manifest["implementation_commit"],
+                anchor=anchor,
             )
     fault_points = manifest.get("fault_points")
     if fault_points is not None:
@@ -2167,7 +2310,9 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
                 raise EvidenceError(
                     f"fault point provenance requires registered command: {command_id}"
                 )
-            lines = resolve_project_path(command["log"]["path"]).read_bytes().splitlines()
+            lines = _evidence_path_bytes(
+                resolve_project_path(command["log"]["path"]), anchor
+            ).splitlines()
             expected_lines = [
                 f"EVIDENCE_FAULT_POINT: {item['fault_point']}".encode("ascii")
                 for item in bindings
@@ -2183,7 +2328,11 @@ def validate_command_log_provenance(manifest: dict[str, Any]) -> None:
 
 
 def validate_manifest(
-    manifest_path: Path, *, schema_only: bool, pre_publication: bool
+    manifest_path: Path,
+    *,
+    schema_only: bool,
+    pre_publication: bool,
+    verify_at: Literal["worktree", "publication"] = "worktree",
 ) -> None:
     ContractRegistry(PROJECT_ROOT).check()
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -2197,6 +2346,23 @@ def validate_manifest(
     except ValidationError as exc:
         path = "/".join(str(part) for part in exc.absolute_path) or "$"
         raise EvidenceError(f"Schema validation failed at {path}: {exc.message}") from exc
+    anchor: str | None = None
+    if verify_at == "publication":
+        try:
+            relative = manifest_path.resolve().relative_to(PROJECT_ROOT).as_posix()
+        except ValueError as exc:
+            raise EvidenceError(
+                "canonical manifest escapes project root",
+                first_failing_gate="evidence_paths",
+                error_code="evidence_path_escape",
+            ) from exc
+        anchor = _publication_commit(value, relative)
+        if anchor is None:
+            raise EvidenceError(
+                "historical manifest publication commit is absent",
+                first_failing_gate="historical_evidence",
+                error_code="historical_evidence_lineage_invalid",
+            )
     if schema_only:
         return
     if value.get("slice", {}).get("number") == 11 and not pre_publication:
@@ -2204,6 +2370,7 @@ def validate_manifest(
             validate_global_gate_exit_evidence(
                 manifest_path,
                 project_root=PROJECT_ROOT,
+                purpose="activation" if verify_at == "worktree" else "release_audit",
             )
         except ExitEvidenceValidationError as exc:
             raise EvidenceError(
@@ -2212,9 +2379,9 @@ def validate_manifest(
                 error_code=exc.error_code,
             ) from exc
         return
-    validate_semantics(value)
-    validate_bindings(value, manifest_path)
-    validate_command_log_provenance(value)
+    validate_semantics(value, anchor=anchor)
+    validate_bindings(value, manifest_path, anchor=anchor)
+    validate_command_log_provenance(value, anchor=anchor)
     validate_implementation_artifacts(value)
     validate_lineage(value, manifest_path, pre_publication=pre_publication)
 

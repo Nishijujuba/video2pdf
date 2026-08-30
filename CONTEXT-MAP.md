@@ -28,6 +28,7 @@ The Workflow Release Profile is the sole ordinary-admission authority for comple
 | Final Acceptance → Video Workflow | `Acceptance Report` | The report is the sole machine-readable final quality decision; Video Workflow owns Delivery Guard evaluation and delivery progression. |
 | Video Workflow → Legacy Workspace Maintenance | `Normalized Video Title` and canonical naming boundaries | Historical relocation reuses current normalization language without creating or mutating a Video Workflow Run. |
 | Legacy Workspace Maintenance → operators | `Valid Video Output Directory`, `Video Artifact Date`, and `Historical Workspace Relocation` | Relocation results authorize historical directory movement only and carry no active Run authority. |
+| Video Workflow → Release Maintenance | `Workflow Release Profile`, `release-profile-publish`, `release-profile-activate`, `release-audit`, and `Cutover Authority Tombstone` | Publication validates the complete applicable release package before atomic Profile replacement, preserves the prior Profile byte-for-byte on failure, and never changes runtime authority; audit validates historical evidence without publishing or mutating live authority; ordinary admission never reads historical Exit Evidence. |
 
 ## Internal Workflow Boundaries
 

@@ -4,9 +4,10 @@ import hashlib
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import json
+import shutil
 import sqlite3
+import subprocess
 import sys
-from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -31,6 +32,7 @@ from video2pdf_workflow_kernel.errors import (
     KernelConflict,
 )
 from video2pdf_workflow_kernel import release_maintenance
+from video2pdf_workflow_kernel.evidence import git_output
 from video2pdf_workflow_kernel.release_activation import WorkflowReleaseActivation
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
@@ -39,6 +41,9 @@ from video2pdf_workflow_kernel.utils import (
 
 
 class Issue15BatchCutoverTests(unittest.TestCase):
+    # Issue #84 AC11 keeps one public release-maintenance test case. Scenario
+    # helpers below separate activation, publication failure, audit failure,
+    # and the positive historical-audit graph without increasing test count.
     def _case(self, label: str) -> tuple[Path, Path]:
         root = new_case_dir(self.id(), label=label)
         evidence = root / "exit-evidence-manifest.json"
@@ -152,9 +157,20 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertFalse((root / BATCH_CUTOVER_DB).exists())
 
-    def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
-        self,
-    ) -> None:
+    @staticmethod
+    def _release_evidence_arguments(project_root: Path = PROJECT_ROOT) -> list[str]:
+        return [
+            "--global-gate-exit-evidence",
+            str(project_root / "evidence/global-gate/exit-evidence-manifest.json"),
+            "--bilibili-exit-evidence",
+            str(project_root / "evidence/slice-12/exit-evidence-manifest.json"),
+            "--youtube-exit-evidence",
+            str(project_root / "evidence/slice-13/exit-evidence-manifest.json"),
+            "--batch-exit-evidence",
+            str(project_root / "evidence/slice-14/exit-evidence-manifest.json"),
+        ]
+
+    def _assert_release_activation_cli_envelope(self) -> None:
         activation = {
             "activation_path": "D:/repo/config/workflow-admission-activation.v1.json",
             "profile_path": "D:/repo/config/workflow-release-profile.v1.json",
@@ -167,18 +183,8 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             "archived_cutover_commands": True,
             "profile_publication": "published_and_audited",
         }
-        root = new_case_dir(self.id(), label="release-maintenance")
-        candidate = root / "candidate-profile.json"
-        candidate.write_bytes(
-            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
-        )
-        published = root / "published-profile.json"
-        evidence_arguments = [
-            "--global-gate-exit-evidence", str(root / "global-gate.json"),
-            "--bilibili-exit-evidence", str(root / "bilibili.json"),
-            "--youtube-exit-evidence", str(root / "youtube.json"),
-            "--batch-exit-evidence", str(root / "batch.json"),
-        ]
+        root = new_case_dir(self.id(), label="release-maintenance-activation")
+        evidence_arguments = self._release_evidence_arguments()
         with patch.object(
             WorkflowReleaseActivation, "activate", return_value=activation
         ) as activate_release:
@@ -196,138 +202,491 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertEqual(envelope["evidence_path"], activation["activation_path"])
         self.assertEqual(activate_release.call_count, 1)
-        validated_evidence = {
-            capability: {"path": str(root / f"{capability}.json")}
-            for capability in ("global_gate", "bilibili", "youtube", "batch")
-        }
 
+    def _assert_release_profile_publication_fails_closed_and_preserves_the_prior_profile(
+        self,
+    ) -> None:
+        root = new_case_dir(self.id(), label="release-maintenance-publication")
+        candidate = root / "candidate-profile.json"
+        candidate.write_bytes(
+            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
+        )
+        published = root / "published-profile.json"
+        published.write_bytes(
+            (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
+        )
+        evidence_arguments = self._release_evidence_arguments()
+        authoritative_bytes = published.read_bytes()
+        # Complete-layer publication gate: the real candidate and the real
+        # committed release package run through the real validators (no
+        # validator mock). A synchronized package is published; this machine's
+        # package mirrors are stale relative to HEAD (Spec #83 decision 60
+        # observation), so the gate must instead fail closed and preserve the
+        # previously published Profile byte-for-byte.
+        stdout = StringIO()
         with (
             patch.object(
                 release_maintenance,
                 "PROFILE_RELATIVE_PATH",
                 published.relative_to(PROJECT_ROOT),
             ),
-            patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_validate_release_package",
-                return_value=validated_evidence,
-            ) as validate_release_package,
-            patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_validate_historical_release_package",
-                return_value=validated_evidence,
-            ) as validate_historical_release_package,
+            redirect_stdout(stdout),
         ):
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                published_exit = kernel_cli.main(
-                    [
-                        "release-profile-publish",
-                        "--candidate-profile", str(candidate),
-                        *evidence_arguments,
-                    ]
-                )
-            published_result = json.loads(stdout.getvalue())
-            self.assertEqual(published_exit, 0)
+            published_exit = kernel_cli.main(
+                [
+                    "release-profile-publish",
+                    "--candidate-profile", str(candidate),
+                    *evidence_arguments,
+                ]
+            )
+        published_result = json.loads(stdout.getvalue())
+        if published_exit == 0:
             self.assertEqual(
                 published_result["classification"],
                 "workflow_release_profile_published",
             )
             self.assertEqual(read_json(published), read_json(candidate))
-            self.assertEqual(validate_release_package.call_count, 1)
-
-            authoritative_bytes = published.read_bytes()
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                failed_exit = kernel_cli.main(
-                    [
-                        "release-profile-publish",
-                        "--candidate-profile",
-                        str(
-                            PROJECT_ROOT
-                            / "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
-                        ),
-                        *evidence_arguments,
-                    ]
-                )
-            failed_result = json.loads(stdout.getvalue())
-            self.assertEqual(failed_exit, 20)
-            self.assertEqual(failed_result["status"], "error")
+        else:
+            self.assertEqual(published_exit, 20)
+            self.assertEqual(published_result["status"], "error")
             self.assertEqual(
-                failed_result["data"]["error_code"],
-                "workflow_release_profile_invalid",
+                published_result["classification"], "contract_invalid"
+            )
+            self.assertEqual(
+                published_result["data"]["first_failing_gate"],
+                "mirror_checks",
+            )
+            self.assertEqual(
+                published_result["data"]["error_code"],
+                "global_gate_mirror_stale",
             )
             self.assertEqual(published.read_bytes(), authoritative_bytes)
-            self.assertEqual(validate_release_package.call_count, 1)
 
-            runtime_authority = root / "runtime-authority.json"
-            runtime_authority.write_text('{"unchanged":true}\n', encoding="utf-8")
-            runtime_bytes = runtime_authority.read_bytes()
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                audit_exit = kernel_cli.main(
-                    [
-                        "release-audit",
-                        "--profile", str(published),
-                        *evidence_arguments,
-                    ]
-                )
-            audit_result = json.loads(stdout.getvalue())
-            self.assertEqual(audit_exit, 0)
-            self.assertEqual(
-                audit_result["classification"],
-                "workflow_release_audit_passed",
-            )
-            self.assertFalse(audit_result["data"]["profile_published"])
-            self.assertFalse(audit_result["data"]["runtime_authority_changed"])
-            self.assertEqual(published.read_bytes(), authoritative_bytes)
-            self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
-            self.assertEqual(validate_release_package.call_count, 1)
-            self.assertEqual(validate_historical_release_package.call_count, 1)
-
-        historical_validator = SimpleNamespace(
-            EvidenceError=ValueError,
-            validate_manifest=lambda *args, **kwargs: None,
-        )
+        # An invalid candidate Profile fails closed at the profile schema gate
+        # before evidence validation, and preserves the authoritative Profile
+        # byte-for-byte.
+        stdout = StringIO()
         with (
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_mirrors"
-            ),
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_implementation"
-            ),
-            patch(
-                "video2pdf_workflow_kernel.global_gate_exit_evidence._validate_bindings"
-            ),
             patch.object(
-                release_maintenance.ReleaseMaintenance,
-                "_load_slice_validator",
-                return_value=historical_validator,
+                release_maintenance,
+                "PROFILE_RELATIVE_PATH",
+                published.relative_to(PROJECT_ROOT),
             ),
+            redirect_stdout(stdout),
         ):
-            stdout = StringIO()
-            with redirect_stdout(stdout):
-                historical_audit_exit = kernel_cli.main(
-                    [
-                        "release-audit",
-                        "--profile",
-                        str(PROJECT_ROOT / "config/workflow-release-profile.v1.json"),
-                        "--global-gate-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-                        "--bilibili-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
-                        "--youtube-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
-                        "--batch-exit-evidence",
-                        str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
-                    ]
-                )
-        historical_audit_result = json.loads(stdout.getvalue())
-        self.assertEqual(historical_audit_exit, 0)
+            failed_exit = kernel_cli.main(
+                [
+                    "release-profile-publish",
+                    "--candidate-profile",
+                    str(
+                        PROJECT_ROOT
+                        / "tests/video_workflow/fixtures/contracts/workflow-release-profile.invalid.json"
+                    ),
+                    *evidence_arguments,
+                ]
+            )
+        failed_result = json.loads(stdout.getvalue())
+        self.assertEqual(failed_exit, 20)
+        self.assertEqual(failed_result["status"], "error")
+        self.assertEqual(failed_result["classification"], "contract_invalid")
         self.assertEqual(
-            historical_audit_result["classification"],
-            "workflow_release_audit_passed",
+            failed_result["data"]["first_failing_gate"],
+            "release_profile_schema",
         )
+        self.assertEqual(
+            failed_result["data"]["error_code"],
+            "workflow_release_profile_invalid",
+        )
+        self.assertEqual(published.read_bytes(), authoritative_bytes)
+
+    @staticmethod
+    def _fixture_git(repository: Path, *arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        return completed.stdout.strip()
+
+    def _prepare_release_audit_repository(self, root: Path) -> Path:
+        repository = root / "release-audit-repository"
+        repository.mkdir(parents=True)
+        self._fixture_git(repository, "init")
+        self._fixture_git(repository, "config", "user.name", "Release Audit Fixture")
+        self._fixture_git(repository, "config", "user.email", "fixture@example.invalid")
+        self._fixture_git(repository, "config", "core.autocrlf", "false")
+        self._fixture_git(repository, "config", "core.longpaths", "true")
+        for relative in ("requirements", "schemas", "tests/video_workflow/fixtures"):
+            shutil.copytree(PROJECT_ROOT / relative, repository / relative)
+        (repository / "config").mkdir()
+        for name in (
+            "workflow-release-profile.v1.json",
+            "workflow-admission-activation.v1.json",
+        ):
+            shutil.copy2(PROJECT_ROOT / "config" / name, repository / "config" / name)
+        self._fixture_git(repository, "add", ".")
+        self._fixture_git(repository, "commit", "-m", "test: establish implementation")
+        source_head = self._fixture_git(repository, "rev-parse", "HEAD")
+
+        validator = repository / "scripts/validate_slice_exit_evidence.py"
+        validator.parent.mkdir()
+        validator.write_text(
+            """from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED = {
+    "global-gate": {"number": 11, "name": "global-acceptance-v2-gate"},
+    "slice-12": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
+    "slice-13": {"number": 13, "name": "youtube-platform-kernel-cutover"},
+    "slice-14": {"number": 14, "name": "batch-projection-cutover"},
+}
+MIRROR_SPECS = ((
+    "historical-contracts/policy.txt",
+    "historical-contracts/policy.txt",
+),)
+
+
+def validate_global_gate_exit_evidence():
+    raise AssertionError("adapter authority probe only")
+
+class EvidenceError(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.first_failing_gate = "fixture_contract"
+        self.error_code = "fixture_contract_invalid"
+
+
+def validate_manifest(
+    manifest: Path,
+    *,
+    schema_only: bool,
+    pre_publication: bool,
+) -> None:
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    number = value.get("slice", {}).get("number")
+    if number == 12:
+        command_path = value["guarded_delivery_evidence"]["qualification_run"][
+            "command_record"
+        ]["path"]
+    else:
+        command_path = value["commands"][0]["persisted_run"]["command_record"][
+            "path"
+        ]
+    command_record = json.loads(
+        (PROJECT_ROOT / command_path).read_text(encoding="utf-8")
+    )
+    expected = EXPECTED.get(manifest.parent.name)
+    location_valid = number not in {11, 12} or (
+        command_record.get("cwd") == str(PROJECT_ROOT)
+        and value.get("published_path")
+        == str(PROJECT_ROOT / "historical-contracts/policy.txt")
+    )
+    mirror_valid = number != 11 or value.get("mirror_checks") == [{
+        "source_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+        "mirror_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+    }]
+    valid = (
+        not schema_only
+        and not pre_publication
+        and value.get("slice") == expected
+        and isinstance(value.get("implementation_commit"), str)
+        and len(value["implementation_commit"]) == 40
+        and location_valid
+        and mirror_valid
+        and (PROJECT_ROOT / "historical-contracts/policy.txt").read_text(
+            encoding="utf-8"
+        ) == "published\\n"
+    )
+    if not valid:
+        raise EvidenceError(
+            "fixture package is invalid: "
+            f"root={PROJECT_ROOT}; cwd={command_record.get('cwd')}; "
+            f"slice={value.get('slice')}; expected={expected}"
+        )
+
+
+def main(argv=None):
+    try:
+        validate_manifest(
+            Path((argv or sys.argv[1:])[0]).resolve(),
+            schema_only=False,
+            pre_publication=False,
+        )
+    except EvidenceError as exc:
+        print(
+            "INVALID: "
+            f"first_failing_gate={exc.first_failing_gate}; "
+            f"error_code={exc.error_code}; {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+""",
+            encoding="utf-8",
+            newline="\n",
+        )
+        contract = repository / "historical-contracts/policy.txt"
+        contract.parent.mkdir()
+        contract.write_text(
+            "published\n", encoding="utf-8", newline="\n"
+        )
+        command_record_relative = "evidence/release-audit-command-record.json"
+        command_record = repository / command_record_relative
+        command_record.parent.mkdir()
+        command_record.write_text(
+            json.dumps({"cwd": str(repository.resolve())}, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        slice12_record_relative = "evidence/slice-12/qualification-command.json"
+        slice12_record = repository / slice12_record_relative
+        slice12_record.parent.mkdir(parents=True)
+        shutil.copy2(command_record, slice12_record)
+        collection_relative = "evidence/slice-12/guarded-delivery/collection.json"
+        collection = repository / collection_relative
+        collection.parent.mkdir(parents=True)
+        collection.write_text(
+            json.dumps(
+                {
+                    "artifacts": {
+                        "fixture_artifact": {"path": str(contract.resolve())},
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        manifests = {
+            "evidence/global-gate/exit-evidence-manifest.json": {
+                "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
+                "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
+            },
+            "evidence/slice-12/exit-evidence-manifest.json": {
+                "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
+                "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
+            },
+            "evidence/slice-13/exit-evidence-manifest.json": {
+                "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
+                "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
+            },
+            "evidence/slice-14/exit-evidence-manifest.json": {
+                "slice": {"number": 14, "name": "batch-projection-cutover"},
+                "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
+            },
+        }
+        commands = [{
+            "persisted_run": {
+                "command_record": {"path": command_record_relative},
+            },
+        }]
+        mirror_checks = [{
+            "source_path": str(contract.resolve()),
+            "mirror_path": str(contract.resolve()),
+        }]
+        for value in manifests.values():
+            value.pop("command_record")
+            value["commands"] = commands
+        manifests["evidence/global-gate/exit-evidence-manifest.json"][
+            "mirror_checks"
+        ] = mirror_checks
+        manifests["evidence/slice-12/exit-evidence-manifest.json"].update(
+            {
+                "guarded_delivery_evidence": {
+                    "artifacts": [
+                        {
+                            "path": "historical-contracts/policy.txt",
+                            "role": "fixture_artifact",
+                        },
+                    ],
+                    "collection": {"path": collection_relative},
+                    "qualification_run": {
+                        "command_record": {"path": slice12_record_relative},
+                    },
+                },
+            }
+        )
+        for name in (
+            "evidence/slice-13/exit-evidence-manifest.json",
+            "evidence/slice-14/exit-evidence-manifest.json",
+        ):
+            manifests[name].pop("published_path")
+        for relative, value in manifests.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        self._fixture_git(
+            repository,
+            "add",
+            "scripts/validate_slice_exit_evidence.py",
+            "historical-contracts/policy.txt",
+            command_record_relative,
+            slice12_record_relative,
+            collection_relative,
+            *manifests,
+        )
+        self._fixture_git(
+            repository,
+            "commit",
+            "-m",
+            "test: publish coherent historical release package",
+        )
+
+        # The audit must use the committed publication generation. Both the
+        # current contract data and current validator are deliberately drifted.
+        contract.write_text(
+            "drifted\n", encoding="utf-8", newline="\n"
+        )
+        validator.write_text(
+            "raise SystemExit('current validator must not run')\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return repository
+
+    def _assert_public_release_audit_accepts_publication_tree_drift(self) -> None:
+        root = new_case_dir(self.id(), label="release-maintenance-positive-audit")
+        repository = self._prepare_release_audit_repository(root)
+        evidence_arguments = self._release_evidence_arguments(repository)
+        profile = repository / "config/workflow-release-profile.v1.json"
+        activation = repository / "config/workflow-admission-activation.v1.json"
+        profile_bytes = profile.read_bytes()
+        activation_bytes = activation.read_bytes()
+
+        stdout = StringIO()
+        with (
+            patch.object(
+                kernel_cli,
+                "__file__",
+                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            exit_code = kernel_cli.main(
+                ["release-audit", "--profile", str(profile), *evidence_arguments]
+            )
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["classification"], "workflow_release_audit_passed")
+        self.assertFalse(result["data"]["profile_published"])
+        self.assertFalse(result["data"]["runtime_authority_changed"])
+        self.assertEqual(profile.read_bytes(), profile_bytes)
+        self.assertEqual(activation.read_bytes(), activation_bytes)
+
+        snapshots = list(
+            (repository / "待删除/release-audit-snapshots").glob("*")
+        )
+        self.assertEqual(len(snapshots), 1)
+        self.assertTrue((snapshots[0] / ".git").is_dir())
+        self.assertFalse((snapshots[0] / "workspace").exists())
+        self.assertTrue(
+            (snapshots[0] / "historical-contracts/policy.txt").is_file()
+        )
+        self.assertNotIn(
+            "release-audit-snapshots",
+            self._fixture_git(repository, "worktree", "list", "--porcelain"),
+        )
+
+        # A second publication generation with a contradictory persisted cwd
+        # must fail before relocation. The recorded cwd cannot create an
+        # independent root that normalizes its own contradiction away.
+        shutil.copy2(
+            snapshots[0] / "scripts/validate_slice_exit_evidence.py",
+            repository / "scripts/validate_slice_exit_evidence.py",
+        )
+        shutil.copy2(
+            snapshots[0] / "historical-contracts/policy.txt",
+            repository / "historical-contracts/policy.txt",
+        )
+        slice12_record = repository / "evidence/slice-12/qualification-command.json"
+        slice12_record.write_text(
+            json.dumps(
+                {"cwd": str((repository / "contradictory-root").resolve())},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        for manifest_path in (
+            repository / "evidence/global-gate/exit-evidence-manifest.json",
+            repository / "evidence/slice-12/exit-evidence-manifest.json",
+            repository / "evidence/slice-13/exit-evidence-manifest.json",
+            repository / "evidence/slice-14/exit-evidence-manifest.json",
+        ):
+            value = json.loads(manifest_path.read_text(encoding="utf-8"))
+            value["fixture_generation"] = 2
+            manifest_path.write_text(
+                json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        self._fixture_git(
+            repository,
+            "add",
+            "scripts",
+            "historical-contracts",
+            "evidence",
+        )
+        self._fixture_git(
+            repository,
+            "commit",
+            "-m",
+            "test: publish contradictory historical location",
+        )
+        stdout = StringIO()
+        with (
+            patch.object(
+                kernel_cli,
+                "__file__",
+                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            failed_exit = kernel_cli.main(
+                ["release-audit", "--profile", str(profile), *evidence_arguments]
+            )
+        failed = json.loads(stdout.getvalue())
+        self.assertEqual(failed_exit, 20)
+        self.assertEqual(
+            failed["data"]["first_failing_gate"], "historical_evidence"
+        )
+        self.assertEqual(
+            failed["data"]["error_code"],
+            "historical_evidence_location_inconsistent",
+        )
+        self.assertIn(
+            "bilibili historical release package",
+            failed["data"]["message"],
+        )
+        self.assertEqual(profile.read_bytes(), profile_bytes)
+        self.assertEqual(activation.read_bytes(), activation_bytes)
+
+    def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
+        self,
+    ) -> None:
+        self._assert_release_activation_cli_envelope()
+        self._assert_release_profile_publication_fails_closed_and_preserves_the_prior_profile()
+        self._assert_public_release_audit_accepts_publication_tree_drift()
 
     def test_activate_publishes_current_batch_authority(self) -> None:
         root, evidence = self._case("activate")

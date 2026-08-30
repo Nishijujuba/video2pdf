@@ -22,7 +22,7 @@ import delivery_guard as delivery_guard_module
 
 
 class Issue94RenderedPageAuthorityTests(unittest.TestCase):
-    def test_final_compile_materializes_canonical_rendered_pages(self) -> None:
+    def test_final_compile_materializes_staged_rendered_pages(self) -> None:
         fixture = final_compile_tests.GuardedFinalCompileProviderAuthorityTests(
             methodName="test_public_final_compile_allows_unread_governance_entries"
         )
@@ -31,21 +31,24 @@ class Issue94RenderedPageAuthorityTests(unittest.TestCase):
         workspace = fixture._run_public_final_compile_fixture(via_cli=True)
 
         video_root = workspace.parents[1]
-        manifest_path = (
-            video_root / "review" / "acceptance" / "render-evidence-manifest.json"
-        )
+        manifest_path = workspace / "render-evidence-manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        expected_page = (
-            video_root
-            / "review"
-            / "acceptance"
-            / "rendered_pages"
-            / "page_0001.png"
-        )
+        expected_page = workspace / "adapter-output" / "rendered_pages" / "page_001.png"
         self.assertTrue(expected_page.is_file())
         self.assertEqual(
-            [{"page": 1, "path": "rendered_pages/page_0001.png", "sha256": manifest["pages"][0]["sha256"]}],
+            [{"page": 1, "path": "adapter-output/rendered_pages/page_001.png", "sha256": manifest["pages"][0]["sha256"]}],
             manifest["pages"],
+        )
+        self.assertEqual(
+            [],
+            list(
+                (
+                    video_root
+                    / "review"
+                    / "acceptance"
+                    / "rendered_pages"
+                ).glob("page_*.png")
+            ),
         )
 
     def test_kernel_multi_page_guard_passes_without_coordinator_page_copy(self) -> None:

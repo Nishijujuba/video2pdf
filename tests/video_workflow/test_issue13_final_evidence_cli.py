@@ -15,12 +15,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_case_dir
-from tests.video_workflow._issue43_git_authority import (
-    build_current_global_gate_authority,
-)
 from tests.video_workflow import test_single_section_production as single_section_fixture
+from tests.video_workflow.test_issue13_run_initialization import (
+    _run_start_cli_with_recording,
+    _write_start_run_project,
+)
 from tests.video_workflow.test_precompile_quality import semantic_dependencies
-from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher
 from video2pdf_workflow_kernel import cli as kernel_cli
 from video2pdf_workflow_kernel.errors import KernelError
 
@@ -63,23 +63,6 @@ def _compile_runtime_policy_fixture(run_dir: Path) -> Path:
     # production-advance persists the validated policy at the canonical
     # workflow/compile-runtime-policy.json path; final compile binds to it.
     return run_dir / "workflow" / "compile-runtime-policy.json"
-
-
-def _current_implementation_commit() -> str:
-    last = ""
-    for _ in range(3):
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            text=True,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        if completed.returncode == 0 and completed.stdout.strip():
-            return completed.stdout.strip()
-        last = completed.stdout + completed.stderr
-    raise AssertionError(last or "git rev-parse HEAD failed without diagnostics")
 
 
 class Issue13FinalEvidenceCliTests(unittest.TestCase):
@@ -164,30 +147,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
 
     def _source_ready_v4_run(self) -> tuple[Path, Path]:
         case_root = new_case_dir(self.id(), label="issue13-final-evidence")
-        workspace_root = case_root / "candidate-project" / "workspace"
-        workspace_root.mkdir(parents=True)
-        control_root = workspace_root
-        authority_error: AssertionError | None = None
-        for _ in range(3):
-            try:
-                authority_repo, gate_evidence = build_current_global_gate_authority(
-                    control_root
-                )
-                break
-            except AssertionError as error:
-                authority_error = error
-        else:
-            raise authority_error or AssertionError(
-                "Global Gate authority fixture could not be constructed"
-            )
-        GlobalGatePublisher(project_root=authority_repo).activate(
-            control_store_root=control_root,
-            exit_evidence=gate_evidence,
-            activated_at="2026-08-11T01:00:00Z",
-        )
-        self.assertTrue((control_root / "active_global_gate.json").is_file())
-        self.assertTrue((authority_repo / ".git").exists())
-
+        project_config, control_root, cookie = _write_start_run_project(case_root)
         recording = (
             PROJECT_ROOT
             / "tests"
@@ -197,58 +157,21 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             / "bilibili"
             / "fresh-download"
         )
-        cookie = case_root / "credentials" / "bilibili-cookies.txt"
-        cookie.parent.mkdir()
-        cookie.write_text(
-            "# Netscape HTTP Cookie File\n"
-            ".bilibili.com\tTRUE\t/\tTRUE\t2147483647\tSESSDATA\trecorded\n",
-            encoding="utf-8",
-        )
-        probe_value = json.loads(
-            (
-                PROJECT_ROOT
-                / "tests/video_workflow/fixtures/contracts/bootstrap-record.v2.valid.json"
-            ).read_text(encoding="utf-8")
-        )
-        probe_value.update(
-            {
-                "canonical_item_id": "BV1TEST00001:p1",
-                "source_identity": "51b5b6809799e799b780ea3dcbf50322d5ada3dae052fe50e0da65e98f328129",
-                "original_title": "Bilibili Adapter Fixture",
-                "source_request": {
-                    "kind": "fresh_download",
-                    "canonical_locator": "https://www.bilibili.com/video/BV1TEST00001/",
-                },
-            }
-        )
-        probe_path = _write_json(case_root / "candidate-probe.json", probe_value)
-        implementation_commit = _current_implementation_commit()
-        self._require_ok(
-            "platform-kernel-prepare",
+        completed, initialized = _run_start_cli_with_recording(
+            recording,
+            "start-run",
+            "--project-config",
+            str(project_config),
             "--platform",
             "bilibili",
-            "--control-store-root",
-            str(control_root),
-            "--implementation-commit",
-            implementation_commit,
-            "--candidate-probe",
-            str(probe_path),
-            "--candidate-session-id",
-            "session-issue13-final-evidence",
-            "--prepared-at",
-            "2026-08-11T01:01:00Z",
-        )
-        initialized = self._require_ok(
-            "init-cutover-candidate",
-            "--workspace-root",
-            str(workspace_root),
-            "--control-store-root",
-            str(control_root),
-            "--probe",
-            str(probe_path),
+            "--source-url",
+            "https://www.bilibili.com/video/BV1TEST00001/?p=1",
             "--session-id",
             "session-issue13-final-evidence",
+            "--credential-ref",
+            str(cookie),
         )
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         run_dir = Path(initialized["data"]["run_dir"])
         acquired = self._require_ok(
             "source-acquire",
@@ -448,6 +371,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "source_sha256": main_generation["sha256"],
             "locator": "latex:document/body",
             "representation": "structured_text",
+            "declared_text": "Core claim",
             "text_sha256": hashlib.sha256(b"Core claim").hexdigest(),
             "applicable_rule_ids": ["no_meta_writing_content"],
         }
@@ -648,7 +572,6 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "--input-track", "kernel",
             "--precompile-workspace-root", str(quality),
             "--compile-manifest", str(compile_manifest_path),
-            "--text-origin-plan", str(origin_plan_path),
             "--compiler-adapter", str(PROJECT_ROOT / "scripts/guarded_final_compile_adapter.py"),
             "--runtime-policy", str(runtime_policy_path),
             "--workspace-root", str(final_workspace),
@@ -662,7 +585,7 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             "final_compile_report": final_workspace / "final-compile-report.json",
             "final_artifact_seal": final_workspace / "final-artifact-seal.json",
             "final_pdf": final_workspace / "adapter-output" / "final.pdf",
-            "render_evidence_manifest": run_dir / "review/acceptance/render-evidence-manifest.json",
+            "render_evidence_manifest": final_workspace / "render-evidence-manifest.json",
             "rendered_text_inventory": final_workspace / "adapter-output" / "rendered-text-object-inventory.json",
             "text_origin_manifest": final_workspace / "text-origin-manifest.json",
             "reconciliation": final_workspace / "rendered-text-reconciliation-report.json",
@@ -998,7 +921,17 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
             },
         )
 
-    def test_replay_does_not_adopt_uncommitted_binding_after_binding_write_fault(self) -> None:
+    def test_after_binding_write_fault_restores_then_reprepares_committed_binding(
+        self,
+    ) -> None:
+        # scenario_id: binding_written_before_intent_commit
+        # target_invariant: an uncommitted binding cannot remain canonical
+        # mutation_seam: after binding write and before COMMITTED
+        # rematerialized_nodes: preceding canonical page set
+        # intentionally_stale_nodes: input binding and final-quality authority
+        # expected_first_gate: final_evidence_page_reconciliation
+        # expected_error_code: final_evidence_page_publication_restored
+        # scenario_class: single_contradiction
         run_dir, control_root = self._source_ready_v4_run()
         self._production_complete(run_dir)
         evidence = self._current_quality_evidence(run_dir)
@@ -1013,17 +946,25 @@ class Issue13FinalEvidenceCliTests(unittest.TestCase):
         self.assertEqual("injected_final_evidence_fault", fault["classification"])
         self.assertTrue((run_dir / "review/acceptance/input-binding.json").is_file())
 
+        restored, rejection = self._invoke_prepare(run_dir, control_root, evidence)
+
+        self.assertEqual(20, restored.returncode)
+        self.assertEqual(
+            {
+                "first_failing_gate": "final_evidence_page_reconciliation",
+                "error_code": "final_evidence_page_publication_restored",
+            },
+            {
+                "first_failing_gate": rejection["data"].get("first_failing_gate"),
+                "error_code": rejection["data"].get("error_code"),
+            },
+        )
+        self.assertFalse((run_dir / "review/acceptance/input-binding.json").is_file())
+
         completed, replay = self._invoke_prepare(run_dir, control_root, evidence)
 
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         self.assertFalse(replay["data"]["idempotent"])
-        self.assertTrue(
-            any(
-                (run_dir / "待删除" / "failed-final-evidence-publications").glob(
-                    "*-input-binding.json"
-                )
-            )
-        )
 
 
 def load_tests(

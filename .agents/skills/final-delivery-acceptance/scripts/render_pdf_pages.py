@@ -21,6 +21,17 @@ EXIT_DEPENDENCY_ERROR = 3
 class RenderError(Exception):
     """Raised when rendered page evidence cannot be generated."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        first_failing_gate: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.first_failing_gate = first_failing_gate
+        self.error_code = error_code
+
 
 def _path_under(base: Path, path: Path) -> bool:
     try:
@@ -73,6 +84,12 @@ def render_pdf_pages(pdf_path: Path, *, video_output_dir: Path | None = None, dp
     video_output_dir = (video_output_dir or pdf_path.parent).resolve()
     if not video_output_dir.exists():
         raise RenderError(f"video output directory not found: {video_output_dir}")
+    if (video_output_dir / "workflow" / "run.json").is_file():
+        raise RenderError(
+            "Kernel rendered pages are published only by delivery-final-evidence-prepare",
+            first_failing_gate="rendered_page_publication_owner",
+            error_code="kernel_rendered_page_publisher_forbidden",
+        )
     if not _path_under(video_output_dir, pdf_path):
         raise RenderError("PDF must be inside the video output directory")
     if dpi < 72:
@@ -137,7 +154,22 @@ def main() -> int:
         result = render_pdf_pages(args.pdf, video_output_dir=args.video_output_dir, dpi=args.dpi)
     except RenderError as exc:
         text = str(exc)
-        print(f"RENDER_FAILED: {text}", file=sys.stderr)
+        if exc.first_failing_gate and exc.error_code:
+            print(
+                "RENDER_FAILED: "
+                + json.dumps(
+                    {
+                        "first_failing_gate": exc.first_failing_gate,
+                        "error_code": exc.error_code,
+                        "message": text,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(f"RENDER_FAILED: {text}", file=sys.stderr)
         return EXIT_DEPENDENCY_ERROR if re.search(r"PyMuPDF", text) else EXIT_INPUT_ERROR
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
@@ -10,6 +11,8 @@ import shutil
 import sqlite3
 from typing import Any, Iterator
 import uuid
+
+import fitz
 
 from .acceptance_v2 import (
     AcceptanceV2Provider,
@@ -40,7 +43,23 @@ QUALITY_ARGUMENTS = {
     "rendered_text_object_inventory": "rendered-text-object-inventory",
     "text_origin_manifest": "text-origin-manifest",
 }
-FINAL_EVIDENCE_FAULT_POINTS = frozenset({"after_binding_write"})
+FINAL_EVIDENCE_FAULT_POINTS = frozenset(
+    {
+        "after_page_staging",
+        "after_previous_archived",
+        "after_pages_published",
+        "after_binding_write",
+    }
+)
+
+
+@dataclass(frozen=True)
+class PagePublicationPaths:
+    root: Path
+    candidate: Path
+    previous: Path
+    failed: Path
+    canonical: Path
 
 
 class FinalDeliveryEvidenceProvider:
@@ -122,6 +141,23 @@ class FinalDeliveryEvidenceProvider:
             "authority_path TEXT NOT NULL, authority_sha256 TEXT NOT NULL, prepared_at TEXT NOT NULL, "
             "PRIMARY KEY(run_id, acceptance_revision))"
         )
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(final_evidence_prepare_intents)"
+            )
+        }
+        for name, declaration in (
+            ("publication_root", "TEXT"),
+            ("source_pages_json", "TEXT"),
+            ("previous_present", "INTEGER"),
+            ("previous_pages_json", "TEXT"),
+        ):
+            if name not in columns:
+                connection.execute(
+                    f"ALTER TABLE final_evidence_prepare_intents "
+                    f"ADD COLUMN {name} {declaration}"
+                )
         return connection
 
     @staticmethod
@@ -137,7 +173,7 @@ class FinalDeliveryEvidenceProvider:
         ).fetchone()
         prepared = control.execute(
             "SELECT MAX(acceptance_revision) AS revision FROM final_evidence_prepare_intents "
-            "WHERE run_id=? AND state='COMMITTED'",
+            "WHERE run_id=?",
             (run_id,),
         ).fetchone()
         revisions = [0]
@@ -159,6 +195,383 @@ class FinalDeliveryEvidenceProvider:
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(path), str(destination))
+
+    @staticmethod
+    def _publication_paths(
+        *,
+        root: Path,
+        revision: int,
+    ) -> PagePublicationPaths:
+        publication_root = (
+            root
+            / "待删除"
+            / "final-evidence-publications"
+            / f"revision-{revision:08d}"
+        )
+        return PagePublicationPaths(
+            root=publication_root,
+            candidate=publication_root / "candidate" / "rendered_pages",
+            previous=publication_root / "previous" / "rendered_pages",
+            failed=publication_root / "failed" / "rendered_pages",
+            canonical=root / "review" / "acceptance" / "rendered_pages",
+        )
+
+    @staticmethod
+    def _rendered_page_bindings(
+        root: Path, source_pages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        canonical_root = root / "review" / "acceptance" / "rendered_pages"
+        return [
+            {
+                "page": item["page"],
+                "path": str(
+                    (canonical_root / f"page_{item['page']:04d}.png").resolve()
+                ),
+                "sha256": item["sha256"],
+            }
+            for item in source_pages
+        ]
+
+    @staticmethod
+    def _validate_page_directory(
+        path: Path,
+        source_pages: list[dict[str, Any]],
+    ) -> bool:
+        expected = {
+            f"page_{item['page']:04d}.png": item["sha256"]
+            for item in source_pages
+        }
+        if not path.is_dir():
+            return False
+        actual = {item.name for item in path.iterdir() if item.is_file()}
+        return actual == set(expected) and all(
+            sha256_file(path / name) == sha256 for name, sha256 in expected.items()
+        )
+
+    @classmethod
+    def _committed_predecessor_pages(
+        cls,
+        *,
+        control: sqlite3.Connection,
+        run_id: str,
+        revision: int,
+        canonical_root: Path,
+    ) -> tuple[bool, str | None]:
+        committed = control.execute(
+            "SELECT * FROM final_evidence_prepare_intents "
+            "WHERE run_id=? AND acceptance_revision<? AND state='COMMITTED' "
+            "ORDER BY acceptance_revision DESC LIMIT 1",
+            (run_id, revision),
+        ).fetchone()
+        if committed is None:
+            return False, None
+        raw_pages = committed["source_pages_json"]
+        if raw_pages is None:
+            binding_path = Path(committed["binding_path"])
+            if not binding_path.is_file():
+                raise ContractError(
+                    "committed predecessor page identity is unavailable",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_predecessor_identity_missing",
+                    },
+                )
+            raw_pages = json.dumps(read_json(binding_path).get("rendered_pages", []))
+        try:
+            predecessor_pages = [
+                {"page": int(item["page"]), "sha256": str(item["sha256"])}
+                for item in json.loads(raw_pages)
+            ]
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            raise ContractError(
+                "committed predecessor page identity is invalid",
+                data={
+                    "first_failing_gate": "final_evidence_page_reconciliation",
+                    "error_code": "final_evidence_predecessor_identity_invalid",
+                },
+            ) from exc
+        if not cls._validate_page_directory(canonical_root, predecessor_pages):
+            raise ContractError(
+                "canonical rendered pages differ from the committed predecessor",
+                data={
+                    "first_failing_gate": "final_evidence_page_reconciliation",
+                    "error_code": "final_evidence_predecessor_page_set_stale",
+                },
+            )
+        return (
+            True,
+            canonical_json_bytes(predecessor_pages).decode("utf-8"),
+        )
+
+    @classmethod
+    def _stage_rendered_pages(
+        cls,
+        *,
+        root: Path,
+        revision: int,
+        source_pages: list[dict[str, Any]],
+    ) -> Path:
+        paths = cls._publication_paths(root=root, revision=revision)
+        if paths.candidate.exists():
+            if cls._validate_page_directory(
+                paths.candidate,
+                source_pages,
+            ):
+                return paths.root
+            raise ContractError(
+                "staged rendered-page set is stale",
+                data={
+                    "first_failing_gate": "final_evidence_page_staging",
+                    "error_code": "final_evidence_staged_page_set_invalid",
+                },
+            )
+        paths.candidate.mkdir(parents=True)
+        for item in source_pages:
+            destination = paths.candidate / f"page_{item['page']:04d}.png"
+            shutil.copy2(item["source_path"], destination)
+            if sha256_file(destination) != item["sha256"]:
+                raise ArtifactDrift(
+                    "staged rendered page differs from compiler-produced evidence"
+                )
+        if not cls._validate_page_directory(
+            paths.candidate,
+            source_pages,
+        ):
+            raise ContractError(
+                "staged rendered-page set is incomplete",
+                data={
+                    "first_failing_gate": "final_evidence_page_staging",
+                    "error_code": "final_evidence_staged_page_set_invalid",
+                },
+            )
+        return paths.root
+
+    @classmethod
+    def _publish_staged_rendered_pages(
+        cls,
+        *,
+        root: Path,
+        revision: int,
+        source_pages: list[dict[str, Any]],
+        previous_present: bool,
+        fault_point: str | None,
+    ) -> None:
+        paths = cls._publication_paths(root=root, revision=revision)
+        if not cls._validate_page_directory(
+            paths.candidate,
+            source_pages,
+        ):
+            raise ContractError(
+                "staged rendered-page set is invalid before publication",
+                data={
+                    "first_failing_gate": "final_evidence_page_staging",
+                    "error_code": "final_evidence_staged_page_set_invalid",
+                },
+            )
+        if previous_present:
+            if paths.previous.exists() and paths.canonical.exists():
+                raise ContractError(
+                    "preceding rendered-page archive already exists",
+                    data={
+                        "first_failing_gate": "final_evidence_page_publication",
+                        "error_code": "final_evidence_previous_page_set_conflict",
+                    },
+                )
+            if paths.canonical.exists():
+                paths.previous.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(paths.canonical), str(paths.previous))
+                if fault_point == "after_previous_archived":
+                    raise FinalEvidenceFault(fault_point)
+            elif not paths.previous.exists():
+                raise ContractError(
+                    "preceding rendered-page set is missing during publication",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_previous_page_set_missing",
+                    },
+                )
+        elif paths.canonical.exists():
+            cls._move_failed_publication(root, paths.canonical)
+        paths.canonical.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(paths.candidate), str(paths.canonical))
+        if not cls._validate_page_directory(
+            paths.canonical,
+            source_pages,
+        ):
+            raise ContractError(
+                "published rendered-page set is invalid",
+                data={
+                    "first_failing_gate": "final_evidence_page_publication",
+                    "error_code": "final_evidence_published_page_set_invalid",
+                },
+            )
+
+    @classmethod
+    def _restore_previous_rendered_pages(
+        cls,
+        *,
+        root: Path,
+        revision: int,
+        previous_present: bool,
+        previous_pages_json: str | None,
+    ) -> None:
+        paths = cls._publication_paths(root=root, revision=revision)
+        if paths.canonical.exists():
+            paths.failed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(paths.canonical), str(paths.failed))
+        if previous_present:
+            if not paths.previous.exists():
+                raise ContractError(
+                    "preceding rendered-page set is unavailable for restoration",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_previous_page_set_missing",
+                    },
+                )
+            predecessor_pages = (
+                json.loads(previous_pages_json) if previous_pages_json else []
+            )
+            if not cls._validate_page_directory(paths.previous, predecessor_pages):
+                raise ContractError(
+                    "preceding rendered-page archive differs from committed identity",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_previous_page_set_stale",
+                    },
+                )
+            paths.canonical.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(paths.previous), str(paths.canonical))
+        else:
+            paths.canonical.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def _abort_pending_publication_before_validation(
+        cls,
+        *,
+        root: Path,
+        global_gate_authority: Path,
+    ) -> None:
+        control_store_root = global_gate_authority.resolve().parent
+        if control_store_root != root.parent.resolve():
+            return
+        database_path = control_store_root / FINAL_AUTHORITY_DB_NAME
+        if not database_path.is_file():
+            return
+        binding_path = root / "review" / "acceptance" / "input-binding.json"
+        with cls._connect_intents(control_store_root) as control:
+            pending = control.execute(
+                "SELECT * FROM final_evidence_prepare_intents "
+                "WHERE binding_path=? AND state IN ('PREPARED','FILES_PUBLISHED') "
+                "ORDER BY acceptance_revision DESC LIMIT 1",
+                (str(binding_path),),
+            ).fetchone()
+            if pending is None:
+                return
+            revision = int(pending["acceptance_revision"])
+            publication_paths = cls._publication_paths(root=root, revision=revision)
+            authority_path = root / "workflow" / f"final-quality-ready.{revision}.json"
+            if (
+                pending["publication_root"] != str(publication_paths.root)
+                or Path(pending["authority_path"]).resolve() != authority_path
+            ):
+                raise ContractError(
+                    "pending Final Evidence publication escapes its lifecycle paths",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_pending_publication_path_invalid",
+                    },
+                )
+            try:
+                source_pages = [
+                    {"page": int(item["page"]), "sha256": str(item["sha256"])}
+                    for item in json.loads(pending["source_pages_json"])
+                ]
+                previous_pages = (
+                    [
+                        {
+                            "page": int(item["page"]),
+                            "sha256": str(item["sha256"]),
+                        }
+                        for item in json.loads(pending["previous_pages_json"])
+                    ]
+                    if pending["previous_pages_json"]
+                    else []
+                )
+                if [item["page"] for item in source_pages] != list(
+                    range(1, len(source_pages) + 1)
+                ):
+                    raise ValueError("pending source page coverage is invalid")
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                raise ContractError(
+                    "pending Final Evidence page identity is invalid",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_pending_page_identity_invalid",
+                    },
+                ) from exc
+            previous_present = bool(pending["previous_present"])
+            canonical_is_previous = previous_present and cls._validate_page_directory(
+                publication_paths.canonical, previous_pages
+            )
+            archived_previous_is_valid = (
+                previous_present
+                and cls._validate_page_directory(
+                    publication_paths.previous, previous_pages
+                )
+            )
+            if previous_present and not (
+                canonical_is_previous or archived_previous_is_valid
+            ):
+                raise ContractError(
+                    "preceding committed rendered-page set is unavailable",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_previous_page_set_missing",
+                    },
+                )
+            cls._move_failed_publication(root, publication_paths.candidate)
+            if canonical_is_previous:
+                if publication_paths.previous.exists():
+                    raise ContractError(
+                        "two preceding rendered-page sets exist during reconciliation",
+                        data={
+                            "first_failing_gate": "final_evidence_page_reconciliation",
+                            "error_code": "final_evidence_previous_page_set_conflict",
+                        },
+                    )
+            else:
+                cls._restore_previous_rendered_pages(
+                    root=root,
+                    revision=revision,
+                    previous_present=previous_present,
+                    previous_pages_json=pending["previous_pages_json"],
+                )
+            cls._move_failed_publication(root, binding_path)
+            cls._move_failed_publication(root, authority_path)
+            control.execute("BEGIN IMMEDIATE")
+            transition = control.execute(
+                "UPDATE final_evidence_prepare_intents SET state='ABORTED' "
+                "WHERE run_id=? AND acceptance_revision=? "
+                "AND state IN ('PREPARED','FILES_PUBLISHED')",
+                (pending["run_id"], revision),
+            )
+            if transition.rowcount != 1:
+                control.execute("ROLLBACK")
+                raise ContractError(
+                    "pending Final Evidence recovery lost authority",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_publication_state_invalid",
+                    },
+                )
+            control.execute("COMMIT")
+        raise ContractError(
+            "interrupted Final Evidence publication was restored before input validation",
+            data={
+                "first_failing_gate": "final_evidence_page_reconciliation",
+                "error_code": "final_evidence_page_publication_restored",
+            },
+        )
 
     def prepare(
         self,
@@ -219,6 +632,10 @@ class FinalDeliveryEvidenceProvider:
         fault_point: str | None,
         **paths: Path,
     ) -> dict[str, Any]:
+        self._abort_pending_publication_before_validation(
+            root=root,
+            global_gate_authority=paths["global_gate_authority"],
+        )
         run_path = root / "workflow" / "run.json"
         run_binding = self._fingerprinted(run_path, root, "Kernel Run Record")
         run = read_json(run_path)
@@ -302,32 +719,71 @@ class FinalDeliveryEvidenceProvider:
             raise ArtifactDrift("Final Artifact Seal binds another PDF")
 
         render_manifest_path = Path(quality_inputs["render_evidence_manifest"]["path"])
-        rendered_pages: list[dict[str, Any]] = []
+        source_pages: list[dict[str, Any]] = []
+        source_page_paths: set[Path] = set()
         for expected_page, page in enumerate(render_manifest.get("pages", []), start=1):
             if page.get("page") != expected_page:
-                raise ContractError("Render Evidence pages must exactly cover 1..page_count")
-            page_path = self._resolve_manifest_path(page.get("path", ""), render_manifest_path)
-            expected_path = (
-                root
-                / "review"
-                / "acceptance"
-                / "rendered_pages"
-                / f"page_{expected_page:04d}.png"
-            ).resolve()
-            if page_path != expected_path:
                 raise ContractError(
-                    "Render Evidence page path is not canonical",
+                    "Render Evidence pages must exactly cover 1..page_count",
                     data={
-                        "first_failing_gate": "rendered_page_authority",
-                        "error_code": "rendered_page_path_noncanonical",
+                        "first_failing_gate": "final_evidence_source_pages",
+                        "error_code": "final_evidence_source_page_coverage_invalid",
+                    },
+                )
+            page_path = self._resolve_manifest_path(page.get("path", ""), render_manifest_path)
+            if page_path in source_page_paths:
+                raise ContractError(
+                    "Render Evidence duplicates a source page path",
+                    data={
+                        "first_failing_gate": "final_evidence_source_pages",
+                        "error_code": "final_evidence_source_page_duplicated",
+                    },
+                )
+            source_page_paths.add(page_path)
+            if not page_path.is_file():
+                raise ContractError(
+                    "Render Evidence source page is missing",
+                    data={
+                        "first_failing_gate": "final_evidence_source_pages",
+                        "error_code": "final_evidence_source_page_missing",
                     },
                 )
             page_binding = self._fingerprinted(page_path, root, f"Rendered page {expected_page}")
             if page_binding["sha256"] != page.get("sha256"):
-                raise ArtifactDrift("Rendered page evidence drifted")
-            rendered_pages.append({"page": expected_page, **page_binding})
-        if render_manifest.get("page_count") != len(rendered_pages) or not rendered_pages:
-            raise ContractError("Render Evidence page coverage is incomplete")
+                raise ArtifactDrift(
+                    "Rendered page evidence drifted",
+                    data={
+                        "first_failing_gate": "final_evidence_source_pages",
+                        "error_code": "final_evidence_source_page_stale",
+                    },
+                )
+            try:
+                pixmap = fitz.Pixmap(page_path)
+                if pixmap.width < 1 or pixmap.height < 1:
+                    raise ValueError("empty rendered page")
+            except Exception as exc:
+                raise ContractError(
+                    "Render Evidence source page is unreadable",
+                    data={
+                        "first_failing_gate": "final_evidence_source_pages",
+                        "error_code": "final_evidence_source_page_unreadable",
+                    },
+                ) from exc
+            source_pages.append(
+                {
+                    "page": expected_page,
+                    "source_path": page_path,
+                    "sha256": page_binding["sha256"],
+                }
+            )
+        if render_manifest.get("page_count") != len(source_pages) or not source_pages:
+            raise ContractError(
+                "Render Evidence page coverage is incomplete",
+                data={
+                    "first_failing_gate": "final_evidence_source_pages",
+                    "error_code": "final_evidence_source_page_coverage_invalid",
+                },
+            )
 
         allowed_binding = self._fingerprinted(paths["allowed_manifest"], root, "Allowed Artifacts Manifest")
         expected_allowed_path = root / "review" / "acceptance" / "allowed_artifacts_manifest.json"
@@ -463,8 +919,16 @@ class FinalDeliveryEvidenceProvider:
         if store.current_run_record_sha(run["run_id"]) != run_binding["sha256"]:
             raise ArtifactDrift("Control Store does not bind the current Run Record")
 
+        with self._connect_intents(control_store_root) as recovery_control:
+            pending_intent = recovery_control.execute(
+                "SELECT * FROM final_evidence_prepare_intents "
+                "WHERE run_id=? AND state IN ('PREPARED','FILES_PUBLISHED') "
+                "ORDER BY acceptance_revision DESC LIMIT 1",
+                (run["run_id"],),
+            ).fetchone()
+
         binding_path = root / "review" / "acceptance" / "input-binding.json"
-        if binding_path.is_file():
+        if binding_path.is_file() and pending_intent is None:
             existing = read_json(binding_path)
             existing_valid = True
             try:
@@ -520,9 +984,19 @@ class FinalDeliveryEvidenceProvider:
                         self._move_failed_publication(root, authority_candidate)
 
         with self._connect_intents(control_store_root) as intents:
-            intents.execute("BEGIN IMMEDIATE")
-            revision = self._next_revision(intents, run["run_id"])
+            active_intent = intents.execute(
+                "SELECT * FROM final_evidence_prepare_intents "
+                "WHERE run_id=? AND state IN ('PREPARED','FILES_PUBLISHED') "
+                "ORDER BY acceptance_revision DESC LIMIT 1",
+                (run["run_id"],),
+            ).fetchone()
+            revision = (
+                int(active_intent["acceptance_revision"])
+                if active_intent is not None
+                else self._next_revision(intents, run["run_id"])
+            )
             authority_path = root / "workflow" / f"final-quality-ready.{revision}.json"
+            rendered_pages = self._rendered_page_bindings(root, source_pages)
             artifacts = [
                 {"logical_id": "final_pdf", **final_pdf_binding},
                 {"logical_id": "main_tex", **supplied_main},
@@ -596,44 +1070,209 @@ class FinalDeliveryEvidenceProvider:
                 binding, "binding_sha256"
             )
             self.acceptance.registry.validate("acceptance-v2-input-binding", binding)
-            intents.execute(
-                "INSERT INTO final_evidence_prepare_intents VALUES(?,?,?,?,?,?,?,?)",
-                (
-                    run["run_id"], revision, "PREPARED", str(binding_path), binding["binding_sha256"],
-                    str(authority_path), binding["run"]["final_checkpoint"]["authority_sha256"], prepared_at,
-                ),
-            )
-            published_authority = False
-            try:
-                authority_path.parent.mkdir(parents=True, exist_ok=True)
-                binding_path.parent.mkdir(parents=True, exist_ok=True)
-                write_json_atomic(authority_path, authority)
-                published_authority = True
-                self.acceptance.validate_input_binding(
-                    binding,
-                    verify_files=True,
-                    require_published_final_authority=False,
+            source_pages_json = canonical_json_bytes(
+                [
+                    {
+                        "page": item["page"],
+                        "path": str(item["source_path"]),
+                        "sha256": item["sha256"],
+                    }
+                    for item in source_pages
+                ]
+            ).decode("utf-8")
+            publication_paths = self._publication_paths(root=root, revision=revision)
+            if active_intent is None:
+                previous_present, previous_pages_json = self._committed_predecessor_pages(
+                    control=intents,
+                    run_id=run["run_id"],
+                    revision=revision,
+                    canonical_root=publication_paths.canonical,
                 )
-                write_json_atomic(binding_path, binding)
-                if fault_point == "after_binding_write":
-                    raise FinalEvidenceFault(fault_point)
+            else:
+                previous_present = bool(active_intent["previous_present"])
+                previous_pages_json = active_intent["previous_pages_json"]
+            if active_intent is None:
+                self._stage_rendered_pages(
+                    root=root,
+                    revision=revision,
+                    source_pages=source_pages,
+                )
+                intents.execute("BEGIN IMMEDIATE")
                 intents.execute(
-                    "UPDATE final_evidence_prepare_intents SET state='COMMITTED' "
+                    "INSERT INTO final_evidence_prepare_intents("
+                    "run_id,acceptance_revision,state,binding_path,binding_sha256,"
+                    "authority_path,authority_sha256,prepared_at,publication_root,"
+                    "source_pages_json,previous_present,previous_pages_json) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        run["run_id"],
+                        revision,
+                        "PREPARED",
+                        str(binding_path),
+                        binding["binding_sha256"],
+                        str(authority_path),
+                        binding["run"]["final_checkpoint"]["authority_sha256"],
+                        prepared_at,
+                        str(publication_paths.root),
+                        source_pages_json,
+                        int(previous_present),
+                        previous_pages_json,
+                    ),
+                )
+                intents.execute("COMMIT")
+                active_intent = intents.execute(
+                    "SELECT * FROM final_evidence_prepare_intents "
+                    "WHERE run_id=? AND acceptance_revision=?",
+                    (run["run_id"], revision),
+                ).fetchone()
+                if fault_point == "after_page_staging":
+                    raise FinalEvidenceFault(fault_point)
+            if (
+                active_intent is None
+                or active_intent["binding_path"] != str(binding_path)
+                or active_intent["binding_sha256"] != binding["binding_sha256"]
+                or active_intent["authority_path"] != str(authority_path)
+                or active_intent["authority_sha256"]
+                != binding["run"]["final_checkpoint"]["authority_sha256"]
+                or active_intent["publication_root"] != str(publication_paths.root)
+                or active_intent["source_pages_json"] != source_pages_json
+                or bool(active_intent["previous_present"]) != previous_present
+                or active_intent["previous_pages_json"] != previous_pages_json
+            ):
+                raise ArtifactDrift(
+                    "pending Final Evidence publication differs from current inputs",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_pending_publication_stale",
+                    },
+                )
+
+            if active_intent["state"] == "PREPARED":
+                if self._validate_page_directory(
+                    publication_paths.candidate, source_pages
+                ):
+                    self._publish_staged_rendered_pages(
+                        root=root,
+                        revision=revision,
+                        source_pages=source_pages,
+                        previous_present=previous_present,
+                        fault_point=fault_point,
+                    )
+                elif self._validate_page_directory(
+                    publication_paths.canonical, source_pages
+                ):
+                    pass
+                else:
+                    self._move_failed_publication(root, publication_paths.candidate)
+                    self._restore_previous_rendered_pages(
+                        root=root,
+                        revision=revision,
+                        previous_present=previous_present,
+                        previous_pages_json=previous_pages_json,
+                    )
+                    intents.execute("BEGIN IMMEDIATE")
+                    intents.execute(
+                        "UPDATE final_evidence_prepare_intents SET state='ABORTED' "
+                        "WHERE run_id=? AND acceptance_revision=? AND state='PREPARED'",
+                        (run["run_id"], revision),
+                    )
+                    intents.execute("COMMIT")
+                    raise ContractError(
+                        "interrupted page publication was restored to its preceding set",
+                        data={
+                            "first_failing_gate": "final_evidence_page_reconciliation",
+                            "error_code": "final_evidence_page_publication_restored",
+                        },
+                    )
+                intents.execute(
+                    "BEGIN IMMEDIATE"
+                )
+                transition = intents.execute(
+                    "UPDATE final_evidence_prepare_intents "
+                    "SET state='FILES_PUBLISHED' "
                     "WHERE run_id=? AND acceptance_revision=? AND state='PREPARED'",
                     (run["run_id"], revision),
                 )
+                if transition.rowcount != 1:
+                    intents.execute("ROLLBACK")
+                    raise ContractError(
+                        "Final Evidence PREPARED transition lost authority",
+                        data={
+                            "first_failing_gate": "final_evidence_page_reconciliation",
+                            "error_code": "final_evidence_publication_state_invalid",
+                        },
+                    )
                 intents.execute("COMMIT")
-            except BaseException as error:
-                intents.execute("ROLLBACK")
-                if (
-                    isinstance(error, FinalEvidenceFault)
-                    and error.fault_point == "after_binding_write"
-                ):
-                    raise
-                if published_authority:
-                    self._move_failed_publication(root, authority_path)
+                active_intent = intents.execute(
+                    "SELECT * FROM final_evidence_prepare_intents "
+                    "WHERE run_id=? AND acceptance_revision=?",
+                    (run["run_id"], revision),
+                ).fetchone()
+                if fault_point == "after_pages_published":
+                    raise FinalEvidenceFault(fault_point)
+
+            if active_intent is None or active_intent["state"] != "FILES_PUBLISHED":
+                raise ContractError(
+                    "Final Evidence page publication state is invalid",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_publication_state_invalid",
+                    },
+                )
+            if not self._validate_page_directory(
+                publication_paths.canonical,
+                source_pages,
+            ):
+                self._restore_previous_rendered_pages(
+                    root=root,
+                    revision=revision,
+                    previous_present=bool(active_intent["previous_present"]),
+                    previous_pages_json=active_intent["previous_pages_json"],
+                )
                 self._move_failed_publication(root, binding_path)
-                raise
+                self._move_failed_publication(root, authority_path)
+                intents.execute("BEGIN IMMEDIATE")
+                intents.execute(
+                    "UPDATE final_evidence_prepare_intents SET state='ABORTED' "
+                    "WHERE run_id=? AND acceptance_revision=? AND state='FILES_PUBLISHED'",
+                    (run["run_id"], revision),
+                )
+                intents.execute("COMMIT")
+                raise ContractError(
+                    "drifted published pages were preserved and the preceding set was restored",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_page_publication_restored",
+                    },
+                )
+
+            authority_path.parent.mkdir(parents=True, exist_ok=True)
+            binding_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(authority_path, authority)
+            self.acceptance.validate_input_binding(
+                binding,
+                verify_files=True,
+                require_published_final_authority=False,
+            )
+            write_json_atomic(binding_path, binding)
+            if fault_point == "after_binding_write":
+                raise FinalEvidenceFault(fault_point)
+            intents.execute("BEGIN IMMEDIATE")
+            transition = intents.execute(
+                "UPDATE final_evidence_prepare_intents SET state='COMMITTED' "
+                "WHERE run_id=? AND acceptance_revision=? AND state='FILES_PUBLISHED'",
+                (run["run_id"], revision),
+            )
+            if transition.rowcount != 1:
+                intents.execute("ROLLBACK")
+                raise ContractError(
+                    "Final Evidence COMMITTED transition lost authority",
+                    data={
+                        "first_failing_gate": "final_evidence_page_reconciliation",
+                        "error_code": "final_evidence_publication_state_invalid",
+                    },
+                )
+            intents.execute("COMMIT")
         return self._result(binding, binding_path, idempotent=False)
 
     @staticmethod

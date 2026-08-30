@@ -680,17 +680,15 @@ class AcceptanceV2CliTests(unittest.TestCase):
         self.refresh_final_authority(binding)
         binding["binding_sha256"] = canonical_sha({key: value for key, value in binding.items() if key != "binding_sha256"})
         write_json(binding_path, binding)
-        published, _ = run_cli("acceptance-final-authority-publish", "--input-binding", str(binding_path))
-        self.assertEqual(0, published.returncode)
-        completed, envelope = run_cli(
-            "acceptance-prepare", "--workspace-root", str(root / "review/acceptance"),
-            "--input-binding", str(binding_path), "--attempt-number", "1",
-            "--prepared-at", "2026-08-02T00:00:00Z",
-            "--coordinator-session", "coordinator-session",
+        published, envelope = run_cli(
+            "acceptance-final-authority-publish", "--input-binding", str(binding_path)
         )
-        self.assertNotEqual(0, completed.returncode)
-        self.assertEqual("allowed_read_set", envelope["data"]["first_failing_gate"])
-        self.assertEqual("acceptance_read_set_duplicate_path", envelope["data"]["error_code"])
+        self.assertNotEqual(0, published.returncode)
+        self.assertEqual("input_page_authority", envelope["data"]["first_failing_gate"])
+        self.assertEqual(
+            "acceptance_rendered_page_path_noncanonical",
+            envelope["data"]["error_code"],
+        )
 
     @unittest.skipUnless(os.name == "nt", "Windows case aliases are platform-specific")
     def test_prepare_rejects_case_alias_for_same_rendered_page_physical_path(self) -> None:

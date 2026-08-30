@@ -2390,7 +2390,7 @@ class AcceptanceV2Provider:
             if reconciliation.get("provider") != {"provider_id": "rendered-text-reconciliation-provider", "provider_version": "1.0.0"}:
                 _reject("Reconciliation provider provenance is unregistered", "quality_input_validity", "acceptance_reconciliation_provider_invalid")
             bound_pages = [
-                {"page": item["page"], "path": str(Path(item["path"]).resolve()), "sha256": item["sha256"]}
+                {"page": item["page"], "sha256": item["sha256"]}
                 for item in binding["rendered_pages"]
             ]
             render_manifest_path = Path(
@@ -2404,7 +2404,6 @@ class AcceptanceV2Provider:
                 manifested_pages.append(
                     {
                         "page": item["page"],
-                        "path": str(manifested_path.resolve()),
                         "sha256": item["sha256"],
                     }
                 )

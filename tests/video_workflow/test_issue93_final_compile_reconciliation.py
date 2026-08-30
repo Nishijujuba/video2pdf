@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import hashlib
+from io import StringIO
 import json
 from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC = PROJECT_ROOT / "src"
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_case_dir
+from video2pdf_workflow_kernel.cli import main as workflow_cli_main
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -73,10 +80,17 @@ def _run_reconcile(workspace_root: Path) -> tuple[subprocess.CompletedProcess[st
 
 
 class FinalCompileReconciliationArchiveTests(unittest.TestCase):
-    # Fixture migration impact: _write_interrupted_workspace is the valid graph
-    # builder; operation/execution records are derived nodes; reconciliation is
-    # the archive boundary; the negative replay scenario mutates only execution
-    # state after that boundary and asserts its stable first-gate error code.
+    # Fixture migration impact:
+    # - positive fixtures: shared-operation archives and archived replay;
+    # - negative fixtures: operation/execution fingerprint replay gates;
+    # - shared builder/API: _write_interrupted_workspace and the public CLI;
+    # - derived nodes: operation_sha256 and execution_sha256;
+    # - boundary: the workspace-to-archive reconciliation commit;
+    # - precedence scenarios: unchanged (none in this focused module);
+    # - first-gate assertions: operation fingerprint precedes execution fingerprint;
+    # - focused tests: this Issue #93 module plus the two Issue #92 reconcile cases;
+    # - complete affected modules: test_issue93_final_compile_reconciliation and
+    #   test_issue92_governed_text_origin_compile.
     def test_public_reconcile_archives_shared_operation_workspaces_distinctly(self) -> None:
         case_root = new_case_dir(self.id())
         operation_id = f"issue93-shared-{uuid.uuid4().hex}"
@@ -135,6 +149,81 @@ class FinalCompileReconciliationArchiveTests(unittest.TestCase):
             (archive / "final-compile-operation.json").read_bytes(),
         )
         self.assertEqual("retained", (archive / "partial-evidence.txt").read_text())
+
+    def test_public_reconcile_replay_does_not_reobserve_an_archived_process(self) -> None:
+        case_root = new_case_dir(self.id())
+        operation_id = f"issue93-reused-pid-{uuid.uuid4().hex}"
+        workspace = case_root / "workspace-a"
+        _write_interrupted_workspace(workspace, operation_id, "retained")
+        execution_path = workspace / "final-compile-execution.json"
+        execution = json.loads(execution_path.read_text(encoding="utf-8"))
+        execution.update(state="running", adapter_pid=424242, exit_code=None)
+        execution["execution_sha256"] = hashlib.sha256(
+            _canonical_bytes(
+                {
+                    key: value
+                    for key, value in execution.items()
+                    if key != "execution_sha256"
+                }
+            )
+        ).hexdigest()
+        execution_path.write_bytes(_canonical_bytes(execution))
+        command = [
+            "delivery-quality-final-compile-reconcile",
+            "--workspace-root",
+            str(workspace),
+        ]
+        first_stdout = StringIO()
+        replay_stdout = StringIO()
+        with patch(
+            "video2pdf_workflow_kernel.final_compile._observe_process_state",
+            side_effect=("missing", "live"),
+        ) as observe_process_state:
+            with redirect_stdout(first_stdout):
+                first_returncode = workflow_cli_main(command)
+            with redirect_stdout(replay_stdout):
+                replay_returncode = workflow_cli_main(command)
+
+        first = json.loads(first_stdout.getvalue())
+        replay = json.loads(replay_stdout.getvalue())
+        archive = Path(first["data"]["archive_path"])
+        self.assertEqual(0, first_returncode)
+        self.assertEqual(0, replay_returncode)
+        self.assertEqual(1, observe_process_state.call_count)
+        self.assertEqual(
+            "final_compile_interruption_already_reconciled",
+            replay["data"]["classification"],
+        )
+        self.assertEqual(str(archive), replay["data"]["archive_path"])
+
+    def test_replay_rejects_stale_operation_fingerprint_at_operation_gate(self) -> None:
+        # scenario_id: issue93-replay-stale-operation
+        # target_invariant: operation fingerprint matches archived operation bytes
+        # mutation_seam: after successful archive publication
+        # rematerialized_nodes: none
+        # intentionally_stale_nodes: operation_sha256
+        # expected_first_gate/error: final_compile_operation_fingerprint_invalid
+        # scenario_class: single_contradiction
+        case_root = new_case_dir(self.id())
+        operation_id = f"issue93-operation-fingerprint-{uuid.uuid4().hex}"
+        workspace = case_root / "workspace-a"
+        _write_interrupted_workspace(workspace, operation_id, "retained")
+        first_completed, first = _run_reconcile(workspace)
+        self.assertEqual(0, first_completed.returncode, first_completed.stderr)
+        archive = Path(first["data"]["archive_path"])
+        operation_path = archive / "final-compile-operation.json"
+        operation = json.loads(operation_path.read_text(encoding="utf-8"))
+        operation["operation_id"] = f"{operation_id}-drift"
+        operation_path.write_bytes(_canonical_bytes(operation))
+
+        replay_completed, replay = _run_reconcile(workspace)
+
+        self.assertEqual(20, replay_completed.returncode, replay_completed.stderr)
+        self.assertEqual("contract_invalid", replay["classification"])
+        self.assertEqual(
+            "final_compile_operation_fingerprint_invalid",
+            replay["data"]["error_code"],
+        )
 
     def test_replay_rejects_stale_execution_fingerprint_at_execution_gate(self) -> None:
         # scenario_id: issue93-replay-stale-execution

@@ -20,8 +20,11 @@ workspace parent:
 Two interrupted sibling workspaces may therefore share one operation identity
 and still retain distinct archives. Repeating the command with the original
 workspace path locates the matching archive, revalidates its operation and
-execution fingerprints plus process state, and returns
+execution fingerprints and completed-evidence boundary, and returns
 `final_compile_interruption_already_reconciled` without rewriting the archive.
+The live-process observation made before the original archive move is not
+repeated, because the immutable historical PID may later identify an unrelated
+process after operating-system PID reuse.
 
 Reconciliation fails closed when the workspace cannot be matched uniquely, the
 operation or execution fingerprint is invalid, process continuity is unknown,

@@ -229,7 +229,8 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Reconcile one interrupted Final Compile workspace into a deterministic "
             "operation-and-workspace archive. Repeating the command for the same "
-            "already-archived workspace returns the validated archive unchanged."
+            "already-archived workspace validates its immutable evidence and returns "
+            "the archive unchanged without re-observing its historical process ID."
         ),
     )
     final_compile_reconcile.add_argument(

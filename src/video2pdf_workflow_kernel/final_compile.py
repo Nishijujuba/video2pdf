@@ -734,7 +734,12 @@ class GuardedFinalCompileProvider:
             "protocol_version": "guarded-final-compile-v2",
         }
 
-    def _load_reconcilable_operation(self, root: Path) -> dict[str, Any]:
+    def _load_reconcilable_operation(
+        self,
+        root: Path,
+        *,
+        observe_running_process: bool = True,
+    ) -> dict[str, Any]:
         operation_path = root / "final-compile-operation.json"
         if not operation_path.is_file():
             raise ContractError(
@@ -770,7 +775,7 @@ class GuardedFinalCompileProvider:
                 "Final Compile process continuity is unknown",
                 data={"error_code": "final_compile_process_state_unknown"},
             )
-        if state == "running":
+        if state == "running" and observe_running_process:
             process_id = execution.get("adapter_pid")
             if not isinstance(process_id, int) or isinstance(process_id, bool):
                 raise ContractError(
@@ -791,7 +796,7 @@ class GuardedFinalCompileProvider:
                     "Final Compile process continuity is unknown",
                     data={"error_code": "final_compile_process_state_unknown"},
                 )
-        elif state not in {"succeeded", "failed", "launch_failed"}:
+        elif state not in {"running", "succeeded", "failed", "launch_failed"}:
             raise ContractError(
                 "Final Compile execution state is invalid",
                 data={"error_code": "final_compile_process_state_unknown"},
@@ -824,7 +829,10 @@ class GuardedFinalCompileProvider:
                 error_type=ContractError,
                 leaf_kind="directory",
             )
-            operation = self._load_reconcilable_operation(archive)
+            operation = self._load_reconcilable_operation(
+                archive,
+                observe_running_process=False,
+            )
             operation_id = operation.get("operation_id")
             return {
                 "classification": "final_compile_interruption_already_reconciled",

@@ -130,8 +130,9 @@ class AcceptanceV2CliTests(unittest.TestCase):
         artifacts = root / "artifacts"
         final_pdf = artifacts / "final.pdf"
         main_tex = artifacts / "main.tex"
-        page_1 = artifacts / "page_001.png"
-        page_2 = artifacts / "page_002.png"
+        rendered_pages = root / "review" / "acceptance" / "rendered_pages"
+        page_1 = rendered_pages / "page_0001.png"
+        page_2 = rendered_pages / "page_0002.png"
         values = (
             (final_pdf, f"pdf-generation-{generation}".encode() if equivalent else b"pdf"),
             (main_tex, f"tex-generation-{1 if equivalent else generation}".encode()),

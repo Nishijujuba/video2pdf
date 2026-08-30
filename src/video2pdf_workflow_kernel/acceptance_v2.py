@@ -2223,6 +2223,15 @@ class AcceptanceV2Provider:
         pages = [item.get("page") for item in binding["rendered_pages"]]
         if pages != list(range(1, len(pages) + 1)) or not pages:
             _reject("rendered pages must exactly cover 1..page_count", "input_page_coverage", "acceptance_input_page_coverage")
+        canonical_rendered_root = video_root / "review" / "acceptance" / "rendered_pages"
+        for item in binding["rendered_pages"]:
+            expected_path = canonical_rendered_root / f"page_{item['page']:04d}.png"
+            if Path(item.get("path", "")).resolve() != expected_path.resolve():
+                _reject(
+                    "rendered page path is not canonical",
+                    "input_page_authority",
+                    "acceptance_rendered_page_path_noncanonical",
+                )
         logical_ids = [item.get("logical_id") for item in binding["artifacts"]]
         if len(logical_ids) != len(set(logical_ids)) or not {"final_pdf", "main_tex"} <= set(logical_ids):
             _reject("Acceptance artifacts are incomplete or duplicated", "input_membership", "acceptance_input_membership_invalid")

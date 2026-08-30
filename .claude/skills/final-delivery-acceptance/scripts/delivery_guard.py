@@ -787,6 +787,35 @@ def _ensure_rendered_page_coverage(target: DeliveryTarget) -> None:
     ]
     if missing:
         raise GuardError(f"rendered page evidence is missing: {', '.join(missing)}")
+    if not target.kernel_authority:
+        return
+    binding = _require_object(
+        _load_json(
+            target.acceptance_report_path.parent / "input-binding.json",
+            "Acceptance v2 input binding",
+        ),
+        "Acceptance v2 input binding",
+    )
+    bound_pages = binding.get("rendered_pages")
+    if not isinstance(bound_pages, list) or len(bound_pages) != page_count:
+        raise GuardError(
+            "Acceptance-bound rendered page coverage differs from the final PDF",
+            first_failing_gate="rendered_page_authority",
+            error_code="rendered_page_coverage_mismatch",
+        )
+    for page_number, page in enumerate(bound_pages, start=1):
+        expected_path = (rendered_dir / f"page_{page_number:04d}.png").resolve()
+        if (
+            not isinstance(page, dict)
+            or page.get("page") != page_number
+            or Path(str(page.get("path", ""))).resolve() != expected_path
+            or page.get("sha256") != _file_sha256(expected_path)
+        ):
+            raise GuardError(
+                f"Acceptance-bound rendered page is stale or noncanonical: page {page_number}",
+                first_failing_gate="rendered_page_authority",
+                error_code="rendered_page_authority_mismatch",
+            )
 
 
 def _require_compile_report_string(report: dict[str, Any], key: str) -> str:

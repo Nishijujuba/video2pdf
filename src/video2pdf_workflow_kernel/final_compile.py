@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 import sys
 from typing import Any, Literal
@@ -916,9 +917,29 @@ class GuardedFinalCompileProvider:
         trace = read_json(
             bound_file("adapter-output/text-origin-trace.json", "compiler Text Origin trace")
         )
-        render_evidence = read_json(
-            bound_file("render-evidence-manifest.json", "Render Evidence Manifest")
-        )
+        render_evidence_path = root / "render-evidence-manifest.json"
+        if not render_evidence_path.is_file():
+            run_boundary = next(
+                (
+                    candidate
+                    for candidate in (root, *root.parents)
+                    if (candidate / "workflow/run.json").is_file()
+                ),
+                None,
+            )
+            if run_boundary is None:
+                raise ContractError("completed Render Evidence Manifest is missing")
+            render_evidence_path = require_contained_path(
+                run_boundary
+                / "review"
+                / "acceptance"
+                / "render-evidence-manifest.json",
+                run_boundary,
+                purpose="Render Evidence Manifest",
+                error_type=ContractError,
+                leaf_kind="file",
+            )
+        render_evidence = read_json(render_evidence_path)
         for value, field, label in (
             (final_seal, "seal_sha256", "Final Artifact Seal"),
             (rendered, "inventory_sha256", "Rendered Text Object Inventory"),
@@ -936,9 +957,77 @@ class GuardedFinalCompileProvider:
         ):
             raise ContractError("completed Final Compile evidence graph is stale")
         for page in render_evidence["pages"]:
-            page_path = bound_file(page["path"], "rendered Final Compile page")
+            page_path = require_contained_path(
+                render_evidence_path.parent / page["path"],
+                render_evidence_path.parent,
+                purpose="rendered Final Compile page",
+                error_type=ContractError,
+                leaf_kind="file",
+            )
             if sha256_file(page_path) != page["sha256"]:
                 raise ContractError("completed rendered page is stale")
+
+    def _publish_kernel_rendered_pages(
+        self,
+        *,
+        video_root: Path,
+        workspace_root: Path,
+        operation_id: str,
+        source_pages: list[tuple[int, Path]],
+    ) -> tuple[Path, list[dict[str, Any]]]:
+        acceptance_root = video_root / "review" / "acceptance"
+        rendered_root = acceptance_root / "rendered_pages"
+        manifest_path = acceptance_root / "render-evidence-manifest.json"
+        acceptance_root.mkdir(parents=True, exist_ok=True)
+        has_rendered_pages = rendered_root.exists() and any(rendered_root.iterdir())
+        if has_rendered_pages or manifest_path.is_file():
+            archive = (
+                video_root
+                / "待删除"
+                / "rendered-pages-replaced"
+                / f"{workspace_root.name}-{operation_id}"
+            )
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            if archive.exists():
+                raise ContractError(
+                    "canonical rendered-page archive already exists",
+                    data={
+                        "first_failing_gate": "final_compile_rendered_page_publication",
+                        "error_code": "canonical_rendered_page_archive_conflict",
+                    },
+                )
+            if rendered_root.exists():
+                shutil.move(str(rendered_root), str(archive))
+            else:
+                archive.mkdir()
+            if manifest_path.is_file():
+                shutil.move(str(manifest_path), str(archive / manifest_path.name))
+        rendered_root.mkdir(parents=True, exist_ok=True)
+
+        pages: list[dict[str, Any]] = []
+        for page_number, source in source_pages:
+            destination = rendered_root / f"page_{page_number:04d}.png"
+            shutil.copy2(source, destination)
+            pages.append(
+                {
+                    "page": page_number,
+                    "path": f"rendered_pages/{destination.name}",
+                    "sha256": sha256_file(destination),
+                }
+            )
+        expected_names = {f"page_{number:04d}.png" for number, _ in source_pages}
+        actual_names = {
+            path.name for path in rendered_root.iterdir() if path.is_file()
+        }
+        if actual_names != expected_names:
+            raise CompileDependencyGap(
+                "canonical Final Compile page publication is incomplete",
+                data={
+                    "first_failing_gate": "final_compile_rendered_page_publication",
+                    "error_code": "canonical_rendered_page_set_invalid",
+                },
+            )
+        return manifest_path, pages
 
     def _validate_workspace_authority(
         self,
@@ -1732,7 +1821,7 @@ class GuardedFinalCompileProvider:
             ) from exc
 
         pages_root = adapter_output / "rendered_pages"
-        pages = []
+        source_pages: list[tuple[int, Path]] = []
         for path in sorted(pages_root.glob("page_*.png")):
             try:
                 page_number = int(path.stem.removeprefix("page_"))
@@ -1744,18 +1833,36 @@ class GuardedFinalCompileProvider:
                     raise ValueError("empty page image")
             except Exception as exc:
                 raise CompileDependencyGap("Final Compile rendered page is unreadable") from exc
-            pages.append({
-                "page": page_number,
-                "path": f"adapter-output/rendered_pages/{path.name}",
-                "sha256": sha256_file(path),
-            })
+            source_pages.append((page_number, path))
         expected_pages = list(range(1, pdf_page_count + 1))
         if (
-            [item["page"] for item in pages] != expected_pages
+            [page_number for page_number, _ in source_pages] != expected_pages
             or rendered.get("coverage", {}).get("page_count") != pdf_page_count
             or rendered.get("coverage", {}).get("pages_scanned") != expected_pages
         ):
             raise CompileDependencyGap("Final Compile page rendering is incomplete")
+        if input_track == "kernel":
+            kernel_video_root = next(
+                candidate
+                for candidate in (precompile_root, *precompile_root.parents)
+                if (candidate / "workflow/run.json").is_file()
+            )
+            render_evidence_path, pages = self._publish_kernel_rendered_pages(
+                video_root=kernel_video_root,
+                workspace_root=root,
+                operation_id=operation["operation_id"],
+                source_pages=source_pages,
+            )
+        else:
+            pages = [
+                {
+                    "page": page_number,
+                    "path": f"adapter-output/rendered_pages/{path.name}",
+                    "sha256": sha256_file(path),
+                }
+                for page_number, path in source_pages
+            ]
+            render_evidence_path = root / "render-evidence-manifest.json"
         render_evidence = {
             "schema_name": "render-evidence-manifest",
             "schema_version": "1.0.0",
@@ -1768,7 +1875,6 @@ class GuardedFinalCompileProvider:
             render_evidence, "manifest_sha256"
         )
         self.registry.validate("render-evidence-manifest", render_evidence)
-        render_evidence_path = root / "render-evidence-manifest.json"
         write_json_atomic(render_evidence_path, render_evidence)
 
         published_final_seal_path = root / "final-artifact-seal.json"

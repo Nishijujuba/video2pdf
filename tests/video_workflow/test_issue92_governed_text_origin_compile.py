@@ -1091,12 +1091,19 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         operation = json.loads(
             (workspace / "final-compile-operation.json").read_text(encoding="utf-8")
         )
+        render_evidence_path = workspace / "render-evidence-manifest.json"
+        render_evidence = json.loads(render_evidence_path.read_text(encoding="utf-8"))
         page = workspace / report["pdf"]["path"]
-        rendered_page = (
-            workspace.parents[1]
-            / "review/acceptance/rendered_pages/page_0001.png"
+        rendered_page = render_evidence_path.parent / render_evidence["pages"][0][
+            "path"
+        ]
+        self.assertEqual(
+            1,
+            len(render_evidence["pages"]),
+            "the focused replay fixture must render exactly one page",
         )
         self.assertTrue(page.is_file())
+        self.assertTrue(rendered_page.is_file())
         with rendered_page.open("ab") as stream:
             stream.write(b"issue92-drift")
 

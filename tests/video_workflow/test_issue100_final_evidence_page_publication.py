@@ -22,6 +22,7 @@ import sys
 import unittest
 
 from tests.video_workflow import test_issue13_final_evidence_cli as final_evidence_tests
+from tests.video_workflow import test_issue13_candidate_confirmation as candidate_tests
 from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow.test_issue13_run_initialization import (
     PROJECT_ROOT,
@@ -129,6 +130,43 @@ class Issue100FinalEvidencePagePublicationTests(unittest.TestCase):
         self.assertTrue(source_manifest.is_file())
         self.assertEqual([], list(canonical_root.glob("page_*.png")))
 
+        transition_fixture = candidate_tests.Issue13CandidateConfirmationTests(
+            methodName="test_candidate_activation_rejects_generating_candidate"
+        )
+        ready_evidence = transition_fixture._transition_evidence(
+            run_dir,
+            from_stage="generating",
+            to_stage="ready_for_delivery",
+            artifacts={
+                "final_pdf": evidence["final_pdf"],
+                "main_tex": evidence["main_tex"],
+                "final_compile_report": evidence["final_compile_report"],
+                "render_evidence_manifest": evidence["render_evidence_manifest"],
+            },
+        )
+        run = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )
+        fixture._require_ok(
+            "delivery-transition",
+            "--run-dir",
+            str(run_dir),
+            "--from-stage",
+            "generating",
+            "--to-stage",
+            "ready_for_delivery",
+            "--session-id",
+            "session-issue100",
+            "--expected-run-revision",
+            str(run["coordination_revision"]),
+            "--expected-ownership-generation",
+            str(run["delivery"]["ownership"]["generation"]),
+            "--evidence",
+            str(ready_evidence),
+            "--transitioned-at",
+            "2026-08-30T01:00:00Z",
+        )
+
         completed, prepared = fixture._invoke_prepare(
             run_dir, control_root, evidence
         )
@@ -160,7 +198,7 @@ class Issue100FinalEvidencePagePublicationTests(unittest.TestCase):
             "--prepared-at",
             "2026-08-11T02:01:00Z",
             "--coordinator-session",
-            "coordinator-issue100",
+            "session-issue100",
         )
         task_path = next(
             Path(accepted["data"]["execution_root"]).glob("tasks/*/task.json")

@@ -9,11 +9,10 @@ import subprocess
 import sys
 from types import ModuleType
 from typing import Any, Iterator
-import uuid
 
 from .errors import ContractError
 from .cutover_retirement import project_maintenance_fence
-from .evidence import EvidenceSupportError, git_output
+from .evidence import EvidenceSupportError, clone_shared_repository, git_output
 from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
@@ -24,6 +23,7 @@ from .utils import read_json, write_json_atomic
 
 PROFILE_RELATIVE_PATH = Path("config/workflow-release-profile.v1.json")
 EXPECTED_EVIDENCE_SLICES = {
+    "global_gate": {"number": 11, "name": "global-acceptance-v2-gate"},
     "bilibili": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},
     "batch": {"number": 14, "name": "batch-projection-cutover"},
@@ -194,6 +194,7 @@ class ReleaseMaintenance:
                 value = read_json(path)
                 if not isinstance(value, dict):
                     raise TypeError("Exit Evidence must be a JSON object")
+                self._require_evidence_identity(value, capability)
                 relative = path.relative_to(self.project_root).as_posix()
                 head_blob = git_output(
                     self.project_root, "rev-parse", f"HEAD:{relative}"
@@ -256,6 +257,9 @@ class ReleaseMaintenance:
                     completed = subprocess.run(
                         [
                             sys.executable,
+                            "-X",
+                            "utf8",
+                            "-B",
                             str(validator_script),
                             str(target),
                         ],
@@ -272,6 +276,7 @@ class ReleaseMaintenance:
                         f"{capability}_exit_evidence_invalid",
                     )
                 if completed.returncode == 0:
+                    self._require_clean_snapshot(snapshot, capability)
                     continue
                 gate, code = self._parse_validator_failure(completed.stderr)
                 if gate is None or code is None:
@@ -304,48 +309,72 @@ class ReleaseMaintenance:
     def _publication_snapshot(
         self, publication: str, capability: str
     ) -> Iterator[Path]:
-        """Detached worktree of one publication commit for release audit.
+        """Reusable repository snapshot of one publication commit.
 
-        The snapshot is a real worktree of the immutable publication commit, so
+        The snapshot is a local shared clone of the immutable publication commit, so
         the publication-era validator (scripts/validate_slice_exit_evidence.py
         as published in that tree) observes the publication state for every
         check, including contract registries, slice constants, mirror files,
         persisted qualification artifacts, and guarded-delivery reports.
-        Snapshots live under the repository 待删除 staging area and are
-        force-removed after validation.
+        Snapshots remain under the repository 待删除 staging area for manual
+        cleanup and are never registered as linked worktrees of the source
+        repository.
         """
-        snapshot_dir = self.project_root / "待删除" / (
-            f"release-audit-snapshot-{capability}-"
-            f"{publication[:12]}-{uuid.uuid4().hex[:8]}"
-        )
-        try:
-            git_output(
-                self.project_root,
-                "worktree",
-                "add",
-                "--detach",
-                str(snapshot_dir),
-                publication,
-            )
-        except EvidenceSupportError as exc:
+        if not re.fullmatch(r"[0-9a-f]{40}", publication):
             _reject(
-                f"{capability} historical publication snapshot is unavailable: {exc}",
+                f"{capability} historical publication identity is invalid",
                 "historical_evidence",
                 f"{capability}_exit_evidence_invalid",
             )
-        try:
-            yield snapshot_dir
-        finally:
+        snapshot_root = self.project_root / "待删除" / "release-audit-snapshots"
+        snapshot_dir = snapshot_root / publication
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        if not snapshot_dir.exists():
             try:
-                git_output(
-                    self.project_root,
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(snapshot_dir),
+                clone_shared_repository(self.project_root, snapshot_dir)
+                git_output(snapshot_dir, "config", "core.autocrlf", "false")
+                git_output(snapshot_dir, "config", "core.longpaths", "true")
+                git_output(snapshot_dir, "checkout", "--detach", publication)
+            except EvidenceSupportError as exc:
+                _reject(
+                    f"{capability} historical publication snapshot is unavailable: {exc}",
+                    "historical_evidence",
+                    f"{capability}_exit_evidence_invalid",
                 )
-            except EvidenceSupportError:
-                pass
+        try:
+            snapshot_head = git_output(snapshot_dir, "rev-parse", "HEAD")
+        except EvidenceSupportError as exc:
+            _reject(
+                f"{capability} historical publication snapshot is invalid: {exc}",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        if snapshot_head != publication:
+            _reject(
+                f"{capability} historical publication snapshot has the wrong commit",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        self._require_clean_snapshot(snapshot_dir, capability)
+        yield snapshot_dir
+
+    def _require_clean_snapshot(self, snapshot: Path, capability: str) -> None:
+        try:
+            status = git_output(
+                snapshot, "status", "--porcelain", "--untracked-files=all"
+            )
+        except EvidenceSupportError as exc:
+            _reject(
+                f"{capability} historical publication snapshot cannot be inspected: {exc}",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
+        if status:
+            _reject(
+                f"{capability} historical publication snapshot is dirty",
+                "historical_evidence",
+                f"{capability}_exit_evidence_invalid",
+            )
 
     def _validate_release_package(self, **paths: Path) -> dict[str, Any]:
         global_gate = paths.pop("global_gate").resolve()
@@ -414,6 +443,10 @@ class ReleaseMaintenance:
                 "exit_evidence_schema",
                 f"{capability}_exit_evidence_invalid",
             )
+        self._require_evidence_identity(value, capability)
+
+    @staticmethod
+    def _require_evidence_identity(value: dict[str, Any], capability: str) -> None:
         if value.get("slice") != EXPECTED_EVIDENCE_SLICES[capability]:
             _reject(
                 f"{capability} Exit Evidence has the wrong release identity",

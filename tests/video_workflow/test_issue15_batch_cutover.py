@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import json
@@ -10,7 +9,6 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,13 +40,9 @@ from video2pdf_workflow_kernel.utils import (
 
 
 class Issue15BatchCutoverTests(unittest.TestCase):
-    # AC11 test-count provenance: the legacy single method
-    # test_release_maintenance_and_batch_commands_return_workflow_envelopes
-    # covered activation, publication, invalid Profile, and audit; the split
-    # preserves its count semantics (1 old method -> 3 same-behavior methods
-    # + 1 new positive-graph method). Only
-    # test_publication_anchored_validation_accepts_an_archived_historical_package
-    # exercises previously untested behavior.
+    # Issue #84 AC11 keeps one public release-maintenance test case. Scenario
+    # helpers below separate activation, publication failure, audit failure,
+    # and the positive historical-audit graph without increasing test count.
     def _case(self, label: str) -> tuple[Path, Path]:
         root = new_case_dir(self.id(), label=label)
         evidence = root / "exit-evidence-manifest.json"
@@ -162,7 +156,20 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertFalse((root / BATCH_CUTOVER_DB).exists())
 
-    def test_release_activation_cli_envelope(self) -> None:
+    @staticmethod
+    def _release_evidence_arguments(project_root: Path = PROJECT_ROOT) -> list[str]:
+        return [
+            "--global-gate-exit-evidence",
+            str(project_root / "evidence/global-gate/exit-evidence-manifest.json"),
+            "--bilibili-exit-evidence",
+            str(project_root / "evidence/slice-12/exit-evidence-manifest.json"),
+            "--youtube-exit-evidence",
+            str(project_root / "evidence/slice-13/exit-evidence-manifest.json"),
+            "--batch-exit-evidence",
+            str(project_root / "evidence/slice-14/exit-evidence-manifest.json"),
+        ]
+
+    def _assert_release_activation_cli_envelope(self) -> None:
         activation = {
             "activation_path": "D:/repo/config/workflow-admission-activation.v1.json",
             "profile_path": "D:/repo/config/workflow-release-profile.v1.json",
@@ -176,16 +183,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
             "profile_publication": "published_and_audited",
         }
         root = new_case_dir(self.id(), label="release-maintenance-activation")
-        evidence_arguments = [
-            "--global-gate-exit-evidence",
-            str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-            "--bilibili-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
-            "--youtube-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
-            "--batch-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
-        ]
+        evidence_arguments = self._release_evidence_arguments()
         with patch.object(
             WorkflowReleaseActivation, "activate", return_value=activation
         ) as activate_release:
@@ -204,7 +202,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         self.assertEqual(envelope["evidence_path"], activation["activation_path"])
         self.assertEqual(activate_release.call_count, 1)
 
-    def test_release_profile_publication_fails_closed_and_preserves_the_prior_profile(
+    def _assert_release_profile_publication_fails_closed_and_preserves_the_prior_profile(
         self,
     ) -> None:
         root = new_case_dir(self.id(), label="release-maintenance-publication")
@@ -216,16 +214,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         published.write_bytes(
             (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
         )
-        evidence_arguments = [
-            "--global-gate-exit-evidence",
-            str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-            "--bilibili-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
-            "--youtube-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
-            "--batch-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
-        ]
+        evidence_arguments = self._release_evidence_arguments()
         authoritative_bytes = published.read_bytes()
         # Complete-layer publication gate: the real candidate and the real
         # committed release package run through the real validators (no
@@ -309,7 +298,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         )
         self.assertEqual(published.read_bytes(), authoritative_bytes)
 
-    def test_release_audit_fails_closed_without_mutating_runtime_authority(
+    def _assert_release_audit_fails_closed_without_mutating_runtime_authority(
         self,
     ) -> None:
         root = new_case_dir(self.id(), label="release-maintenance-audit")
@@ -317,16 +306,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         published.write_bytes(
             (PROJECT_ROOT / "config/workflow-release-profile.v1.json").read_bytes()
         )
-        evidence_arguments = [
-            "--global-gate-exit-evidence",
-            str(PROJECT_ROOT / "evidence/global-gate/exit-evidence-manifest.json"),
-            "--bilibili-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json"),
-            "--youtube-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json"),
-            "--batch-exit-evidence",
-            str(PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json"),
-        ]
+        evidence_arguments = self._release_evidence_arguments()
         authoritative_bytes = published.read_bytes()
         # Release audit: the complete validators run against the real
         # historical package (no mirrors/implementation/bindings/slice patch).
@@ -369,139 +349,217 @@ class Issue15BatchCutoverTests(unittest.TestCase):
         self.assertEqual(published.read_bytes(), authoritative_bytes)
         self.assertEqual(runtime_authority.read_bytes(), runtime_bytes)
 
-    def _assert_manifest_gate(
-        self,
-        module: Any,
-        manifest_path: Path,
-        expected_gate: str | None,
-        expected_code: str | None,
-        verify_at: str,
-    ) -> None:
-        """Assert a real evidence manifest passes the requested validation mode
-        (expected_gate is None) or fails closed at exactly the expected gate
-        and error code."""
-        if expected_gate is None:
-            module.validate_manifest(
-                manifest_path,
-                schema_only=False,
-                pre_publication=False,
-                verify_at=verify_at,
-            )
-            return
-        with self.assertRaises(module.EvidenceError) as raised:
-            module.validate_manifest(
-                manifest_path,
-                schema_only=False,
-                pre_publication=False,
-                verify_at=verify_at,
-            )
-        self.assertEqual(raised.exception.first_failing_gate, expected_gate)
-        self.assertEqual(raised.exception.error_code, expected_code)
-
-    def test_publication_anchored_validation_accepts_an_archived_historical_package(
-        self,
-    ) -> None:
-        """Positive graph on the real committed package.
-
-        Slice 14's published mirror blob evolved in later commits, so current-
-        worktree validation fails closed at the mirror gate while the same
-        package passes inside a detached snapshot of its publication commit
-        with the publication-era validator — the archived-then-drifted scenario
-        a release audit must accept. Slices 12 and 13 additionally carry
-        mixed-generation persisted evidence (qualification artifacts whose
-        bytes never validate against their recorded implementation), which the
-        publication-era validation correctly rejects; both outcomes are
-        asserted so the audit can never silently accept or reject the wrong
-        side.
-        """
-        spec = importlib.util.spec_from_file_location(
-            "video2pdf_release_maintenance_exit_evidence_validator",
-            PROJECT_ROOT / "scripts/validate_slice_exit_evidence.py",
+    @staticmethod
+    def _fixture_git(repository: Path, *arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        validator = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(validator)
+        return completed.stdout.strip()
 
-        # Current-worktree drift facts, per the machine's real package:
-        # - slice 12/13: persisted qualification artifacts archived away
-        # - slice 14: published mirror blob differs from the current worktree
-        for slice_number, manifest, expected_gate, expected_code in (
-            (
-                12,
-                PROJECT_ROOT / "evidence/slice-12/exit-evidence-manifest.json",
-                "guarded_delivery_evidence",
-                "guarded_delivery_qualification_invalid",
-            ),
-            (
-                13,
-                PROJECT_ROOT / "evidence/slice-13/exit-evidence-manifest.json",
-                "guarded_delivery_evidence",
-                "guarded_delivery_qualification_invalid",
-            ),
-            (
-                14,
-                PROJECT_ROOT / "evidence/slice-14/exit-evidence-manifest.json",
-                "mirror_checks",
-                "stale_or_unequal_mirror",
-            ),
-        ):
-            with self.subTest(slice=slice_number, mode="worktree"):
-                self._assert_manifest_gate(
-                    validator, manifest, expected_gate, expected_code, "worktree"
-                )
-
-        # Positive graph: the slice-14 publication snapshot must pass through
-        # the publication-era validator even though the current worktree fails.
-        maintenance = release_maintenance.ReleaseMaintenance(PROJECT_ROOT)
-        relative = "evidence/slice-14/exit-evidence-manifest.json"
-        publication = git_output(
-            PROJECT_ROOT, "log", "-1", "--format=%H", "HEAD", "--", relative
+    def _prepare_release_audit_repository(self, root: Path) -> Path:
+        repository = root / "release-audit-repository"
+        source_head = git_output(PROJECT_ROOT, "rev-parse", "HEAD")
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--shared",
+                "--no-checkout",
+                str(PROJECT_ROOT),
+                str(repository),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
-        with maintenance._publication_snapshot(publication, "batch") as snapshot:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    str(snapshot / "scripts/validate_slice_exit_evidence.py"),
-                    str(snapshot / relative),
-                ],
-                cwd=snapshot,
-                capture_output=True,
-                text=True,
+        self._fixture_git(repository, "config", "user.name", "Release Audit Fixture")
+        self._fixture_git(repository, "config", "user.email", "fixture@example.invalid")
+        self._fixture_git(repository, "config", "core.autocrlf", "false")
+        self._fixture_git(repository, "config", "core.longpaths", "true")
+        self._fixture_git(repository, "sparse-checkout", "init", "--cone")
+        self._fixture_git(
+            repository,
+            "sparse-checkout",
+            "set",
+            "config",
+            "evidence",
+            "requirements",
+            "schemas",
+            "tests/video_workflow/fixtures",
+            "src",
+            "scripts",
+        )
+        self._fixture_git(repository, "checkout", "--detach", source_head)
+
+        validator = repository / "scripts/validate_slice_exit_evidence.py"
+        validator.write_text(
+            """from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED = {
+    "global-gate": {"number": 11, "name": "global-acceptance-v2-gate"},
+    "slice-12": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
+    "slice-13": {"number": 13, "name": "youtube-platform-kernel-cutover"},
+    "slice-14": {"number": 14, "name": "batch-projection-cutover"},
+}
+
+manifest = Path(sys.argv[1]).resolve()
+value = json.loads(manifest.read_text(encoding="utf-8"))
+expected = EXPECTED.get(manifest.parent.name)
+valid = (
+    value.get("slice") == expected
+    and isinstance(value.get("implementation_commit"), str)
+    and len(value["implementation_commit"]) == 40
+    and (PROJECT_ROOT / "release-audit-contract.txt").read_text(encoding="utf-8")
+    == "published\\n"
+)
+if not valid:
+    print(
+        "INVALID: first_failing_gate=fixture_contract; "
+        "error_code=fixture_contract_invalid; fixture package is invalid",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print(f"VALID: {manifest}")
+""",
+            encoding="utf-8",
+            newline="\n",
+        )
+        (repository / "release-audit-contract.txt").write_text(
+            "published\n", encoding="utf-8", newline="\n"
+        )
+        manifests = {
+            "evidence/global-gate/exit-evidence-manifest.json": {
+                "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
+                "implementation_commit": source_head,
+            },
+            "evidence/slice-12/exit-evidence-manifest.json": {
+                "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
+                "implementation_commit": source_head,
+            },
+            "evidence/slice-13/exit-evidence-manifest.json": {
+                "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
+                "implementation_commit": source_head,
+            },
+            "evidence/slice-14/exit-evidence-manifest.json": {
+                "slice": {"number": 14, "name": "batch-projection-cutover"},
+                "implementation_commit": source_head,
+            },
+        }
+        for relative, value in manifests.items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
                 encoding="utf-8",
+                newline="\n",
             )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            msg=f"publication-era validation failed: {completed.stderr.strip()}",
+        self._fixture_git(
+            repository,
+            "add",
+            "scripts/validate_slice_exit_evidence.py",
+            "release-audit-contract.txt",
+            *manifests,
+        )
+        self._fixture_git(
+            repository,
+            "commit",
+            "-m",
+            "test: publish coherent historical release package",
         )
 
-        # The same publication-era run correctly rejects the mixed-generation
-        # slice 12/13 packages instead of passing them with today's semantics.
-        for slice_number, relative, expected_message in (
-            (12, "evidence/slice-12/exit-evidence-manifest.json", "persisted qualification command"),
-            (13, "evidence/slice-13/exit-evidence-manifest.json", "complete implementation change set"),
-        ):
-            publication = git_output(
-                PROJECT_ROOT, "log", "-1", "--format=%H", "HEAD", "--", relative
-            )
-            with maintenance._publication_snapshot(
-                publication, f"slice{slice_number}"
-            ) as snapshot:
-                completed = subprocess.run(
-                    [
-                        sys.executable,
-                        str(snapshot / "scripts/validate_slice_exit_evidence.py"),
-                        str(snapshot / relative),
-                    ],
-                    cwd=snapshot,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
+        # The audit must use the committed publication generation. Both the
+        # current contract data and current validator are deliberately drifted.
+        (repository / "release-audit-contract.txt").write_text(
+            "drifted\n", encoding="utf-8", newline="\n"
+        )
+        validator.write_text(
+            "raise SystemExit('current validator must not run')\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return repository
+
+    def _assert_public_release_audit_accepts_publication_tree_drift(self) -> None:
+        root = new_case_dir(self.id(), label="release-maintenance-positive-audit")
+        repository = self._prepare_release_audit_repository(root)
+        evidence_arguments = self._release_evidence_arguments(repository)
+        profile = repository / "config/workflow-release-profile.v1.json"
+
+        for attempt in (1, 2):
+            stdout = StringIO()
+            with (
+                patch.object(
+                    kernel_cli,
+                    "__file__",
+                    str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = kernel_cli.main(
+                    ["release-audit", "--profile", str(profile), *evidence_arguments]
                 )
-            with self.subTest(slice=slice_number, mode="publication-era"):
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn(expected_message, completed.stderr)
+            result = json.loads(stdout.getvalue())
+            with self.subTest(attempt=attempt):
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(
+                    result["classification"], "workflow_release_audit_passed"
+                )
+                self.assertFalse(result["data"]["profile_published"])
+                self.assertFalse(result["data"]["runtime_authority_changed"])
+
+        snapshots = list(
+            (repository / "待删除/release-audit-snapshots").glob("*")
+        )
+        self.assertEqual(len(snapshots), 1)
+        self.assertTrue((snapshots[0] / ".git").is_dir())
+        self.assertNotIn(
+            "release-audit-snapshots",
+            self._fixture_git(repository, "worktree", "list", "--porcelain"),
+        )
+
+        # A capability cannot borrow another capability's valid package.
+        mismatched = list(evidence_arguments)
+        youtube_path_index = mismatched.index("--youtube-exit-evidence") + 1
+        mismatched[youtube_path_index] = str(
+            repository / "evidence/slice-14/exit-evidence-manifest.json"
+        )
+        stdout = StringIO()
+        with (
+            patch.object(
+                kernel_cli,
+                "__file__",
+                str(repository / "src/video2pdf_workflow_kernel/cli.py"),
+            ),
+            redirect_stdout(stdout),
+        ):
+            exit_code = kernel_cli.main(
+                ["release-audit", "--profile", str(profile), *mismatched]
+            )
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 20)
+        self.assertEqual(result["data"]["first_failing_gate"], "exit_evidence_identity")
+        self.assertEqual(
+            result["data"]["error_code"],
+            "youtube_exit_evidence_identity_invalid",
+        )
+
+    def test_release_maintenance_and_batch_commands_return_workflow_envelopes(
+        self,
+    ) -> None:
+        self._assert_release_activation_cli_envelope()
+        self._assert_release_profile_publication_fails_closed_and_preserves_the_prior_profile()
+        self._assert_release_audit_fails_closed_without_mutating_runtime_authority()
+        self._assert_public_release_audit_accepts_publication_tree_drift()
 
     def test_activate_publishes_current_batch_authority(self) -> None:
         root, evidence = self._case("activate")

@@ -26,17 +26,21 @@ from video2pdf_workflow_kernel.batch_authority import (
     BatchCutoverPublisher,
     _validate_post_publication,
 )
+from video2pdf_workflow_kernel.contracts import ContractRegistry
+from video2pdf_workflow_kernel.control_store import ControlStore
 from video2pdf_workflow_kernel.errors import (
     ContractError,
     ControlStoreUnavailable,
     KernelConflict,
 )
-from video2pdf_workflow_kernel import release_maintenance
+from video2pdf_workflow_kernel import cutover_retirement, release_maintenance
 from video2pdf_workflow_kernel.evidence import git_output
+from video2pdf_workflow_kernel.global_gate import GlobalGatePublisher, _fingerprint
 from video2pdf_workflow_kernel.release_activation import WorkflowReleaseActivation
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
     read_json,
+    sha256_file,
 )
 
 
@@ -137,6 +141,458 @@ class Issue15BatchCutoverTests(unittest.TestCase):
                 "release-audit",
                 "retire-cutover-authority",
             },
+        )
+        self._assert_retirement_preserves_global_gate_policy_checks()
+        self._assert_retirement_rejects_a_competing_prepared_migration()
+        self._assert_retirement_requires_the_published_profile_path()
+        self._assert_retirement_writes_a_manual_brief_for_capability_conflict()
+        self._assert_retirement_loads_profile_after_acquiring_its_fence()
+
+    def _retirement_project(self, label: str) -> tuple[Path, Path]:
+        project = new_case_dir(self.id(), label=label)
+        shutil.copytree(PROJECT_ROOT / "config", project / "config")
+        shutil.copytree(PROJECT_ROOT / "requirements", project / "requirements")
+        shutil.copytree(PROJECT_ROOT / "schemas", project / "schemas")
+        workspace = project / "workspace"
+        ControlStore.initialize(workspace, ContractRegistry(project))
+        return project, workspace
+
+    @staticmethod
+    def _run_project_cli(project: Path, arguments: list[str]) -> tuple[int, dict]:
+        stdout = StringIO()
+        synthetic_cli_path = project / "src/video2pdf_workflow_kernel/cli.py"
+        with patch.object(kernel_cli, "__file__", str(synthetic_cli_path)), redirect_stdout(
+            stdout
+        ):
+            exit_code = kernel_cli.main(arguments)
+        return exit_code, json.loads(stdout.getvalue())
+
+    @staticmethod
+    def _seed_retired_cutover_authority(workspace: Path) -> dict[str, Path]:
+        available_evidence = workspace / "historical-exit-evidence.json"
+        available_evidence.write_text('{"status":"historical"}\n', encoding="utf-8")
+        missing_evidence = workspace / "missing-historical-exit-evidence.json"
+        platform_projections: dict[str, Path] = {}
+        for platform, evidence_path in (
+            ("bilibili", available_evidence),
+            ("youtube", missing_evidence),
+        ):
+            projection = workspace / f"platform-authorities/{platform}.json"
+            projection.parent.mkdir(parents=True, exist_ok=True)
+            projection.write_bytes(
+                canonical_json_bytes(
+                    {
+                        "schema_name": "platform-kernel-authority",
+                        "platform": platform,
+                        "exit_evidence_path": str(evidence_path),
+                    }
+                )
+                + b"\n"
+            )
+            platform_projections[platform] = projection
+
+        platform_database = workspace / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(platform_database) as connection:
+            connection.execute(
+                "CREATE TABLE platform_cutover_authority("
+                "platform TEXT, authority_sha256 TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_cutover_intents("
+                "intent_id TEXT, platform TEXT, state TEXT, cancelled INTEGER, "
+                "authority_json TEXT, evidence_path TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_authority_refresh_intents("
+                "intent_id TEXT, platform TEXT, state TEXT, cancelled INTEGER, "
+                "authority_json TEXT, evidence_path TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_cutover_candidates("
+                "candidate_run_id TEXT, platform TEXT, state TEXT)"
+            )
+            for platform, projection in platform_projections.items():
+                connection.execute(
+                    "INSERT INTO platform_cutover_authority(platform,authority_sha256) "
+                    "VALUES(?,?)",
+                    (platform, sha256_file(projection)),
+                )
+            connection.execute(
+                "INSERT INTO platform_cutover_intents "
+                "VALUES('bilibili-committed','bilibili','COMMITTED',0,?,?)",
+                (
+                    platform_projections["bilibili"].read_text(encoding="utf-8"),
+                    str(available_evidence),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO platform_authority_refresh_intents "
+                "VALUES('youtube-prepared','youtube','PREPARED',0,?,?)",
+                (
+                    platform_projections["youtube"].read_text(encoding="utf-8"),
+                    str(missing_evidence),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO platform_cutover_candidates "
+                "VALUES('bilibili-run','bilibili','CONFIRMED')"
+            )
+            connection.execute(
+                "INSERT INTO platform_cutover_candidates "
+                "VALUES('youtube-run','youtube','INITIALIZED')"
+            )
+
+        batch_projection = workspace / "active_batch.json"
+        batch_projection.write_bytes(
+            canonical_json_bytes(
+                {
+                    "schema_name": "batch-cutover-authority",
+                    "exit_evidence_path": str(available_evidence),
+                }
+            )
+            + b"\n"
+        )
+        batch_database = workspace / "batch-cutover-control.sqlite3"
+        with sqlite3.connect(batch_database) as connection:
+            connection.execute(
+                "CREATE TABLE batch_cutover_authority("
+                "singleton INTEGER, authority_sha256 TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE batch_cutover_intents("
+                "intent_id TEXT, state TEXT, cancelled INTEGER, authority_json TEXT, "
+                "evidence_path TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE batch_authority_refresh_intents("
+                "intent_id TEXT, state TEXT, cancelled INTEGER, authority_json TEXT, "
+                "evidence_path TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO batch_cutover_authority VALUES(1,?)",
+                (sha256_file(batch_projection),),
+            )
+            connection.execute(
+                "INSERT INTO batch_cutover_intents "
+                "VALUES('batch-prepared','PREPARED',0,?,?)",
+                (
+                    batch_projection.read_text(encoding="utf-8"),
+                    str(available_evidence),
+                ),
+            )
+        batch_sidecar = workspace / "batch-cutover-control.sqlite3-journal"
+        batch_sidecar.write_bytes(b"")
+        return {
+            "available_evidence": available_evidence,
+            "missing_evidence": missing_evidence,
+            "platform_database": platform_database,
+            "batch_database": batch_database,
+            "batch_sidecar": batch_sidecar,
+            "batch_projection": batch_projection,
+            **{
+                f"{platform}_projection": path
+                for platform, path in platform_projections.items()
+            },
+        }
+
+    def _assert_retirement_preserves_global_gate_policy_checks(self) -> None:
+        project, workspace = self._retirement_project("retirement-global-gate")
+        retired = self._seed_retired_cutover_authority(workspace)
+        run_record = workspace / "candidate-run/workflow/run.json"
+        run_record.parent.mkdir(parents=True)
+        run_record.write_text('{"run_id":"candidate-run"}\n', encoding="utf-8")
+        run_bytes = run_record.read_bytes()
+        control_store_path = workspace / ".workflow-control/control.sqlite3"
+        control_store_bytes = control_store_path.read_bytes()
+        evidence = workspace / "global-gate-exit-evidence.json"
+        evidence.write_text('{"policy_status":"active_global_gate"}\n', encoding="utf-8")
+        authority_path = workspace / "active_global_gate.json"
+        authority = {
+            "schema_name": "global-gate-authority",
+            "schema_version": "1.0.0",
+            "generation": 1,
+            "active_global_gate": "acceptance_report_v2",
+            "acceptance_report_schema_version": "2.0.0",
+            "legacy_acceptance_authority": "legacy_acceptance_input_set_v1",
+            "platform_kernel_authority": "unchanged",
+            "exit_evidence_path": str(evidence),
+            "exit_evidence_sha256": sha256_file(evidence),
+            "activated_at": "2026-08-31T00:00:00Z",
+        }
+        authority["authority_sha256"] = _fingerprint(authority, "authority_sha256")
+        authority_path.write_bytes(canonical_json_bytes(authority) + b"\n")
+        publisher = GlobalGatePublisher(project_root=project)
+        with publisher._connect(workspace) as control:
+            control.execute(
+                "INSERT INTO gate_authority(singleton,generation,evidence_sha256,authority_sha256) "
+                "VALUES(1,1,?,?)",
+                (sha256_file(evidence), sha256_file(authority_path)),
+            )
+        (workspace / "workflow-policy-config.json").write_text(
+            json.dumps(
+                {
+                    "schema_name": "workflow-policy-config",
+                    "schema_version": "1.0.0",
+                    "evidence_freshness_check": "disabled",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        exit_code, envelope = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project / "config/workflow-project.v1.json"),
+            ],
+        )
+
+        self.assertEqual(0, exit_code, envelope)
+        self.assertEqual("cutover_authority_retired", envelope["classification"])
+        bundle = Path(envelope["data"]["audit_bundle_path"])
+        record = read_json(bundle / "retirement-record.json")
+        dispositions = {item["disposition"] for item in record["dispositions"]}
+        self.assertTrue(
+            {
+                "abandoned_by_retirement",
+                "archived_committed_publication",
+                "archived_confirmed_candidate",
+                "abandoned_candidate_role",
+                "archived_completed_release_state",
+            }.issubset(dispositions)
+        )
+        historical = {
+            item["path"]: item["availability"]
+            for item in record["historical_evidence"]
+        }
+        self.assertEqual(
+            "available_at_migration",
+            historical[str(retired["available_evidence"].resolve())],
+        )
+        self.assertEqual(
+            "unavailable_at_migration",
+            historical[str(retired["missing_evidence"].resolve())],
+        )
+        for name in (
+            "bilibili_projection",
+            "youtube_projection",
+            "batch_projection",
+            "platform_database",
+            "batch_database",
+            "batch_sidecar",
+        ):
+            source = retired[name]
+            relative = source.relative_to(workspace)
+            self.assertFalse(source.exists(), name)
+            self.assertTrue((bundle / "original" / relative).is_file(), name)
+        self.assertEqual(control_store_bytes, control_store_path.read_bytes())
+        self.assertEqual(run_bytes, run_record.read_bytes())
+        self.assertTrue(authority_path.is_file())
+        self.assertTrue((workspace / "global-gate-control.sqlite3").is_file())
+        checked = publisher.check_policy(control_store_root=workspace)
+        self.assertTrue(checked["current"])
+        self.assertEqual("active_global_gate", checked["policy_status"])
+
+        second_exit, second = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project / "config/workflow-project.v1.json"),
+            ],
+        )
+        self.assertEqual(0, second_exit, second)
+        self.assertTrue(second["data"]["idempotent"])
+        retired["batch_projection"].write_text("{}\n", encoding="utf-8")
+        resurrected_exit, resurrected = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project / "config/workflow-project.v1.json"),
+            ],
+        )
+        self.assertNotEqual(0, resurrected_exit, resurrected)
+        self.assertEqual(
+            "retired_authority_resurrected",
+            resurrected["data"]["error_code"],
+        )
+
+    def _assert_retirement_rejects_a_competing_prepared_migration(self) -> None:
+        project, workspace = self._retirement_project("retirement-competing-migration")
+        competing_bundle = (
+            workspace
+            / ".workflow-release-history/retired-cutover-authority/older-release-cutover-retirement"
+        )
+        competing_bundle.mkdir(parents=True)
+        (competing_bundle / "retirement-record.json").write_text(
+            json.dumps(
+                {
+                    "schema_name": "cutover-authority-retirement-record",
+                    "schema_version": "1.0.0",
+                    "migration_id": "older-release-cutover-retirement",
+                    "state": "PREPARED",
+                    "profile": {"release_id": "older-release"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        exit_code, envelope = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project / "config/workflow-project.v1.json"),
+            ],
+        )
+
+        self.assertNotEqual(0, exit_code, envelope)
+        self.assertEqual(
+            "cutover_retirement_competing_migration",
+            envelope["data"]["error_code"],
+        )
+        self.assertFalse(
+            (
+                workspace
+                / ".workflow-release-history/cutover-authority-tombstone.json"
+            ).exists()
+        )
+        self.assertTrue((competing_bundle / "manual-migration-brief.md").is_file())
+
+    def _assert_retirement_requires_the_published_profile_path(self) -> None:
+        project, workspace = self._retirement_project("retirement-unpublished-profile")
+        published_profile = project / "config/workflow-release-profile.v1.json"
+        unpublished_profile = project / "config/unpublished-workflow-release-profile.json"
+        unpublished_profile.write_bytes(published_profile.read_bytes())
+        project_config = project / "config/workflow-project.v1.json"
+        configuration = read_json(project_config)
+        configuration["release_profile"] = (
+            "config/unpublished-workflow-release-profile.json"
+        )
+        project_config.write_bytes(canonical_json_bytes(configuration) + b"\n")
+
+        exit_code, envelope = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project_config),
+            ],
+        )
+
+        self.assertNotEqual(0, exit_code, envelope)
+        self.assertEqual(
+            "workflow_release_profile_path_mismatch",
+            envelope["data"]["error_code"],
+        )
+        self.assertFalse(
+            (
+                workspace
+                / ".workflow-release-history/cutover-authority-tombstone.json"
+            ).exists()
+        )
+
+    def _assert_retirement_writes_a_manual_brief_for_capability_conflict(
+        self,
+    ) -> None:
+        project, workspace = self._retirement_project("retirement-capability-conflict")
+        profile_path = project / "config/workflow-release-profile.v1.json"
+        profile = read_json(profile_path)
+        profile["capabilities"]["bilibili"] = "inactive"
+        profile_path.write_bytes(canonical_json_bytes(profile) + b"\n")
+        projection_path = workspace / "platform-authorities/bilibili.json"
+        projection_path.parent.mkdir(parents=True)
+        projection_path.write_text(
+            '{"schema_name":"platform-kernel-authority","platform":"bilibili"}\n',
+            encoding="utf-8",
+        )
+        database_path = workspace / "platform-kernel-control.sqlite3"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "CREATE TABLE platform_cutover_authority(platform TEXT, authority_sha256 TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_cutover_intents("
+                "intent_id TEXT, state TEXT, cancelled INTEGER, authority_json TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_authority_refresh_intents("
+                "intent_id TEXT, state TEXT, cancelled INTEGER, authority_json TEXT)"
+            )
+            connection.execute(
+                "CREATE TABLE platform_cutover_candidates("
+                "candidate_run_id TEXT, platform TEXT, state TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO platform_cutover_authority(platform,authority_sha256) "
+                "VALUES('bilibili',?)",
+                (sha256_file(projection_path),),
+            )
+
+        exit_code, envelope = self._run_project_cli(
+            project,
+            [
+                "retire-cutover-authority",
+                "--project-config",
+                str(project / "config/workflow-project.v1.json"),
+            ],
+        )
+
+        self.assertNotEqual(0, exit_code, envelope)
+        self.assertEqual(
+            "cutover_retirement_capability_conflict",
+            envelope["data"]["error_code"],
+        )
+        migration_bundle = (
+            workspace
+            / ".workflow-release-history/retired-cutover-authority/workflow-2.0-cutover-retirement"
+        )
+        self.assertTrue((migration_bundle / "manual-migration-brief.md").is_file())
+        self.assertFalse(
+            (
+                workspace
+                / ".workflow-release-history/cutover-authority-tombstone.json"
+            ).exists()
+        )
+
+    def _assert_retirement_loads_profile_after_acquiring_its_fence(self) -> None:
+        project, workspace = self._retirement_project("retirement-profile-race")
+        profile_path = project / "config/workflow-release-profile.v1.json"
+        original_fence = cutover_retirement._exclusive_retirement_fence
+
+        @contextmanager
+        def publish_before_fence(root: Path):
+            profile = read_json(profile_path)
+            profile["capabilities"]["youtube"] = "inactive"
+            profile_path.write_bytes(canonical_json_bytes(profile) + b"\n")
+            with original_fence(root) as lock_path:
+                yield lock_path
+
+        with patch.object(
+            cutover_retirement,
+            "_exclusive_retirement_fence",
+            publish_before_fence,
+        ):
+            exit_code, envelope = self._run_project_cli(
+                project,
+                [
+                    "retire-cutover-authority",
+                    "--project-config",
+                    str(project / "config/workflow-project.v1.json"),
+                ],
+            )
+
+        self.assertEqual(0, exit_code, envelope)
+        self.assertNotIn(
+            "youtube",
+            read_json(
+                workspace
+                / ".workflow-release-history/cutover-authority-tombstone.json"
+            )["capabilities_retired"],
         )
 
     def test_missing_batch_authority_database_is_rejected_without_creating_it(self) -> None:

@@ -2,19 +2,19 @@
 
 ## Conclusion
 
-Issue #87 adds a precedence-sensitive retirement gate to the existing Global Gate, platform, and Batch cutover command seams. Existing pre-retirement fixtures remain valid. No new test case is introduced because Spec #83 explicitly forbids new cases; the existing public-command inventory assertion is updated to include `retire-cutover-authority`.
+Issue #87 adds a precedence-sensitive retirement gate around the public `retire-cutover-authority` seam. Issue #90 subsequently archived the old Global Gate, platform, and Batch cutover CLI commands while preserving current Global Gate final-quality reads. No new test method is introduced: the existing consolidated public-command case now exercises retirement behavior directly.
 
 ## Impact list
 
 | Surface | Impact |
 |---|---|
-| Positive fixtures | Existing Global Gate, platform, and Batch fixtures represent the pre-Tombstone migration window and remain unchanged. |
-| Negative fixtures | No existing fixture contains a Cutover Authority Tombstone or an active retirement fence, so no prior expected first gate changes. |
-| Shared builders and scenario APIs | No fixture builder changes. Retirement inventory is read from the old public stores directly. |
-| Derived snapshots and golden data | No existing snapshot, fingerprint, cache, or golden file derives from the Tombstone. |
-| First-gate assertions | A published Tombstone owns `cutover_authority_tombstone` / `cutover_authority_retired`. A concurrently held retirement fence owns `retirement_fence` / `cutover_authority_retirement_in_progress`. |
-| Precedence scenarios | Tombstone state is checked while the command owns the shared cutover fence; retirement cannot publish the Tombstone concurrently with a fenced old command. |
-| Focused contract tests | The existing public-command inventory assertion is updated. Spec #83 prohibits adding a retirement scenario. |
+| Positive fixtures | The existing consolidated public-command case constructs a healthy live Control Store, preserved Global Gate final-quality authority, old platform and Batch projections, SQLite families, sidecars, intents, candidates, and available/missing historical paths. |
+| Negative fixtures | The same existing case covers an unpublished Profile path, a competing PREPARED migration, a capability contradiction, and authority resurrection after Tombstone publication. |
+| Shared builders and scenario APIs | Lifecycle-aware builders materialize one coherent retired-authority graph and invoke the public CLI; each negative scenario starts from its own coherent project graph. |
+| Derived snapshots and golden data | Retirement moves the declared old authority family into one audit bundle. Tests distinguish live-state preservation, archive membership, source absence, and idempotent replay. |
+| First-gate assertions | The unpublished Profile fails at `project_configuration`; a competing migration and resurrection fail at `retirement_resume`; a capability contradiction fails at `capability_consistency`. Stable error codes are asserted. |
+| Precedence scenarios | The Tombstone is validated before any retired provider mutation. The Profile is loaded only after the exclusive retirement fence is acquired, and the public test simulates publication immediately before that acquisition. Issue #90 removed the old cutover CLI mutators, so no supported old command remains to claim a command-wide retirement fence. Current Global Gate policy checks use the preserved read-only authority path. |
+| Focused contract tests | `test_batch_and_release_maintenance_commands_are_public` retains its existing identity and now executes the retirement seam; the test-method count remains unchanged. |
 | Complete affected suites | Deferred until all Spec #83 implementation Issues are complete, following the operator's explicit test-execution boundary. |
 
 The migration command itself remains the approved public verification seam. Private helper behavior carries no completion authority.

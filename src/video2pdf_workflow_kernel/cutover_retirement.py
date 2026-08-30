@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from .contracts import ContractRegistry
 from .control_store import ControlStore
 from .errors import ContractError, KernelConflict
-from .release_profile import WorkflowReleaseProfile
+from .release_profile import PUBLISHED_PROFILE_RELATIVE_PATH, WorkflowReleaseProfile
 from .utils import read_json, sha256_file, write_json_atomic
 
 
@@ -239,28 +239,6 @@ def reject_retired_cutover_mutation(control_store_root: Path) -> None:
             _unlock_byte(handle)
 
 
-@contextmanager
-def cutover_mutation_fence(control_store_root: Path) -> Iterator[None]:
-    """Hold the retirement fence for one complete old-command mutation."""
-
-    root = control_store_root.resolve()
-    if not root.is_dir():
-        yield
-        return
-    with _fence_file_lock(
-        root,
-        message="Cutover authority retirement is in progress",
-        error_code="cutover_authority_retirement_in_progress",
-        error_type=ContractError,
-    ):
-        token = _PROJECT_MAINTENANCE_FENCE_HELD.set(True)
-        try:
-            reject_retired_cutover_mutation(root)
-            yield
-        finally:
-            _PROJECT_MAINTENANCE_FENCE_HELD.reset(token)
-
-
 def _resolve_project_path(project_root: Path, raw: Any, field: str) -> Path:
     if not isinstance(raw, str) or not raw.strip():
         raise ContractError(
@@ -294,6 +272,12 @@ class CutoverAuthorityRetirement:
         config_path = project_config.resolve()
         config = self._load_project_config(config_path)
         configured_project_root = config_path.parent.parent.resolve()
+        if configured_project_root != self.project_root:
+            self._reject(
+                "Workflow project configuration does not belong to this runtime",
+                "project_configuration",
+                "workflow_project_configuration_root_mismatch",
+            )
         root = _resolve_project_path(
             configured_project_root,
             config["control_store_root"],
@@ -315,9 +299,14 @@ class CutoverAuthorityRetirement:
             config["release_profile"],
             "release_profile",
         )
-        profile = WorkflowReleaseProfile(self.project_root).load(profile_path)
-
+        if profile_path != self.project_root / PUBLISHED_PROFILE_RELATIVE_PATH:
+            self._reject(
+                "Workflow project configuration does not select the published Profile",
+                "project_configuration",
+                "workflow_release_profile_path_mismatch",
+            )
         with _exclusive_retirement_fence(root):
+            profile = WorkflowReleaseProfile(self.project_root).load(profile_path)
             committed = tombstone_path(root)
             if committed.is_file():
                 return self._validate_committed(
@@ -326,7 +315,32 @@ class CutoverAuthorityRetirement:
 
             health = ControlStore(root, self.contracts).check()
             migration_id = f"{profile['release_id']}-cutover-retirement"
-            bundle = root / HISTORY_DIR / "retired-cutover-authority" / migration_id
+            retirement_root = root / HISTORY_DIR / "retired-cutover-authority"
+            bundle = retirement_root / migration_id
+            competing_bundles = sorted(
+                candidate
+                for candidate in (
+                    retirement_root.iterdir() if retirement_root.is_dir() else ()
+                )
+                if candidate.is_dir() and candidate != bundle
+            )
+            if competing_bundles:
+                conflict = KernelConflict(
+                    "Another prepared cutover-authority retirement already exists",
+                    data={
+                        "first_failing_gate": "retirement_resume",
+                        "error_code": "cutover_retirement_competing_migration",
+                        "competing_migrations": [
+                            str(candidate) for candidate in competing_bundles
+                        ],
+                    },
+                )
+                for competing_bundle in competing_bundles:
+                    self._write_manual_brief(competing_bundle, conflict)
+                conflict.data["manual_migration_brief"] = str(
+                    competing_bundles[0] / "manual-migration-brief.md"
+                )
+                raise conflict
             record_path = bundle / "retirement-record.json"
             original = bundle / "original"
             try:
@@ -407,7 +421,12 @@ class CutoverAuthorityRetirement:
                     "idempotent": False,
                     "live_control_store_unchanged": True,
                 }
-            except (ContractError, KernelConflict):
+            except (ContractError, KernelConflict) as exc:
+                self._write_manual_brief(bundle, exc)
+                exc.data.setdefault(
+                    "manual_migration_brief",
+                    str(bundle / "manual-migration-brief.md"),
+                )
                 raise
             except Exception as exc:
                 self._write_manual_brief(bundle, exc)
@@ -872,7 +891,6 @@ class CutoverAuthorityRetirement:
 
 __all__ = [
     "CutoverAuthorityRetirement",
-    "cutover_mutation_fence",
     "project_admission_lease",
     "project_maintenance_fence",
     "require_project_admission_open",

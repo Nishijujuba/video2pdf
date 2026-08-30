@@ -1193,7 +1193,7 @@ class GlobalGatePublisher:
                 "workflow_policy_config",
                 "workflow_policy_config_invalid",
             )
-        with self._connect(root) as control:
+        with self._connect_existing_readonly(root) as control:
             policy = control.execute(
                 "SELECT * FROM gate_policy_authority WHERE singleton=1"
             ).fetchone()

@@ -21,11 +21,11 @@ from .global_gate_exit_evidence import (
     ExitEvidenceValidationError,
     validate_global_gate_exit_evidence,
 )
-from .release_profile import WorkflowReleaseProfile
+from .release_profile import PUBLISHED_PROFILE_RELATIVE_PATH, WorkflowReleaseProfile
 from .utils import read_json, write_json_atomic
 
 
-PROFILE_RELATIVE_PATH = Path("config/workflow-release-profile.v1.json")
+PROFILE_RELATIVE_PATH = PUBLISHED_PROFILE_RELATIVE_PATH
 EXPECTED_EVIDENCE_SLICES = {
     "bilibili": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
     "youtube": {"number": 13, "name": "youtube-platform-kernel-cutover"},

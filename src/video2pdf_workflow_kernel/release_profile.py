@@ -16,6 +16,7 @@ EXPECTED_CONTRACT_COMPATIBILITY = {
     "youtube_adapter": "1.0.0",
     "batch": "1.0.0",
 }
+PUBLISHED_PROFILE_RELATIVE_PATH = Path("config/workflow-release-profile.v1.json")
 
 
 def _reject(message: str, gate: str, code: str, **data: Any) -> None:

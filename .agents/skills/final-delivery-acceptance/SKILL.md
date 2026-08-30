@@ -63,7 +63,8 @@ The three precompile semantic owners complete semantic review before final compi
 
 The Acceptance Reviewer evaluates only the `visual_quality` criteria named by the provider-created Task Envelope. It must:
 
-- verify the Task Envelope identity, Claim fencing fields, `criterion_ids`, exact path-and-SHA `authorized_read_set`, sole `declared_write_set` entry, and `required_output.path`
+- verify the Task Envelope identity, Claim fencing fields, `criterion_ids`, exact path-and-SHA `authorized_read_set`, sole `declared_write_set` entry, and complete `required_output` contract
+- load the exact `judgment_patch_schema` authorized read and follow `required_output.contract` for field ownership, canonical UTF-8 JSON bytes, the required trailing newline, and the provider-owned fingerprint rule
 - read only the exact `authorized_read_set` and reproduce those reads as `actual_read_set`
 - inspect every rendered PDF page image for the visual criteria, even after finding a failure
 - write one `criterion_results[]` entry for every `criterion_ids` entry in the Task Envelope
@@ -71,7 +72,7 @@ The Acceptance Reviewer evaluates only the `visual_quality` criteria named by th
 - include artifact-grounded evidence for every visual decision and the required change plus allowed repair types for every failure
 - record only add-only `cross_phase_findings`; it cannot remove or weaken a committed precompile decision
 - record any unclassifiable blocking observation as a Contract Gap
-- write one Visual Quality Judgment Patch with schema `acceptance-v2-judgment-patch` to the exact `required_output.path` inside the provider-created Attempt directory
+- write one Visual Quality Judgment Patch to the exact `required_output.path` inside the provider-created Attempt directory; fields outside the authorized schema remain forbidden
 
 The Reviewer does not publish or edit the Skeleton, attempt record, repair ledger, summary, or canonical report. `acceptance-patch-commit` validates and commits the one Visual Quality Judgment Patch. After the committed precompile owner reports and Visual Patch are current, `acceptance-materialize` provider materializes `review/acceptance/acceptance_report.json` and its immutable companion records without semantic reinterpretation.
 

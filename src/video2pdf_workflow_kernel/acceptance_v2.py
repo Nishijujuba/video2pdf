@@ -529,7 +529,7 @@ class AcceptanceV2Provider:
                 "required_output": {
                     "logical_id": "judgment_patch",
                     "path": str(staged_patch_path),
-                    "schema_name": "acceptance-v2-judgment-patch",
+                    "contract": self._judgment_patch_output_contract(),
                 },
                 "peer_results_visible": task["peer_results_visible"],
                 "skeleton_sha256": skeleton["skeleton_sha256"],
@@ -1726,7 +1726,7 @@ class AcceptanceV2Provider:
             "required_output": {
                 "logical_id": "judgment_patch",
                 "path": str(staged_patch_path),
-                "schema_name": "acceptance-v2-judgment-patch",
+                "contract": self._judgment_patch_output_contract(),
             },
             "peer_results_visible": False,
             "skeleton_sha256": skeleton["skeleton_sha256"],
@@ -1794,6 +1794,10 @@ class AcceptanceV2Provider:
         prompt_path = (
             self.project_root / projection["generated_prompt"]["path"]
         ).resolve()
+        patch_schema_path = (
+            self.project_root
+            / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json"
+        ).resolve()
         skeleton_path = (execution_root / "acceptance_report.skeleton.json").resolve()
         binding_path = (execution_root / "input-binding.json").resolve()
         gate = domain.global_gate_authority
@@ -1839,6 +1843,11 @@ class AcceptanceV2Provider:
                 "logical_id": "role_projection:visual-quality-evaluation",
                 "path": str(prompt_path),
                 "sha256": sha256_file(prompt_path),
+            },
+            {
+                "logical_id": "judgment_patch_schema",
+                "path": str(patch_schema_path),
+                "sha256": sha256_file(patch_schema_path),
             },
             {
                 "logical_id": "acceptance_review_skeleton",
@@ -1911,6 +1920,57 @@ class AcceptanceV2Provider:
                 file_identities.add(file_identity)
             physical_paths.append(path)
         return authorized
+
+    def _judgment_patch_output_contract(self) -> dict[str, Any]:
+        schema_path = (
+            self.project_root
+            / "schemas/delivery-quality/v1/acceptance-v2-judgment-patch.v1.schema.json"
+        ).resolve()
+        return {
+            "schema": {
+                "name": "acceptance-v2-judgment-patch",
+                "version": "1.0.0",
+                "path": str(schema_path),
+                "sha256": sha256_file(schema_path),
+            },
+            "field_ownership": {
+                "provider_bound": [
+                    "schema_name",
+                    "schema_version",
+                    "dimension",
+                    "task_id",
+                    "attempt_id",
+                    "claim_generation",
+                    "fencing_token",
+                    "skeleton_sha256",
+                    "actual_read_set",
+                ],
+                "reviewer_judgment": [
+                    "reviewer",
+                    "criterion_results",
+                    "visual_scan_evidence",
+                    "cross_phase_findings",
+                    "contract_gaps",
+                ],
+                "mechanically_derived": ["patch_sha256"],
+                "optional": [],
+                "forbidden": "all_fields_not_declared_by_schema",
+            },
+            "serialization": {
+                "encoding": "utf-8",
+                "ensure_ascii": False,
+                "sort_keys": True,
+                "item_separator": ",",
+                "key_separator": ":",
+                "trailing_newline": "required",
+            },
+            "fingerprint": {
+                "owner": "acceptance_v2_provider",
+                "field": "patch_sha256",
+                "algorithm": "sha256",
+                "input": "canonical_json_without_patch_sha256",
+            },
+        }
 
     def _select_recoverable_execution_projection(
         self,

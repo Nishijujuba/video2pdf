@@ -259,7 +259,7 @@
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",
       "schema_path": "schemas/delivery-quality/v1/acceptance-v2-task-envelope.v1.schema.json",
       "canonical_instance": "delivery-quality/v1/acceptance-v2-task-envelope.example.v1.json",
-      "canonical_sha256": "b54082c88dded5ce610dfa9775ccfd5444ac18db6fda7b6bc26894725c127517",
+      "canonical_sha256": "8c87f256ebe19543cfdb5a8753a6099043031a0412e109a7fe950ec3a7ae543d",
       "positive_example": "delivery-quality/v1/acceptance-v2-task-envelope.example.v1.json",
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/acceptance-v2-task-envelope.invalid.json"
     },

@@ -337,6 +337,7 @@ class Issue15BatchCutoverTests(unittest.TestCase):
 
 import json
 from pathlib import Path
+import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
@@ -358,23 +359,49 @@ def validate_manifest(
     *,
     schema_only: bool,
     pre_publication: bool,
-    verify_at: str,
 ) -> None:
     value = json.loads(manifest.read_text(encoding="utf-8"))
+    command_record = json.loads(
+        (PROJECT_ROOT / value["command_record"]["path"]).read_text(encoding="utf-8")
+    )
     expected = EXPECTED.get(manifest.parent.name)
     valid = (
-        verify_at == "publication"
-        and not schema_only
+        not schema_only
         and not pre_publication
         and value.get("slice") == expected
         and isinstance(value.get("implementation_commit"), str)
         and len(value["implementation_commit"]) == 40
+        and command_record.get("cwd") == str(PROJECT_ROOT)
+        and value.get("published_path")
+        == str(PROJECT_ROOT / "historical-contracts/policy.txt")
         and (PROJECT_ROOT / "historical-contracts/policy.txt").read_text(
             encoding="utf-8"
         ) == "published\\n"
     )
     if not valid:
-        raise EvidenceError("fixture package is invalid")
+        raise EvidenceError(
+            "fixture package is invalid: "
+            f"root={PROJECT_ROOT}; cwd={command_record.get('cwd')}; "
+            f"slice={value.get('slice')}; expected={expected}"
+        )
+
+
+def main(argv=None):
+    try:
+        validate_manifest(
+            Path((argv or sys.argv[1:])[0]).resolve(),
+            schema_only=False,
+            pre_publication=False,
+        )
+    except EvidenceError as exc:
+        print(
+            "INVALID: "
+            f"first_failing_gate={exc.first_failing_gate}; "
+            f"error_code={exc.error_code}; {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 """,
             encoding="utf-8",
             newline="\n",
@@ -384,22 +411,38 @@ def validate_manifest(
         contract.write_text(
             "published\n", encoding="utf-8", newline="\n"
         )
+        command_record_relative = "evidence/release-audit-command-record.json"
+        command_record = repository / command_record_relative
+        command_record.parent.mkdir()
+        command_record.write_text(
+            json.dumps({"cwd": str(repository.resolve())}, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         manifests = {
             "evidence/global-gate/exit-evidence-manifest.json": {
                 "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
                 "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
             },
             "evidence/slice-12/exit-evidence-manifest.json": {
                 "slice": {"number": 12, "name": "bilibili-platform-kernel-cutover"},
                 "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
             },
             "evidence/slice-13/exit-evidence-manifest.json": {
                 "slice": {"number": 13, "name": "youtube-platform-kernel-cutover"},
                 "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
             },
             "evidence/slice-14/exit-evidence-manifest.json": {
                 "slice": {"number": 14, "name": "batch-projection-cutover"},
                 "implementation_commit": source_head,
+                "command_record": {"path": command_record_relative},
+                "published_path": str(contract.resolve()),
             },
         }
         for relative, value in manifests.items():
@@ -415,6 +458,7 @@ def validate_manifest(
             "add",
             "scripts/validate_slice_exit_evidence.py",
             "historical-contracts/policy.txt",
+            command_record_relative,
             *manifests,
         )
         self._fixture_git(

@@ -35,12 +35,107 @@ EXPECTED_EVIDENCE_SLICES = {
 _PUBLICATION_VALIDATOR_RUNNER = """\
 from pathlib import Path
 import inspect
+import json
 import runpy
 import sys
 
 namespace = runpy.run_path(sys.argv[1])
 validator = namespace["validate_manifest"]
 if "verify_at" not in inspect.signature(validator).parameters:
+    snapshot_root = Path(sys.argv[1]).resolve().parents[1]
+    manifest_path = Path(sys.argv[2]).resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    original_roots = set()
+    referenced_json = []
+
+    def collect_records(node):
+        if isinstance(node, dict):
+            cwd = node.get("cwd")
+            if isinstance(cwd, str) and Path(cwd).is_absolute():
+                original_roots.add(Path(cwd))
+            for key, value in node.items():
+                if (
+                    key == "path"
+                    and isinstance(value, str)
+                    and not Path(value).is_absolute()
+                    and value.endswith(".json")
+                ):
+                    referenced_json.append(snapshot_root / value)
+                collect_records(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect_records(value)
+
+    collect_records(manifest)
+    inspected = set()
+    while referenced_json:
+        record_path = referenced_json.pop()
+        if record_path in inspected or not record_path.is_file():
+            continue
+        inspected.add(record_path)
+        try:
+            collect_records(json.loads(record_path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass
+
+    global_validator = namespace.get("validate_global_gate_exit_evidence")
+    if global_validator is not None:
+        mirror_specs = global_validator.__globals__.get("MIRROR_SPECS", ())
+        for check, spec in zip(manifest.get("mirror_checks", ()), mirror_specs):
+            for field, relative in (
+                ("source_path", spec[0]),
+                ("mirror_path", spec[1]),
+            ):
+                recorded = check.get(field)
+                if not isinstance(recorded, str) or not Path(recorded).is_absolute():
+                    continue
+                root = Path(recorded)
+                for _ in Path(relative).parts:
+                    root = root.parent
+                original_roots.add(root)
+
+    def relocate(node):
+        if isinstance(node, dict):
+            return {key: relocate(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [relocate(value) for value in node]
+        if not isinstance(node, str) or not Path(node).is_absolute():
+            return node
+        candidate = Path(node)
+        for original_root in sorted(original_roots, key=lambda item: len(str(item)), reverse=True):
+            try:
+                relative = candidate.relative_to(original_root)
+            except ValueError:
+                continue
+            return str(snapshot_root / relative)
+        return node
+
+    class RelocatingJson:
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(value, *args, **kwargs):
+            return relocate(json.loads(value, *args, **kwargs))
+
+        @staticmethod
+        def load(value, *args, **kwargs):
+            return relocate(json.load(value, *args, **kwargs))
+
+    relocating_json = RelocatingJson()
+    namespace["json"] = relocating_json
+    validator.__globals__["json"] = relocating_json
+    namespace["main"].__globals__["json"] = relocating_json
+    for module in tuple(sys.modules.values()):
+        module_file = getattr(module, "__file__", None)
+        if not isinstance(module_file, str):
+            continue
+        try:
+            Path(module_file).resolve().relative_to(snapshot_root)
+        except (OSError, ValueError):
+            continue
+        if getattr(module, "json", None) is json:
+            module.json = relocating_json
     raise SystemExit(namespace["main"]([sys.argv[2]]))
 try:
     validator(

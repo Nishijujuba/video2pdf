@@ -9,6 +9,7 @@ from typing import Any
 
 from .acceptance_v2 import AcceptanceV2Provider, CONTROL_DB_NAME
 from .control_store import ControlStore
+from .delivery_authority import DeliveryTransitionAuthority
 from .delivery_lifecycle import (
     DeliveryLifecycleProvider,
     _run_locked,
@@ -27,6 +28,109 @@ from .utils import (
 
 class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
     """Bind one provider-current Acceptance decision as a ready successor."""
+
+    @staticmethod
+    def _require_bindable_target(
+        run_record: dict[str, Any], video_target: dict[str, Any]
+    ) -> None:
+        if run_record.get("delivery", {}).get("stage") != "ready_for_delivery":
+            raise ContractError(
+                "Kernel Acceptance preparation requires a bindable ready_for_delivery revision",
+                data={
+                    "first_failing_gate": "run_lifecycle",
+                    "error_code": "acceptance_delivery_revision_unbindable",
+                },
+            )
+        artifacts = video_target.get("artifacts", {})
+        if (
+            video_target.get("stage") != "ready_for_delivery"
+            or artifacts.get("acceptance_report") is not None
+            or artifacts.get("delivery_guard_report") is not None
+        ):
+            raise ContractError(
+                "Kernel Acceptance preparation requires empty decision slots at ready_for_delivery",
+                data={
+                    "first_failing_gate": "run_lifecycle",
+                    "error_code": "acceptance_delivery_revision_unbindable",
+                },
+            )
+
+    @_run_locked
+    def preflight(
+        self,
+        *,
+        run_dir: Path,
+        session_id: str,
+        expected_run_revision: int,
+    ) -> dict[str, Any]:
+        """Prove the current ready revision can later bind directly to accepted."""
+
+        require_safe_path_segment(
+            session_id,
+            purpose="Delivery Acceptance session identity",
+            error_type=CliUsageError,
+        )
+        run_path, run_record = self._load_run(run_dir)
+        ownership = run_record["delivery"]["ownership"]
+        if (
+            ownership["session_id"] != session_id
+            or run_record["coordination_revision"] != expected_run_revision
+        ):
+            raise KernelConflict(
+                "Delivery Acceptance preflight CAS identity is stale",
+                data={
+                    "first_failing_gate": "lifecycle_fencing",
+                    "error_code": "delivery_acceptance_preflight_fence_lost",
+                },
+            )
+        projections = run_record["delivery"]["projections"]
+        video_path = self._validate_binding(
+            projections["video_target"], label="video target", run_dir=run_dir
+        )
+        session_path = self._validate_binding(
+            projections["session_target"], label="session target"
+        )
+        video_target = read_json(video_path)
+        session_target = read_json(session_path)
+        self._require_bindable_target(run_record, video_target)
+        self._validate_task_index_binding(
+            projections["task_index"],
+            run_record=run_record,
+            video_target=video_target,
+            session_target=session_target,
+        )
+        store = ControlStore(run_dir.parent, self.contracts)
+        if store.current_run_record_sha(run_record["run_id"]) != sha256_file(run_path):
+            raise ContractError(
+                "Delivery Acceptance preflight Run authority is stale",
+                data={
+                    "first_failing_gate": "run_lifecycle",
+                    "error_code": "acceptance_delivery_revision_unbindable",
+                },
+            )
+        committed_gate = video_target.get("global_gate_authority")
+        if not isinstance(committed_gate, dict):
+            raise ContractError(
+                "Delivery Acceptance target lacks Global Gate authority",
+                data={
+                    "first_failing_gate": "global_gate_authority",
+                    "error_code": "delivery_global_gate_binding_invalid",
+                },
+            )
+        DeliveryTransitionAuthority(self.repository_root).require_current(
+            platform=run_record["canonical_platform"],
+            control_store_root=Path(committed_gate["path"]).resolve().parent,
+            run_dir=run_dir,
+            run_id=run_record["run_id"],
+            to_stage="accepted",
+            artifacts={},
+        )
+        return {
+            "run_id": run_record["run_id"],
+            "run_revision": run_record["coordination_revision"],
+            "stage": "ready_for_delivery",
+            "bindable_successor_stage": "accepted",
+        }
 
     @staticmethod
     def _read_canonical_report(
@@ -237,7 +341,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
                 intent["intent_identity"] == intent_identity
                 and intent["operation"] == "transition"
                 and intent["prior_stage"] == "ready_for_delivery"
-                and intent["target_stage"] == "ready_for_delivery"
+                and intent["target_stage"] == "accepted"
                 and intent["replacement_run_record_sha256"]
                 == _sha256_json(replacement)
                 and len(slots) == 4
@@ -256,7 +360,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
             and intent["state"] == "COMMITTED"
             and intent["operation"] == "transition"
             and intent["prior_stage"] == "ready_for_delivery"
-            and intent["target_stage"] == "ready_for_delivery"
+            and intent["target_stage"] == "accepted"
             and intent["replacement_run_record_sha256"] == sha256_file(run_path)
             and replacement == run_record
             and store.current_run_record_sha(run_record["run_id"])
@@ -320,7 +424,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
         return {
             "run_id": run_record["run_id"],
             "intent_id": intent_id,
-            "stage": "ready_for_delivery",
+            "stage": "accepted",
             "run_revision": run_record["coordination_revision"],
             "ownership_generation": run_record["delivery"]["ownership"][
                 "generation"
@@ -489,6 +593,28 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
         )
         old_video = read_json(video_path)
         old_session = read_json(session_path)
+        committed_gate = old_video.get("global_gate_authority")
+        if not isinstance(committed_gate, dict):
+            raise ContractError(
+                "Delivery Acceptance target lacks Global Gate authority",
+                data={
+                    "first_failing_gate": "global_gate_authority",
+                    "error_code": "delivery_global_gate_binding_invalid",
+                },
+            )
+        DeliveryTransitionAuthority(self.repository_root).require_current(
+            platform=run_record["canonical_platform"],
+            control_store_root=Path(committed_gate["path"]).resolve().parent,
+            run_dir=run_dir,
+            run_id=run_record["run_id"],
+            to_stage="accepted",
+            artifacts={
+                "acceptance_report": {
+                    "path": str(report_path),
+                    "sha256": report_file_sha256,
+                }
+            },
+        )
         task_index_path = self._validate_task_index_binding(
             projections["task_index"],
             run_record=run_record,
@@ -531,6 +657,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
                 "projection_revision": old_video["projection_revision"] + 1,
                 "run_revision": run_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": "accepted",
             }
         )
         video["artifacts"]["acceptance_report"] = acceptance_binding
@@ -542,6 +669,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
                 "projection_revision": old_session["projection_revision"] + 1,
                 "run_revision": run_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": "accepted",
                 "video_target": {
                     "path": str(video_path),
                     "projection_revision": video["projection_revision"],
@@ -571,6 +699,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
             {
                 "run_revision": run_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": "accepted",
                 "video_target": {
                     "path": str(video_path),
                     "projection_revision": video["projection_revision"],
@@ -593,6 +722,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
                 "last_mutation_intent_id": intent_id,
             }
         )
+        replacement["delivery"]["stage"] = "accepted"
         replacement["delivery"]["projections"].update(
             {
                 "video_target": {
@@ -727,7 +857,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
                         expected_run_revision,
                         expected_ownership_generation,
                         "ready_for_delivery",
-                        "ready_for_delivery",
+                        "accepted",
                         predecessors[str(run_path)],
                         replacement_sha256,
                         canonical_json_bytes(replacement).decode("utf-8"),
@@ -863,7 +993,7 @@ class DeliveryAcceptanceBindingProvider(DeliveryLifecycleProvider):
         return {
             "run_id": run_record["run_id"],
             "intent_id": intent_id,
-            "stage": "ready_for_delivery",
+            "stage": "accepted",
             "run_revision": run_revision,
             "ownership_generation": expected_ownership_generation,
             "run_record_path": str(run_path),

@@ -383,6 +383,30 @@ class AcceptanceV2Provider:
             control.execute("COMMIT")
         return {"run_id": run["run_id"], "acceptance_revision": run["acceptance_revision"], "authority_sha256": checkpoint["authority_sha256"], "idempotent": False, "activation_status": "active_global_gate"}
 
+    def _preflight_delivery_binding(
+        self,
+        *,
+        domain: AcceptanceInputDomain,
+        coordinator_session: str,
+    ) -> None:
+        if domain.track != "kernel":
+            return
+        if domain.run is None:
+            _reject(
+                "Kernel Acceptance domain lacks Run authority",
+                "contract_shape",
+                "acceptance_input_contract_invalid",
+            )
+        # The local import avoids a module-load cycle while delegating
+        # projection and release-authority ownership to the bind provider.
+        from .delivery_acceptance_binding import DeliveryAcceptanceBindingProvider
+
+        DeliveryAcceptanceBindingProvider(self.project_root).preflight(
+            run_dir=domain.video_root,
+            session_id=coordinator_session,
+            expected_run_revision=domain.run["coordination_revision"],
+        )
+
     def prepare(
         self,
         *,
@@ -399,6 +423,10 @@ class AcceptanceV2Provider:
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
         domain = AcceptanceInputDomain.from_binding(binding)
+        self._preflight_delivery_binding(
+            domain=domain,
+            coordinator_session=coordinator_session,
+        )
         expected_root = (domain.video_root / "review" / "acceptance").resolve()
         if root != expected_root:
             _reject("Acceptance workspace is not the canonical video authority", "workspace_authority", "acceptance_workspace_authority_invalid")
@@ -1161,6 +1189,10 @@ class AcceptanceV2Provider:
         }
         if set(current_run["changed_generation_ids"]) != actual_changed_generation_ids:
             _reject("declared changed generations do not match predecessor bytes", "repair_generation", "acceptance_changed_generation_ids_mismatch")
+        self._preflight_delivery_binding(
+            domain=domain,
+            coordinator_session=coordinator_session,
+        )
         with self._connect_control(root) as control:
             control.execute("UPDATE execution_authority SET state='invalidated' WHERE singleton=1")
         return self._prepare_execution(root=root, binding=binding, attempt_number=next_attempt, prepared_at=prepared_at, ledger=ledger, coordinator_session=coordinator_session)
@@ -2441,7 +2473,7 @@ class AcceptanceV2Provider:
         successor_stage = successor.get("delivery", {}).get("stage")
         expected_revision_delta = {
             "ready_for_delivery": 1,
-            "accepted": 2,
+            "accepted": 1,
         }.get(successor_stage)
         if (
             successor.get("run_id") != run.get("run_id")
@@ -2474,20 +2506,6 @@ class AcceptanceV2Provider:
                     "SELECT * FROM delivery_lifecycle_intents WHERE intent_id=?",
                     (intent_id,),
                 ).fetchone()
-                binding_intents = (
-                    control.execute(
-                        "SELECT * FROM delivery_lifecycle_intents "
-                        "WHERE run_id=? AND expected_run_revision=? "
-                        "AND replacement_run_record_sha256=?",
-                        (
-                            run["run_id"],
-                            run["coordination_revision"],
-                            intent["prior_run_record_sha256"] if intent else "",
-                        ),
-                    ).fetchall()
-                    if successor_stage == "accepted"
-                    else []
-                )
         except (sqlite3.DatabaseError, OSError) as exc:
             _reject(
                 "Delivery Lifecycle authority is unavailable",
@@ -2504,49 +2522,6 @@ class AcceptanceV2Provider:
                 "acceptance_delivery_successor_invalid",
                 detail=str(exc),
             )
-        binding_intent = intent
-        binding_successor = successor
-        binding_successor_sha256 = successor_sha256
-        if successor_stage == "accepted":
-            binding_intent = (
-                binding_intents[0] if len(binding_intents) == 1 else None
-            )
-            try:
-                binding_successor = (
-                    json.loads(binding_intent["replacement_run_record_json"])
-                    if binding_intent
-                    else None
-                )
-            except (json.JSONDecodeError, TypeError) as exc:
-                _reject(
-                    "Committed Acceptance binding successor is malformed",
-                    "run_lifecycle",
-                    "acceptance_delivery_successor_uncommitted",
-                    detail=str(exc),
-                )
-            binding_successor_sha256 = (
-                str(intent["prior_run_record_sha256"]) if intent else ""
-            )
-            if not (
-                binding_intent
-                and binding_successor
-                and binding_successor.get("run_id") == run["run_id"]
-                and binding_successor.get("coordination_revision")
-                == run["coordination_revision"] + 1
-                and binding_successor.get("delivery", {}).get("stage")
-                == "ready_for_delivery"
-                and binding_successor.get("last_mutation_intent_id")
-                == binding_intent["intent_id"]
-                and hashlib.sha256(
-                    canonical_json_bytes(binding_successor)
-                ).hexdigest()
-                == binding_successor_sha256
-            ):
-                _reject(
-                    "Accepted delivery lacks its exact Acceptance-bound predecessor",
-                    "run_lifecycle",
-                    "acceptance_delivery_successor_uncommitted",
-                )
         stage_binding_valid = (
             intent
             and intent["prior_stage"] == "ready_for_delivery"
@@ -2562,8 +2537,6 @@ class AcceptanceV2Provider:
             and intent["prior_run_record_sha256"]
             == (
                 run["run_record_sha256"]
-                if successor_stage == "ready_for_delivery"
-                else binding_successor_sha256
             )
             and stage_binding_valid
             and intent["replacement_run_record_sha256"] == successor_sha256
@@ -2577,9 +2550,9 @@ class AcceptanceV2Provider:
             )
         self._require_committed_acceptance_binding_successor(
             binding=binding,
-            successor=binding_successor,
-            successor_sha256=binding_successor_sha256,
-            intent=binding_intent,
+            successor=successor,
+            successor_sha256=successor_sha256,
+            intent=intent,
             control_store_path=control_store_path,
             require_current_projections=successor_stage == "ready_for_delivery",
         )
@@ -2724,6 +2697,7 @@ class AcceptanceV2Provider:
                 "projection_revision": prior_video["projection_revision"] + 1,
                 "run_revision": expected_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": successor["delivery"]["stage"],
             }
         )
         expected_video["artifacts"]["acceptance_report"] = (
@@ -2739,6 +2713,7 @@ class AcceptanceV2Provider:
                 "projection_revision": prior_session["projection_revision"] + 1,
                 "run_revision": expected_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": successor["delivery"]["stage"],
                 "video_target": {
                     "path": str(video_path),
                     "projection_revision": expected_video["projection_revision"],
@@ -2769,6 +2744,7 @@ class AcceptanceV2Provider:
             {
                 "run_revision": expected_revision,
                 "lifecycle_intent_id": intent_id,
+                "stage": successor["delivery"]["stage"],
                 "video_target": {
                     "path": str(video_path),
                     "projection_revision": expected_video["projection_revision"],
@@ -2818,6 +2794,7 @@ class AcceptanceV2Provider:
                 },
             }
         )
+        expected_successor["delivery"]["stage"] = successor["delivery"]["stage"]
         with sqlite3.connect(
             f"file:{control_store_path.as_posix()}?mode=ro", uri=True
         ) as control:

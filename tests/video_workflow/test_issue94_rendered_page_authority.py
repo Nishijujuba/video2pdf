@@ -141,25 +141,7 @@ class Issue94RenderedPageAuthorityTests(unittest.TestCase):
             "--bound-at", "2026-08-30T01:04:00Z",
         )
         run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
-        accepted_evidence = transition_fixture._transition_evidence(
-            run_dir,
-            from_stage="ready_for_delivery",
-            to_stage="accepted",
-            artifacts={"acceptance_report": report_path},
-        )
-        fixture._require_ok(
-            "delivery-transition",
-            "--run-dir", str(run_dir),
-            "--from-stage", "ready_for_delivery",
-            "--to-stage", "accepted",
-            "--session-id", "session-issue100",
-            "--expected-run-revision", str(run["coordination_revision"]),
-            "--expected-ownership-generation", str(run["delivery"]["ownership"]["generation"]),
-            "--evidence", str(accepted_evidence),
-            "--transitioned-at", "2026-08-30T01:05:00Z",
-        )
-
-        run = json.loads((run_dir / "workflow" / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual("accepted", run["delivery"]["stage"])
         current_target = Path(run["delivery"]["projections"]["session_target"]["path"])
         completed = subprocess.run(
             [

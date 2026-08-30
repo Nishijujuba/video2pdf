@@ -78,7 +78,15 @@ class MachineArgumentParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = MachineArgumentParser(prog="video_workflow.py")
+    parser = MachineArgumentParser(
+        prog="video_workflow.py",
+        description=(
+            "Kernel final delivery order: provider-owned final evidence and rendered pages; "
+            "ready_for_delivery; acceptance-prepare and one independent review; "
+            "acceptance-patch-commit; acceptance-materialize; delivery-acceptance-bind "
+            "to accepted; a fresh Final Delivery Guard; delivery-transition to delivered."
+        ),
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     contracts = commands.add_parser("contracts-check")
@@ -266,7 +274,10 @@ def _parser() -> argparse.ArgumentParser:
     acceptance_authority = commands.add_parser("acceptance-final-authority-publish")
     acceptance_authority.add_argument("--input-binding", required=True, type=Path)
 
-    acceptance_prepare = commands.add_parser("acceptance-prepare")
+    acceptance_prepare = commands.add_parser(
+        "acceptance-prepare",
+        help="prepare one Acceptance review from a bindable ready_for_delivery revision",
+    )
     acceptance_prepare.add_argument("--workspace-root", required=True, type=Path)
     acceptance_prepare.add_argument("--input-binding", required=True, type=Path)
     acceptance_prepare.add_argument("--attempt-number", required=True, type=int)
@@ -281,7 +292,10 @@ def _parser() -> argparse.ArgumentParser:
     acceptance_patch.add_argument("--committed-at", required=True)
     acceptance_patch.add_argument("--fault-point", choices=sorted(ACCEPTANCE_PATCH_FAULT_POINTS))
 
-    acceptance_materialize = commands.add_parser("acceptance-materialize")
+    acceptance_materialize = commands.add_parser(
+        "acceptance-materialize",
+        help="materialize the canonical Acceptance Report v2 for delivery binding",
+    )
     acceptance_materialize.add_argument("--workspace-root", required=True, type=Path)
     acceptance_materialize.add_argument("--provider-id", required=True)
     acceptance_materialize.add_argument("--provider-version", required=True)
@@ -336,7 +350,10 @@ def _parser() -> argparse.ArgumentParser:
         "--project-config", required=True, type=Path
     )
 
-    delivery_transition = commands.add_parser("delivery-transition")
+    delivery_transition = commands.add_parser(
+        "delivery-transition",
+        help="advance ordinary lifecycle transitions, including accepted to delivered after a fresh Guard",
+    )
     delivery_transition.add_argument("--run-dir", required=True, type=Path)
     delivery_transition.add_argument("--from-stage", required=True)
     delivery_transition.add_argument("--to-stage", required=True)
@@ -351,7 +368,10 @@ def _parser() -> argparse.ArgumentParser:
         "--fault-point", choices=sorted(DELIVERY_FAULT_POINTS)
     )
 
-    delivery_acceptance_bind = commands.add_parser("delivery-acceptance-bind")
+    delivery_acceptance_bind = commands.add_parser(
+        "delivery-acceptance-bind",
+        help="atomically bind a passing Acceptance Report and advance ready_for_delivery to accepted",
+    )
     delivery_acceptance_bind.add_argument("--run-dir", required=True, type=Path)
     delivery_acceptance_bind.add_argument("--session-id", required=True)
     delivery_acceptance_bind.add_argument(

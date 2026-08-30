@@ -24,6 +24,8 @@ If acquisition is interrupted after terminal proof persistence and before Resour
 
 This context owns the deterministic lifecycle of a video-to-PDF run, including source preparation, content production, content assurance, repair, compilation, final evidence, resource admission, Batch projection, delivery coordination, and new-run naming. Source Acquisition, Content Production, Content Assurance, Repair Planning, Resource Admission, and Batch remain internal Modules or Adapters inside this context.
 
+For an ordinary active Kernel Run, the public final-delivery order is provider-owned final evidence and rendered pages, `ready_for_delivery`, one Acceptance preparation and independent review, Acceptance Report v2 materialization, `delivery-acceptance-bind` atomically advancing to `accepted`, a fresh Final Delivery Guard, and the guarded transition to `delivered`. Acceptance preparation rejects a Run revision that cannot be bound by that direct successor.
+
 The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and the Pyramid Gate Report. The Final Acceptance Context owns acceptance criteria, Reviewer judgment, and the final semantic delivery decision; this context consumes those published decisions and owns their invocation timing, freshness consequences, repair routing, and delivery mechanics.
 
 ## Video Workflow Kernel

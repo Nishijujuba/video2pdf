@@ -692,14 +692,20 @@ class BilibiliPlatformCutoverPublisher:
 
     @staticmethod
     def _candidate_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+        platform = str(row["platform"])
+        spec = _platform_spec(platform)
+        display_name = spec["display_name"]
+        prefix = spec["error_prefix"]
         try:
             candidate = json.loads(row["candidate_json"])
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise KernelConflict(
-                "Bilibili candidate snapshot cannot be decoded",
+                f"{display_name} candidate snapshot cannot be decoded",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_snapshot_invalid",
+                    "error_code": f"{prefix}_candidate_snapshot_invalid",
+                    "platform": platform,
+                    "authority_boundary": "platform_kernel_candidate",
                 },
             ) from exc
         if (
@@ -715,10 +721,12 @@ class BilibiliPlatformCutoverPublisher:
             != row["global_gate_sha256"]
         ):
             raise KernelConflict(
-                "Bilibili candidate SQL and JSON states differ",
+                f"{display_name} candidate SQL and JSON states differ",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_state_inconsistent",
+                    "error_code": f"{prefix}_candidate_state_inconsistent",
+                    "platform": platform,
+                    "authority_boundary": "platform_kernel_candidate",
                 },
             )
         return candidate

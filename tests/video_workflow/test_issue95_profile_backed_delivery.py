@@ -150,7 +150,7 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
         self,
     ) -> None:
         case_root = new_case_dir(self.id(), label="issue95-profile-delivery")
-        project_config, _workspace_root, credential = _write_start_run_project(
+        project_config, workspace_root, credential = _write_start_run_project(
             case_root
         )
         started, start_envelope = _run_start_cli_with_recording(
@@ -214,11 +214,50 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
             to_stage="accepted",
             artifacts={"acceptance_report": acceptance_report},
         )
+        tombstone_path = (
+            workspace_root
+            / ".workflow-release-history"
+            / "cutover-authority-tombstone.json"
+        )
+        original_tombstone = tombstone_path.read_bytes()
+        tombstone_path.write_text("[]\n", encoding="utf-8")
+        malformed, malformed_envelope = self._transition(
+            run_dir,
+            from_stage="ready_for_delivery",
+            to_stage="accepted",
+            expected_revision=2,
+            evidence=accepted_evidence,
+            acceptance_authority=True,
+        )
+        self.assertNotEqual(0, malformed.returncode)
+        self.assertEqual(
+            {
+                "platform": "youtube",
+                "authority_boundary": "workflow_release_profile",
+                "first_failing_gate": "cutover_authority_tombstone",
+                "error_code": "cutover_authority_tombstone_invalid",
+            },
+            {
+                key: malformed_envelope["data"][key]
+                for key in (
+                    "platform",
+                    "authority_boundary",
+                    "first_failing_gate",
+                    "error_code",
+                )
+            },
+        )
+        tombstone_path.write_bytes(original_tombstone)
         profile_path = project_config.parent / "workflow-release-profile.v1.json"
+        activation_path = project_config.parent / "workflow-admission-activation.v1.json"
         original_profile = profile_path.read_bytes()
+        original_activation = activation_path.read_bytes()
         inactive_profile = json.loads(original_profile)
         inactive_profile["capabilities"]["youtube"] = "inactive"
         _write_json(profile_path, inactive_profile)
+        inactive_activation = json.loads(original_activation)
+        inactive_activation["profile_sha256"] = _sha256(profile_path)
+        _write_json(activation_path, inactive_activation)
         rejected, rejected_envelope = self._transition(
             run_dir,
             from_stage="ready_for_delivery",
@@ -232,14 +271,21 @@ class Issue95ProfileBackedDeliveryTests(unittest.TestCase):
             {
                 "platform": "youtube",
                 "authority_boundary": "workflow_release_profile",
+                "first_failing_gate": "platform_activation",
                 "error_code": "workflow_release_capability_inactive",
             },
             {
                 key: rejected_envelope["data"][key]
-                for key in ("platform", "authority_boundary", "error_code")
+                for key in (
+                    "platform",
+                    "authority_boundary",
+                    "first_failing_gate",
+                    "error_code",
+                )
             },
         )
         profile_path.write_bytes(original_profile)
+        activation_path.write_bytes(original_activation)
         accepted, accepted_envelope = self._transition(
             run_dir,
             from_stage="ready_for_delivery",

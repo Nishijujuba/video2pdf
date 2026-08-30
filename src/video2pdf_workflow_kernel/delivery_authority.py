@@ -6,7 +6,9 @@ from typing import Any
 
 from .cutover_retirement import tombstone_path
 from .errors import ContractError
-from .platform_kernel import BilibiliPlatformCutoverPublisher
+from .platform_kernel import (
+    BilibiliPlatformCutoverPublisher as PlatformKernelCutoverPublisher,
+)
 from .release_activation import ACTIVATION_FILE, WorkflowReleaseActivation
 from .release_maintenance import PROFILE_RELATIVE_PATH, ReleaseMaintenance
 from .utils import read_json
@@ -47,7 +49,7 @@ class DeliveryTransitionAuthority:
             )
             return
 
-        BilibiliPlatformCutoverPublisher().authorize_delivery_transition(
+        PlatformKernelCutoverPublisher().authorize_delivery_transition(
             platform=platform,
             control_store_root=root,
             run_dir=run_dir,
@@ -99,6 +101,8 @@ class DeliveryTransitionAuthority:
             return runtime_project_root / PROFILE_RELATIVE_PATH
         try:
             value = read_json(tombstone)
+            if not isinstance(value, dict):
+                raise ValueError("Tombstone must be a JSON object")
             raw_path = value.get("profile_path")
             if not isinstance(raw_path, str) or not raw_path:
                 raise ValueError("profile_path is absent")

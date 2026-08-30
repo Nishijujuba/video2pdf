@@ -369,26 +369,36 @@ def validate_manifest(
     pre_publication: bool,
 ) -> None:
     value = json.loads(manifest.read_text(encoding="utf-8"))
+    number = value.get("slice", {}).get("number")
+    if number == 12:
+        command_path = value["guarded_delivery_evidence"]["qualification_run"][
+            "command_record"
+        ]["path"]
+    else:
+        command_path = value["commands"][0]["persisted_run"]["command_record"][
+            "path"
+        ]
     command_record = json.loads(
-        (
-            PROJECT_ROOT
-            / value["commands"][0]["persisted_run"]["command_record"]["path"]
-        ).read_text(encoding="utf-8")
+        (PROJECT_ROOT / command_path).read_text(encoding="utf-8")
     )
     expected = EXPECTED.get(manifest.parent.name)
+    location_valid = number not in {11, 12} or (
+        command_record.get("cwd") == str(PROJECT_ROOT)
+        and value.get("published_path")
+        == str(PROJECT_ROOT / "historical-contracts/policy.txt")
+    )
+    mirror_valid = number != 11 or value.get("mirror_checks") == [{
+        "source_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+        "mirror_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
+    }]
     valid = (
         not schema_only
         and not pre_publication
         and value.get("slice") == expected
         and isinstance(value.get("implementation_commit"), str)
         and len(value["implementation_commit"]) == 40
-        and command_record.get("cwd") == str(PROJECT_ROOT)
-        and value.get("published_path")
-        == str(PROJECT_ROOT / "historical-contracts/policy.txt")
-        and value.get("mirror_checks") == [{
-            "source_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
-            "mirror_path": str(PROJECT_ROOT / "historical-contracts/policy.txt"),
-        }]
+        and location_valid
+        and mirror_valid
         and (PROJECT_ROOT / "historical-contracts/policy.txt").read_text(
             encoding="utf-8"
         ) == "published\\n"
@@ -434,6 +444,26 @@ def main(argv=None):
             encoding="utf-8",
             newline="\n",
         )
+        slice12_record_relative = "evidence/slice-12/qualification-command.json"
+        slice12_record = repository / slice12_record_relative
+        slice12_record.parent.mkdir(parents=True)
+        shutil.copy2(command_record, slice12_record)
+        collection_relative = "evidence/slice-12/guarded-delivery/collection.json"
+        collection = repository / collection_relative
+        collection.parent.mkdir(parents=True)
+        collection.write_text(
+            json.dumps(
+                {
+                    "artifacts": {
+                        "fixture_artifact": {"path": str(contract.resolve())},
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         manifests = {
             "evidence/global-gate/exit-evidence-manifest.json": {
                 "slice": {"number": 11, "name": "global-acceptance-v2-gate"},
@@ -472,7 +502,30 @@ def main(argv=None):
         for value in manifests.values():
             value.pop("command_record")
             value["commands"] = commands
-            value["mirror_checks"] = mirror_checks
+        manifests["evidence/global-gate/exit-evidence-manifest.json"][
+            "mirror_checks"
+        ] = mirror_checks
+        manifests["evidence/slice-12/exit-evidence-manifest.json"].update(
+            {
+                "guarded_delivery_evidence": {
+                    "artifacts": [
+                        {
+                            "path": "historical-contracts/policy.txt",
+                            "role": "fixture_artifact",
+                        },
+                    ],
+                    "collection": {"path": collection_relative},
+                    "qualification_run": {
+                        "command_record": {"path": slice12_record_relative},
+                    },
+                },
+            }
+        )
+        for name in (
+            "evidence/slice-13/exit-evidence-manifest.json",
+            "evidence/slice-14/exit-evidence-manifest.json",
+        ):
+            manifests[name].pop("published_path")
         for relative, value in manifests.items():
             path = repository / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -487,6 +540,8 @@ def main(argv=None):
             "scripts/validate_slice_exit_evidence.py",
             "historical-contracts/policy.txt",
             command_record_relative,
+            slice12_record_relative,
+            collection_relative,
             *manifests,
         )
         self._fixture_git(
@@ -562,8 +617,8 @@ def main(argv=None):
             snapshots[0] / "historical-contracts/policy.txt",
             repository / "historical-contracts/policy.txt",
         )
-        command_record = repository / "evidence/release-audit-command-record.json"
-        command_record.write_text(
+        slice12_record = repository / "evidence/slice-12/qualification-command.json"
+        slice12_record.write_text(
             json.dumps(
                 {"cwd": str((repository / "contradictory-root").resolve())},
                 sort_keys=True,

@@ -46,7 +46,8 @@ if "verify_at" not in inspect.signature(validator).parameters:
     snapshot_root = Path(sys.argv[1]).resolve().parents[1]
     manifest_path = Path(sys.argv[2]).resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    recorded_roots = []
+    authority_roots = []
+    identity_roots = []
     identity_records = []
     slice_number = manifest.get("slice", {}).get("number")
     if slice_number == 11:
@@ -71,7 +72,28 @@ if "verify_at" not in inspect.signature(validator).parameters:
             continue
         cwd = record.get("cwd")
         if isinstance(cwd, str) and Path(cwd).is_absolute():
-            recorded_roots.append(Path(cwd))
+            identity_roots.append(Path(cwd))
+
+    def add_authority_root(recorded, relative, label):
+        if not isinstance(recorded, str) or not Path(recorded).is_absolute():
+            return
+        relative_parts = Path(relative).parts
+        recorded_path = Path(recorded)
+        if tuple(
+            os.path.normcase(part)
+            for part in recorded_path.parts[-len(relative_parts):]
+        ) != tuple(os.path.normcase(part) for part in relative_parts):
+            print(
+                "INVALID: first_failing_gate=historical_evidence; "
+                "error_code=historical_evidence_location_inconsistent; "
+                f"recorded {label} path contradicts publication authority",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        root = recorded_path
+        for _ in relative_parts:
+            root = root.parent
+        authority_roots.append(root)
 
     global_validator = namespace.get("validate_global_gate_exit_evidence")
     if global_validator is not None:
@@ -81,31 +103,40 @@ if "verify_at" not in inspect.signature(validator).parameters:
                 ("source_path", spec[0]),
                 ("mirror_path", spec[1]),
             ):
-                recorded = check.get(field)
-                if not isinstance(recorded, str) or not Path(recorded).is_absolute():
-                    continue
-                relative_parts = Path(relative).parts
-                recorded_path = Path(recorded)
-                if tuple(
-                    os.path.normcase(part)
-                    for part in recorded_path.parts[-len(relative_parts):]
-                ) != tuple(os.path.normcase(part) for part in relative_parts):
-                    print(
-                        "INVALID: first_failing_gate=historical_evidence; "
-                        "error_code=historical_evidence_location_inconsistent; "
-                        "recorded mirror path contradicts publication authority",
-                        file=sys.stderr,
-                    )
-                    raise SystemExit(1)
-                root = recorded_path
-                for _ in relative_parts:
-                    root = root.parent
-                recorded_roots.append(root)
+                add_authority_root(check.get(field), relative, "mirror")
+
+    if slice_number == 12:
+        guarded = manifest.get("guarded_delivery_evidence", {})
+        collection_relative = guarded.get("collection", {}).get("path")
+        if isinstance(collection_relative, str) and not Path(collection_relative).is_absolute():
+            try:
+                collection = json.loads(
+                    (snapshot_root / collection_relative).read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                collection = {}
+            collection_artifacts = collection.get("artifacts", {})
+            for artifact in guarded.get("artifacts", ()):
+                role = artifact.get("role")
+                collected = collection_artifacts.get(role, {})
+                add_authority_root(
+                    collected.get("path"),
+                    artifact.get("path", ""),
+                    "guarded-delivery artifact",
+                )
 
     roots_by_identity = {
         os.path.normcase(os.path.normpath(str(root))): root
-        for root in recorded_roots
+        for root in (*authority_roots, *identity_roots)
     }
+    if identity_roots and not authority_roots:
+        print(
+            "INVALID: first_failing_gate=historical_evidence; "
+            "error_code=historical_evidence_location_inconsistent; "
+            "historical project root lacks independent publication authority",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     if len(roots_by_identity) > 1:
         print(
             "INVALID: first_failing_gate=historical_evidence; "

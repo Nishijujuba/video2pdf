@@ -19,7 +19,6 @@ from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow.test_issue13_platform_cutover import (
     _run_cli as _run_platform_cli,
 )
-from src.video2pdf_workflow_kernel.adapters import RecordedCommandRunner
 from src.video2pdf_workflow_kernel.cli import main as workflow_main
 from src.video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
 from src.video2pdf_workflow_kernel.platform_kernel import (
@@ -32,6 +31,37 @@ def _run_cli(*arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
     return completed, json.loads(completed.stdout)
 
 
+class _LiveFixtureSubprocess:
+    """Serve recorded probe outputs through the live command runner."""
+
+    def __init__(self, recording: Path) -> None:
+        self._recording = recording
+        self._commands = json.loads(
+            (recording / "recording.json").read_text(encoding="utf-8")
+        )["commands"]
+        self._cursor = 0
+
+    def __call__(self, argv, **_kwargs) -> subprocess.CompletedProcess[bytes]:
+        expected = self._commands[self._cursor]
+        comparable = list(argv)
+        comparable[0] = "python"
+        if "--cookies" in comparable:
+            comparable[comparable.index("--cookies") + 1] = (
+                "<localized-cookie-file>"
+            )
+        if comparable != expected["argv"] or expected["outputs"]:
+            raise AssertionError(
+                f"live provider probe command {self._cursor} differs from fixture"
+            )
+        self._cursor += 1
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=expected["returncode"],
+            stdout=(self._recording / expected["stdout"]["path"]).read_bytes(),
+            stderr=(self._recording / expected["stderr"]["path"]).read_bytes(),
+        )
+
+
 def _run_start_cli_with_recording(
     recording: Path,
     *arguments: str,
@@ -39,9 +69,9 @@ def _run_start_cli_with_recording(
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     stdout = io.StringIO()
     stderr = io.StringIO()
-    runner_patch = patch(
-        "src.video2pdf_workflow_kernel.production_bootstrap.SubprocessCommandRunner",
-        return_value=RecordedCommandRunner(recording),
+    process_patch = patch(
+        "src.video2pdf_workflow_kernel.adapters.base.subprocess.run",
+        side_effect=_LiveFixtureSubprocess(recording),
     )
     original_initialize = VideoWorkflowKernel.initialize_production_source
 
@@ -58,7 +88,7 @@ def _run_start_cli_with_recording(
         if injected_fault_point is not None
         else None
     )
-    with runner_patch, redirect_stdout(stdout), redirect_stderr(stderr):
+    with process_patch, redirect_stdout(stdout), redirect_stderr(stderr):
         if fault_patch is None:
             returncode = workflow_main(list(arguments))
         else:
@@ -295,6 +325,11 @@ class Issue13RunInitializationTests(unittest.TestCase):
             project_root / ".codex" / "delivery-targets" / "task-index.json"
         )
         run_record = json.loads(run_path.read_text(encoding="utf-8"))
+        bootstrap_record = json.loads(
+            (run_dir / "待删除" / "bootstrap" / "probe.json").read_text(
+                encoding="utf-8"
+            )
+        )
         video_target = json.loads(video_target_path.read_text(encoding="utf-8"))
         session_target = json.loads(session_target_path.read_text(encoding="utf-8"))
         task_index = json.loads(task_index_path.read_text(encoding="utf-8"))
@@ -388,6 +423,10 @@ class Issue13RunInitializationTests(unittest.TestCase):
                 "generation": 1,
                 "sha256": _sha256(workspace_root / "active_global_gate.json"),
             },
+        )
+        self.assertEqual(
+            str(Path(sys.executable)),
+            bootstrap_record["probe_execution"]["command_argv_redacted"][0],
         )
 
     @unittest.skip("Issue #90 archives production init-run")

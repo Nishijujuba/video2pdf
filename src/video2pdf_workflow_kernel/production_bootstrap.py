@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+import sys
 import uuid
 from typing import Any, Literal
 
@@ -202,8 +203,15 @@ def _bootstrap_platform_production_probe(
     if not source_url:
         raise ContractError("production Bootstrap requires --source-url")
 
+    selected_mode = provider_mode or (
+        "recorded" if provider_recording is not None else "deterministic"
+    )
     runtime = YtDlpRuntime(
-        python_executable=Path("python"),
+        python_executable=(
+            Path(sys.executable)
+            if selected_mode == "live"
+            else Path("python")
+        ),
         ffmpeg_dir=Path("ffmpeg-bin"),
         ffprobe_executable=Path("ffprobe"),
     )
@@ -211,9 +219,6 @@ def _bootstrap_platform_production_probe(
         adapter = YouTubePlatformAdapter(runtime)
     else:
         adapter = BilibiliPlatformAdapter(runtime)
-    selected_mode = provider_mode or (
-        "recorded" if provider_recording is not None else "deterministic"
-    )
     if selected_mode == "deterministic":
         if provider_recording is not None:
             raise ContractError(

@@ -71,6 +71,11 @@ def _run_formal_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 class Issue13PlatformCutoverTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.skipTest(
+            "Issue #90 archived the Platform Kernel cutover command surface"
+        )
+
     @staticmethod
     def _write_stub_global_gate(control_store_root: Path) -> dict[str, object]:
         evidence = control_store_root / "global-gate-exit-evidence.json"
@@ -106,12 +111,29 @@ class Issue13PlatformCutoverTests(unittest.TestCase):
         )
         file_sha = hashlib.sha256(authority_path.read_bytes()).hexdigest()
         with sqlite3.connect(control_store_root / "global-gate-control.sqlite3") as db:
+            db.execute("PRAGMA user_version=1")
             db.execute(
-                "CREATE TABLE gate_authority (singleton INTEGER PRIMARY KEY, "
-                "generation INTEGER, evidence_sha256 TEXT, authority_sha256 TEXT)"
+                "CREATE TABLE gate_authority (singleton INTEGER PRIMARY KEY "
+                "CHECK(singleton=1), generation INTEGER NOT NULL, "
+                "evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)"
             )
             db.execute(
-                "CREATE TABLE gate_intents (intent_id TEXT PRIMARY KEY, state TEXT)"
+                "CREATE TABLE gate_intents (intent_id TEXT PRIMARY KEY, "
+                "expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, "
+                "state TEXT NOT NULL, authority_sha256 TEXT, authority_json TEXT, "
+                "evidence_path TEXT, project_root TEXT, publication_commit TEXT)"
+            )
+            db.execute(
+                "CREATE TABLE gate_policy_authority (singleton INTEGER PRIMARY KEY "
+                "CHECK(singleton=1), generation INTEGER NOT NULL, "
+                "evidence_sha256 TEXT NOT NULL, authority_sha256 TEXT NOT NULL)"
+            )
+            db.execute(
+                "CREATE TABLE gate_policy_refresh_intents (intent_id TEXT PRIMARY KEY, "
+                "expected_generation INTEGER NOT NULL, evidence_sha256 TEXT NOT NULL, "
+                "state TEXT NOT NULL CHECK(state IN ('PREPARED','COMMITTED')), "
+                "authority_json TEXT NOT NULL, evidence_path TEXT NOT NULL, "
+                "project_root TEXT NOT NULL, publication_commit TEXT NOT NULL)"
             )
             db.execute(
                 "INSERT INTO gate_authority VALUES(1,1,?,?)",

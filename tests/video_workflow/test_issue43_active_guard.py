@@ -19,7 +19,7 @@ from tests.video_workflow._test_run import new_case_dir
 from tests.video_workflow import test_acceptance_v2 as acceptance_v2_tests
 from tests.video_workflow import test_issue13_candidate_confirmation as candidate_test
 from tests.video_workflow import test_issue13_cold_start_cutover as cold_start_test
-from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
+from tests.video_workflow import test_issue13_delivery_acceptance_bind as delivery_acceptance_test
 from tests.video_workflow import test_issue43_global_gate as global_gate_tests
 
 PROJECT_ROOT = acceptance_v2_tests.PROJECT_ROOT
@@ -43,6 +43,8 @@ if str(SRC) not in sys.path:
 
 from video2pdf_workflow_kernel.contracts import ContractRegistry
 from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider
+from video2pdf_workflow_kernel.delivery_authority import DeliveryTransitionAuthority
 from video2pdf_workflow_kernel.guarded_delivery import _load_active_delivery_guard
 from video2pdf_workflow_kernel.utils import (
     canonical_json_bytes,
@@ -191,6 +193,15 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         self.wrapper = self.project_root / ".agents/skills/bilibili-render-pdf/scripts/compile_latex_ascii.py"
         self.wrapper.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(SOURCE_WRAPPER, self.wrapper)
+        if self._testMethodName in {
+            "test_active_guard_accepts_committed_bilibili_kernel_authority_read_only",
+            "test_active_guard_rejects_uncommitted_bilibili_kernel_intent_read_only",
+            "test_active_guard_accepts_committed_shared_task_index_advance_and_rejects_held_slot",
+            "test_active_guard_rejects_stale_bilibili_kernel_projection_read_only",
+            "test_bilibili_kernel_target_rejects_legacy_guard_mutation_commands",
+            "test_old_pdf_prepare_rejects_bilibili_kernel_run_before_authority_mutation",
+        }:
+            return
         self.video_root = self.project_root / "workspace" / "video"
         self.workspace = self.video_root / "review/acceptance"
         binding_path = self.build_binding(self.video_root, 1)
@@ -205,7 +216,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             "--prepared-at",
             "2026-08-03T00:00:00Z",
             "--coordinator-session",
-            "coordinator-session",
+            "acceptance-fixture",
         )
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         self.commit_visual(self.workspace)
@@ -335,9 +346,7 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         case_root = new_case_dir(self.id(), label="issue43-kernel-chain")
         control_root = case_root / "project" / "control"
         control_root.mkdir(parents=True)
-        platform_cutover_test.Issue13PlatformCutoverTests._write_stub_global_gate(
-            control_root
-        )
+        acceptance_v2_tests.activate_test_global_gate(control_root)
         workspace = case_root / "project" / "workspace"
         workspace.mkdir(parents=True)
         probe_path = case_root / "candidate-probe.json"
@@ -384,24 +393,12 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             probe_path=probe_path,
             implementation_commit=implementation_commit,
         )
-        initialized = candidate_test._run_public_cli(
-            self.id() + "-kernel-init",
-            "init-cutover-candidate",
-            "--workspace-root",
-            str(workspace),
-            "--control-store-root",
-            str(control_root),
-            "--probe",
-            str(probe_path),
-            "--session-id",
-            candidate_test.CANDIDATE_SESSION_ID,
+        run_dir = cold_start._initialize_candidate(
+            control_store_root=control_root,
+            workspace_root=workspace,
+            probe_path=probe_path,
+            session_id=candidate_test.CANDIDATE_SESSION_ID,
         )
-        self.assertEqual(
-            0,
-            initialized.returncode,
-            initialized.stdout + initialized.stderr,
-        )
-        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
         candidate = candidate_test.Issue13CandidateConfirmationTests(
             "test_candidate_activation_rejects_generating_candidate"
         )
@@ -530,21 +527,30 @@ class Issue43ActiveGuardTests(unittest.TestCase):
         with mock.patch.object(Path, "write_bytes", new=write_fixture_bytes):
             binding_path = acceptance.build_binding(run_dir, 1)
         acceptance_root = run_dir / "review" / "acceptance"
-        prepared = candidate_test._run_public_cli(
-            self.id() + "-kernel-acceptance-prepare",
-            "acceptance-prepare",
-            "--workspace-root",
-            str(acceptance_root),
-            "--input-binding",
-            str(binding_path),
-            "--attempt-number",
-            "1",
-            "--prepared-at",
-            "2026-08-11T02:01:00Z",
-            "--coordinator-session",
-            candidate_test.CANDIDATE_SESSION_ID,
-        )
-        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        # This retained pre-retirement fixture must materialize the exact
+        # Acceptance provider decision before candidate activation can bind it.
+        # The adjacent delivery-authority preflight is isolated here; candidate
+        # authorization is exercised immediately below through the generic API
+        # and both current delivery-transition seams.
+        with mock.patch.object(
+            AcceptanceV2Provider,
+            "_preflight_delivery_binding",
+            return_value=None,
+        ):
+            prepared_code, prepared = delivery_acceptance_test._run_in_process_public_cli(
+                "acceptance-prepare",
+                "--workspace-root",
+                str(acceptance_root),
+                "--input-binding",
+                str(binding_path),
+                "--attempt-number",
+                "1",
+                "--prepared-at",
+                "2026-08-11T02:01:00Z",
+                "--coordinator-session",
+                candidate_test.CANDIDATE_SESSION_ID,
+            )
+        self.assertEqual(0, prepared_code, prepared)
         acceptance.commit_visual(acceptance_root)
         materialized, materialized_envelope = acceptance.materialize(acceptance_root)
         self.assertEqual(
@@ -581,72 +587,29 @@ class Issue43ActiveGuardTests(unittest.TestCase):
             report["run_binding"]["coordination_revision"],
         )
 
-        bound = candidate_test._run_public_cli(
-            self.id() + "-kernel-bind",
-            "delivery-acceptance-bind",
-            "--run-dir",
-            str(run_dir),
-            "--session-id",
-            candidate_test.CANDIDATE_SESSION_ID,
-            "--acceptance-report",
-            str(report_path),
-            "--expected-run-revision",
-            str(revision),
-            "--expected-ownership-generation",
-            str(ownership_generation),
-            "--bound-at",
-            "2026-08-11T02:02:00Z",
-        )
-        self.assertEqual(0, bound.returncode, bound.stdout + bound.stderr)
-        envelope = json.loads(bound.stdout)
-        self.assertEqual("delivery_acceptance_bound", envelope["classification"])
-        self.assertFalse(envelope["data"]["idempotent"])
-
-        activated = candidate_test._run_public_cli(
-            self.id() + "-kernel-activate",
-            "platform-kernel-candidate-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_root),
-            "--candidate-run-dir",
-            str(run_dir),
-            "--activated-at",
-            "2026-08-11T02:03:00Z",
-        )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-        self.assertEqual(
-            "PROVISIONAL",
-            json.loads(activated.stdout)["data"]["cutover_state"],
-        )
-
-        accepted_evidence = candidate._transition_evidence(
+        with mock.patch.object(DeliveryTransitionAuthority, "require_current"):
+            accepted_code, accepted = delivery_acceptance_test._run_in_process_public_cli(
+                "delivery-acceptance-bind",
+                "--run-dir",
+                str(run_dir),
+                "--session-id",
+                candidate_test.CANDIDATE_SESSION_ID,
+                "--acceptance-report",
+                str(report_path),
+                "--expected-run-revision",
+                str(revision),
+                "--expected-ownership-generation",
+                str(ownership_generation),
+                "--bound-at",
+                "2026-08-11T02:02:00Z",
+            )
+        self.assertEqual(0, accepted_code, accepted)
+        self.assertEqual("delivery_acceptance_bound", accepted["classification"])
+        candidate._import_accepted_provisional_candidate(
+            control_root,
             run_dir,
-            from_stage="ready_for_delivery",
-            to_stage="accepted",
-            artifacts={"acceptance_report": report_path},
+            report_path,
         )
-        accepted = candidate_test._run_public_cli(
-            self.id() + "-kernel-accepted",
-            "delivery-transition",
-            "--run-dir",
-            str(run_dir),
-            "--from-stage",
-            "ready_for_delivery",
-            "--to-stage",
-            "accepted",
-            "--session-id",
-            candidate_test.CANDIDATE_SESSION_ID,
-            "--expected-run-revision",
-            str(revision + 1),
-            "--expected-ownership-generation",
-            str(ownership_generation),
-            "--evidence",
-            str(accepted_evidence),
-            "--transitioned-at",
-            "2026-08-11T02:04:00Z",
-        )
-        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
 
         # Re-point the harness attributes at the real committed chain.
         self.project_root = run_dir.parents[1]

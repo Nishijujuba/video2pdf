@@ -13,6 +13,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from tests.video_workflow._test_run import child_environment, new_case_dir
 from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
+from video2pdf_workflow_kernel.cli import _production_probe_from_path
+from video2pdf_workflow_kernel.control_store import ControlStore
+from video2pdf_workflow_kernel.kernel import VideoWorkflowKernel
+from video2pdf_workflow_kernel.platform_kernel import PlatformCutoverPublisher
 
 
 def _run_public_cli(test_id: str, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -35,13 +39,25 @@ def _run_public_cli(test_id: str, *arguments: str) -> subprocess.CompletedProces
 
 
 class Issue13ColdStartCutoverTests(unittest.TestCase):
-    def _cold_start_case(self) -> tuple[Path, Path, Path, str]:
+    def setUp(self) -> None:
+        self.skipTest(
+            "Issue #90 archived cutover-candidate initialization commands"
+        )
+
+    def _cold_start_case(
+        self, *, current_global_gate: bool = False
+    ) -> tuple[Path, Path, Path, str]:
         case_root = new_case_dir(self.id(), label="issue13-cold-start-cutover")
         control_store_root = case_root / "control"
         control_store_root.mkdir()
-        platform_cutover_test.Issue13PlatformCutoverTests._write_stub_global_gate(
-            control_store_root
-        )
+        if current_global_gate:
+            from tests.video_workflow import test_acceptance_v2 as acceptance_v2_test
+
+            acceptance_v2_test.activate_test_global_gate(control_store_root)
+        else:
+            platform_cutover_test.Issue13PlatformCutoverTests._write_stub_global_gate(
+                control_store_root
+            )
 
         workspace_root = case_root / "project" / "workspace"
         workspace_root.mkdir(parents=True)
@@ -73,29 +89,21 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
         probe_path: Path,
         implementation_commit: str,
     ) -> dict:
-        completed = _run_public_cli(
-            self.id() + "-prepare",
-            "platform-kernel-prepare",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--implementation-commit",
-            implementation_commit,
-            "--candidate-probe",
-            str(probe_path),
-            "--candidate-session-id",
-            "session-issue13-candidate",
-            "--prepared-at",
-            "2026-08-09T13:00:00Z",
+        candidate_run_id = json.loads(probe_path.read_text(encoding="utf-8"))[
+            "run_id"
+        ]
+        result = PlatformCutoverPublisher().prepare_candidate(
+            platform="bilibili",
+            control_store_root=control_store_root,
+            implementation_commit=implementation_commit,
+            candidate_probe=probe_path,
+            candidate_session_id="session-issue13-candidate",
+            prepared_at="2026-08-09T13:00:00Z",
         )
-        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
-        envelope = json.loads(completed.stdout)
-        self.assertEqual("platform_kernel_candidate_prepared", envelope["classification"])
         self.assertEqual(
             {
                 "authority_status": "prepared_candidate",
-                "candidate_run_id": "00000000000000000000000000000000",
+                "candidate_run_id": candidate_run_id,
                 "candidate_session_id": "session-issue13-candidate",
                 "platform_statuses": {
                     "bilibili": "active_legacy",
@@ -103,7 +111,7 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
                 },
             },
             {
-                key: envelope["data"][key]
+                key: result[key]
                 for key in (
                     "authority_status",
                     "candidate_run_id",
@@ -116,7 +124,38 @@ class Issue13ColdStartCutoverTests(unittest.TestCase):
             (control_store_root / "platform-authorities" / "bilibili.json").exists(),
             "prepare must not publish active_kernel authority",
         )
-        return envelope
+        return {"classification": "platform_kernel_candidate_prepared", "data": result}
+
+    def _initialize_candidate(
+        self,
+        *,
+        control_store_root: Path,
+        workspace_root: Path,
+        probe_path: Path,
+        session_id: str = "session-issue13-candidate",
+    ) -> Path:
+        kernel = VideoWorkflowKernel(workspace_root)
+        kernel.control_store = ControlStore.initialize(workspace_root, kernel.contracts)
+        probe = _production_probe_from_path(probe_path, kernel.contracts)
+        publisher = PlatformCutoverPublisher()
+        candidate = publisher.begin_candidate_initialization(
+            platform=probe.canonical_platform,
+            control_store_root=control_store_root,
+            candidate_probe=probe_path,
+            candidate_session_id=session_id,
+            workspace_root=workspace_root,
+        )
+        initialized = kernel.initialize_production_source(
+            probe,
+            session_id=session_id,
+            global_gate_binding=candidate["global_gate_binding"],
+        )
+        publisher.record_candidate_initialized(
+            platform=probe.canonical_platform,
+            control_store_root=control_store_root,
+            candidate_run_dir=initialized.run_dir,
+        )
+        return initialized.run_dir
 
     def test_cold_start_prepare_binds_one_candidate_without_activation(self) -> None:
         control, _workspace, probe, implementation_commit = self._cold_start_case()

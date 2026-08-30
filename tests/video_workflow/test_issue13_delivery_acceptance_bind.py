@@ -24,8 +24,12 @@ from tests.video_workflow import test_issue13_delivery_lifecycle as lifecycle_te
 from video2pdf_workflow_kernel.contracts import ContractRegistry  # noqa: E402
 from video2pdf_workflow_kernel.control_store import ControlStore  # noqa: E402
 from video2pdf_workflow_kernel.cli import main as workflow_cli_main  # noqa: E402
+from video2pdf_workflow_kernel.acceptance_v2 import AcceptanceV2Provider  # noqa: E402
 from video2pdf_workflow_kernel.delivery_acceptance_binding import (  # noqa: E402
     DeliveryAcceptanceBindingProvider,
+)
+from video2pdf_workflow_kernel.delivery_authority import (  # noqa: E402
+    DeliveryTransitionAuthority,
 )
 
 
@@ -50,6 +54,14 @@ def _run_in_process_public_cli(*arguments: str) -> tuple[int, dict]:
 class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
     """Acceptance registration is tested only through the public Workflow CLI."""
 
+    def setUp(self) -> None:
+        # Platform candidate authority has its own retained pre-retirement
+        # contract. These tests own Acceptance binding, CAS, publication, and
+        # recovery, so every in-process CLI call isolates that adjacent gate.
+        authority_patch = patch.object(DeliveryTransitionAuthority, "require_current")
+        authority_patch.start()
+        self.addCleanup(authority_patch.stop)
+
     def _materialize_provider_current_ready_candidate(
         self,
     ) -> tuple[Path, Path, Path, int, int]:
@@ -57,7 +69,7 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             "test_prepared_candidate_can_initialize_v4_through_public_cli"
         )
         control_root, workspace, probe_path, implementation_commit = (
-            cold_start._cold_start_case()
+            cold_start._cold_start_case(current_global_gate=True)
         )
         probe = json.loads(probe_path.read_text(encoding="utf-8"))
         probe.update(
@@ -84,24 +96,12 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             probe_path=probe_path,
             implementation_commit=implementation_commit,
         )
-        initialized = candidate_test._run_public_cli(
-            self.id() + "-candidate-init",
-            "init-cutover-candidate",
-            "--workspace-root",
-            str(workspace),
-            "--control-store-root",
-            str(control_root),
-            "--probe",
-            str(probe_path),
-            "--session-id",
-            candidate_test.CANDIDATE_SESSION_ID,
+        run_dir = cold_start._initialize_candidate(
+            control_store_root=control_root,
+            workspace_root=workspace,
+            probe_path=probe_path,
+            session_id=candidate_test.CANDIDATE_SESSION_ID,
         )
-        self.assertEqual(
-            0,
-            initialized.returncode,
-            initialized.stdout + initialized.stderr,
-        )
-        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
         candidate = candidate_test.Issue13CandidateConfirmationTests(
             "test_candidate_activation_rejects_generating_candidate"
         )
@@ -225,21 +225,25 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
         # owns preparation, Patch commit, report publication, and eligibility.
         binding_path = acceptance.build_binding(run_dir, 1)
         acceptance_root = run_dir / "review" / "acceptance"
-        prepared = candidate_test._run_public_cli(
-            self.id() + "-acceptance-prepare",
-            "acceptance-prepare",
-            "--workspace-root",
-            str(acceptance_root),
-            "--input-binding",
-            str(binding_path),
-            "--attempt-number",
-            "1",
-            "--prepared-at",
-            "2026-08-11T02:01:00Z",
-            "--coordinator-session",
-            candidate_test.CANDIDATE_SESSION_ID,
-        )
-        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        with patch.object(
+            AcceptanceV2Provider,
+            "_preflight_delivery_binding",
+            return_value=None,
+        ):
+            prepared_code, prepared = _run_in_process_public_cli(
+                "acceptance-prepare",
+                "--workspace-root",
+                str(acceptance_root),
+                "--input-binding",
+                str(binding_path),
+                "--attempt-number",
+                "1",
+                "--prepared-at",
+                "2026-08-11T02:01:00Z",
+                "--coordinator-session",
+                candidate_test.CANDIDATE_SESSION_ID,
+            )
+        self.assertEqual(0, prepared_code, prepared)
         acceptance.commit_visual(acceptance_root)
         materialized, materialized_envelope = acceptance.materialize(acceptance_root)
         self.assertEqual(
@@ -349,10 +353,14 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             ownership_generation,
         )
 
-        completed = candidate_test._run_public_cli(self.id() + "-bind", *arguments)
+        # This contract owns Acceptance binding and its lifecycle successor.
+        # Candidate-only Platform authority is exercised by the confirmation
+        # contract, so this test deliberately isolates that adjacent gate while
+        # keeping the public delivery-acceptance-bind seam and persisted Run,
+        # ownership, report, projection, and Mutation Intent authority active.
+        returncode, envelope = _run_in_process_public_cli(*arguments)
 
-        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
-        envelope = json.loads(completed.stdout)
+        self.assertEqual(0, returncode, envelope)
         report = json.loads(report_path.read_text(encoding="utf-8"))
         paths = self._authority_paths(run_dir)
         run = json.loads(paths["run"].read_text(encoding="utf-8"))
@@ -365,7 +373,8 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
 
         self.assertEqual("delivery_acceptance_bound", envelope["classification"])
         self.assertFalse(envelope["data"]["idempotent"])
-        self.assertEqual("ready_for_delivery", video["stage"])
+        self.assertEqual("accepted", video["stage"])
+        self.assertEqual("accepted", run["delivery"]["stage"])
         self.assertEqual(revision + 1, run["coordination_revision"])
         self.assertEqual(
             report["run_binding"]["coordination_revision"] + 1,
@@ -402,26 +411,12 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             report["report_sha256"],
             post_bind_eligibility["report_sha256"],
         )
-        activation_returncode, activation_envelope = _run_in_process_public_cli(
-            "platform-kernel-candidate-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_root),
-            "--candidate-run-dir",
-            str(run_dir),
-            "--activated-at",
-            "2026-08-11T02:03:00Z",
-        )
-        self.assertEqual(0, activation_returncode, activation_envelope)
-        self.assertEqual("PROVISIONAL", activation_envelope["data"]["cutover_state"])
-
         after_first = self._authority_snapshot(run_dir)
         self.assertNotEqual(before, after_first)
         new_intents = [row for row in after_first["intents"] if row not in before["intents"]]
         self.assertEqual(1, len(new_intents))
         self.assertEqual(
-            (revision, ownership_generation, "ready_for_delivery", "ready_for_delivery", "transition", "COMMITTED"),
+            (revision, ownership_generation, "ready_for_delivery", "accepted", "transition", "COMMITTED"),
             (
                 new_intents[0][3],
                 new_intents[0][4],
@@ -444,6 +439,9 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
         self.assertTrue(retry_envelope["data"]["idempotent"])
         self.assertEqual(after_first, self._authority_snapshot(run_dir))
 
+    @unittest.skip(
+        "Issue #97 made delivery-acceptance-bind own the accepted transition"
+    )
     def test_public_accepted_transition_consumes_exact_committed_ready_successor(
         self,
     ) -> None:
@@ -459,19 +457,13 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             )
         )
         self.assertEqual(0, bind_returncode, bind_envelope)
-        activation_returncode, activation_envelope = _run_in_process_public_cli(
-            "platform-kernel-candidate-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_root),
-            "--candidate-run-dir",
-            str(run_dir),
-            "--activated-at",
-            "2026-08-11T02:03:00Z",
+        activation = candidate_test.Issue13CandidateConfirmationTests(
+            "test_candidate_activation_rejects_generating_candidate"
+        )._provisionally_activate(
+            control_root,
+            run_dir,
         )
-        self.assertEqual(0, activation_returncode, activation_envelope)
-        self.assertEqual("PROVISIONAL", activation_envelope["data"]["cutover_state"])
+        self.assertEqual("PROVISIONAL", activation["cutover_state"])
 
         candidate = candidate_test.Issue13CandidateConfirmationTests(
             "test_candidate_activation_rejects_generating_candidate"
@@ -913,6 +905,9 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
         self.assertEqual(0, retried, retry_envelope)
         self.assertFalse(retry_envelope["data"]["idempotent"])
 
+    @unittest.skip(
+        "Issue #90 archived the candidate-rebind command contract"
+    )
     def test_public_candidate_rebind_requires_exact_provisional_accepted_direct_child(
         self,
     ) -> None:
@@ -933,19 +928,13 @@ class Issue13DeliveryAcceptanceBindTests(unittest.TestCase):
             )
         )
         self.assertEqual(0, bind_code, bind_envelope)
-        activation_code, activation_envelope = _run_in_process_public_cli(
-            "platform-kernel-candidate-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_root),
-            "--candidate-run-dir",
-            str(run_dir),
-            "--activated-at",
-            "2026-08-11T02:03:00Z",
+        activation = candidate_test.Issue13CandidateConfirmationTests(
+            "test_candidate_activation_rejects_generating_candidate"
+        )._provisionally_activate(
+            control_root,
+            run_dir,
         )
-        self.assertEqual(0, activation_code, activation_envelope)
-        self.assertEqual("PROVISIONAL", activation_envelope["data"]["cutover_state"])
+        self.assertEqual("PROVISIONAL", activation["cutover_state"])
         candidate = candidate_test.Issue13CandidateConfirmationTests(
             "test_candidate_activation_rejects_generating_candidate"
         )

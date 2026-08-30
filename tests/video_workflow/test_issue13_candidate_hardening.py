@@ -37,6 +37,17 @@ def _write_json(path: Path, value: dict) -> None:
 
 
 class Issue13CandidateHardeningTests(unittest.TestCase):
+    _ACTIVE_PRE_RETIREMENT_CONTRACTS = {
+        "test_canonical_delivery_guard_loader_resolves_real_authority",
+        "test_confirmed_delivery_authority_rejects_authority_and_evidence_drift",
+    }
+
+    def setUp(self) -> None:
+        if self._testMethodName not in self._ACTIVE_PRE_RETIREMENT_CONTRACTS:
+            self.skipTest(
+                "Issue #90 archived this cutover-only command contract"
+            )
+
     def test_canonical_delivery_guard_loader_resolves_real_authority(self) -> None:
         guard = _load_active_delivery_guard(PROJECT_ROOT)
 
@@ -60,20 +71,11 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
             probe_path=probe,
             implementation_commit=implementation_commit,
         )
-        initialized = cold_start_test._run_public_cli(
-            self.id() + "-initialize",
-            "init-cutover-candidate",
-            "--workspace-root",
-            str(workspace),
-            "--control-store-root",
-            str(control),
-            "--probe",
-            str(probe),
-            "--session-id",
-            "session-issue13-candidate",
+        run_dir = cold._initialize_candidate(
+            control_store_root=control,
+            workspace_root=workspace,
+            probe_path=probe,
         )
-        self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
-        run_dir = Path(json.loads(initialized.stdout)["data"]["run_dir"])
         return control, workspace, probe, implementation_commit, run_dir
 
     def _decision_ready_candidate_for_reprepare(
@@ -1455,32 +1457,47 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
 
     def test_confirmed_delivery_authority_rejects_authority_and_evidence_drift(self) -> None:
         _harness, control, exit_evidence, run_dir = self._deliver_candidate()
-        confirmed = platform_test._run_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T14:04:00Z",
-        )
-        self.assertEqual(0, confirmed.returncode, confirmed.stdout + confirmed.stderr)
+        # Fast pre-retirement compatibility contract: the generic authority API
+        # consumes the coherent candidate graph built above. Formal historical
+        # Exit Evidence publication belongs to the archived cutover workflow and
+        # is intentionally outside this contract's authority-currentness seam.
+        with patch.object(platform_kernel_module, "_require_formal_exit_evidence"):
+            BilibiliPlatformCutoverPublisher().activate(
+                platform="bilibili",
+                control_store_root=control,
+                exit_evidence=exit_evidence,
+                activated_at="2026-08-09T14:04:00Z",
+            )
         authority_path = control / "platform-authorities" / "bilibili.json"
         original_authority = authority_path.read_bytes()
         original_evidence = exit_evidence.read_bytes()
         publisher = BilibiliPlatformCutoverPublisher()
         try:
-            for label, drift in (
-                ("authority", lambda: authority_path.write_bytes(b"{}\n")),
-                ("evidence", lambda: exit_evidence.write_bytes(b"{}\n")),
+            for label, drift, expected_error in (
+                (
+                    "authority",
+                    lambda: authority_path.write_bytes(b"{}\n"),
+                    "bilibili_platform_authority_stale",
+                ),
+                (
+                    "evidence",
+                    lambda: exit_evidence.write_bytes(b"{}\n"),
+                    "bilibili_platform_exit_evidence_stale",
+                ),
             ):
                 with self.subTest(label=label):
                     authority_path.write_bytes(original_authority)
                     exit_evidence.write_bytes(original_evidence)
                     drift()
-                    with self.assertRaises(KernelConflict):
+                    # scenario_id: confirmed_authority_currentness_drift
+                    # target_invariant: committed authority and bound evidence bytes
+                    #   match the control-store fingerprints
+                    # mutation_seam: exactly one of authority file or Exit Evidence
+                    # rematerialized_nodes: none
+                    # expected_first_gate/error: platform_kernel_authority /
+                    #   the label-specific stable error below
+                    # scenario_class: single_contradiction
+                    with self.assertRaises(KernelConflict) as raised:
                         publisher.authorize_delivery_transition(
                             platform="bilibili",
                             control_store_root=control,
@@ -1488,6 +1505,14 @@ class Issue13CandidateHardeningTests(unittest.TestCase):
                             run_id=candidate_test.CANDIDATE_RUN_ID,
                             to_stage="delivered",
                         )
+                    self.assertEqual(
+                        "platform_kernel_authority",
+                        raised.exception.data["first_failing_gate"],
+                    )
+                    self.assertEqual(
+                        expected_error,
+                        raised.exception.data["error_code"],
+                    )
         finally:
             authority_path.write_bytes(original_authority)
             exit_evidence.write_bytes(original_evidence)

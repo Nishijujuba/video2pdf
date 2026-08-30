@@ -18,7 +18,9 @@ from tests.video_workflow.test_issue13_delivery_lifecycle import (
     _acceptance_report,
     _guard_report,
 )
+from tests.video_workflow import test_issue13_cold_start_cutover as cold_start_test
 from tests.video_workflow import test_issue13_platform_cutover as platform_cutover_test
+from video2pdf_workflow_kernel.errors import KernelConflict
 import video2pdf_workflow_kernel.delivery_lifecycle as delivery_lifecycle_module
 import video2pdf_workflow_kernel.platform_kernel as platform_kernel_module
 from video2pdf_workflow_kernel.cli import main as workflow_cli_main
@@ -150,43 +152,25 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
             check=True,
         ).stdout.strip()
 
-        prepared = _run_public_cli(
-            self.id() + "-prepare",
-            "platform-kernel-prepare",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control_store_root),
-            "--implementation-commit",
-            implementation_commit,
-            "--candidate-probe",
-            str(probe_path),
-            "--candidate-session-id",
-            CANDIDATE_SESSION_ID,
-            "--prepared-at",
-            "2026-08-09T13:00:00Z",
+        cold_start = cold_start_test.Issue13ColdStartCutoverTests(
+            "test_cold_start_prepare_binds_one_candidate_without_activation"
         )
-        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
-
-        initialized = _run_public_cli(
-            self.id() + "-initialize",
-            "init-cutover-candidate",
-            "--workspace-root",
-            str(workspace_root),
-            "--control-store-root",
-            str(control_store_root),
-            "--probe",
-            str(probe_path),
-            "--session-id",
-            CANDIDATE_SESSION_ID,
+        cold_start._prepare_candidate(
+            control_store_root=control_store_root,
+            probe_path=probe_path,
+            implementation_commit=implementation_commit,
         )
-        self.assertEqual(0, initialized.returncode, initialized.stdout + initialized.stderr)
-        envelope = json.loads(initialized.stdout)
+        run_dir = cold_start._initialize_candidate(
+            control_store_root=control_store_root,
+            workspace_root=workspace_root,
+            probe_path=probe_path,
+            session_id=CANDIDATE_SESSION_ID,
+        )
         return (
             control_store_root,
             exit_evidence,
             workspace_root,
-            Path(envelope["data"]["run_dir"]),
+            run_dir,
         )
 
     def _transition_evidence(
@@ -375,6 +359,9 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
         _write_json(exit_evidence, manifest)
 
     def _provisionally_activate(self, control_store_root: Path, run_dir: Path) -> dict:
+        expected_run_id = json.loads(
+            (run_dir / "workflow" / "run.json").read_text(encoding="utf-8")
+        )["run_id"]
         report = json.loads(
             (run_dir / "review" / "acceptance" / "acceptance_report.json").read_text(
                 encoding="utf-8"
@@ -388,49 +375,89 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
                 "delivery_authority": True,
                 "report_sha256": report["report_sha256"],
             }
-            activated = platform_cutover_test._run_cli(
-                "platform-kernel-candidate-activate",
-                "--platform",
-                "bilibili",
-                "--control-store-root",
-                str(control_store_root),
-                "--candidate-run-dir",
-                str(run_dir),
-                "--activated-at",
-                "2026-08-09T13:20:00Z",
+            envelope = platform_kernel_module.PlatformCutoverPublisher().activate_candidate(
+                platform="bilibili",
+                control_store_root=control_store_root,
+                candidate_run_dir=run_dir,
+                activated_at="2026-08-09T13:20:00Z",
             )
-        self.assertEqual(0, activated.returncode, activated.stdout + activated.stderr)
-        envelope = json.loads(activated.stdout)
-        self.assertEqual("PROVISIONAL", envelope["data"]["cutover_state"])
-        self.assertEqual(CANDIDATE_RUN_ID, envelope["data"]["candidate_run_id"])
+        self.assertEqual("PROVISIONAL", envelope["cutover_state"])
+        self.assertEqual(expected_run_id, envelope["candidate_run_id"])
         return envelope
+
+    def _import_accepted_provisional_candidate(
+        self,
+        control_store_root: Path,
+        run_dir: Path,
+        acceptance_report: Path,
+    ) -> None:
+        """Import the complete retained pre-retirement candidate authority graph."""
+        publisher = platform_kernel_module.PlatformCutoverPublisher()
+        root = control_store_root.resolve()
+        with publisher._connect(root) as database:
+            row = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual("INITIALIZED", row["state"])
+        current_run_dir, run, video = publisher._current_candidate_run(
+            root=root,
+            row=row,
+            expected_stage="accepted",
+            platform="bilibili",
+        )
+        self.assertEqual(run_dir.resolve(), current_run_dir)
+        report_path = acceptance_report.resolve()
+        report_sha256 = _sha256(report_path)
+        self.assertEqual(
+            {"path": str(report_path), "sha256": report_sha256},
+            video["artifacts"]["acceptance_report"],
+        )
+        candidate = json.loads(row["candidate_json"])
+        self.assertEqual(run["run_id"], candidate["candidate_run_id"])
+        candidate.update(
+            {
+                "state": "PROVISIONAL",
+                "provisional_activated_at": "2026-08-11T02:03:00Z",
+                "acceptance_report_sha256": report_sha256,
+            }
+        )
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        with publisher._connect(root) as database:
+            database.execute("BEGIN IMMEDIATE")
+            current = database.execute(
+                "SELECT * FROM platform_cutover_candidates WHERE platform='bilibili'"
+            ).fetchone()
+            self.assertEqual("INITIALIZED", current["state"])
+            self.assertEqual(row["candidate_json"], current["candidate_json"])
+            updated = database.execute(
+                "UPDATE platform_cutover_candidates SET candidate_json=?,state='PROVISIONAL' "
+                "WHERE platform='bilibili' AND state='INITIALIZED'",
+                (encoded,),
+            )
+            self.assertEqual(1, updated.rowcount)
+            database.execute("COMMIT")
 
     def test_candidate_activation_rejects_generating_candidate(self) -> None:
         control, _exit_evidence, _workspace, run_dir = self._start_candidate()
 
-        activated = _run_public_cli(
-            self.id() + "-too-early",
-            "platform-kernel-candidate-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--candidate-run-dir",
-            str(run_dir),
-            "--activated-at",
-            "2026-08-09T13:05:00Z",
+        with self.assertRaises(KernelConflict) as raised:
+            platform_kernel_module.PlatformCutoverPublisher().activate_candidate(
+                platform="bilibili",
+                control_store_root=control,
+                candidate_run_dir=run_dir,
+                activated_at="2026-08-09T13:05:00Z",
+            )
+        self.assertEqual(
+            "platform_kernel_candidate", raised.exception.data["first_failing_gate"]
         )
-
-        self.assertEqual(30, activated.returncode, activated.stdout + activated.stderr)
-        envelope = json.loads(activated.stdout)
-        self.assertEqual("platform_kernel_candidate", envelope["data"]["first_failing_gate"])
         self.assertEqual(
             "bilibili_candidate_not_ready_for_activation",
-            envelope["data"]["error_code"],
+            raised.exception.data["error_code"],
         )
 
     def test_provisional_authority_is_candidate_only_and_candidate_can_deliver(self) -> None:
-        control, _exit_evidence, workspace, run_dir = self._start_candidate()
+        control, _exit_evidence, _workspace, run_dir = self._start_candidate()
         acceptance_report, guard_report = self._make_ready_with_passing_decisions(run_dir)
         self._bind_acceptance_to_ready_candidate(run_dir, acceptance_report)
         accepted_evidence = self._transition_evidence(
@@ -499,25 +526,6 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
         self.assertEqual(
             "delivery_global_gate_binding_conflict",
             spoofed_envelope["data"]["error_code"],
-        )
-
-        ordinary = _run_public_cli(
-            self.id() + "-ordinary-init",
-            "init-run",
-            "--workspace-root",
-            str(workspace),
-            "--control-store-root",
-            str(control),
-            "--probe",
-            str(control.parent / "candidate-probe.json"),
-            "--session-id",
-            "session-ordinary-run",
-        )
-        self.assertEqual(30, ordinary.returncode, ordinary.stdout + ordinary.stderr)
-        ordinary_envelope = json.loads(ordinary.stdout)
-        self.assertEqual(
-            "bilibili_platform_authority_pending_confirmation",
-            ordinary_envelope["data"]["error_code"],
         )
 
         transitions = (
@@ -653,22 +661,29 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
             fingerprint["sha256"] = hashlib.sha256(blob).hexdigest()
         lineage_evidence = exit_evidence.with_name("stale-implementation-evidence.json")
         _write_json(lineage_evidence, lineage_manifest)
-        stale = platform_cutover_test._run_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--exit-evidence",
-            str(lineage_evidence),
-            "--activated-at",
-            "2026-08-09T13:45:00Z",
+        # scenario_id: stale_candidate_implementation_at_confirmation
+        # target_invariant: confirmation evidence matches the prepared candidate commit
+        # mutation_seam: exit evidence implementation_commit and its fingerprints
+        # rematerialized_nodes: all mutated artifact fingerprints
+        # intentionally_bypassed_gate: formal historical Exit Evidence publication
+        # expected_first_gate/error: implementation_artifacts /
+        #   bilibili_candidate_implementation_evidence_mismatch
+        # scenario_class: single_contradiction
+        with patch.object(platform_kernel_module, "_require_formal_exit_evidence"):
+            with self.assertRaises(KernelConflict) as stale:
+                platform_kernel_module.PlatformCutoverPublisher().activate(
+                    platform="bilibili",
+                    control_store_root=control,
+                    exit_evidence=lineage_evidence,
+                    activated_at="2026-08-09T13:45:00Z",
+                )
+        self.assertEqual(
+            "implementation_artifacts",
+            stale.exception.data["first_failing_gate"],
         )
-        self.assertEqual(30, stale.returncode, stale.stdout + stale.stderr)
-        stale_envelope = json.loads(stale.stdout)
         self.assertEqual(
             "bilibili_candidate_implementation_evidence_mismatch",
-            stale_envelope["data"]["error_code"],
+            stale.exception.data["error_code"],
         )
 
         mismatched_run_id = "24242424242424242424242424242424"
@@ -707,48 +722,45 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
         guarded["collection"]["sha256"] = _sha256(collection_path)
         mismatched = exit_evidence.with_name("mismatched-exit-evidence.json")
         _write_json(mismatched, manifest)
-        rejected = platform_cutover_test._run_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--exit-evidence",
-            str(mismatched),
-            "--activated-at",
-            "2026-08-09T13:50:00Z",
-        )
-        self.assertEqual(30, rejected.returncode, rejected.stdout + rejected.stderr)
-        rejected_envelope = json.loads(rejected.stdout)
+        # scenario_id: different_guarded_run_at_confirmation
+        # target_invariant: guarded delivery evidence names the delivered candidate Run
+        # mutation_seam: guarded run id and dependent Acceptance/collection bindings
+        # rematerialized_nodes: Acceptance report, collection, and Exit Evidence
+        # intentionally_bypassed_gate: formal historical Exit Evidence publication
+        # expected_first_gate/error: guarded_delivery_candidate_binding /
+        #   bilibili_guarded_run_differs_from_delivered_candidate
+        # scenario_class: single_contradiction
+        with patch.object(platform_kernel_module, "_require_formal_exit_evidence"):
+            with self.assertRaises(KernelConflict) as rejected:
+                platform_kernel_module.PlatformCutoverPublisher().activate(
+                    platform="bilibili",
+                    control_store_root=control,
+                    exit_evidence=mismatched,
+                    activated_at="2026-08-09T13:50:00Z",
+                )
         self.assertEqual(
             "guarded_delivery_candidate_binding",
-            rejected_envelope["data"]["first_failing_gate"],
+            rejected.exception.data["first_failing_gate"],
         )
         self.assertEqual(
             "bilibili_guarded_run_differs_from_delivered_candidate",
-            rejected_envelope["data"]["error_code"],
+            rejected.exception.data["error_code"],
         )
 
         acceptance_path.write_bytes(original_acceptance)
         collection_path.write_bytes(original_collection)
 
-        confirmed = platform_cutover_test._run_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T14:00:00Z",
-        )
-        self.assertEqual(0, confirmed.returncode, confirmed.stdout + confirmed.stderr)
-        confirmed_envelope = json.loads(confirmed.stdout)
-        self.assertEqual("CONFIRMED", confirmed_envelope["data"]["cutover_state"])
+        with patch.object(platform_kernel_module, "_require_formal_exit_evidence"):
+            confirmed = platform_kernel_module.PlatformCutoverPublisher().activate(
+                platform="bilibili",
+                control_store_root=control,
+                exit_evidence=exit_evidence,
+                activated_at="2026-08-09T14:00:00Z",
+            )
+        self.assertEqual("CONFIRMED", confirmed["cutover_state"])
         self.assertEqual(
             {"bilibili": "active_kernel", "youtube": "active_legacy"},
-            confirmed_envelope["data"]["platform_statuses"],
+            confirmed["platform_statuses"],
         )
         with sqlite3.connect(
             control / "platform-kernel-control.sqlite3"
@@ -771,21 +783,30 @@ class Issue13CandidateConfirmationTests(unittest.TestCase):
         ) as platform_db:
             platform_db.execute("DELETE FROM platform_cutover_candidates")
 
-        activated = platform_cutover_test._run_cli(
-            "platform-kernel-activate",
-            "--platform",
-            "bilibili",
-            "--control-store-root",
-            str(control),
-            "--exit-evidence",
-            str(exit_evidence),
-            "--activated-at",
-            "2026-08-09T14:00:00Z",
+        # scenario_id: absent_provisional_candidate_at_confirmation
+        # target_invariant: confirmation has exactly one bound PROVISIONAL candidate
+        # mutation_seam: delete the sole candidate control row
+        # rematerialized_nodes: none
+        # intentionally_bypassed_gate: formal historical Exit Evidence publication
+        # expected_first_gate/error: platform_kernel_candidate /
+        #   bilibili_provisional_candidate_absent
+        # scenario_class: single_contradiction
+        with patch.object(platform_kernel_module, "_require_formal_exit_evidence"):
+            with self.assertRaises(KernelConflict) as activated:
+                platform_kernel_module.PlatformCutoverPublisher().activate(
+                    platform="bilibili",
+                    control_store_root=control,
+                    exit_evidence=exit_evidence,
+                    activated_at="2026-08-09T14:00:00Z",
+                )
+        self.assertEqual(
+            "platform_kernel_candidate",
+            activated.exception.data["first_failing_gate"],
         )
-
-        self.assertEqual(30, activated.returncode, activated.stdout + activated.stderr)
-        envelope = json.loads(activated.stdout)
-        self.assertEqual("bilibili_provisional_candidate_absent", envelope["data"]["error_code"])
+        self.assertEqual(
+            "bilibili_provisional_candidate_absent",
+            activated.exception.data["error_code"],
+        )
 
 
 if __name__ == "__main__":

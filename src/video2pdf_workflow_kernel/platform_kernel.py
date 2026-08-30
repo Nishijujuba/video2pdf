@@ -692,14 +692,20 @@ class BilibiliPlatformCutoverPublisher:
 
     @staticmethod
     def _candidate_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+        platform = str(row["platform"])
+        spec = _platform_spec(platform)
+        display_name = spec["display_name"]
+        prefix = spec["error_prefix"]
         try:
             candidate = json.loads(row["candidate_json"])
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise KernelConflict(
-                "Bilibili candidate snapshot cannot be decoded",
+                f"{display_name} candidate snapshot cannot be decoded",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_snapshot_invalid",
+                    "error_code": f"{prefix}_candidate_snapshot_invalid",
+                    "platform": platform,
+                    "authority_boundary": "platform_kernel_candidate",
                 },
             ) from exc
         if (
@@ -715,10 +721,12 @@ class BilibiliPlatformCutoverPublisher:
             != row["global_gate_sha256"]
         ):
             raise KernelConflict(
-                "Bilibili candidate SQL and JSON states differ",
+                f"{display_name} candidate SQL and JSON states differ",
                 data={
                     "first_failing_gate": "platform_kernel_candidate",
-                    "error_code": "bilibili_candidate_state_inconsistent",
+                    "error_code": f"{prefix}_candidate_state_inconsistent",
+                    "platform": platform,
+                    "authority_boundary": "platform_kernel_candidate",
                 },
             )
         return candidate
@@ -2637,14 +2645,18 @@ class BilibiliPlatformCutoverPublisher:
     ) -> None:
         if to_stage not in {"accepted", "delivered"}:
             return
-        self._platform_spec(platform)
+        spec = self._platform_spec(platform)
+        display_name = spec["display_name"]
+        prefix = spec["error_prefix"]
         root = control_store_root.resolve()
         if not (root / PLATFORM_KERNEL_DB).is_file():
             raise KernelConflict(
-                "Bilibili delivery transition lacks Platform Kernel authority",
+                f"{display_name} delivery transition lacks Platform Kernel authority",
                 data={
                     "first_failing_gate": "platform_kernel_authority",
-                    "error_code": "bilibili_platform_authority_stale",
+                    "error_code": f"{prefix}_platform_authority_stale",
+                    "platform": platform,
+                    "authority_boundary": "platform_kernel",
                 },
             )
         with self._connect(root) as connection:
@@ -2674,10 +2686,14 @@ class BilibiliPlatformCutoverPublisher:
                         )
                     except (ContractError, OSError, KeyError, TypeError, ValueError) as exc:
                         raise KernelConflict(
-                            "Bilibili candidate guarded delivery authority is stale",
+                            f"{display_name} candidate guarded delivery authority is stale",
                             data={
                                 "first_failing_gate": "platform_kernel_candidate",
-                                "error_code": "bilibili_candidate_guarded_decision_stale",
+                                "error_code": (
+                                    f"{prefix}_candidate_guarded_decision_stale"
+                                ),
+                                "platform": platform,
+                                "authority_boundary": "platform_kernel_candidate",
                             },
                         ) from exc
                     if (
@@ -2686,18 +2702,24 @@ class BilibiliPlatformCutoverPublisher:
                         != value.get("acceptance_report_sha256")
                     ):
                         raise KernelConflict(
-                            "Bilibili candidate guarded delivery authority is stale",
+                            f"{display_name} candidate guarded delivery authority is stale",
                             data={
                                 "first_failing_gate": "platform_kernel_candidate",
-                                "error_code": "bilibili_candidate_guarded_decision_stale",
+                                "error_code": (
+                                    f"{prefix}_candidate_guarded_decision_stale"
+                                ),
+                                "platform": platform,
+                                "authority_boundary": "platform_kernel_candidate",
                             },
                         )
                 return
         raise KernelConflict(
-            "Bilibili delivery transition lacks confirmed or provisional authority",
+            f"{display_name} delivery transition lacks confirmed or provisional authority",
             data={
                 "first_failing_gate": "platform_kernel_candidate",
-                "error_code": "bilibili_candidate_delivery_not_authorized",
+                "error_code": f"{prefix}_candidate_delivery_not_authorized",
+                "platform": platform,
+                "authority_boundary": "platform_kernel_candidate",
             },
         )
 

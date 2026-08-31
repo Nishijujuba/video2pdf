@@ -369,7 +369,7 @@ def _synctex_source_location(
         errors="strict",
         capture_output=True,
         check=False,
-        timeout=30,
+        timeout=90,
     )
     if completed.returncode != 0 or completed.stderr:
         raise AdapterError("compiler source map query failed")
@@ -1161,7 +1161,8 @@ def render_and_derive(
             raise AdapterError(
                 f"declared generated text source does not declare inventory: {item_id}"
             )
-        expected_invocations: dict[tuple[str, int, str], str] = {}
+        begin_invocations: dict[tuple[str, int, str], str] = {}
+        end_invocations: dict[tuple[str, int, str], str] = {}
         for source_entry in manifest_entries:
             source_path = staging / Path(source_entry["staging_path"])
             if source_path.suffix.casefold() != ".tex" or not source_path.is_file():
@@ -1170,20 +1171,38 @@ def render_and_derive(
                 source_path.read_text(encoding="utf-8").splitlines(), 1
             ):
                 invocation = re.fullmatch(
-                    r"\s*\\end\{([^{}]+)\}\s*(?:%.*)?",
+                    r"\s*\\(begin|end)\{([^{}]+)\}\s*(?:%.*)?",
                     source_line,
                 )
                 if invocation is None:
                     continue
-                expected_title = title_by_environment.get(invocation.group(1))
+                expected_title = title_by_environment.get(invocation.group(2))
                 if expected_title in declared_tokens:
-                    expected_invocations[
+                    target = (
+                        begin_invocations
+                        if invocation.group(1) == "begin"
+                        else end_invocations
+                    )
+                    target[
                         (
                             str(source_path.resolve()).casefold(),
                             line_number,
-                            invocation.group(1),
+                            invocation.group(2),
                         )
                     ] = expected_title
+        begun_environments = {key[2] for key in begin_invocations}
+        expected_invocations = {
+            key: title
+            for key, title in begin_invocations.items()
+            if key[2] in begun_environments
+        }
+        expected_invocations.update(
+            {
+                key: title
+                for key, title in end_invocations.items()
+                if key[2] not in begun_environments
+            }
+        )
         if not expected_invocations:
             raise AdapterError(
                 f"declared generated text is absent from compile inputs: {item_id}"
@@ -1206,7 +1225,7 @@ def render_and_derive(
             if line_number < 1 or line_number > len(source_lines):
                 raise AdapterError("compiler source map line is invalid")
             invocation = re.fullmatch(
-                r"\s*\\end\{([^{}]+)\}\s*(?:%.*)?",
+                r"\s*\\(begin|end)\{([^{}]+)\}\s*(?:%.*)?",
                 source_lines[line_number - 1],
             )
             if invocation is None:
@@ -1214,7 +1233,7 @@ def render_and_derive(
             invocation_key = (
                 str(source_path.resolve()).casefold(),
                 line_number,
-                invocation.group(1),
+                invocation.group(2),
             )
             expected_title = expected_invocations.get(invocation_key)
             if expected_title is None:

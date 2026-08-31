@@ -710,7 +710,9 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         source = fixture.root / "section.tex"
         source.write_text(
             "Source (source\\_timestamp): 00:00:58--00:01:06\n"
-            "\\section{Core}\n",
+            "\\section{Core}\n"
+            "Rendered shell fragment.\n"
+            "A long effect result.\n",
             encoding="utf-8",
         )
         dispatcher = fixture.root / "main.tex"
@@ -749,6 +751,36 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "bbox": [105, 99, 170, 113],
                 "exact_utf8_text": "Core",
             },
+            {
+                "object_id": "styled-anchor",
+                "page": 4,
+                "bbox": [80, 100, 150, 111],
+                "exact_utf8_text": "Rendered ",
+            },
+            {
+                "object_id": "styled-missing",
+                "page": 4,
+                "bbox": [150, 100, 185, 112],
+                "exact_utf8_text": "shell",
+            },
+            {
+                "object_id": "styled-tail",
+                "page": 4,
+                "bbox": [185, 100, 245, 111],
+                "exact_utf8_text": " fragment.",
+            },
+            {
+                "object_id": "wrapped-anchor",
+                "page": 5,
+                "bbox": [80, 100, 525, 111],
+                "exact_utf8_text": "A long effect res",
+            },
+            {
+                "object_id": "wrapped-missing",
+                "page": 5,
+                "bbox": [80, 118, 105, 129],
+                "exact_utf8_text": "ult.",
+            },
         ]
         locations = {
             "anchor": {
@@ -779,6 +811,20 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
                 "column": -1,
                 "query": {"page": 3, "x": 137.5, "y": 106},
             },
+            "styled-anchor": {
+                "object_id": "styled-anchor",
+                "source_path": str(source),
+                "line": 2,
+                "column": 1,
+                "query": {"page": 4, "x": 115, "y": 105.5},
+            },
+            "wrapped-anchor": {
+                "object_id": "wrapped-anchor",
+                "source_path": str(source),
+                "line": 4,
+                "column": 1,
+                "query": {"page": 5, "x": 302.5, "y": 105.5},
+            },
         }
 
         _complete_compiler_source_locations(
@@ -800,6 +846,9 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         self.assertEqual(
             "compiler-line-layout-v1", locations["space"]["completion"]
         )
+        for object_id in ("styled-anchor", "styled-missing", "styled-tail"):
+            self.assertEqual(3, locations[object_id]["line"])
+        self.assertEqual(4, locations["wrapped-missing"]["line"])
 
     def test_running_header_accepts_compiler_case_presentation(self) -> None:
         fixture, _, _ = self._inventory_bound_adapter_fixture()

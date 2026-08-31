@@ -627,6 +627,11 @@ def _complete_compiler_source_locations(
         and path.suffix.casefold() in {".tex", ".toc", ".sty", ".cls"}
     }
 
+    def presentation_text(value: str) -> str:
+        normalized = _normalized_layout_text(value).replace("--", "–")
+        normalized = re.sub(r"\\([_%&#])", r"\1", normalized)
+        return normalized.replace(r"\par", "").replace("``", "“").replace("''", "”")
+
     def source_identity(location: dict[str, Any]) -> tuple[Path, int] | None:
         path = Path(str(location.get("source_path", ""))).resolve()
         line = location.get("line")
@@ -646,10 +651,7 @@ def _complete_compiler_source_locations(
         token = _normalized_layout_text(obj["exact_utf8_text"])
         if not token:
             return True
-        source_text = _normalized_layout_text(
-            source_lines[identity[0]][identity[1] - 1]
-        ).replace("--", "–")
-        source_text = re.sub(r"\\([_%&#])", r"\1", source_text)
+        source_text = presentation_text(source_lines[identity[0]][identity[1] - 1])
         if len(token) <= 2 and token.isascii() and token.isalnum():
             return re.search(
                 rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
@@ -767,6 +769,116 @@ def _complete_compiler_source_locations(
             },
             "completion": "compiler-line-layout-v1",
         }
+
+    visual_lines: list[list[dict[str, Any]]] = []
+    for obj in sorted(
+        (
+            item
+            for item in objects
+            if item.get("object_kind", "pdf_text_run") == "pdf_text_run"
+        ),
+        key=lambda item: (
+            item["page"],
+            (item["bbox"][1] + item["bbox"][3]) / 2,
+            item["bbox"][0],
+        ),
+    ):
+        center_y = (obj["bbox"][1] + obj["bbox"][3]) / 2
+        if visual_lines:
+            prior = visual_lines[-1]
+            prior_center_y = sum(
+                (item["bbox"][1] + item["bbox"][3]) / 2 for item in prior
+            ) / len(prior)
+            if prior[0]["page"] == obj["page"] and abs(prior_center_y - center_y) <= 1.2:
+                prior.append(obj)
+                continue
+        visual_lines.append([obj])
+
+    def completed_location(
+        obj: dict[str, Any], identity: tuple[Path, int]
+    ) -> dict[str, Any]:
+        bbox = obj["bbox"]
+        return {
+            "object_id": obj["object_id"],
+            "source_path": str(identity[0]),
+            "line": identity[1],
+            "column": -1,
+            "query": {
+                "page": obj["page"],
+                "x": (bbox[0] + bbox[2]) / 2,
+                "y": (bbox[1] + bbox[3]) / 2,
+            },
+            "completion": "compiler-line-layout-v1",
+        }
+
+    for line_objects in visual_lines:
+        identities = [
+            identity
+            for obj in line_objects
+            if (location := locations.get(obj["object_id"])) is not None
+            if (identity := source_identity(location)) is not None
+        ]
+        source_paths = {identity[0] for identity in identities}
+        if len(source_paths) != 1:
+            continue
+        source_path = next(iter(source_paths))
+        rendered_line = presentation_text(
+            "".join(
+                item["exact_utf8_text"]
+                for item in sorted(line_objects, key=lambda value: value["bbox"][0])
+            )
+        )
+        matching_lines = [
+            line_number
+            for line_number, source_line in enumerate(source_lines[source_path], 1)
+            if rendered_line and rendered_line in presentation_text(source_line)
+        ]
+        if len(matching_lines) != 1:
+            continue
+        identity = (source_path, matching_lines[0])
+        for obj in line_objects:
+            locations[obj["object_id"]] = completed_location(obj, identity)
+
+    for previous, current in zip(visual_lines, visual_lines[1:]):
+        if previous[0]["page"] != current[0]["page"]:
+            continue
+        previous_bottom = max(item["bbox"][2] for item in previous)
+        current_left = min(item["bbox"][0] for item in current)
+        previous_y = sum(
+            (item["bbox"][1] + item["bbox"][3]) / 2 for item in previous
+        ) / len(previous)
+        current_y = sum(
+            (item["bbox"][1] + item["bbox"][3]) / 2 for item in current
+        ) / len(current)
+        if previous_bottom < 500 or current_left > 80 or current_y - previous_y > 25:
+            continue
+        previous_identities = {
+            identity
+            for obj in previous
+            if (location := locations.get(obj["object_id"])) is not None
+            if (identity := source_identity(location)) is not None
+        }
+        if len(previous_identities) != 1:
+            continue
+        identity = next(iter(previous_identities))
+        rendered_wrap = presentation_text(
+            "".join(
+                item["exact_utf8_text"]
+                for item in sorted(previous, key=lambda value: value["bbox"][0])
+            )
+            + "".join(
+                item["exact_utf8_text"]
+                for item in sorted(current, key=lambda value: value["bbox"][0])
+            )
+        )
+        if rendered_wrap not in presentation_text(
+            source_lines[identity[0]][identity[1] - 1]
+        ):
+            continue
+        for obj in current:
+            location = locations.get(obj["object_id"])
+            if location is None or not source_line_supports(obj, identity, location):
+                locations[obj["object_id"]] = completed_location(obj, identity)
 
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
@@ -1173,6 +1285,38 @@ def render_and_derive(
         len(stable_toc_sources) == 1
         and bool(stable_toc_sources[0][0].read_text(encoding="utf-8").splitlines())
     )
+    toc_header_sources = [
+        (source_path.resolve(), line_number)
+        for source_path in observed_declared_paths
+        if source_path.suffix.casefold() == ".tex" and source_path.is_file()
+        for line_number, source_line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        )
+        if source_line.strip() == r"\tableofcontents"
+    ]
+    if len(toc_header_sources) == 1:
+        source_path, line_number = toc_header_sources[0]
+        for item in objects:
+            if (
+                item["object_id"] in used_objects
+                or item["object_id"] in locations
+                or item["exact_utf8_text"] != "目录"
+                or item["bbox"][3] > 45
+            ):
+                continue
+            bbox = item["bbox"]
+            locations[item["object_id"]] = {
+                "object_id": item["object_id"],
+                "source_path": str(source_path),
+                "line": line_number,
+                "column": -1,
+                "query": {
+                    "page": item["page"],
+                    "x": (bbox[0] + bbox[2]) / 2,
+                    "y": (bbox[1] + bbox[3]) / 2,
+                },
+                "completion": "compiler-line-layout-v1",
+            }
     running_header_objects = [
         item
         for item in objects

@@ -1326,6 +1326,8 @@ def render_and_derive(
         and item["object_id"] in locations
         and item["page"] >= 1
         and item["bbox"][3] <= 45
+        and locations[item["object_id"]].get("completion")
+        != "compiler-line-layout-v1"
     ]
     if running_header_objects:
         if len(stable_toc_sources) != 1:

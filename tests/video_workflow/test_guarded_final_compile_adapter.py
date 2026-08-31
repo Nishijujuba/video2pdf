@@ -284,6 +284,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         captured_command: list[str] = []
         captured_environment: dict[str, str] = {}
         captured_source_map_environment: dict[str, str] = {}
+        synctex_stdout = f"Input:{entry}\nLine:1\nColumn:1\n"
         invocation_count = 0
 
         document = fitz.open()
@@ -301,7 +302,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
                 return subprocess.CompletedProcess(
                     command,
                     0,
-                    f"Input:{entry}\nLine:1\nColumn:1\n",
+                    synctex_stdout,
                     (
                         "synctex: major issue: Root directory #5 covers root directory #0.\n"
                         "synctex: major issue: Root directory #5 covers root directory #1.\n"
@@ -345,8 +346,31 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
                 {entry.resolve()},
                 runtime_environment,
             )
+            # scenario_id: successful-synctex-with-incomplete-map
+            # target_invariant: a successful query must still publish Input and Line
+            # mutation_seam: SyncTeX stdout after process success
+            # rematerialized_nodes: subprocess result; intentionally_stale_nodes: none
+            # expected_first_gate/error: source-map parsing / query is incomplete
+            synctex_stdout = ""
+            with self.assertRaisesRegex(
+                adapter.AdapterError, "compiler source map query is incomplete"
+            ):
+                adapter._synctex_source_location(
+                    Path("synctex.exe"),
+                    compile_result[0],
+                    staging,
+                    {
+                        "object_id": "page-1-text-1",
+                        "page": 1,
+                        "bbox": [0.0, 0.0, 10.0, 10.0],
+                        "exact_utf8_text": "fixture",
+                    },
+                    [{"staging_path": "main.tex"}],
+                    {entry.resolve()},
+                    runtime_environment,
+                )
 
-        self.assertEqual(4, invocation_count)
+        self.assertEqual(5, invocation_count)
         self.assertIsNotNone(location)
         self.assertEqual(runtime_environment, captured_source_map_environment)
         installer_index = captured_command.index("--disable-installer")

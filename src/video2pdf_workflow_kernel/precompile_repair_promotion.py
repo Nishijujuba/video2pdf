@@ -143,6 +143,11 @@ class PrecompileRepairPromotionProvider:
                     "actual_task_count": len(task_order),
                 },
             )
+        self._preflight_claim_plan(
+            state=state,
+            initial_claims=initial_claims,
+            task_order=expected_task_order,
+        )
 
         resumed_task_count = self._resume_production_repair(
             run_dir=run_dir,
@@ -350,15 +355,74 @@ class PrecompileRepairPromotionProvider:
         )
         for section_id in section_ids:
             for slot in sections[section_id]["figure_slots"]:
-                task_order.append(
-                    f"figure-{slot['wave']}-{slot['slot_id'].replace('_', '-')}"
-                )
+                task_order.append(ContentProduction._figure_logical_task_key(slot))
         task_order.extend(
             f"pyramid-section-{section_id.replace('_', '-')}"
             for section_id in section_ids
         )
         task_order.append("pyramid-main")
         return task_order
+
+    def _preflight_claim_plan(
+        self,
+        *,
+        state: dict[str, Any],
+        initial_claims: dict[str, Any],
+        task_order: list[str],
+    ) -> None:
+        if set(initial_claims) != set(task_order):
+            self._reject(
+                "Precompile repair promotion claim plan does not cover the task closure",
+                "precompile_repair_claim_plan",
+                "precompile_repair_claim_plan_incomplete",
+            )
+        current_claims = state["claims"]
+        for logical_key in task_order:
+            initial = initial_claims[logical_key]
+            current = current_claims.get(logical_key)
+            if not isinstance(initial, dict) or not isinstance(current, dict):
+                self._reject(
+                    f"Precompile repair promotion claim disappeared: {logical_key}",
+                    "precompile_repair_claim_plan",
+                    "precompile_repair_claim_missing",
+                    logical_task_key=logical_key,
+                )
+            if initial.get("task_id") != current.get("task_id"):
+                self._reject(
+                    f"Precompile repair promotion task identity changed: {logical_key}",
+                    "precompile_repair_claim_plan",
+                    "precompile_repair_task_identity_changed",
+                    logical_task_key=logical_key,
+                )
+            initial_generation = initial.get("claim_generation")
+            current_generation = current.get("claim_generation")
+            if not isinstance(initial_generation, int):
+                self._reject(
+                    f"Precompile repair promotion initial generation is invalid: {logical_key}",
+                    "precompile_repair_claim_plan",
+                    "precompile_repair_initial_generation_invalid",
+                    logical_task_key=logical_key,
+                )
+            if current_generation not in {
+                initial_generation,
+                initial_generation + 1,
+            }:
+                self._reject(
+                    f"Precompile repair claim generation is outside its replay fence: {logical_key}",
+                    "precompile_repair_claim_plan",
+                    "precompile_repair_generation_fence_invalid",
+                    logical_task_key=logical_key,
+                )
+            if (
+                current_generation == initial_generation
+                and current.get("status") != "committed"
+            ):
+                self._reject(
+                    f"Precompile repair predecessor claim is not committed: {logical_key}",
+                    "precompile_repair_claim_plan",
+                    "precompile_repair_predecessor_not_committed",
+                    logical_task_key=logical_key,
+                )
 
     @staticmethod
     def _reject(message: str, gate: str, code: str, **data: Any) -> None:

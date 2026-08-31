@@ -19,6 +19,12 @@ import unittest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CLI = PROJECT_ROOT / "scripts" / "video_workflow.py"
 RUN_ENV = "VIDEO2PDF_ISSUE101_RUN_DIR"
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from video2pdf_workflow_kernel.errors import ContractError
+from video2pdf_workflow_kernel.precompile_repair_promotion import (
+    PrecompileRepairPromotionProvider,
+)
 
 
 @unittest.skipUnless(os.environ.get(RUN_ENV), f"{RUN_ENV} is required")
@@ -45,6 +51,9 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             if bundle.get("notes", {}).get("scope")
             == "complete Production closure with fresh independent Pyramid evaluations"
         )
+        complete_bundle_data = json.loads(
+            complete_bundle.read_text(encoding="utf-8")
+        )
         predecessor = run_dir / "review/precompile/workspaces/attempt_01_20260831"
 
         # The retained nine-task bundle is the exact failed Pyramid-only replay
@@ -52,6 +61,33 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
         # authoritative state change because its order cannot restore the full
         # outline -> content -> Pyramid -> main Production closure.
         state_path = run_dir / "workflow/production-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        self.assertEqual(
+            complete_bundle_data["task_order"],
+            provider._required_replay_task_order(state),
+        )
+        provider._preflight_claim_plan(
+            state=state,
+            initial_claims=complete_bundle_data["initial_claims"],
+            task_order=complete_bundle_data["task_order"],
+        )
+        incomplete_claims = dict(complete_bundle_data["initial_claims"])
+        incomplete_claims.pop(complete_bundle_data["task_order"][-1])
+        with self.assertRaises(ContractError) as missing_claim:
+            provider._preflight_claim_plan(
+                state=state,
+                initial_claims=incomplete_claims,
+                task_order=complete_bundle_data["task_order"],
+            )
+        self.assertEqual(
+            "precompile_repair_claim_plan",
+            missing_claim.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "precompile_repair_claim_plan_incomplete",
+            missing_claim.exception.data["error_code"],
+        )
         state_before = hashlib.sha256(state_path.read_bytes()).hexdigest()
         incomplete = subprocess.run(
             [
@@ -159,6 +195,25 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             {"precompile_repair_promoted", "precompile_repair_already_promoted"},
         )
         self.assertEqual(33, result["data"]["promoted_task_count"])
+
+        recovered_state = json.loads(state_path.read_text(encoding="utf-8"))
+        for logical_key in complete_bundle_data["task_order"]:
+            initial = complete_bundle_data["initial_claims"][logical_key]
+            current = recovered_state["claims"][logical_key]
+            self.assertEqual(initial["claim_generation"] + 1, current["claim_generation"])
+            self.assertEqual("committed", current["status"])
+            receipt = recovered_state["receipts"][logical_key]
+            self.assertEqual(current["claim_generation"], receipt["claim_generation"])
+            self.assertTrue(
+                (
+                    run_dir
+                    / "workflow/tasks"
+                    / current["task_id"]
+                    / "attempts"
+                    / receipt["attempt_id"]
+                    / "attempt.json"
+                ).is_file()
+            )
 
         repeated = subprocess.run(
             command,

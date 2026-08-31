@@ -1345,19 +1345,40 @@ def render_and_derive(
                 },
                 "completion": "compiler-line-layout-v1",
             }
-    running_header_objects = [
+    header_candidates = [
         item
         for item in objects
         if item["object_id"] not in used_objects
-        and item["object_id"] in locations
         and item["page"] >= 1
         and item["bbox"][3] <= 45
-        and locations[item["object_id"]].get("completion")
+    ]
+    if header_candidates:
+        if len(stable_toc_sources) != 1:
+            raise AdapterError("running header authority is incomplete")
+        toc_source, toc_source_sha256 = stable_toc_sources[0]
+        for item in header_candidates:
+            if item["object_id"] in locations:
+                continue
+            bbox = item["bbox"]
+            locations[item["object_id"]] = {
+                "object_id": item["object_id"],
+                "source_path": str(toc_source),
+                "line": 1,
+                "column": -1,
+                "query": {
+                    "page": item["page"],
+                    "x": (bbox[0] + bbox[2]) / 2,
+                    "y": (bbox[1] + bbox[3]) / 2,
+                },
+                "completion": "latex-running-header-layout-v1",
+            }
+    running_header_objects = [
+        item
+        for item in header_candidates
+        if locations[item["object_id"]].get("completion")
         != "compiler-line-layout-v1"
     ]
     if running_header_objects:
-        if len(stable_toc_sources) != 1:
-            raise AdapterError("running header authority is incomplete")
         toc_source, toc_source_sha256 = stable_toc_sources[0]
         generator = registered_generator_identity("latex-running-header-v1")
         edges.append(

@@ -290,11 +290,10 @@ def validate_latex_running_header(
     grouped: dict[int, list[dict[str, Any]]] = {}
     for object_id in rendered_ids:
         obj = objects_by_id[object_id]
-        if obj.get("page", 0) < 2 or obj.get("bbox", [0, 0, 0, 999])[3] > 45:
+        if obj.get("page", 0) < 1 or obj.get("bbox", [0, 0, 0, 999])[3] > 45:
             return False
         grouped.setdefault(obj["page"], []).append(obj)
-    if set(grouped) != set(range(2, inputs["page_count"] + 1)):
-        return False
+    headers: dict[int, tuple[str, str]] = {}
     for page, values in grouped.items():
         left = "".join(
             str(value["exact_utf8_text"])
@@ -305,15 +304,41 @@ def validate_latex_running_header(
             str(value["exact_utf8_text"])
             for value in values
             if value["bbox"][0] >= 500
-        )
-        display_page = page - 1
+        ).replace(" ", "")
+        if not right.isdigit():
+            return False
+        headers[page] = (left, right)
+    body_pages = [
+        page
+        for page, (left, _) in headers.items()
+        if left.casefold() not in {"", "目录".casefold()}
+    ]
+    if (
+        not body_pages
+        or sorted(body_pages)
+        != list(range(min(body_pages), inputs["page_count"] + 1))
+    ):
+        return False
+    frontmatter_pages = sorted(set(headers) - set(body_pages))
+    if any(
+        page >= min(body_pages)
+        or headers[page][0].casefold() not in {"", "目录".casefold()}
+        or headers[page][1] != str(page)
+        for page in frontmatter_pages
+    ):
+        return False
+    body_display_pages = [int(headers[page][1]) for page in sorted(body_pages)]
+    if body_display_pages != list(range(1, len(body_pages) + 1)):
+        return False
+    for page in sorted(body_pages):
+        left, right = headers[page]
+        display_page = int(right)
         active_sections = [
             (number + title).replace(" ", "")
             for number, title, start_page in toc_sections
             if int(start_page) <= display_page
         ]
-        expected_left = active_sections[-1] if active_sections else "目录"
-        if left.casefold() != expected_left.casefold() or right != str(display_page):
+        if not active_sections or left.casefold() != active_sections[-1].casefold():
             return False
     return True
 

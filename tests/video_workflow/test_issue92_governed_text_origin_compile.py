@@ -811,23 +811,53 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         generator = {
             **registered_generator_identity("latex-running-header-v1"),
             "inputs": {
-                "page_count": 2,
+                "page_count": 5,
                 "toc_source_path": str(toc),
                 "toc_source_sha256": hashlib.sha256(toc.read_bytes()).hexdigest(),
             },
         }
         objects = {
-            "left": {
-                "object_id": "left",
+            "toc-page-1": {
+                "object_id": "toc-page-1",
+                "page": 1,
+                "bbox": [510, 20, 530, 35],
+                "exact_utf8_text": "1",
+            },
+            "toc-left": {
+                "object_id": "toc-left",
                 "page": 2,
+                "bbox": [60, 20, 200, 35],
+                "exact_utf8_text": "目录",
+            },
+            "toc-right": {
+                "object_id": "toc-right",
+                "page": 2,
+                "bbox": [510, 20, 530, 35],
+                "exact_utf8_text": "2",
+            },
+            "body-left-1": {
+                "object_id": "body-left-1",
+                "page": 4,
                 "bbox": [60, 20, 200, 35],
                 "exact_utf8_text": "1 ECHOLEAK AND REPLIT",
             },
-            "right": {
-                "object_id": "right",
-                "page": 2,
+            "body-right-1": {
+                "object_id": "body-right-1",
+                "page": 4,
                 "bbox": [510, 20, 530, 35],
                 "exact_utf8_text": "1",
+            },
+            "body-left-2": {
+                "object_id": "body-left-2",
+                "page": 5,
+                "bbox": [60, 20, 200, 35],
+                "exact_utf8_text": "1 ECHOLEAK AND REPLIT",
+            },
+            "body-right-2": {
+                "object_id": "body-right-2",
+                "page": 5,
+                "bbox": [510, 20, 530, 35],
+                "exact_utf8_text": "2",
             },
         }
         sealed_items = [
@@ -839,7 +869,11 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
 
         self.assertTrue(
             validate_latex_running_header(
-                generator, objects, ["left", "right"], sealed_items, 2
+                generator,
+                objects,
+                list(objects),
+                sealed_items,
+                5,
             )
         )
 

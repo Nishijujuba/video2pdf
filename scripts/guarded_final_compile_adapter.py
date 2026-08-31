@@ -1178,7 +1178,7 @@ def render_and_derive(
         for item in objects
         if item["object_id"] not in used_objects
         and item["object_id"] in locations
-        and item["page"] >= 2
+        and item["page"] >= 1
         and item["bbox"][3] <= 45
     ]
     if running_header_objects:

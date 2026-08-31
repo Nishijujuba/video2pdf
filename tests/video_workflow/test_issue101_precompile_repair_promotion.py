@@ -150,7 +150,7 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
         successor = (
             run_dir
             / "review/precompile/workspaces"
-            / f"attempt_03_fault_recovery_{bundle_suffix}"
+            / f"attempt_04_used_reader_items_{bundle_suffix}"
         )
         command = [
             sys.executable,
@@ -184,12 +184,21 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             "--prepared-at",
             "2026-08-31T18:40:00+08:00",
         ]
+        refreshed_state = json.loads(state_path.read_text(encoding="utf-8"))
         fault_scenarios = (
-            ("after_supersede", "outline"),
-            ("after_attempt_materialized", "pyramid-outline"),
-            ("after_promotion_prepared", "writer-section-01"),
-            ("before_receipt_committed", "writer-section-02"),
-            ("after_state_committed", "pyramid-main"),
+            (
+                ("after_supersede", "outline"),
+                ("after_attempt_materialized", "pyramid-outline"),
+                ("after_promotion_prepared", "writer-section-01"),
+                ("before_receipt_committed", "writer-section-02"),
+                ("after_state_committed", "pyramid-main"),
+            )
+            if all(
+                refreshed_state["claims"][logical_key]["claim_generation"]
+                == complete_bundle_data["initial_claims"][logical_key]["claim_generation"]
+                for logical_key in complete_bundle_data["task_order"]
+            )
+            else ()
         )
         for fault_point, logical_task_key in fault_scenarios:
             interrupted = subprocess.run(
@@ -233,6 +242,24 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             {"precompile_repair_promoted", "precompile_repair_already_promoted"},
         )
         self.assertEqual(33, result["data"]["promoted_task_count"])
+
+        successor_inventory = json.loads(
+            (
+                successor / "reader-facing-text-inventory.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertNotIn(
+            "raster.source_cover",
+            {item["item_id"] for item in successor_inventory["items"]},
+        )
+        self.assertNotIn(
+            "raster.source_cover",
+            {item["region_id"] for item in successor_inventory["declared_surface"]},
+        )
+        self.assertNotIn(
+            "raster.source_cover",
+            {item["region_id"] for item in successor_inventory["coverage_ledger"]},
+        )
 
         recovered_state = json.loads(state_path.read_text(encoding="utf-8"))
         for logical_key in complete_bundle_data["task_order"]:
@@ -302,6 +329,10 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
         self.assertEqual(
             "核心结论\n机制说明\n边界与限制",
             generated_titles["declared_text"],
+        )
+        self.assertNotIn(
+            "raster.source_cover",
+            {item["item_id"] for item in inventory["items"]},
         )
         dependencies = json.loads(
             Path(

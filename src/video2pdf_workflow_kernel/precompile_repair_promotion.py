@@ -226,7 +226,7 @@ class PrecompileRepairPromotionProvider:
         operation_id = hashlib.sha256(
             canonical_json_bytes(
                 {
-                    "successor_inventory_derivation_version": "3",
+                    "successor_inventory_derivation_version": "5",
                     "bundle_sha256": sha256_file(bundle_path),
                     "predecessor_generation_set_sha256": predecessor[
                         "generation_set_sha256"
@@ -990,6 +990,15 @@ class PrecompileRepairPromotionProvider:
                 )
             item["source_generation"] = generation["generation"]
             item["source_sha256"] = generation["sha256"]
+            if (
+                item.get("representation") == "authoritative_raster_text"
+                and not PrecompileRepairPromotionProvider._raster_is_referenced(
+                    run_dir=run_dir,
+                    manifest_entries=compile_manifest["entries"],
+                    source_path=run_dir / manifest_entry["source_path"],
+                )
+            ):
+                continue
             if item.get("representation") == "structured_text":
                 source_path = require_contained_path(
                     run_dir / manifest_entry["source_path"],
@@ -1049,6 +1058,17 @@ class PrecompileRepairPromotionProvider:
             "generation_set_sha256"
         ]
         inventory["items"] = items
+        retained_item_ids = {item["item_id"] for item in items}
+        inventory["declared_surface"] = [
+            region
+            for region in candidate["declared_surface"]
+            if region["region_id"] in retained_item_ids
+        ]
+        inventory["coverage_ledger"] = [
+            entry
+            for entry in candidate["coverage_ledger"]
+            if entry["region_id"] in retained_item_ids
+        ]
         inventory["reader_text_set_sha256"] = hashlib.sha256(
             canonical_json_bytes(
                 [
@@ -1118,6 +1138,40 @@ class PrecompileRepairPromotionProvider:
                 f"Precompile repair generated-text titles are invalid: {item_id}"
             )
         return "\n".join(titles)
+
+    @staticmethod
+    def _raster_is_referenced(
+        *, run_dir: Path, manifest_entries: list[dict[str, Any]], source_path: Path
+    ) -> bool:
+        source_name = source_path.name.casefold()
+        source_stem = source_path.stem.casefold()
+        for manifest_entry in manifest_entries:
+            declared_path = manifest_entry.get("source_path")
+            if not isinstance(declared_path, str):
+                raise ContractError("Precompile repair raster manifest source is invalid")
+            if Path(declared_path).suffix.casefold() != ".tex":
+                continue
+            candidate = require_contained_path(
+                run_dir / Path(declared_path),
+                run_dir,
+                purpose="Precompile repair raster usage source",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            for reference in re.findall(
+                r"\\includegraphics(?:\[[^\]]*\])?\{([^{}]+)\}",
+                candidate.read_text(encoding="utf-8"),
+            ):
+                reference_path = Path(reference)
+                if reference_path.name.casefold() == source_name:
+                    return True
+                if (
+                    not reference_path.suffix
+                    and reference_path.name.casefold() == source_stem
+                ):
+                    return True
+        return False
 
     @staticmethod
     def _derive_successor_dependencies(

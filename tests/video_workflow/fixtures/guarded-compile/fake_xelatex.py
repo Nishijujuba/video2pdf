@@ -61,6 +61,14 @@ with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
 document = fitz.open()
 page = document.new_page()
 page.insert_text((72, 72), "Core claim")
+if (
+    "\\tableofcontents" in source
+    and "VIDEO2PDF_FIXTURE_STABLE_TOC" in source
+):
+    page = document.new_page()
+    if "VIDEO2PDF_FIXTURE_OMIT_TOC_HEADING" not in source:
+        page.insert_text((72, 72), "目录", fontname="china-s")
+    page.insert_text((72, 100), "1 Core claim 1")
 if "VIDEO2PDF_FIXTURE_SECOND_PAGE_CORRUPTED_TITLE" in source:
     page = document.new_page()
     page.insert_text((72, 72), "Corrupted title")

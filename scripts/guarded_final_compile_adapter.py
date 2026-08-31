@@ -481,11 +481,30 @@ def compiler_source_locations(
         item for item in objects if item["object_kind"] == "pdf_text_run"
     ]
     if policy["policy_id"] == "fixture-miktex-runtime":
-        locations = {
-            item["object_id"]: {
+        toc_sources = list(staging.glob(f"{entry.stem}.toc"))
+        entry_lines = entry.read_text(encoding="utf-8").splitlines()
+        toc_invocation_line = next(
+            (
+                index
+                for index, line in enumerate(entry_lines, 1)
+                if line.strip() == r"\tableofcontents"
+            ),
+            1,
+        )
+        locations = {}
+        for item in text_objects:
+            source_path = entry.resolve()
+            line = min(item["page"], max(1, len(entry_lines)))
+            if len(toc_sources) == 1 and item["page"] >= 2:
+                if item["exact_utf8_text"] == "目录":
+                    line = toc_invocation_line
+                else:
+                    source_path = toc_sources[0].resolve()
+                    line = 1
+            locations[item["object_id"]] = {
                 "object_id": item["object_id"],
-                "source_path": str(entry.resolve()),
-                "line": item["page"],
+                "source_path": str(source_path),
+                "line": line,
                 "column": 1,
                 "query": {
                     "page": item["page"],
@@ -493,8 +512,6 @@ def compiler_source_locations(
                     "y": (item["bbox"][1] + item["bbox"][3]) / 2,
                 },
             }
-            for item in text_objects
-        }
         return locations, {
             "provider_id": "fixture-compiler-source-map-v1",
             "provider_sha256": policy["engine"]["prefix_file_fingerprints"][0]["sha256"],
@@ -1164,8 +1181,6 @@ def render_and_derive(
         and item["page"] >= 2
         and item["bbox"][3] <= 45
     ]
-    if page_count >= 2 and toc_expected and not running_header_objects:
-        raise AdapterError("running header objects are absent")
     if running_header_objects:
         if len(stable_toc_sources) != 1:
             raise AdapterError("running header authority is incomplete")

@@ -861,7 +861,8 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         self._replace_fixture_source(
             fixture,
             inventory_path,
-            "\\tableofcontents\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n",
+            "\\tableofcontents\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n"
+            "% VIDEO2PDF_FIXTURE_OMIT_TOC_HEADING\n",
         )
 
         completed = fixture._run()
@@ -872,19 +873,20 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
             completed.stderr,
         )
 
-    def test_adapter_fails_when_running_header_family_is_absent(self) -> None:
-        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture()
+    def test_adapter_accepts_table_of_contents_without_running_headers(self) -> None:
+        fixture, inventory_path, _ = self._inventory_bound_adapter_fixture(
+            declared_text="\\section{Core claim}"
+        )
         self._replace_fixture_source(
             fixture,
             inventory_path,
-            "Core claim\n% VIDEO2PDF_FIXTURE_STABLE_TOC\n"
-            "% VIDEO2PDF_FIXTURE_SECOND_PAGE_CORRUPTED_TITLE\n",
+            "\\tableofcontents\n\\section{Core claim}\n"
+            "% VIDEO2PDF_FIXTURE_STABLE_TOC\n",
         )
 
         completed = fixture._run()
 
-        self.assertEqual(1, completed.returncode)
-        self.assertIn("running header objects are absent", completed.stderr)
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_adapter_fails_closed_on_ambiguous_sealed_origin(self) -> None:
         fixture, inventory_path, inventory = self._inventory_bound_adapter_fixture()

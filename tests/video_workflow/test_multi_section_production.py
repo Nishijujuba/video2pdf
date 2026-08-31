@@ -393,6 +393,7 @@ class MultiSectionProductionTests(unittest.TestCase):
         self.kernel, self.run_dir, _ = build_decision_ready_authority()
         self.kernel.finalize_production_source(self.run_dir, published_at="2026-07-21T12:00:00+08:00")
         main_b, manifest_b = self._complete_to_main_integration(True)
+        self.assertEqual(1, main_a.count(b"\\tableofcontents"))
         self.assertEqual(main_a, main_b)
         self.assertEqual([item["logical_id"] for item in manifest_a["sections"]], [item["logical_id"] for item in manifest_b["sections"]])
         self.assertEqual([item["logical_id"] for item in manifest_a["figures"]], [item["logical_id"] for item in manifest_b["figures"]])

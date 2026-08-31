@@ -1214,7 +1214,7 @@ class ContentProduction:
             f"\\documentclass{{{support['document_class']}}}\n"
             f"\\usepackage{{{support['style_name']}}}\n"
             "\\usepackage{graphicx}\n\\usepackage{fontspec}\n\\setmainfont{Arial}\n"
-            "\\begin{document}\n"
+            "\\begin{document}\n\\tableofcontents\n"
             + "".join(f"\\input{{{section_id}.tex}}\n" for section_id in state["sections"])
             + f"\\bibliography{{{Path(support['bibliography_name']).stem}}}\n"
             +

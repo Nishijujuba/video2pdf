@@ -373,7 +373,7 @@ def _synctex_source_location(
         timeout=90,
         env=runtime_environment,
     )
-    if completed.returncode != 0 or completed.stderr:
+    if completed.returncode != 0:
         raise AdapterError("compiler source map query failed")
     records: list[dict[str, str]] = []
     fields: dict[str, str] = {}

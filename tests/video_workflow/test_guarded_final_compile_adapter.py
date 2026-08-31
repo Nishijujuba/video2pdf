@@ -291,7 +291,9 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         fixture_pdf = document.tobytes()
         document.close()
 
-        def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        def run_compiler_or_synctex(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess:
             nonlocal invocation_count
             invocation_count += 1
             if len(command) > 1 and command[1] == "edit":
@@ -300,7 +302,13 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
                     command,
                     0,
                     f"Input:{entry}\nLine:1\nColumn:1\n",
-                    "",
+                    (
+                        "synctex: major issue: Root directory #5 covers root directory #0.\n"
+                        "synctex: major issue: Root directory #5 covers root directory #1.\n"
+                        "synctex: major issue: Root directory #5 covers root directory #2.\n"
+                        "synctex: major issue: Root directory #5 covers root directory #3.\n"
+                        "synctex: major issue: Root directory #5 covers root directory #4.\n"
+                    ),
                 )
             captured_command.extend(command)
             captured_environment.update(kwargs["env"])
@@ -318,7 +326,9 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "allowed_runtime_roots": [r"D:\kits\MiKTex"],
             "system_fonts": [],
         }
-        with mock.patch.object(adapter.subprocess, "run", side_effect=complete):
+        with mock.patch.object(
+            adapter.subprocess, "run", side_effect=run_compiler_or_synctex
+        ):
             compile_result = adapter.compile_pdf(staging, entry, policy)
             runtime_environment = compile_result[3]
             location = adapter._synctex_source_location(

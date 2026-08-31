@@ -481,7 +481,10 @@ def compiler_source_locations(
     observed_declared_paths: set[Path],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     text_objects = [
-        item for item in objects if item["object_kind"] == "pdf_text_run"
+        item
+        for item in objects
+        if item["object_kind"] == "pdf_text_run"
+        and any(character.isalnum() for character in item["exact_utf8_text"])
     ]
     if policy["policy_id"] == "fixture-miktex-runtime":
         toc_sources = list(staging.glob(f"{entry.stem}.toc"))

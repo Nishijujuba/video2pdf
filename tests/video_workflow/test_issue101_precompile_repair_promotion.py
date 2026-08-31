@@ -27,14 +27,89 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
         run_dir = Path(os.environ[RUN_ENV]).resolve()
         bundle_paths = sorted(
             (run_dir / "待删除" / "production-repair-replay" / "bundles").glob(
-                "*/bundle.json"
+                "*/bundle*.json"
             )
         )
-        self.assertEqual(1, len(bundle_paths))
+        bundle_records = [
+            (path, json.loads(path.read_text(encoding="utf-8")))
+            for path in bundle_paths
+        ]
+        incomplete_bundle = next(
+            path
+            for path, bundle in bundle_records
+            if len(bundle["task_order"]) == 9
+        )
+        complete_bundle = next(
+            path
+            for path, bundle in bundle_records
+            if bundle.get("notes", {}).get("scope")
+            == "complete Production closure with fresh independent Pyramid evaluations"
+        )
         predecessor = run_dir / "review/precompile/workspaces/attempt_01_20260831"
+
+        # The retained nine-task bundle is the exact failed Pyramid-only replay
+        # from this PDF Run.  Replaying it must be rejected before any further
+        # authoritative state change because its order cannot restore the full
+        # outline -> content -> Pyramid -> main Production closure.
+        state_path = run_dir / "workflow/production-state.json"
+        state_before = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        incomplete = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                "-B",
+                str(CLI),
+                "delivery-quality-precompile-repair-promote",
+                "--run-dir",
+                str(run_dir),
+                "--repair-bundle",
+                str(incomplete_bundle),
+                "--predecessor-workspace-root",
+                str(predecessor),
+                "--workspace-root",
+                str(run_dir / "review/precompile/workspaces/attempt_06_pyramid_payload"),
+                "--inventory",
+                str(
+                    run_dir
+                    / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
+                    / "reader-facing-text-inventory.json"
+                ),
+                "--semantic-dependencies",
+                str(
+                    run_dir
+                    / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
+                    / "semantic-dependencies.json"
+                ),
+                "--repair-attempt-number",
+                "2",
+                "--prepared-at",
+                "2026-08-31T17:10:00+08:00",
+            ],
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(20, incomplete.returncode, incomplete.stdout + incomplete.stderr)
+        incomplete_result = json.loads(incomplete.stdout)
+        self.assertEqual(
+            "precompile_repair_task_order_closure",
+            incomplete_result["data"]["first_failing_gate"],
+        )
+        self.assertEqual(
+            "precompile_repair_task_order_incomplete",
+            incomplete_result["data"]["error_code"],
+        )
+        self.assertEqual(
+            state_before,
+            hashlib.sha256(state_path.read_bytes()).hexdigest(),
+        )
+
         successor = (
             run_dir
-            / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
+            / "review/precompile/workspaces/attempt_06_pyramid_payload"
         )
         command = [
             sys.executable,
@@ -46,7 +121,7 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             "--run-dir",
             str(run_dir),
             "--repair-bundle",
-            str(bundle_paths[0]),
+            str(complete_bundle),
             "--predecessor-workspace-root",
             str(predecessor),
             "--workspace-root",
@@ -54,19 +129,19 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             "--inventory",
             str(
                 run_dir
-                / "review/precompile/workspaces/attempt_02_20260831"
+                / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
                 / "reader-facing-text-inventory.json"
             ),
             "--semantic-dependencies",
             str(
                 run_dir
-                / "review/precompile/workspaces/attempt_02_20260831"
+                / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
                 / "semantic-dependencies.json"
             ),
             "--repair-attempt-number",
-            "1",
+            "2",
             "--prepared-at",
-            "2026-08-31T16:15:00+08:00",
+            "2026-08-31T17:10:00+08:00",
         ]
         completed = subprocess.run(
             command,
@@ -79,10 +154,26 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
         result = json.loads(completed.stdout)
         self.assertEqual("ok", result["status"])
-        self.assertEqual(
-            "precompile_repair_already_promoted", result["classification"]
+        self.assertIn(
+            result["classification"],
+            {"precompile_repair_promoted", "precompile_repair_already_promoted"},
         )
         self.assertEqual(33, result["data"]["promoted_task_count"])
+
+        repeated = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
+        repeated_result = json.loads(repeated.stdout)
+        self.assertEqual(
+            "precompile_repair_already_promoted",
+            repeated_result["classification"],
+        )
 
         generations = json.loads(
             Path(result["data"]["successor_generation_set_path"]).read_text(
@@ -163,9 +254,9 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
                 "--semantic-dependencies",
                 result["data"]["successor_semantic_dependencies_path"],
                 "--repair-attempt-number",
-                "1",
+                "2",
                 "--prepared-at",
-                "2026-08-31T16:15:00+08:00",
+                "2026-08-31T17:10:00+08:00",
             ],
             cwd=PROJECT_ROOT,
             text=True,

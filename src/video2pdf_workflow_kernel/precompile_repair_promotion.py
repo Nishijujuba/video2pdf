@@ -131,6 +131,17 @@ class PrecompileRepairPromotionProvider:
             raise ContractError("Precompile repair promotion claim plan is incomplete")
         if len(task_order) != len(set(task_order)):
             raise ContractError("Precompile repair promotion task order is ambiguous")
+        expected_task_order = self._required_replay_task_order(state)
+        if task_order != expected_task_order:
+            raise ContractError(
+                "Precompile repair promotion requires the complete ordered Production task closure",
+                data={
+                    "first_failing_gate": "precompile_repair_task_order_closure",
+                    "error_code": "precompile_repair_task_order_incomplete",
+                    "expected_task_count": len(expected_task_order),
+                    "actual_task_count": len(task_order),
+                },
+            )
 
         resumed_task_count = self._resume_production_repair(
             run_dir=run_dir,
@@ -326,6 +337,27 @@ class PrecompileRepairPromotionProvider:
             "repair_attempt_path": prepared["repair_attempt_path"],
             "reviewer_skeleton_paths": prepared["skeleton_paths"],
         }
+
+    @staticmethod
+    def _required_replay_task_order(state: dict[str, Any]) -> list[str]:
+        sections = state["sections"]
+        section_ids = list(sections)
+        task_order = ["outline", "pyramid-outline"]
+        task_order.extend(
+            f"writer-{section_id.replace('_', '-')}"
+            for section_id in section_ids
+        )
+        for section_id in section_ids:
+            for slot in sections[section_id]["figure_slots"]:
+                task_order.append(
+                    f"figure-{slot['wave']}-{slot['slot_id'].replace('_', '-')}"
+                )
+        task_order.extend(
+            f"pyramid-section-{section_id.replace('_', '-')}"
+            for section_id in section_ids
+        )
+        task_order.append("pyramid-main")
+        return task_order
 
     @staticmethod
     def _reject(message: str, gate: str, code: str, **data: Any) -> None:

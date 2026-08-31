@@ -4,6 +4,7 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
+import re
 from typing import Any
 
 from .contracts import ContractRegistry
@@ -194,7 +195,7 @@ class PrecompileRepairPromotionProvider:
         operation_id = hashlib.sha256(
             canonical_json_bytes(
                 {
-                    "successor_inventory_derivation_version": "2",
+                    "successor_inventory_derivation_version": "3",
                     "bundle_sha256": sha256_file(bundle_path),
                     "predecessor_generation_set_sha256": predecessor[
                         "generation_set_sha256"
@@ -907,6 +908,8 @@ class PrecompileRepairPromotionProvider:
                 declared_text = (
                     PrecompileRepairPromotionProvider._tcolorbox_titles(
                         source_path=source_path,
+                        run_dir=run_dir,
+                        manifest_entries=compile_manifest["entries"],
                         locator=item.get("locator"),
                         item_id=item.get("item_id"),
                     )
@@ -958,7 +961,12 @@ class PrecompileRepairPromotionProvider:
 
     @staticmethod
     def _tcolorbox_titles(
-        *, source_path: Path, locator: object, item_id: object
+        *,
+        source_path: Path,
+        run_dir: Path,
+        manifest_entries: list[dict[str, Any]],
+        locator: object,
+        item_id: object,
     ) -> str:
         if (
             not isinstance(locator, str)
@@ -969,11 +977,34 @@ class PrecompileRepairPromotionProvider:
             raise ContractError(
                 f"Precompile repair generated-text source is unsupported: {item_id}"
             )
-        titles = list(
-            extract_tcolorbox_titles(
-                source_path.read_text(encoding="utf-8")
-            ).values()
+        titles_by_environment = extract_tcolorbox_titles(
+            source_path.read_text(encoding="utf-8")
         )
+        used_environments: set[str] = set()
+        for manifest_entry in manifest_entries:
+            declared_path = manifest_entry.get("source_path")
+            if not isinstance(declared_path, str):
+                raise ContractError(
+                    f"Precompile repair generated-text manifest source is invalid: {item_id}"
+                )
+            candidate = require_contained_path(
+                run_dir / Path(declared_path),
+                run_dir,
+                purpose="Precompile repair generated-text usage source",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            if candidate.suffix.casefold() != ".tex":
+                continue
+            used_environments.update(
+                re.findall(r"\\begin\{([^{}]+)\}", candidate.read_text(encoding="utf-8"))
+            )
+        titles = [
+            title
+            for environment, title in titles_by_environment.items()
+            if environment in used_environments
+        ]
         if not titles or len(titles) != len(set(titles)):
             raise ContractError(
                 f"Precompile repair generated-text titles are invalid: {item_id}"

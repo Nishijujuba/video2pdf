@@ -68,7 +68,7 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
                 "--predecessor-workspace-root",
                 str(predecessor),
                 "--workspace-root",
-                str(run_dir / "review/precompile/workspaces/attempt_06_pyramid_payload"),
+                str(run_dir / "review/precompile/workspaces/attempt_07_used_environment_titles"),
                 "--inventory",
                 str(
                     run_dir
@@ -109,7 +109,7 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
 
         successor = (
             run_dir
-            / "review/precompile/workspaces/attempt_06_pyramid_payload"
+            / "review/precompile/workspaces/attempt_07_used_environment_titles"
         )
         command = [
             sys.executable,
@@ -207,7 +207,7 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             if item["item_id"] == "generated.local_style.box_titles"
         )
         self.assertEqual(
-            "核心结论\n机制说明\n边界与限制\n演讲原声",
+            "核心结论\n机制说明\n边界与限制",
             generated_titles["declared_text"],
         )
         dependencies = json.loads(

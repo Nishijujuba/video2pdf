@@ -357,6 +357,7 @@ def _synctex_source_location(
     obj: dict[str, Any],
     manifest_entries: list[dict[str, Any]],
     observed_declared_paths: set[Path],
+    runtime_environment: dict[str, str],
 ) -> dict[str, Any] | None:
     bbox = obj["bbox"]
     x = (float(bbox[0]) + float(bbox[2])) / 2
@@ -370,6 +371,7 @@ def _synctex_source_location(
         capture_output=True,
         check=False,
         timeout=90,
+        env=runtime_environment,
     )
     if completed.returncode != 0 or completed.stderr:
         raise AdapterError("compiler source map query failed")
@@ -479,6 +481,7 @@ def compiler_source_locations(
     entry: Path,
     manifest_entries: list[dict[str, Any]],
     observed_declared_paths: set[Path],
+    runtime_environment: dict[str, str],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     text_objects = [
         item
@@ -540,6 +543,7 @@ def compiler_source_locations(
                     item,
                     manifest_entries,
                     observed_declared_paths,
+                    runtime_environment,
                 ),
                 text_objects,
             )
@@ -931,6 +935,7 @@ def render_and_derive(
     manifest_entries: list[dict[str, Any]],
     stable_final_round_auxiliaries: dict[Path, str],
     observed_declared_paths: set[Path],
+    runtime_environment: dict[str, str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]], int]:
     items = inventory.get("items")
     if not isinstance(items, list) or not items:
@@ -1077,6 +1082,7 @@ def render_and_derive(
         entry=entry,
         manifest_entries=manifest_entries,
         observed_declared_paths=observed_declared_paths,
+        runtime_environment=runtime_environment,
     )
     _complete_toc_source_locations(
         objects,
@@ -1694,6 +1700,7 @@ def run(request_path: Path) -> None:
         manifest_entries=manifest["entries"],
         stable_final_round_auxiliaries=stable_final_round_auxiliaries,
         observed_declared_paths=observed_declared_paths,
+        runtime_environment=runtime_environment,
     )
     pdf_sha = sha(final_pdf)
     rendered = {"schema_name": "rendered-text-object-inventory", "schema_version": "1.0.0",

@@ -283,6 +283,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         entry.write_text("fixture", encoding="utf-8")
         captured_command: list[str] = []
         captured_environment: dict[str, str] = {}
+        captured_source_map_environment: dict[str, str] = {}
         invocation_count = 0
 
         document = fitz.open()
@@ -290,9 +291,17 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
         fixture_pdf = document.tobytes()
         document.close()
 
-        def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        def complete(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
             nonlocal invocation_count
             invocation_count += 1
+            if len(command) > 1 and command[1] == "edit":
+                captured_source_map_environment.update(kwargs["env"])
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    f"Input:{entry}\nLine:1\nColumn:1\n",
+                    "",
+                )
             captured_command.extend(command)
             captured_environment.update(kwargs["env"])
             (staging / "main.pdf").write_bytes(fixture_pdf)
@@ -300,6 +309,7 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
                 "Output written on main.pdf (1 page).\n", encoding="utf-8"
             )
             (staging / "main.fls").write_text(f"INPUT {entry}\n", encoding="utf-8")
+            (staging / "main.synctex.gz").write_bytes(b"fixture-source-map")
             return subprocess.CompletedProcess(command, 0, b"", b"")
 
         policy = {
@@ -309,9 +319,26 @@ class GuardedFinalCompileAdapterTests(unittest.TestCase):
             "system_fonts": [],
         }
         with mock.patch.object(adapter.subprocess, "run", side_effect=complete):
-            adapter.compile_pdf(staging, entry, policy)
+            compile_result = adapter.compile_pdf(staging, entry, policy)
+            runtime_environment = compile_result[3]
+            location = adapter._synctex_source_location(
+                Path("synctex.exe"),
+                compile_result[0],
+                staging,
+                {
+                    "object_id": "page-1-text-1",
+                    "page": 1,
+                    "bbox": [0.0, 0.0, 10.0, 10.0],
+                    "exact_utf8_text": "fixture",
+                },
+                [{"staging_path": "main.tex"}],
+                {entry.resolve()},
+                runtime_environment,
+            )
 
-        self.assertEqual(3, invocation_count)
+        self.assertEqual(4, invocation_count)
+        self.assertIsNotNone(location)
+        self.assertEqual(runtime_environment, captured_source_map_environment)
         installer_index = captured_command.index("--disable-installer")
         self.assertEqual(
             ["--miktex-disable-maintenance", "--miktex-disable-diagnose"],

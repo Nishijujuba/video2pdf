@@ -178,7 +178,36 @@ class PrecompileQualityProvider:
         semantic_dependencies_path: Path,
         repair_attempt_number: int,
         prepared_at: str,
+        kernel_production_run_dir: Path | None = None,
     ) -> dict[str, Any]:
+        kernel_roots: set[Path] = set()
+        for supplied_path in (
+            predecessor_workspace_root,
+            workspace_root,
+            inventory_path,
+            artifact_generations_path,
+            semantic_dependencies_path,
+        ):
+            resolved = supplied_path.resolve()
+            for candidate_root in (resolved, *resolved.parents):
+                if (candidate_root / "workflow" / "run.json").is_file():
+                    kernel_roots.add(candidate_root)
+                    break
+        authorized_root = (
+            kernel_production_run_dir.resolve()
+            if kernel_production_run_dir is not None
+            else None
+        )
+        if kernel_roots and (
+            len(kernel_roots) != 1 or authorized_root not in kernel_roots
+        ):
+            raise ContractError(
+                "active Kernel repair preparation requires governed Production promotion",
+                data={
+                    "first_failing_gate": "kernel_production_authority",
+                    "error_code": "precompile_repair_production_authority_required",
+                },
+            )
         if repair_attempt_number not in {1, 2, 3}:
             raise ContractError("repair attempt number must be within 1..3")
         predecessor_root = predecessor_workspace_root.resolve()

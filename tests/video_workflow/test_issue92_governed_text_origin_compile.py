@@ -118,7 +118,8 @@ class GovernedTextOriginFinalCompileTests(unittest.TestCase):
         declared_tokens = declared_text.splitlines()
         style.write_text(
             "".join(
-                f"\\newtcolorbox{{box{index}}}{{title={value}}}\n"
+                f"\\newtcolorbox{{box{index}}}[1][]"
+                f"{{breakable,title={{{value}}},fonttitle=\\bfseries,#1}}\n"
                 for index, value in enumerate(declared_tokens, 1)
             ),
             encoding="utf-8",

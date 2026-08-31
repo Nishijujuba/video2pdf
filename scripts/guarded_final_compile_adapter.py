@@ -25,6 +25,9 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
 from video2pdf_workflow_kernel.final_compile import (  # noqa: E402
     registered_generator_identity,
 )
+from video2pdf_workflow_kernel.latex_generated_text import (  # noqa: E402
+    extract_tcolorbox_titles,
+)
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
     canonical_json_bytes,
     require_contained_path,
@@ -1151,19 +1154,9 @@ def render_and_derive(
             raise AdapterError(
                 f"declared generated text source is unsupported: {item_id}"
             )
-        title_by_environment: dict[str, str] = {}
-        for source_line in style_path.read_text(encoding="utf-8").splitlines():
-            declaration = re.fullmatch(
-                r"\s*\\newtcolorbox\{([^{}]+)\}\{([^{}]*)\}\s*",
-                source_line,
-            )
-            if declaration is None:
-                continue
-            title = re.search(
-                r"(?:^|,)\s*title=([^,]+)(?:,|$)", declaration.group(2)
-            )
-            if title is not None:
-                title_by_environment[declaration.group(1)] = title.group(1).strip()
+        title_by_environment = extract_tcolorbox_titles(
+            style_path.read_text(encoding="utf-8")
+        )
         if not set(declared_tokens) <= set(title_by_environment.values()):
             raise AdapterError(
                 f"declared generated text source does not declare inventory: {item_id}"

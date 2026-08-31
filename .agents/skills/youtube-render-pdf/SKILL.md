@@ -545,6 +545,19 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe .agents\skills\bilibili-rende
 
 If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Adobe-GB1`, treat that renderer as unreliable for Chinese layout checking. Render with PyMuPDF instead, then inspect representative pages with `view_image`, especially pages containing tables, dense bilingual text, TikZ diagrams, video screenshots, and the final page.
 
+For an active Kernel Run, a failed Precompile semantic attempt must route every
+changed compile input through current Content Production Claims, Attempts, and
+Promotions before successor Reviewer tasks exist. Invoke
+`delivery-quality-precompile-repair-promote`; provide the failed predecessor
+workspace, the provider-bound repair bundle, the candidate complete inventory,
+the current semantic dependencies, and a fresh successor workspace. The command
+first proves the complete current Production graph and diagnostic Compile
+Manifest, derives the successor Artifact Generation set from that Manifest,
+rebinds the complete inventory, and only then creates successor Reviewer
+Skeletons. Do not call `delivery-quality-precompile-repair-prepare` directly for
+an active Kernel repair, author a successor generation set, edit
+`workflow/production-state.json`, or seal a detached successor workspace.
+
 ## Final Delivery Acceptance Gate
 
 After the final PDF is rendered and visual verification is complete, run the Final Delivery Acceptance Gate before delivery.

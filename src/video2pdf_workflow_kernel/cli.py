@@ -46,6 +46,7 @@ from .precompile_quality import (
     PREPARE_FAULT_POINTS,
     PrecompileQualityProvider,
 )
+from .precompile_repair_promotion import PrecompileRepairPromotionProvider
 from .rendered_text_reconciliation import RenderedTextReconciliationProvider
 from .acceptance_v2 import (
     MATERIALIZE_FAULT_POINTS as ACCEPTANCE_MATERIALIZE_FAULT_POINTS,
@@ -153,6 +154,28 @@ def _parser() -> argparse.ArgumentParser:
         "--repair-attempt-number", required=True, type=int
     )
     precompile_repair_prepare.add_argument("--prepared-at", required=True)
+
+    precompile_repair_promote = commands.add_parser(
+        "delivery-quality-precompile-repair-promote"
+    )
+    precompile_repair_promote.add_argument("--run-dir", required=True, type=Path)
+    precompile_repair_promote.add_argument(
+        "--repair-bundle", required=True, type=Path
+    )
+    precompile_repair_promote.add_argument(
+        "--predecessor-workspace-root", required=True, type=Path
+    )
+    precompile_repair_promote.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    precompile_repair_promote.add_argument("--inventory", required=True, type=Path)
+    precompile_repair_promote.add_argument(
+        "--semantic-dependencies", required=True, type=Path
+    )
+    precompile_repair_promote.add_argument(
+        "--repair-attempt-number", required=True, type=int
+    )
+    precompile_repair_promote.add_argument("--prepared-at", required=True)
 
     precompile_patch_commit = commands.add_parser(
         "delivery-quality-precompile-patch-commit"
@@ -1150,6 +1173,23 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             "precompile_repair_attempt_prepared",
             result,
             result["repair_attempt_path"],
+        )
+    if command == "delivery-quality-precompile-repair-promote":
+        result = PrecompileRepairPromotionProvider(project_root).promote(
+            run_dir=args.run_dir,
+            repair_bundle_path=args.repair_bundle,
+            predecessor_workspace_root=args.predecessor_workspace_root,
+            workspace_root=args.workspace_root,
+            inventory_path=args.inventory,
+            semantic_dependencies_path=args.semantic_dependencies,
+            repair_attempt_number=args.repair_attempt_number,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            result["production_state_path"],
         )
     if command == "delivery-quality-precompile-patch-commit":
         result = PrecompileQualityProvider(project_root).commit_patch(

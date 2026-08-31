@@ -643,6 +643,19 @@ If `pdftoppm`, Poppler, or another renderer reports missing CJK maps such as `Ad
 
 When using Python to render a PDF whose path contains Chinese characters, pass the PDF path and output directory as command-line arguments or environment variables. This avoids stdin script encoding loss on Windows.
 
+For an active Kernel Run, a failed Precompile semantic attempt must route every
+changed compile input through current Content Production Claims, Attempts, and
+Promotions before successor Reviewer tasks exist. Invoke
+`delivery-quality-precompile-repair-promote`; provide the failed predecessor
+workspace, the provider-bound repair bundle, the candidate complete inventory,
+the current semantic dependencies, and a fresh successor workspace. The command
+first proves the complete current Production graph and diagnostic Compile
+Manifest, derives the successor Artifact Generation set from that Manifest,
+rebinds the complete inventory, and only then creates successor Reviewer
+Skeletons. Do not call `delivery-quality-precompile-repair-prepare` directly for
+an active Kernel repair, author a successor generation set, edit
+`workflow/production-state.json`, or seal a detached successor workspace.
+
 ## Final Delivery Acceptance Gate
 
 After PDF rendering and PDF verification, run the Final Delivery Acceptance Gate before delivery.

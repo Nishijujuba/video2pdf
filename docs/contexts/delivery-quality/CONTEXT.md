@@ -52,6 +52,17 @@ The complete fingerprinted declaration of visible text before Final Compile. It 
 
 The provider-materialized aggregate of independent Source-Faithfulness, Writing Quality, and Pyramid judgments over one current Artifact Generation set and Reader-Facing Text Inventory. It carries precompile semantic authority only when coverage is complete and no Delivery Quality Contract Gap exists.
 
+## Precompile Production Repair Promotion
+
+The governed active-Kernel transition from one materialized Precompile semantic
+failure to successor Reviewer tasks. It publishes changed compile inputs through
+current Content Production Claims, Attempts, and Promotions, proves the complete
+diagnostic Production graph, derives the successor Artifact Generation set from
+the current Compile Manifest, rebinds the complete Reader-Facing Text Inventory,
+and only then dispatches successor semantic owners. A caller-authored generation
+set and a successor workspace detached from Production have no review or seal
+authority.
+
 ## Precompile Text Seal
 
 The immutable binding between a passing Precompile Quality Report, its complete inventory, current policy and projection identities, Language Profile, optional Delivery Glossary, semantic dependencies, providers, and Artifact Generations. A successor Seal may reuse prior judgment only through a passing deterministic Text Equivalence Report.

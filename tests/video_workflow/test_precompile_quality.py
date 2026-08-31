@@ -94,7 +94,11 @@ def semantic_dependencies() -> dict:
     return value
 
 
-def inventory(*, raster_representation: bool = True) -> dict:
+def inventory(
+    *,
+    raster_representation: bool = True,
+    delivery_glossary: dict[str, str] | None = None,
+) -> dict:
     generation = generation_set()
     items = [
         {
@@ -146,7 +150,7 @@ def inventory(*, raster_representation: bool = True) -> dict:
         "schema_version": "1.0.0",
         "inventory_id": "inventory-7",
         "language_profile_id": "zh-hans",
-        "delivery_glossary": None,
+        "delivery_glossary": delivery_glossary,
         "generation_set_sha256": generation["generation_set_sha256"],
         "declared_surface": [
             {"region_id": item["item_id"], "kind": item["kind"]} for item in items
@@ -184,6 +188,7 @@ class PrecompileQualityCliTests(unittest.TestCase):
         self,
         *,
         raster_representation: bool = True,
+        delivery_glossary: dict[str, str] | None = None,
         fault_point: str | None = None,
     ) -> tuple[Path, subprocess.CompletedProcess[str], dict]:
         root = new_case_dir(self.id(), label="precompile-prepare")
@@ -194,7 +199,10 @@ class PrecompileQualityCliTests(unittest.TestCase):
         )
         inventory_path = write_json(
             root / "inventory.json",
-            inventory(raster_representation=raster_representation),
+            inventory(
+                raster_representation=raster_representation,
+                delivery_glossary=delivery_glossary,
+            ),
         )
         arguments = [
             "delivery-quality-precompile-prepare",
@@ -452,7 +460,7 @@ class PrecompileQualityCliTests(unittest.TestCase):
             },
         )
 
-    def test_prepare_rejects_unrepresented_raster_text_before_writing_skeletons(
+    def test_prepare_rejects_invalid_inventory_before_writing_skeletons(
         self,
     ) -> None:
         workspace, completed, envelope = self.prepare_case(
@@ -462,6 +470,18 @@ class PrecompileQualityCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 20)
         self.assertEqual(envelope["classification"], "contract_invalid")
         self.assertIn("raster", envelope["data"]["message"].lower())
+        self.assertFalse((workspace / "reviewers").exists())
+
+        workspace, completed, envelope = self.prepare_case(
+            delivery_glossary={
+                "glossary_id": "delivery-glossary-fixture",
+                "sha256": "f" * 64,
+            }
+        )
+
+        self.assertEqual(completed.returncode, 20)
+        self.assertEqual(envelope["classification"], "contract_invalid")
+        self.assertIn("glossary", envelope["data"]["message"].lower())
         self.assertFalse((workspace / "reviewers").exists())
 
     def test_independent_complete_patches_materialize_pass_and_create_initial_seal(

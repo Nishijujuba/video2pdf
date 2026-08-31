@@ -1135,6 +1135,8 @@ class PrecompileQualityProvider:
         if glossary is not None and (
             not isinstance(glossary, dict)
             or not glossary.get("glossary_id")
+            or not isinstance(glossary.get("path"), str)
+            or not glossary["path"]
             or not _is_sha256(glossary.get("sha256"))
         ):
             raise ContractError("Delivery Glossary identity is invalid")

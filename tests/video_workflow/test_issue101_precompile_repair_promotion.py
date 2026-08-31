@@ -45,14 +45,17 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             for path, bundle in bundle_records
             if len(bundle["task_order"]) == 9
         )
-        complete_bundle = next(
-            path
-            for path, bundle in bundle_records
-            if bundle.get("notes", {}).get("scope")
-            == "complete Production closure with fresh independent Pyramid evaluations"
-        )
-        complete_bundle_data = json.loads(
-            complete_bundle.read_text(encoding="utf-8")
+        complete_bundle, complete_bundle_data = max(
+            (
+                (path, bundle)
+                for path, bundle in bundle_records
+                if bundle.get("notes", {}).get("scope")
+                == "complete Production closure with fresh independent Pyramid evaluations"
+            ),
+            key=lambda item: sum(
+                claim["claim_generation"]
+                for claim in item[1]["initial_claims"].values()
+            ),
         )
         predecessor = run_dir / "review/precompile/workspaces/attempt_01_20260831"
 
@@ -118,9 +121,9 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
                     / "semantic-dependencies.json"
                 ),
                 "--repair-attempt-number",
-                "2",
+                "3",
                 "--prepared-at",
-                "2026-08-31T17:10:00+08:00",
+                "2026-08-31T18:40:00+08:00",
             ],
             cwd=PROJECT_ROOT,
             text=True,
@@ -143,9 +146,11 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             hashlib.sha256(state_path.read_bytes()).hexdigest(),
         )
 
+        bundle_suffix = complete_bundle.stem.removeprefix("bundle-")
         successor = (
             run_dir
-            / "review/precompile/workspaces/attempt_07_used_environment_titles"
+            / "review/precompile/workspaces"
+            / f"attempt_03_fault_recovery_{bundle_suffix}"
         )
         command = [
             sys.executable,
@@ -165,20 +170,53 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
             "--inventory",
             str(
                 run_dir
-                / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
+                / "review/precompile/workspaces/attempt_07_used_environment_titles"
                 / "reader-facing-text-inventory.json"
             ),
             "--semantic-dependencies",
             str(
                 run_dir
-                / "review/precompile/workspaces/attempt_05_issue102_generated_titles"
+                / "review/precompile/workspaces/attempt_07_used_environment_titles"
                 / "semantic-dependencies.json"
             ),
             "--repair-attempt-number",
-            "2",
+            "3",
             "--prepared-at",
-            "2026-08-31T17:10:00+08:00",
+            "2026-08-31T18:40:00+08:00",
         ]
+        fault_scenarios = (
+            ("after_supersede", "outline"),
+            ("after_attempt_materialized", "pyramid-outline"),
+            ("after_promotion_prepared", "writer-section-01"),
+            ("before_receipt_committed", "writer-section-02"),
+            ("after_state_committed", "pyramid-main"),
+        )
+        for fault_point, logical_task_key in fault_scenarios:
+            interrupted = subprocess.run(
+                [
+                    *command,
+                    "--fault-point",
+                    fault_point,
+                    "--fault-logical-task-key",
+                    logical_task_key,
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(
+                60,
+                interrupted.returncode,
+                interrupted.stdout + interrupted.stderr,
+            )
+            fault_result = json.loads(interrupted.stdout)
+            self.assertEqual(
+                "injected_production_fault", fault_result["classification"]
+            )
+            self.assertEqual(fault_point, fault_result["data"]["fault_point"])
+
         completed = subprocess.run(
             command,
             cwd=PROJECT_ROOT,
@@ -309,9 +347,9 @@ class Issue101RetainedRunQualificationTests(unittest.TestCase):
                 "--semantic-dependencies",
                 result["data"]["successor_semantic_dependencies_path"],
                 "--repair-attempt-number",
-                "2",
+                "3",
                 "--prepared-at",
-                "2026-08-31T17:10:00+08:00",
+                "2026-08-31T18:40:00+08:00",
             ],
             cwd=PROJECT_ROOT,
             text=True,

@@ -8,9 +8,9 @@ import re
 from typing import Any
 
 from .contracts import ContractRegistry
-from .content_production import ContentProduction
+from .content_production import PRODUCTION_FAULT_POINTS, ContentProduction
 from .delivery_quality import DeliveryQualityRegistry
-from .errors import ContractError
+from .errors import ContractError, ProductionFault
 from .kernel import VideoWorkflowKernel
 from .latex_generated_text import extract_tcolorbox_titles
 from .precompile_quality import PrecompileQualityProvider
@@ -20,6 +20,11 @@ from .utils import (
     require_contained_path,
     sha256_file,
     write_json_atomic,
+)
+
+
+PRECOMPILE_REPAIR_PROMOTION_FAULT_POINTS = frozenset(
+    {"after_supersede", "after_attempt_materialized", *PRODUCTION_FAULT_POINTS}
 )
 
 
@@ -42,6 +47,8 @@ class PrecompileRepairPromotionProvider:
         semantic_dependencies_path: Path,
         repair_attempt_number: int,
         prepared_at: str,
+        fault_point: str | None = None,
+        fault_logical_task_key: str | None = None,
     ) -> dict[str, Any]:
         try:
             return self._promote(
@@ -53,6 +60,8 @@ class PrecompileRepairPromotionProvider:
                 semantic_dependencies_path=semantic_dependencies_path,
                 repair_attempt_number=repair_attempt_number,
                 prepared_at=prepared_at,
+                fault_point=fault_point,
+                fault_logical_task_key=fault_logical_task_key,
             )
         except ContractError as error:
             if error.data.get("first_failing_gate") and error.data.get("error_code"):
@@ -76,6 +85,8 @@ class PrecompileRepairPromotionProvider:
         semantic_dependencies_path: Path,
         repair_attempt_number: int,
         prepared_at: str,
+        fault_point: str | None,
+        fault_logical_task_key: str | None,
     ) -> dict[str, Any]:
         run_dir = run_dir.resolve()
         bundle_path = require_contained_path(
@@ -148,6 +159,19 @@ class PrecompileRepairPromotionProvider:
             initial_claims=initial_claims,
             task_order=expected_task_order,
         )
+        if (fault_point is None) != (fault_logical_task_key is None):
+            raise ContractError(
+                "Precompile repair fault point and logical task key must be supplied together"
+            )
+        if fault_point is not None:
+            if fault_point not in PRECOMPILE_REPAIR_PROMOTION_FAULT_POINTS:
+                raise ContractError(
+                    f"unsupported Precompile repair promotion fault point: {fault_point}"
+                )
+            if fault_logical_task_key not in expected_task_order:
+                raise ContractError(
+                    "Precompile repair promotion fault target is outside the task closure"
+                )
 
         resumed_task_count = self._resume_production_repair(
             run_dir=run_dir,
@@ -155,6 +179,8 @@ class PrecompileRepairPromotionProvider:
             bundle=bundle,
             initial_claims=initial_claims,
             task_order=task_order,
+            fault_point=fault_point,
+            fault_logical_task_key=fault_logical_task_key,
         )
         state = read_json(state_path)
         self.contracts.validate("production-state", state)
@@ -443,6 +469,8 @@ class PrecompileRepairPromotionProvider:
         bundle: dict[str, Any],
         initial_claims: dict[str, Any],
         task_order: list[Any],
+        fault_point: str | None,
+        fault_logical_task_key: str | None,
     ) -> int:
         state_path = run_dir / "workflow" / "production-state.json"
         self._restore_initial_artifacts(
@@ -511,6 +539,11 @@ class PrecompileRepairPromotionProvider:
                         logical_task_key=logical_key,
                     )
                 envelope = runnable[0]
+                if (
+                    fault_logical_task_key == logical_key
+                    and fault_point == "after_supersede"
+                ):
+                    raise ProductionFault(fault_point)
             elif current_generation == initial_generation + 1:
                 envelope_path = require_contained_path(
                     run_dir
@@ -547,6 +580,11 @@ class PrecompileRepairPromotionProvider:
                 bundle=bundle,
                 envelope=envelope,
             )
+            if (
+                fault_logical_task_key == logical_key
+                and fault_point == "after_attempt_materialized"
+            ):
+                raise ProductionFault(fault_point)
             if current_generation == initial_generation + 1 and current.get(
                 "status"
             ) == "committed":
@@ -600,6 +638,12 @@ class PrecompileRepairPromotionProvider:
                 envelope["task_id"],
                 attempt_id,
                 compile_runtime_policy=runtime_policy,
+                fault_point=(
+                    fault_point
+                    if fault_logical_task_key == logical_key
+                    and fault_point in PRODUCTION_FAULT_POINTS
+                    else None
+                ),
             )
             resumed += 1
 

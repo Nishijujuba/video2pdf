@@ -46,7 +46,10 @@ from .precompile_quality import (
     PREPARE_FAULT_POINTS,
     PrecompileQualityProvider,
 )
-from .precompile_repair_promotion import PrecompileRepairPromotionProvider
+from .precompile_repair_promotion import (
+    PRECOMPILE_REPAIR_PROMOTION_FAULT_POINTS,
+    PrecompileRepairPromotionProvider,
+)
 from .rendered_text_reconciliation import RenderedTextReconciliationProvider
 from .acceptance_v2 import (
     MATERIALIZE_FAULT_POINTS as ACCEPTANCE_MATERIALIZE_FAULT_POINTS,
@@ -176,6 +179,11 @@ def _parser() -> argparse.ArgumentParser:
         "--repair-attempt-number", required=True, type=int
     )
     precompile_repair_promote.add_argument("--prepared-at", required=True)
+    precompile_repair_promote.add_argument(
+        "--fault-point",
+        choices=sorted(PRECOMPILE_REPAIR_PROMOTION_FAULT_POINTS),
+    )
+    precompile_repair_promote.add_argument("--fault-logical-task-key")
 
     precompile_patch_commit = commands.add_parser(
         "delivery-quality-precompile-patch-commit"
@@ -1184,6 +1192,8 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             semantic_dependencies_path=args.semantic_dependencies,
             repair_attempt_number=args.repair_attempt_number,
             prepared_at=args.prepared_at,
+            fault_point=args.fault_point,
+            fault_logical_task_key=args.fault_logical_task_key,
         )
         return _ok(
             command,

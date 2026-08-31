@@ -1287,24 +1287,45 @@ def render_and_derive(
         len(stable_toc_sources) == 1
         and bool(stable_toc_sources[0][0].read_text(encoding="utf-8").splitlines())
     )
+    toc_source_documents = [entry.resolve()] + sorted(
+        (
+            source_path.resolve()
+            for source_path in observed_declared_paths
+            if source_path.suffix.casefold() == ".tex"
+            and source_path.is_file()
+            and source_path.resolve() != entry.resolve()
+        ),
+        key=lambda source_path: str(source_path).casefold(),
+    )
     toc_header_sources = [
-        (source_path.resolve(), line_number)
-        for source_path in observed_declared_paths
-        if source_path.suffix.casefold() == ".tex" and source_path.is_file()
+        (source_path, line_number)
+        for source_path in toc_source_documents
         for line_number, source_line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         )
         if source_line.strip() == r"\tableofcontents"
     ]
-    if len(toc_header_sources) == 1:
-        source_path, line_number = toc_header_sources[0]
-        for item in objects:
-            if (
-                item["object_id"] in used_objects
-                or item["object_id"] in locations
-                or item["exact_utf8_text"] != "目录"
-                or item["bbox"][3] > 45
-            ):
+    toc_heading_candidates = [
+        item
+        for item in objects
+        if item["object_id"] not in used_objects
+        and item["exact_utf8_text"] == "目录"
+        and item["bbox"][3] > 45
+    ]
+    if len(toc_heading_candidates) == len(toc_header_sources):
+        for item, (source_path, line_number) in zip(
+            sorted(
+                toc_heading_candidates,
+                key=lambda value: (
+                    value["page"],
+                    value["bbox"][1],
+                    value["bbox"][0],
+                ),
+            ),
+            toc_header_sources,
+        ):
+            location = locations.get(item["object_id"])
+            if location is not None and Path(location["source_path"]).suffix.casefold() != ".toc":
                 continue
             bbox = item["bbox"]
             locations[item["object_id"]] = {
@@ -1363,15 +1384,7 @@ def render_and_derive(
         used_objects.update(
             item["object_id"] for item in running_header_objects
         )
-    toc_heading_invocations = [
-        (source_path, line_number)
-        for source_path in observed_declared_paths
-        if source_path.suffix.casefold() == ".tex" and source_path.is_file()
-        for line_number, source_line in enumerate(
-            source_path.read_text(encoding="utf-8").splitlines(), 1
-        )
-        if source_line.strip() == r"\tableofcontents"
-    ]
+    toc_heading_invocations = toc_header_sources
     toc_heading_objects: list[dict[str, Any]] = []
     for item in objects:
         if (

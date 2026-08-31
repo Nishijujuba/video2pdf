@@ -1164,8 +1164,10 @@ def render_and_derive(
             raise AdapterError(
                 f"declared generated text source does not declare inventory: {item_id}"
             )
-        begin_invocations: dict[tuple[str, int, str], str] = {}
-        end_invocations: dict[tuple[str, int, str], str] = {}
+        expected_invocations: dict[tuple[str, int, str], str] = {}
+        expected_occurrences: dict[str, int] = {}
+        begin_counts: dict[str, int] = {}
+        end_counts: dict[str, int] = {}
         for source_entry in manifest_entries:
             source_path = staging / Path(source_entry["staging_path"])
             if source_path.suffix.casefold() != ".tex" or not source_path.is_file():
@@ -1181,40 +1183,29 @@ def render_and_derive(
                     continue
                 expected_title = title_by_environment.get(invocation.group(2))
                 if expected_title in declared_tokens:
-                    target = (
-                        begin_invocations
-                        if invocation.group(1) == "begin"
-                        else end_invocations
-                    )
-                    target[
+                    expected_invocations[
                         (
                             str(source_path.resolve()).casefold(),
                             line_number,
                             invocation.group(2),
                         )
                     ] = expected_title
-        begun_environments = {key[2] for key in begin_invocations}
-        expected_invocations = {
-            key: title
-            for key, title in begin_invocations.items()
-            if key[2] in begun_environments
-        }
-        expected_invocations.update(
-            {
-                key: title
-                for key, title in end_invocations.items()
-                if key[2] not in begun_environments
-            }
-        )
+                    counts = (
+                        begin_counts
+                        if invocation.group(1) == "begin"
+                        else end_counts
+                    )
+                    counts[expected_title] = counts.get(expected_title, 0) + 1
+        for title in declared_tokens:
+            expected_occurrences[title] = begin_counts.get(
+                title, end_counts.get(title, 0)
+            )
         if not expected_invocations:
             raise AdapterError(
                 f"declared generated text is absent from compile inputs: {item_id}"
             )
-        invocation_candidates: dict[
-            tuple[str, int, str], tuple[str, list[tuple[dict[str, Any], dict[str, Any]]]]
-        ] = {
-            key: (expected_title, [])
-            for key, expected_title in expected_invocations.items()
+        title_candidates: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {
+            title: [] for title in declared_tokens
         }
         for value in objects:
             location = locations.get(value["object_id"])
@@ -1241,24 +1232,20 @@ def render_and_derive(
             expected_title = expected_invocations.get(invocation_key)
             if expected_title is None:
                 continue
-            invocation_candidates[invocation_key][1].append((value, location))
+            if value["exact_utf8_text"] == expected_title:
+                title_candidates[expected_title].append((value, location))
         object_ids: list[str] = []
         expected_titles: list[str] = []
         object_sources: list[dict[str, Any]] = []
-        for expected_title, candidates in invocation_candidates.values():
-            title_matches = [
-                (value, location)
-                for value, location in candidates
-                if value["exact_utf8_text"] == expected_title
-            ]
-            if len(title_matches) != 1:
+        for expected_title, candidates in title_candidates.items():
+            if len(candidates) != expected_occurrences[expected_title]:
                 raise AdapterError(
                     f"generated style title occurrence is absent or ambiguous: {item_id}"
                 )
-            value, location = title_matches[0]
-            object_ids.append(value["object_id"])
-            expected_titles.append(expected_title)
-            object_sources.append(location)
+            for value, location in candidates:
+                object_ids.append(value["object_id"])
+                expected_titles.append(expected_title)
+                object_sources.append(location)
         if not object_ids or set(expected_titles) != set(declared_tokens):
             raise AdapterError(
                 f"declared generated text is absent from compiled PDF: {item_id}"

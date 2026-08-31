@@ -1107,6 +1107,7 @@ def render_and_derive(
         )
         items_by_binding.setdefault(binding, []).append(item)
     grouped: dict[str, list[dict[str, Any]]] = {}
+    objects_by_id = {item["object_id"]: item for item in objects}
     used_objects: set[str] = set()
     mapped_items: set[str] = set()
     for object_id, location in locations.items():
@@ -1447,6 +1448,7 @@ def render_and_derive(
             value
             for value in grouped.get(item_id, [])
             if value["object_id"] not in used_objects
+            and objects_by_id[value["object_id"]]["bbox"][3] > 45
         ]
         if not object_sources:
             continue

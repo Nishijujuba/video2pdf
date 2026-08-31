@@ -1379,6 +1379,11 @@ def render_and_derive(
         ):
             continue
         location = locations[item["object_id"]]
+        if (
+            location.get("completion") == "compiler-line-layout-v1"
+            and item["bbox"][3] <= 45
+        ):
+            continue
         source_path = Path(location["source_path"])
         line_number = location["line"]
         if not source_path.is_file():

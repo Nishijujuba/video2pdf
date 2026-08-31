@@ -1325,8 +1325,6 @@ def render_and_derive(
             toc_header_sources,
         ):
             location = locations.get(item["object_id"])
-            if location is not None and Path(location["source_path"]).suffix.casefold() != ".toc":
-                continue
             bbox = item["bbox"]
             locations[item["object_id"]] = {
                 "object_id": item["object_id"],

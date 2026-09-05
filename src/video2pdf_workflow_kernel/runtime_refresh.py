@@ -288,7 +288,42 @@ class CompileRuntimeRefreshProvider:
             "sha256": sha256_file(run / "workflow/compile-runtime-policy.json"),
         }
         policy = read_json(run / "workflow/compile-runtime-policy.json")
+        successor_manifest["approved_runtime_inputs"] = (
+            self._approved_runtime_inputs(report, policy)
+        )
+        successor_manifest["manifest_sha256"] = _fingerprint(
+            successor_manifest, "manifest_sha256"
+        )
+        self.quality.validate("final-compile-manifest", successor_manifest)
+        successor_manifest_path = operation_root / "final-compile-manifest.json"
+        write_json_atomic(successor_manifest_path, successor_manifest)
+        journal["state"] = "committed"
+        journal["precompile"] = precompile
+        journal["precompile_workspace_root"] = precompile["workspace_root"]
+        journal["successor_final_compile_manifest_path"] = str(successor_manifest_path)
+        journal["successor_final_compile_manifest_sha256"] = sha256_file(
+            successor_manifest_path
+        )
+        journal["journal_sha256"] = _fingerprint(journal, "journal_sha256")
+        write_json_atomic(operation_root / "journal.json", journal)
+        write_json_atomic(active_path, journal)
+        return self._result(journal)
+
+    @staticmethod
+    def _approved_runtime_inputs(
+        report: dict[str, Any], policy: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        _require_fingerprint(policy, "policy_sha256", "Compile Runtime Policy")
+        if report.get("runtime_policy_sha256") != policy["policy_sha256"]:
+            raise ContractError(
+                "Diagnostic Compile Report lacks the current Runtime Policy binding"
+            )
         inventory = read_json(Path(policy["package_inventory"]["path"]))
+        if (
+            sha256_file(Path(policy["package_inventory"]["path"]))
+            != policy["package_inventory"]["sha256"]
+        ):
+            raise ContractError("Compile Runtime package inventory is stale")
         registered_runtime = {
             str(Path(item["path"]).resolve()).casefold(): item["sha256"]
             for item in inventory["files"]
@@ -311,44 +346,24 @@ class CompileRuntimeRefreshProvider:
                 if item["classification"] == "registered_runtime_dependency"
                 else registered_fonts
             )
-            recorded_sha256 = item.get("sha256")
+            authenticated_sha256 = registered.get(identity)
             if (
-                identity not in registered
-                or registered[identity] != recorded_sha256
+                authenticated_sha256 is None
                 or not path.is_file()
-                or sha256_file(path) != recorded_sha256
+                or sha256_file(path) != authenticated_sha256
             ):
                 raise ContractError(
                     "diagnostic runtime input drifted before Final Compile binding"
                 )
             candidate = {
                 "path": str(path),
-                "sha256": recorded_sha256,
+                "sha256": authenticated_sha256,
                 "classification": item["classification"],
             }
             if identity in approved and approved[identity] != candidate:
                 raise ContractError("diagnostic runtime input has conflicting identities")
             approved[identity] = candidate
-        successor_manifest["approved_runtime_inputs"] = [
-            approved[key] for key in sorted(approved)
-        ]
-        successor_manifest["manifest_sha256"] = _fingerprint(
-            successor_manifest, "manifest_sha256"
-        )
-        self.quality.validate("final-compile-manifest", successor_manifest)
-        successor_manifest_path = operation_root / "final-compile-manifest.json"
-        write_json_atomic(successor_manifest_path, successor_manifest)
-        journal["state"] = "committed"
-        journal["precompile"] = precompile
-        journal["precompile_workspace_root"] = precompile["workspace_root"]
-        journal["successor_final_compile_manifest_path"] = str(successor_manifest_path)
-        journal["successor_final_compile_manifest_sha256"] = sha256_file(
-            successor_manifest_path
-        )
-        journal["journal_sha256"] = _fingerprint(journal, "journal_sha256")
-        write_json_atomic(operation_root / "journal.json", journal)
-        write_json_atomic(active_path, journal)
-        return self._result(journal)
+        return [approved[key] for key in sorted(approved)]
 
     def _preflight_predecessor_manifest(
         self,

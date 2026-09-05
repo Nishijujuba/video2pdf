@@ -21,7 +21,10 @@ identify as compile inputs. Four such files later drifted and blocked compilatio
 the successor package inventory from the predecessor Diagnostic Compile recorder
 closure, fingerprints each currently registered runtime input, and runs a fresh
 Diagnostic Compile through Content Production before publishing successor
-bindings. Newly observed runtime dependencies remain fail-closed.
+bindings. Recorder rows prove consumed-path membership and classification. The
+bound Runtime Policy inventory and system-font entries supply file identity;
+publication requires those identities to match current bytes. Newly observed
+runtime dependencies remain fail-closed.
 
 The operation archives exact predecessor policy, manifest, report, PDF, and
 Production State bytes below its retained operation directory. A journal blocks

@@ -14,6 +14,11 @@ SRC = PROJECT_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from tests.video_workflow._test_run import new_case_dir
+from video2pdf_workflow_kernel.errors import ContractError
+from video2pdf_workflow_kernel.runtime_refresh import CompileRuntimeRefreshProvider
+from video2pdf_workflow_kernel.utils import canonical_json_bytes
+
 
 class CompileRuntimeRefreshParserTests(unittest.TestCase):
     def test_public_runtime_refresh_command_is_available(self) -> None:
@@ -21,6 +26,75 @@ class CompileRuntimeRefreshParserTests(unittest.TestCase):
 
         commands = _parser()._subparsers._group_actions[0].choices
         self.assertIn("compile-runtime-refresh", commands)
+
+    def test_policy_authenticates_recorder_paths_without_per_row_hashes(self) -> None:
+        root = new_case_dir(self.id(), label="issue104-runtime-binding")
+        runtime_input = root / "runtime-input.fmt"
+        runtime_input.write_bytes(b"runtime")
+        system_font = root / "font.ttf"
+        system_font.write_bytes(b"font")
+        inventory = {
+            "schema_version": 1,
+            "files": [
+                {
+                    "path": str(runtime_input.resolve()),
+                    "sha256": hashlib.sha256(runtime_input.read_bytes()).hexdigest(),
+                }
+            ],
+        }
+        inventory_path = root / "runtime-inventory.json"
+        inventory_path.write_bytes(canonical_json_bytes(inventory))
+        policy = {
+            "package_inventory": {
+                "path": str(inventory_path.resolve()),
+                "sha256": hashlib.sha256(inventory_path.read_bytes()).hexdigest(),
+            },
+            "system_fonts": [
+                {
+                    "path": str(system_font.resolve()),
+                    "sha256": hashlib.sha256(system_font.read_bytes()).hexdigest(),
+                }
+            ],
+        }
+        policy["policy_sha256"] = hashlib.sha256(
+            canonical_json_bytes(policy)
+        ).hexdigest()
+        report = {
+            "runtime_policy_sha256": policy["policy_sha256"],
+            "dependency_closure": {
+                "inputs": [
+                    {
+                        "path": str(runtime_input.resolve()),
+                        "classification": "registered_runtime_dependency",
+                    },
+                    {
+                        "path": str(system_font.resolve()),
+                        "classification": "registered_system_font",
+                    },
+                ]
+            },
+        }
+
+        approved = CompileRuntimeRefreshProvider._approved_runtime_inputs(
+            report, policy
+        )
+
+        self.assertEqual(
+            {
+                str(runtime_input.resolve()): inventory["files"][0]["sha256"],
+                str(system_font.resolve()): policy["system_fonts"][0]["sha256"],
+            },
+            {item["path"]: item["sha256"] for item in approved},
+        )
+        unbound_report = dict(report)
+        unbound_report["runtime_policy_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ContractError, "Runtime Policy binding"):
+            CompileRuntimeRefreshProvider._approved_runtime_inputs(
+                unbound_report, policy
+            )
+        runtime_input.write_bytes(b"drift")
+        with self.assertRaisesRegex(ContractError, "drifted"):
+            CompileRuntimeRefreshProvider._approved_runtime_inputs(report, policy)
 
 
 RUN_ENV = "VIDEO2PDF_ISSUE104_RUN_DIR"

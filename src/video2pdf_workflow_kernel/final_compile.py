@@ -1479,6 +1479,10 @@ class GuardedFinalCompileProvider:
             write_json_atomic(execution_path, execution)
             raise
         stdout, stderr = process.communicate()
+        stdout_path = root / "adapter-stdout.log"
+        stderr_path = root / "adapter-stderr.log"
+        stdout_path.write_text(stdout, encoding="utf-8", newline="")
+        stderr_path.write_text(stderr, encoding="utf-8", newline="")
         execution = read_json(execution_path)
         _require_fingerprint(execution, "execution_sha256", "Final Compile execution")
         execution_pid = execution.get("adapter_pid")
@@ -1508,7 +1512,13 @@ class GuardedFinalCompileProvider:
         if process.returncode != 0 or stderr:
             raise CompileDependencyGap(
                 "guarded Final Compile adapter failed",
-                data={"exit_code": process.returncode},
+                data={
+                    "first_failing_gate": "final_compile_adapter_execution",
+                    "error_code": "final_compile_adapter_failed",
+                    "exit_code": process.returncode,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                },
             )
 
         pdf_path = adapter_output / resolved_pdf_basename

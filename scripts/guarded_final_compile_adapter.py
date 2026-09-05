@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from typing import Any
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
@@ -1774,7 +1775,7 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 1
     except Exception:
-        print("guarded final compile failed closed", file=sys.stderr)
+        traceback.print_exc()
         return 1
     return 0
 

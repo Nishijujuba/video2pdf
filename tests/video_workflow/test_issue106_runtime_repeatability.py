@@ -398,6 +398,12 @@ class Issue106RuntimeRepeatabilityTests(unittest.TestCase):
         )
         self.assertEqual(active_bytes, case["active_path"].read_bytes())
 
+        # Scenario: competing-runtime-successor (single contradiction).
+        # Invariant: one failure authority admits one published successor.
+        # Mutation seam: only the requested workspace changes after publication.
+        # Rematerialized/stale nodes: none; all retained authority stays current.
+        # First gate/code: content_repair_continuation_successor /
+        # runtime_refresh_continuation_competing_successor.
         competing = case["run"] / "review/precompile/workspaces/competing-replay"
         with self.assertRaises(ContractError) as raised:
             case["runtime"].preflight_repair_continuation(
@@ -408,6 +414,10 @@ class Issue106RuntimeRepeatabilityTests(unittest.TestCase):
                 successor_workspace_root=competing,
                 actual_write_set=["work/writers/section_01.tex"],
             )
+        self.assertEqual(
+            "content_repair_continuation_successor",
+            raised.exception.data["first_failing_gate"],
+        )
         self.assertEqual(
             "runtime_refresh_continuation_competing_successor",
             raised.exception.data["error_code"],

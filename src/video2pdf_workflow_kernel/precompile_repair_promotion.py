@@ -528,8 +528,15 @@ class PrecompileRepairPromotionProvider:
                 recorded_disposition = repair_attempt.get("disposition")
                 current_refresh = runtime_handoff.get("promotion_refresh")
                 if current_refresh is not None and (
-                    not isinstance(recorded_disposition, dict)
-                    or recorded_disposition.get("disposition_sha256")
+                    (
+                        recorded_disposition is not None
+                        and not isinstance(recorded_disposition, dict)
+                    )
+                    or (
+                        recorded_disposition.get("disposition_sha256")
+                        if isinstance(recorded_disposition, dict)
+                        else None
+                    )
                     != current_refresh.get("disposition_sha256")
                 ):
                     raise ContractError(

@@ -14,11 +14,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_case_dir
-from tests.video_workflow.test_precompile_quality import (
-    generation_set as valid_generation_set,
-    inventory as valid_inventory,
-    semantic_dependencies as valid_semantic_dependencies,
-)
 from tests.video_workflow.test_single_section_production import (
     PROJECT_ROOT as PRODUCTION_PROJECT_ROOT,
     SYSTEM_FONT,
@@ -1230,7 +1225,9 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             },
         )
 
-    def _complete_single_section_production(self) -> tuple[object, Path]:
+    def _complete_single_section_production(
+        self, *, writer_text: bytes = b"Declared inputs establish closure."
+    ) -> tuple[object, Path]:
         lifecycle = SingleSectionProductionTests(
             "test_public_plan_and_advance_reach_guarded_diagnostic_compile"
         )
@@ -1265,7 +1262,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             writer,
             {
                 "section_01.tex": (
-                    b"\\section{Core claim}\nDeclared inputs establish closure.\n"
+                    b"\\section{Core claim}\n" + writer_text + b"\n"
                     b"% FIGURE_SLOT:figure_01\n"
                 ),
                 "writer-result.json": writer_result,
@@ -1335,9 +1332,15 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
         return kernel, run
 
     def _non_runtime_bound_repair_fixture(self) -> dict:
-        kernel, run = self._complete_single_section_production()
+        _kernel, run = self._complete_single_section_production()
+        _candidate_kernel, candidate_run = self._complete_single_section_production(
+            writer_text=b"Changed reader wording preserves the declared closure."
+        )
         provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
-        state = read_json(run / "workflow/production-state.json")
+        state_path = run / "workflow/production-state.json"
+        state = read_json(state_path)
+        compile_manifest_path = run / "workflow/compile-manifest.json"
+        compile_manifest = read_json(compile_manifest_path)
         task_order = provider._required_replay_task_order(state)
         initial_claims = {
             logical_key: {
@@ -1349,6 +1352,273 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             for logical_key in task_order
         }
 
+        predecessor_generations = {
+            "schema_name": "precompile-artifact-generation-set",
+            "schema_version": "1.0.0",
+            "generation_set_id": (
+                f"{state['run_id'][:8]}-diagnostic-"
+                f"{hashlib.sha256(compile_manifest_path.read_bytes()).hexdigest()[:12]}"
+            ),
+            "producer_ids": sorted(
+                {entry["producer"] for entry in compile_manifest["entries"]}
+            ),
+            "artifacts": sorted(
+                [
+                    {
+                        "logical_id": entry["logical_id"],
+                        "generation": entry["generation"],
+                        "sha256": entry["sha256"],
+                    }
+                    for entry in compile_manifest["entries"]
+                ],
+                key=lambda item: item["logical_id"],
+            ),
+        }
+        predecessor_generations["generation_set_sha256"] = fingerprint(
+            predecessor_generations, "generation_set_sha256"
+        )
+        generation_by_id = {
+            item["logical_id"]: item
+            for item in predecessor_generations["artifacts"]
+        }
+        structured_entries = [
+            entry
+            for entry in compile_manifest["entries"]
+            if entry["logical_id"] in {"integrated_main", "integrated_section_01"}
+        ]
+        inventory_items = []
+        for entry in structured_entries:
+            source_path = run / entry["source_path"]
+            declared_text = source_path.read_text(encoding="utf-8")
+            source = generation_by_id[entry["logical_id"]]
+            item = {
+                "item_id": f"{entry['logical_id']}.body",
+                "kind": "body_text",
+                "semantic_region": entry["logical_id"],
+                "language_profile_id": "zh-hans",
+                "source_artifact_logical_id": entry["logical_id"],
+                "source_generation": source["generation"],
+                "source_sha256": source["sha256"],
+                "locator": f"latex:{entry['source_path']}",
+                "representation": "structured_text",
+                "declared_text": declared_text,
+                "text_sha256": hashlib.sha256(
+                    declared_text.encode("utf-8")
+                ).hexdigest(),
+                "applicable_rule_ids": ["no_meta_writing_content"],
+            }
+            item["item_sha256"] = fingerprint(item, "item_sha256")
+            inventory_items.append(item)
+        predecessor_inventory = {
+            "schema_name": "reader-facing-text-inventory",
+            "schema_version": "1.0.0",
+            "inventory_id": f"{state['run_id'][:8]}-reader-text",
+            "language_profile_id": "zh-hans",
+            "delivery_glossary": None,
+            "generation_set_sha256": predecessor_generations[
+                "generation_set_sha256"
+            ],
+            "declared_surface": [
+                {"region_id": item["item_id"], "kind": item["kind"]}
+                for item in inventory_items
+            ],
+            "items": inventory_items,
+            "coverage_ledger": [
+                {
+                    "region_id": item["item_id"],
+                    "item_id": item["item_id"],
+                    "status": "covered",
+                }
+                for item in inventory_items
+            ],
+            "extractors": [
+                {
+                    "extractor_id": "kernel-structured-tex-reader",
+                    "extractor_sha256": hashlib.sha256(
+                        (
+                            PROJECT_ROOT
+                            / "src/video2pdf_workflow_kernel/precompile_quality.py"
+                        ).read_bytes()
+                    ).hexdigest(),
+                }
+            ],
+        }
+        predecessor_inventory["reader_text_set_sha256"] = hashlib.sha256(
+            canonical_json_bytes(
+                [
+                    {
+                        "item_id": item["item_id"],
+                        "kind": item["kind"],
+                        "representation": item["representation"],
+                        "text_sha256": item["text_sha256"],
+                    }
+                    for item in inventory_items
+                ]
+            )
+        ).hexdigest()
+        predecessor_inventory["inventory_sha256"] = fingerprint(
+            predecessor_inventory, "inventory_sha256"
+        )
+
+        run_record = read_json(run / "workflow/run.json")
+        source_manifest_path = run / run_record["artifact_generations"][
+            "source_manifest"
+        ]["path"]
+        source_evidence_paths = [
+            source_manifest_path,
+            run / state["artifacts"]["figure_asset_figure_01"]["path"],
+            run / state["artifacts"]["figure_manifest_figure_01"]["path"],
+        ]
+        pyramid_evidence_paths = [
+            run / state["artifacts"][logical_id]["path"]
+            for logical_id in (
+                "pyramid_outline_report",
+                "pyramid_section_01_report",
+                "pyramid_main_report",
+            )
+        ]
+        provider_descriptor = (
+            PROJECT_ROOT / "delivery-quality/v1/role-projections.v1.json"
+        )
+        provider_sha256 = hashlib.sha256(provider_descriptor.read_bytes()).hexdigest()
+        dependencies = []
+        for owner, projection_id, scopes, evidence_paths in (
+            (
+                "source-faithfulness-reviewer",
+                "source-faithfulness-current-production",
+                ["source-and-figure-evidence"],
+                source_evidence_paths,
+            ),
+            (
+                "pyramid-reviewer",
+                "pyramid-current-production",
+                ["outline-section-main"],
+                pyramid_evidence_paths,
+            ),
+        ):
+            projection = {
+                "projection_id": projection_id,
+                "evidence": [
+                    {
+                        "path": path.relative_to(run).as_posix(),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                    for path in evidence_paths
+                ],
+            }
+            dependencies.append(
+                {
+                    "owner": owner,
+                    "projection_id": projection_id,
+                    "projection_sha256": hashlib.sha256(
+                        canonical_json_bytes(projection)
+                    ).hexdigest(),
+                    "required_scope_ids": scopes,
+                    "provider_id": "delivery-quality-role-projections",
+                    "provider_sha256": provider_sha256,
+                    "projection": projection,
+                }
+            )
+        predecessor_dependencies = {
+            "schema_name": "precompile-semantic-dependencies",
+            "schema_version": "1.0.0",
+            "dependencies": dependencies,
+        }
+        predecessor_dependencies["dependencies_sha256"] = fingerprint(
+            predecessor_dependencies, "dependencies_sha256"
+        )
+
+        predecessor = run / "review/precompile/workspaces/failed-current"
+        candidate_root = run / "待删除/non-runtime-repair-inputs"
+        generation_path = write_json(
+            candidate_root / "artifact-generations.json", predecessor_generations
+        )
+        inventory_path = write_json(
+            candidate_root / "reader-facing-text-inventory.json", predecessor_inventory
+        )
+        dependencies_path = write_json(
+            candidate_root / "semantic-dependencies.json", predecessor_dependencies
+        )
+        quality = PrecompileQualityProvider(PROJECT_ROOT)
+        quality.prepare(
+            workspace_root=predecessor,
+            inventory_path=inventory_path,
+            artifact_generations_path=generation_path,
+            semantic_dependencies_path=dependencies_path,
+            prepared_at="2026-09-06T00:00:00Z",
+        )
+        failed_result_key = None
+        for owner in PRECOMPILE_OWNERS:
+            skeleton_path = (
+                predecessor
+                / "reviewers"
+                / owner
+                / "input/review-skeleton.json"
+            )
+            skeleton = read_json(skeleton_path)
+            results = []
+            for required in skeleton["required_results"]:
+                fail = (
+                    owner == "writing-quality-reviewer"
+                    and required.get("item_id") == "integrated_section_01.body"
+                    and failed_result_key is None
+                )
+                result = {
+                    "result_key": required["result_key"],
+                    "decision": "fail" if fail else "pass",
+                    "evidence_locator": (
+                        "artifact:work/integration/section_01.tex"
+                        if fail
+                        else f"artifact:{required['result_key']}"
+                    ),
+                    "repair_write_set": (
+                        ["work/writers/section_01.tex"] if fail else []
+                    ),
+                }
+                if fail:
+                    result["violation_id"] = "reader_wording_requires_repair"
+                    failed_result_key = required["result_key"]
+                results.append(result)
+            patch_value = {
+                "schema_name": "precompile-judgment-patch",
+                "schema_version": "1.0.0",
+                "task_id": skeleton["task_id"],
+                "owner": owner,
+                "skeleton_sha256": skeleton["skeleton_sha256"],
+                "generation_set_sha256": skeleton["generation_set_sha256"],
+                "reviewer": {
+                    "reviewer_id": f"reviewer-{skeleton['task_id'][:12]}",
+                    "runtime_sha256": hashlib.sha256(
+                        skeleton_path.read_bytes()
+                    ).hexdigest(),
+                    "independent_from_generation_producers": True,
+                },
+                "results": results,
+                "contract_gaps": [],
+            }
+            patch_value["patch_sha256"] = fingerprint(
+                patch_value, "patch_sha256"
+            )
+            patch_path = write_json(
+                candidate_root / f"{owner}.judgment-patch.json", patch_value
+            )
+            quality.commit_patch(
+                workspace_root=predecessor,
+                owner=owner,
+                patch_path=patch_path,
+                committed_at="2026-09-06T00:01:00Z",
+            )
+        self.assertIsNotNone(failed_result_key)
+        materialized = quality.materialize(
+            workspace_root=predecessor,
+            provider_id=PRECOMPILE_PROVIDER_ID,
+            provider_version=PRECOMPILE_PROVIDER_VERSION,
+            materialized_at="2026-09-06T00:02:00Z",
+        )
+        self.assertEqual("fail", materialized["overall_decision"])
+        self.assertEqual(1, materialized["failure_count"])
+        failure_path = Path(materialized["report_path"])
+
         bundle_root = run / "待删除/non-runtime-repair-bundle"
         input_snapshot = []
         for logical_key in task_order:
@@ -1358,13 +1628,16 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                 / state["claims"][logical_key]["task_id"]
                 / "envelope.json"
             )
+            snapshot_path = bundle_root / "input/envelopes" / f"{logical_key}.json"
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_bytes(envelope_path.read_bytes())
             input_snapshot.append(
                 {
-                    "path": envelope_path.relative_to(run).as_posix(),
-                    "sha256": hashlib.sha256(envelope_path.read_bytes()).hexdigest(),
+                    "path": snapshot_path.relative_to(run).as_posix(),
+                    "sha256": hashlib.sha256(snapshot_path.read_bytes()).hexdigest(),
                 }
             )
-
+        candidate_state = read_json(candidate_run / "workflow/production-state.json")
         payload_sources = {
             "payload/outline.json": "outline_contract",
             "payload/writers/section_01.tex": "writer_section_01",
@@ -1378,16 +1651,32 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             ),
             "payload/pyramid/pyramid-main.json": "pyramid_main_report",
         }
+        pyramid_task_by_artifact = {
+            "pyramid_outline_report": "pyramid-outline",
+            "pyramid_section_01_report": "pyramid-section-section-01",
+            "pyramid_main_report": "pyramid-main",
+        }
         derived_payload = []
         for relative, logical_id in payload_sources.items():
-            source = run / state["artifacts"][logical_id]["path"]
+            source = candidate_run / candidate_state["artifacts"][logical_id]["path"]
+            payload_bytes = source.read_bytes()
+            if logical_id.startswith("pyramid_"):
+                binding = json.loads(payload_bytes)
+                envelope = read_json(
+                    run
+                    / "workflow/tasks"
+                    / state["claims"][pyramid_task_by_artifact[logical_id]]["task_id"]
+                    / "envelope.json"
+                )
+                binding["evaluation_context"] = envelope["evaluation_context"]
+                payload_bytes = canonical_json_bytes(binding)
             target = bundle_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(source.read_bytes())
+            target.write_bytes(payload_bytes)
             derived_payload.append(
                 {
                     "path": target.relative_to(run).as_posix(),
-                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                    "sha256": hashlib.sha256(payload_bytes).hexdigest(),
                 }
             )
         policy_source = run / "workflow/compile-runtime-policy.json"
@@ -1408,143 +1697,46 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                 "run_id": state["run_id"],
                 "input_snapshot": input_snapshot,
                 "derived_payload": derived_payload,
+                "restoration": [],
                 "initial_claims": initial_claims,
                 "task_order": task_order,
             },
         )
-
-        predecessor = run / "review/precompile/workspaces/failed-current"
-        predecessor_generations = valid_generation_set()
-        predecessor_inventory = valid_inventory()
-        predecessor_dependencies = valid_semantic_dependencies()
-        write_json(predecessor / "artifact-generations.json", predecessor_generations)
-        write_json(
-            predecessor / "reader-facing-text-inventory.json", predecessor_inventory
-        )
-        write_json(
-            predecessor / "semantic-dependencies.json", predecessor_dependencies
-        )
-        failure = {
-            "schema_name": "precompile-quality-report",
-            "schema_version": "1.0.0",
-            "overall_decision": "fail",
-            "generation_set_sha256": predecessor_generations[
-                "generation_set_sha256"
-            ],
-            "inventory_sha256": predecessor_inventory["inventory_sha256"],
-            "semantic_dependencies_sha256": predecessor_dependencies[
-                "dependencies_sha256"
-            ],
-            "failure_set": [
-                {
-                    "owner": "writing-quality-reviewer",
-                    "result_key": "reader_wording:section_01",
-                    "repair_write_set": ["work/writers/section_01.tex"],
-                }
-            ],
-            "contract_gaps": [],
-            "semantic_attempt_budget_consumed": True,
-            "repair_routing": {
-                "parallel_repair_tasks": [
-                    {
-                        "failure_keys": [
-                            "writing-quality-reviewer:reader_wording:section_01"
-                        ]
-                    }
-                ],
-                "integration_repair_tasks": [],
-            },
-        }
-        failure["report_sha256"] = fingerprint(failure, "report_sha256")
-        failure_path = write_json(
-            predecessor / "precompile-quality-report.json", failure
-        )
-
-        successor_generations = json.loads(json.dumps(predecessor_generations))
-        successor_main = next(
-            item
-            for item in successor_generations["artifacts"]
-            if item["logical_id"] == "integrated_main_tex"
-        )
-        successor_main["generation"] += 1
-        successor_main["sha256"] = "c" * 64
-        successor_generations["generation_set_id"] = "integrated-draft-8"
-        successor_generations["generation_set_sha256"] = fingerprint(
-            successor_generations, "generation_set_sha256"
-        )
-        successor_inventory = json.loads(json.dumps(predecessor_inventory))
-        successor_inventory["inventory_id"] = "inventory-8"
-        successor_inventory["generation_set_sha256"] = successor_generations[
-            "generation_set_sha256"
-        ]
-        for item in successor_inventory["items"]:
-            if item["source_artifact_logical_id"] == "integrated_main_tex":
-                item["source_generation"] = successor_main["generation"]
-                item["source_sha256"] = successor_main["sha256"]
-            item["item_sha256"] = fingerprint(item, "item_sha256")
-        successor_inventory["reader_text_set_sha256"] = hashlib.sha256(
-            canonical_json_bytes(
-                [
-                    {
-                        "item_id": item["item_id"],
-                        "kind": item["kind"],
-                        "representation": item["representation"],
-                        "text_sha256": item["text_sha256"],
-                    }
-                    for item in successor_inventory["items"]
-                ]
-            )
-        ).hexdigest()
-        successor_inventory["inventory_sha256"] = fingerprint(
-            successor_inventory, "inventory_sha256"
-        )
-        candidate_root = run / "待删除/non-runtime-repair-inputs"
-        generation_path = write_json(
-            candidate_root / "artifact-generations.json", successor_generations
-        )
-        inventory_path = write_json(
-            candidate_root / "reader-facing-text-inventory.json", successor_inventory
-        )
-        dependencies_path = write_json(
-            candidate_root / "semantic-dependencies.json", predecessor_dependencies
-        )
         workspace = run / "review/precompile/workspaces/repaired-current"
-        prepared = PrecompileQualityProvider(PROJECT_ROOT).prepare_repair(
+        promoted = provider.promote(
+            run_dir=run,
+            repair_bundle_path=bundle_path,
             predecessor_workspace_root=predecessor,
             workspace_root=workspace,
-            inventory_path=inventory_path,
-            artifact_generations_path=generation_path,
-            semantic_dependencies_path=dependencies_path,
+            inventory_path=predecessor / "reader-facing-text-inventory.json",
+            semantic_dependencies_path=predecessor / "semantic-dependencies.json",
             repair_attempt_number=1,
-            prepared_at="2026-09-06T00:00:00Z",
-            repair_bundle_path=bundle_path,
-            repair_sequence=1,
-            kernel_production_run_dir=run,
-            promotion_input_bindings={
-                "predecessor_workspace_root": str(predecessor.resolve()),
-                "inventory": {
-                    "path": str(inventory_path.resolve()),
-                    "sha256": hashlib.sha256(inventory_path.read_bytes()).hexdigest(),
-                },
-                "semantic_dependencies": {
-                    "path": str(dependencies_path.resolve()),
-                    "sha256": hashlib.sha256(
-                        dependencies_path.read_bytes()
-                    ).hexdigest(),
-                },
-            },
+            prepared_at="2026-09-06T00:03:00Z",
+            repair_failure_authority_path=failure_path,
+        )
+        self.assertEqual("precompile_repair_promoted", promoted["classification"])
+        current_manifest = read_json(compile_manifest_path)
+        published_generations = read_json(Path(promoted["successor_generation_set_path"]))
+        self.assertEqual(
+            sorted(
+                (entry["logical_id"], entry["generation"], entry["sha256"])
+                for entry in current_manifest["entries"]
+            ),
+            sorted(
+                (item["logical_id"], item["generation"], item["sha256"])
+                for item in published_generations["artifacts"]
+            ),
         )
         return {
-            "kernel": kernel,
             "run": run,
             "provider": provider,
             "bundle_path": bundle_path,
             "failure_path": failure_path,
             "predecessor": predecessor,
             "workspace": workspace,
-            "inventory_path": inventory_path,
-            "dependencies_path": dependencies_path,
-            "prepared": prepared,
+            "inventory_path": predecessor / "reader-facing-text-inventory.json",
+            "dependencies_path": predecessor / "semantic-dependencies.json",
+            "promoted": promoted,
             "task_order": task_order,
         }
 
@@ -1563,7 +1755,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             inventory_path=case["inventory_path"],
             semantic_dependencies_path=case["dependencies_path"],
             repair_attempt_number=1,
-            prepared_at="2026-09-06T00:00:00Z",
+            prepared_at="2026-09-06T00:03:00Z",
             repair_failure_authority_path=case["failure_path"],
         )
         self.assertEqual("precompile_repair_already_promoted", result["classification"])
@@ -1596,7 +1788,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                 inventory_path=case["inventory_path"],
                 semantic_dependencies_path=case["dependencies_path"],
                 repair_attempt_number=1,
-                prepared_at="2026-09-06T00:00:00Z",
+                prepared_at="2026-09-06T00:03:00Z",
                 repair_failure_authority_path=case["failure_path"],
             )
         self.assertEqual(
@@ -1649,7 +1841,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                         inventory_path=case["inventory_path"],
                         semantic_dependencies_path=case["dependencies_path"],
                         repair_attempt_number=1,
-                        prepared_at="2026-09-06T00:00:00Z",
+                        prepared_at="2026-09-06T00:03:00Z",
                         repair_failure_authority_path=case["failure_path"],
                     )
                 self.assertEqual(
@@ -1721,7 +1913,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                         repair_bundle_path=case["bundle_path"],
                         workspace_root=case["workspace"],
                         repair_attempt_number=1,
-                        prepared_at="2026-09-06T00:00:00Z",
+                        prepared_at="2026-09-06T00:03:00Z",
                         repair_failure_authority_path=case["failure_path"],
                         **arguments,
                     )

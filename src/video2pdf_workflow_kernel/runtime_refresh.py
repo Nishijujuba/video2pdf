@@ -528,8 +528,19 @@ class CompileRuntimeRefreshProvider:
         predecessor_promotion = handoff.get("promotion")
         if not isinstance(predecessor_promotion, dict):
             raise ContractError("content repair continuation predecessor is missing")
+        predecessor_workspace = require_contained_path(
+            Path(predecessor_promotion["workspace_root"]),
+            run,
+            purpose="content repair continuation predecessor workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+        )
         existing_refresh = handoff.get("promotion_refresh")
-        if existing_refresh is not None:
+        current_failure_authority = failure_authority_path.resolve()
+        if (
+            existing_refresh is not None
+            and current_failure_authority.parent != predecessor_workspace
+        ):
             if predecessor_promotion.get("workspace_root") != str(
                 successor_workspace_root.resolve()
             ):
@@ -549,15 +560,33 @@ class CompileRuntimeRefreshProvider:
             supplied_authority_sha256 = supplied_authority.get(
                 "brief_sha256", supplied_authority.get("report_sha256")
             )
+            recorded_authority_sha256 = existing_refresh.get(
+                "authorization_sha256",
+                existing_refresh.get(
+                    "disposition_sha256",
+                    existing_refresh.get(
+                        "failure_authority_sha256",
+                        existing_refresh.get(
+                            "predecessor_contract_gap_brief_sha256"
+                        ),
+                    ),
+                ),
+            )
+            recorded_authority_path = existing_refresh.get(
+                "failure_authority_path",
+                existing_refresh.get("predecessor_contract_gap_brief_path"),
+            )
+            recorded_bundle_path = existing_refresh.get("repair_bundle_path")
             if (
-                existing_refresh.get("authorization_sha256")
+                recorded_authority_sha256
                 != (supplied_disposition_sha256 or supplied_authority_sha256)
-                or existing_refresh.get("repair_bundle_path")
-                != str(repair_bundle_path.resolve())
+                or (
+                    recorded_bundle_path is not None
+                    and recorded_bundle_path != str(repair_bundle_path.resolve())
+                )
                 or existing_refresh.get("repair_bundle_sha256")
                 != sha256_file(repair_bundle_path.resolve())
-                or existing_refresh.get("failure_authority_path")
-                != str(failure_authority_path.resolve())
+                or recorded_authority_path != str(current_failure_authority)
             ):
                 raise ContractError(
                     "content repair continuation replay disposition changed",
@@ -567,13 +596,6 @@ class CompileRuntimeRefreshProvider:
                     },
                 )
             return existing_refresh
-        predecessor_workspace = require_contained_path(
-            Path(predecessor_promotion["workspace_root"]),
-            run,
-            purpose="content repair continuation predecessor workspace",
-            error_type=ContractError,
-            leaf_kind="directory",
-        )
         if predecessor_workspace == successor_workspace_root.resolve():
             raise ContractError(
                 "content repair continuation requires a fresh workspace",

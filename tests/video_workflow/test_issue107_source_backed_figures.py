@@ -20,6 +20,7 @@ from tests.video_workflow.test_issue105_content_repair_handoff import (
     write_json,
 )
 from video2pdf_workflow_kernel.contracts import ContractRegistry
+from video2pdf_workflow_kernel.delivery_quality import DeliveryQualityRegistry
 from video2pdf_workflow_kernel.errors import ContractError
 from video2pdf_workflow_kernel.precompile_repair_promotion import (
     PrecompileRepairPromotionProvider,
@@ -119,7 +120,25 @@ class Issue107SourceBackedFigureTests(unittest.TestCase):
         )
         write_json(state_path, state)
         compile_manifest["entries"][0]["sha256"] = asset_sha256
-        generations["artifacts"][0]["sha256"] = asset_sha256
+        for entry in compile_manifest["entries"]:
+            entry["producer"] = (
+                "task:figure-demo"
+                if entry["logical_id"].startswith("figure_asset_")
+                else "provider:section-integration"
+            )
+        generations = PrecompileRepairPromotionProvider._derive_successor_generations(
+            run_id=read_json(run / "workflow/run.json")["run_id"],
+            compile_manifest=compile_manifest,
+            predecessor=generations,
+            production_state_sha256=hashlib.sha256(state_path.read_bytes()).hexdigest(),
+        )
+        DeliveryQualityRegistry(PROJECT_ROOT).validate(
+            "precompile-artifact-generation-set", generations
+        )
+        self.assertEqual(
+            fingerprint(generations, "generation_set_sha256"),
+            generations["generation_set_sha256"],
+        )
         evidence = [*provenance["source"].values()]
         evidence.extend(
             [
@@ -185,7 +204,8 @@ class Issue107SourceBackedFigureTests(unittest.TestCase):
         # scenario_id: issue107_wrong_source_video
         # target_invariant: transform source video equals verified visual provenance video
         # mutation_seam: transform source_video sha256
-        # rematerialized_nodes: transform file, Figure Manifest transform binding, Production state
+        # rematerialized_nodes: transform file, Figure Manifest binding, Production state,
+        # compile manifest, provider-derived Artifact Generation Set
         # intentionally_stale_nodes: none
         # expected_first_gate: precompile_repair_figure_transform_source
         # expected_error_code: precompile_repair_transform_source_video_mismatch
@@ -215,7 +235,8 @@ class Issue107SourceBackedFigureTests(unittest.TestCase):
         # scenario_id: issue107_wrong_output_asset
         # target_invariant: transform output equals current Figure asset
         # mutation_seam: transform composition.output sha256
-        # rematerialized_nodes: transform file, Figure Manifest transform binding, Production state
+        # rematerialized_nodes: transform file, Figure Manifest binding, Production state,
+        # compile manifest, provider-derived Artifact Generation Set
         # intentionally_stale_nodes: none
         # expected_first_gate: precompile_repair_figure_transform_output
         # expected_error_code: precompile_repair_transform_output_asset_mismatch

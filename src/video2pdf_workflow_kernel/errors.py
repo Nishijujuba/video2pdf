@@ -145,6 +145,18 @@ class ProductionFault(KernelError):
         self.fault_point = fault_point
 
 
+class RuntimeRefreshFault(KernelError):
+    classification = "injected_runtime_refresh_fault"
+    exit_code = 60
+
+    def __init__(self, fault_point: str) -> None:
+        super().__init__(
+            f"injected Compile Runtime refresh fault at {fault_point}",
+            data={"fault_point": fault_point},
+        )
+        self.fault_point = fault_point
+
+
 class FinalEvidenceFault(KernelError):
     classification = "injected_final_evidence_fault"
     exit_code = 60

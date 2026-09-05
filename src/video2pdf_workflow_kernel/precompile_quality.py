@@ -59,6 +59,119 @@ class PrecompileQualityProvider:
         self.project_root = project_root.resolve()
         self.registry = DeliveryQualityRegistry(self.project_root)
 
+    def assess_current_seal(self, *, workspace_root: Path) -> dict[str, Any]:
+        """Read and validate one existing Precompile authority without resealing it."""
+        root = workspace_root.resolve()
+        required = {
+            "report": root / "precompile-quality-report.json",
+            "seal": root / "precompile-text-seal.json",
+            "generations": root / "artifact-generations.json",
+            "inventory": root / "reader-facing-text-inventory.json",
+            "dependencies": root / "semantic-dependencies.json",
+        }
+        if any(not path.is_file() for path in required.values()):
+            return {
+                "classification": "precompile_refresh_required",
+                "prepare_inputs": {key: str(path) for key, path in required.items()},
+            }
+        try:
+            self.registry.check()
+            report = read_json(required["report"])
+            seal = read_json(required["seal"])
+            self.registry.validate("precompile-quality-report", report)
+            self.registry.validate("precompile-text-seal", seal)
+            _require_fingerprint(report, "report_sha256", "Precompile Quality Report")
+            _require_fingerprint(seal, "seal_sha256", "Precompile Text Seal")
+            binding_root = root / "seal-bindings" / seal["seal_sha256"]
+            generations = read_json(binding_root / "artifact-generations.json")
+            inventory = read_json(binding_root / "reader-facing-text-inventory.json")
+            dependencies = read_json(required["dependencies"])
+            self._validate_generation_set(generations)
+            self._validate_dependencies(dependencies)
+            writing_projection, catalog_sha256, projections_sha256 = (
+                self._writing_projection()
+            )
+            self._validate_inventory(inventory, generations, writing_projection)
+            self.registry.validate("precompile-artifact-generation-set", generations)
+            self.registry.validate("reader-facing-text-inventory", inventory)
+            self.registry.validate("precompile-semantic-dependencies", dependencies)
+            _require_fingerprint(
+                generations,
+                "generation_set_sha256",
+                "Precompile Artifact Generation set",
+            )
+            _require_fingerprint(
+                inventory, "inventory_sha256", "Reader-Facing Text Inventory"
+            )
+            report_by_owner = {
+                item.get("owner"): item for item in report.get("owner_reports", [])
+            }
+            if set(report_by_owner) != set(PRECOMPILE_OWNERS):
+                raise ContractError("Precompile Quality Report owner set is stale")
+            for owner in PRECOMPILE_OWNERS:
+                skeleton = read_json(_skeleton_path(root, owner))
+                patch = read_json(_patch_path(root, owner))
+                commit = read_json(_commit_path(root, owner))
+                _require_fingerprint(skeleton, "skeleton_sha256", "Reviewer Skeleton")
+                self._validate_skeleton_current(root, skeleton, owner)
+                self._validate_patch(patch, skeleton, owner)
+                _require_fingerprint(commit, "commit_sha256", "Patch commit")
+                owner_report = report_by_owner[owner]
+                if (
+                    owner_report.get("skeleton_sha256")
+                    != skeleton["skeleton_sha256"]
+                    or owner_report.get("patch_sha256") != patch["patch_sha256"]
+                    or owner_report.get("commit_sha256") != commit["commit_sha256"]
+                    or commit.get("state") != "committed"
+                    or commit.get("generation_set_sha256")
+                    != generations["generation_set_sha256"]
+                ):
+                    raise ContractError("Precompile reviewer authority is stale")
+            current_provider = {
+                "provider_id": PRECOMPILE_PROVIDER_ID,
+                "provider_version": PRECOMPILE_PROVIDER_VERSION,
+                "provider_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            }
+            if (
+                report.get("overall_decision") != "pass"
+                or report.get("contract_gaps")
+                or report.get("provider") != current_provider
+                or seal.get("provider") != current_provider
+                or seal.get("precompile_quality_report_sha256")
+                != report.get("report_sha256")
+                or seal.get("generation_set_sha256")
+                != generations.get("generation_set_sha256")
+                or seal.get("inventory_sha256") != inventory.get("inventory_sha256")
+                or seal.get("reader_text_set_sha256")
+                != inventory.get("reader_text_set_sha256")
+                or seal.get("semantic_dependencies_sha256")
+                != dependencies.get("dependencies_sha256")
+                or seal.get("catalog_sha256") != catalog_sha256
+                or seal.get("role_projections_sha256") != projections_sha256
+                or report.get("generation_set_sha256")
+                != generations.get("generation_set_sha256")
+                or report.get("inventory_sha256") != inventory.get("inventory_sha256")
+                or report.get("semantic_dependencies_sha256")
+                != dependencies.get("dependencies_sha256")
+                or report.get("catalog_sha256") != catalog_sha256
+                or report.get("role_projections_sha256") != projections_sha256
+            ):
+                raise ContractError("Precompile authority is stale")
+        except (ContractError, KeyError, OSError, TypeError, ValueError):
+            return {
+                "classification": "precompile_refresh_required",
+                "prepare_inputs": {key: str(path) for key, path in required.items()},
+                "suggested_workspace_root": str(
+                    root.parent / "runtime-refresh-successor"
+                ),
+            }
+        return {
+            "classification": "precompile_seal_reused",
+            "workspace_root": str(root),
+            "seal_sha256": seal["seal_sha256"],
+            "artifact_generations": generations["artifacts"],
+        }
+
     def prepare(
         self,
         *,

@@ -117,6 +117,7 @@ flowchart TD
 - ADR 0032–0034: deep production orchestration, bounded figure waves, and parallel Content Assurance.
 - ADR 0048: declared Compile Manifest with recorder-proven dependency closure.
 - ADR 0052–0053: Content Assurance repair closure plus final sealing, compile, and render evidence.
+- ADR 0067: recorder-derived, resumable Compile Runtime successor publication.
 
 ### Final acceptance and repair
 

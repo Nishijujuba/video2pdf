@@ -10,7 +10,14 @@ import shutil
 from typing import Any
 from contextlib import contextmanager
 
-from .errors import ArtifactDrift, ContractError, KernelConflict, ProductionFault, SupersededProductionAttempt
+from .errors import (
+    ArtifactDrift,
+    ContractError,
+    KernelConflict,
+    ProductionFault,
+    RuntimeRefreshFault,
+    SupersededProductionAttempt,
+)
 from .guarded_compile import GuardedCompileProvider
 from .utils import read_json, require_contained_path, sha256_file, write_json_atomic
 
@@ -149,6 +156,13 @@ class ContentProduction:
         state_path = self._state_path(run_dir)
         if not state_path.is_file():
             raise ContractError("Final Compile requires current Production State")
+        refresh_path = run_dir / "workflow/runtime-refresh-active.json"
+        if refresh_path.is_file():
+            refresh = read_json(refresh_path)
+            if refresh.get("state") != "committed":
+                raise ContractError(
+                    "Final Compile is blocked while Compile Runtime refresh is incomplete"
+                )
         with self._exclusive_run_lock(run_dir):
             state = self._load_or_create_state(run_dir)
             plan = self._plan_locked(run_dir, state, persist=False)
@@ -493,6 +507,46 @@ class ContentProduction:
                 "diagnostic_compile_report_sha256": sha256_file(report_path),
                 "diagnostic_pdf_sha256": diagnostic_pdf["sha256"],
             }
+
+    def refresh_diagnostic_compile(
+        self,
+        run_dir: Path,
+        runtime_policy: dict[str, Any],
+        *,
+        fault_point: str | None = None,
+    ) -> dict[str, Any]:
+        """Publish a successor diagnostic compile without changing content owners."""
+        run_dir = run_dir.resolve()
+        with self._exclusive_run_lock(run_dir):
+            state = self._load_or_create_state(run_dir)
+            if self._plan_locked(run_dir, state, persist=False).get("classification") != "production_complete":
+                raise ContractError("Compile Runtime refresh requires complete Production")
+            before = {
+                key: dict(value)
+                for key, value in state["artifacts"].items()
+                if key not in {
+                    "compile_manifest",
+                    "diagnostic_compile_report",
+                    "diagnostic_pdf",
+                }
+            }
+            result = self._compile(run_dir, state, runtime_policy)
+            after = {
+                key: dict(value)
+                for key, value in state["artifacts"].items()
+                if key not in {
+                    "compile_manifest",
+                    "diagnostic_compile_report",
+                    "diagnostic_pdf",
+                }
+            }
+            if after != before:
+                raise ContractError("Compile Runtime refresh changed Production content authority")
+            if fault_point == "before_production_state_publish":
+                raise RuntimeRefreshFault(fault_point)
+            self.kernel.contracts.validate("production-state", state)
+            write_json_atomic(self._state_path(run_dir), state)
+            return result
 
     @staticmethod
     def _artifact(state: dict[str, Any], logical_id: str) -> dict[str, Any]:

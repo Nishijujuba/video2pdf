@@ -35,6 +35,7 @@ from .task_execution import (
 )
 from .content_production import PRODUCTION_FAULT_POINTS
 from .guarded_compile import GuardedCompileProvider
+from .runtime_refresh import CompileRuntimeRefreshProvider, RUNTIME_REFRESH_FAULT_POINTS
 from .final_compile import GuardedFinalCompileProvider
 from .final_delivery_evidence import (
     FINAL_EVIDENCE_FAULT_POINTS,
@@ -708,6 +709,15 @@ def _parser() -> argparse.ArgumentParser:
     guarded_compile.add_argument("--manifest", required=True, type=Path)
     guarded_compile.add_argument("--runtime-policy", required=True, type=Path)
 
+    runtime_refresh = commands.add_parser("compile-runtime-refresh")
+    runtime_refresh.add_argument("--run-dir", required=True, type=Path)
+    runtime_refresh.add_argument("--refreshed-at", required=True)
+    runtime_refresh.add_argument("--precompile-workspace-root", type=Path)
+    runtime_refresh.add_argument("--final-compile-manifest", type=Path)
+    runtime_refresh.add_argument(
+        "--fault-point", choices=sorted(RUNTIME_REFRESH_FAULT_POINTS)
+    )
+
     batch_plan = commands.add_parser("batch-plan")
     batch_plan.add_argument("--project-config", required=True, type=Path)
     batch_plan.add_argument("--platform", required=True, choices=("bilibili", "youtube"))
@@ -1288,6 +1298,21 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             "diagnostic_compile_ready",
             result["report"],
             str(result["report_path"]),
+        )
+    if command == "compile-runtime-refresh":
+        result = CompileRuntimeRefreshProvider(project_root).refresh(
+            run_dir=args.run_dir,
+            refreshed_at=args.refreshed_at,
+            precompile_workspace_root=args.precompile_workspace_root,
+            final_compile_manifest_path=args.final_compile_manifest,
+            fault_point=args.fault_point,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            result.get("successor_final_compile_manifest_path")
+            or result["runtime_policy_path"],
         )
     if command == "production-plan":
         run_dir = args.run_dir.resolve()

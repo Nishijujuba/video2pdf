@@ -32,6 +32,15 @@ The Pyramid Evaluation Context owns Pyramid standards, semantic evaluation, and 
 
 The authoritative lifecycle boundary for a single video-to-PDF run. It owns deterministic coordination, artifact state, checkpoints, recovery, and delivery mechanics while semantic judgment remains with registered providers and agents.
 
+## Compile Runtime Refresh
+
+A resumable Kernel recovery operation for a drifted Compile Runtime Policy. It
+derives a narrow successor inventory from the current Diagnostic Compile recorder
+closure, republishes Diagnostic Compile through Production authority, validates
+unchanged Precompile authority or reports the exact fresh-review inputs, and
+derives the successor Final Compile Manifest. Its pending journal blocks Final
+Compile, and its retained predecessor archive preserves the superseded evidence.
+
 ## Video Platform Adapter
 
 An internal source-specific adapter that supplies platform identity and acquisition behavior to the Video Workflow Kernel while preserving the shared downstream lifecycle.

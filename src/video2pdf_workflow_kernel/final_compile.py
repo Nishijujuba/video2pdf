@@ -1292,7 +1292,9 @@ class GuardedFinalCompileProvider:
             require_single_link=True,
         )
         policy = read_json(runtime_policy)
-        GuardedCompileProvider(self.project_root)._validate_runtime_policy(policy)
+        registered_runtime_inputs = GuardedCompileProvider(
+            self.project_root
+        )._validate_runtime_policy(policy)
         runtime_roots = [
             Path(value).resolve() for value in policy["allowed_runtime_roots"]
         ]
@@ -1558,6 +1560,14 @@ class GuardedFinalCompileProvider:
             observed = observed.resolve()
             identity = str(observed).casefold()
             if identity in declared_recorder_paths:
+                observed_recorder_paths.append(identity)
+                continue
+            registered_sha256 = registered_runtime_inputs.get(identity)
+            if registered_sha256 is not None:
+                if not observed.is_file() or sha256_file(observed) != registered_sha256:
+                    raise CompileDependencyGap(
+                        "Final Compile recorder contains drifted runtime dependency"
+                    )
                 observed_recorder_paths.append(identity)
                 continue
             try:

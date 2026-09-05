@@ -55,6 +55,8 @@ with (cwd / f"{stem}.fls").open("w", encoding="utf-8") as handle:
     for value in os.environ.get("VIDEO2PDF_FIXTURE_FONTS", "").split(os.pathsep):
         if value:
             handle.write(f"INPUT {Path(value).resolve()}\n")
+    if "VIDEO2PDF_FIXTURE_REGISTERED_RUNTIME_INPUT" in source:
+        handle.write(f"INPUT {Path(__file__).resolve()}\n")
     undeclared = os.environ.get("VIDEO2PDF_FIXTURE_UNDECLARED_INPUT")
     if undeclared:
         handle.write(f"INPUT {Path(undeclared).resolve()}\n")

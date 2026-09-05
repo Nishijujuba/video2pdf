@@ -955,6 +955,7 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         }
         manifest["manifest_sha256"] = fingerprint(manifest, "manifest_sha256")
         fixture.manifest.write_bytes(canonical_bytes(manifest))
+        self._last_final_compile_manifest = manifest
         workspace = run_dir / "review/final-compile"
         allowed_root = Path(sys.executable).resolve().parent
         valid_miktex_paths = os.pathsep.join(
@@ -1034,8 +1035,27 @@ class GuardedFinalCompileProviderAuthorityTests(unittest.TestCase):
         self.assertNotIn("ordinary_secret", runtime_environment)
         return workspace
 
-    def test_public_final_compile_allows_unread_governance_entries(self) -> None:
-        self._run_public_final_compile_fixture()
+    def test_public_final_compile_allows_unread_governance_and_registered_runtime_inputs(
+        self,
+    ) -> None:
+        workspace = self._run_public_final_compile_fixture(
+            "VIDEO2PDF_FIXTURE_REGISTERED_RUNTIME_INPUT",
+            via_cli=True,
+        )
+        report = json.loads(
+            (workspace / "final-compile-report.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            self._last_final_compile_manifest["approved_runtime_inputs"],
+            report["dependency_closure"]["runtime_inputs"],
+        )
+        self.assertNotIn(
+            str(FAKE_ENGINE.resolve()).casefold(),
+            {
+                str(item["path"]).casefold()
+                for item in report["dependency_closure"]["generated_inputs"]
+            },
+        )
 
     def test_public_final_compile_accepts_bound_raster_source_path(self) -> None:
         self._run_public_final_compile_fixture(include_raster=True)

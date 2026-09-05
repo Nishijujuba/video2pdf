@@ -2508,9 +2508,13 @@ class PrecompileRepairPromotionProvider:
                             "Precompile repair visual evidence source identity changed"
                         )
                     if (
-                        prior_asset.get("sha256") != asset["sha256"]
-                        or visual.get("source") != current_source
-                    ) and transform is None:
+                        current_source["kind"] == "source_timestamp"
+                        and (
+                            prior_asset.get("sha256") != asset["sha256"]
+                            or visual.get("source") != current_source
+                        )
+                        and transform is None
+                    ):
                         PrecompileRepairPromotionProvider._reject(
                             "changed source-backed Figure requires transform evidence",
                             "precompile_repair_figure_transform_record",

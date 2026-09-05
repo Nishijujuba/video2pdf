@@ -11,7 +11,7 @@ from video2pdf_workflow_kernel.utils import read_json
 
 
 class RepairDerivationOperationIdentityTests(unittest.TestCase):
-    def _case(self) -> tuple[object, dict[str, object], Path, Path]:
+    def _unchanged_inputs_with_semantic_candidates(self) -> tuple[object, dict[str, object], Path, Path]:
         fixture = Issue113SemanticInputRepairTests()
         provider, arguments = fixture._semantic_only_case()
         semantic_inventory = Path(arguments["inventory_path"])
@@ -34,7 +34,7 @@ class RepairDerivationOperationIdentityTests(unittest.TestCase):
         for scenario in ("prepared_at", "inventory", "semantic_dependencies"):
             with self.subTest(scenario=scenario):
                 provider, arguments, semantic_inventory, semantic_dependencies = (
-                    self._case()
+                    self._unchanged_inputs_with_semantic_candidates()
                 )
                 promotions_root = (
                     Path(arguments["run_dir"])
@@ -45,6 +45,10 @@ class RepairDerivationOperationIdentityTests(unittest.TestCase):
                 self.assertEqual(
                     "precompile_repair_evaluation_inputs_unchanged",
                     initial.exception.data["error_code"],
+                )
+                self.assertEqual(
+                    "precompile_repair_input_advance",
+                    initial.exception.data["first_failing_gate"],
                 )
                 initial_operations = {path.name for path in promotions_root.iterdir()}
                 self.assertEqual(1, len(initial_operations))
@@ -72,6 +76,10 @@ class RepairDerivationOperationIdentityTests(unittest.TestCase):
                     self.assertEqual(
                         "precompile_repair_evaluation_inputs_unchanged",
                         repeated_no_change.exception.data["error_code"],
+                    )
+                    self.assertEqual(
+                        "precompile_repair_input_advance",
+                        repeated_no_change.exception.data["first_failing_gate"],
                     )
                 self.assertEqual(
                     2,

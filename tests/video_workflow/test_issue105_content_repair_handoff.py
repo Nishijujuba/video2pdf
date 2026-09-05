@@ -572,6 +572,265 @@ class Issue105ContentRepairHandoffTests(unittest.TestCase):
             raised.exception.data["error_code"],
         )
 
+    def _visual_derivation_fixture(self) -> tuple[Path, Path, dict, dict, dict, bytes]:
+        root = new_case_dir(self.id(), label="issue105-visual-derivation")
+        run = root / "run"
+        write_json(run / "workflow/run.json", {"run_id": "a" * 32})
+        asset_path = run / "figures/figure_demo.png"
+        asset_path.parent.mkdir(parents=True)
+        asset_path.write_bytes(b"unchanged reviewed image")
+        asset_sha256 = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+        manifest = {
+            "schema_name": "figure-manifest",
+            "schema_version": "2.0.0",
+            "kernel_version": "2.0.0",
+            "slot_id": "figure_demo",
+            "section_id": "section_02",
+            "asset_path": "figures/figure_demo.png",
+            "asset_sha256": asset_sha256,
+            "caption": "current reviewed caption",
+            "slot_contribution_path": "work/figures/figure_demo.tex",
+            "slot_contribution_sha256": "b" * 64,
+            "source": {"kind": "source_timestamp", "value": "00:05:03--00:05:20"},
+        }
+        manifest_path = write_json(run / "work/figures/figure_demo.manifest.json", manifest)
+        write_json(
+            run / "workflow/production-state.json",
+            {
+                "artifacts": {
+                    "figure_manifest_figure_demo": {
+                        "generation": 2,
+                        "path": "work/figures/figure_demo.manifest.json",
+                        "producer": "task:figure-demo",
+                        "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                        "size": len(manifest_path.read_bytes()),
+                    }
+                }
+            },
+        )
+        section_path = run / "work/integration/section_02.tex"
+        section_path.parent.mkdir(parents=True)
+        section_path.write_text(
+            r"\includegraphics{figures/figure_demo.png}", encoding="utf-8"
+        )
+        entries = [
+            {
+                "logical_id": "figure_asset_figure_demo",
+                "generation": 2,
+                "sha256": asset_sha256,
+                "source_path": "figures/figure_demo.png",
+            },
+            {
+                "logical_id": "integrated_section_02",
+                "generation": 4,
+                "sha256": hashlib.sha256(section_path.read_bytes()).hexdigest(),
+                "source_path": "work/integration/section_02.tex",
+            },
+        ]
+        compile_manifest = {"entries": entries}
+        generations = {
+            "artifacts": [
+                {
+                    key: entry[key]
+                    for key in ("logical_id", "generation", "sha256")
+                }
+                for entry in entries
+            ],
+            "generation_set_sha256": "c" * 64,
+        }
+        old_caption = "old reviewed caption"
+        item = {
+            "applicable_rule_ids": ["argument_chain_integrity"],
+            "declaration_basis": "direct_visual_inspection_and_current_figure_manifest",
+            "declared_text": old_caption,
+            "item_id": "raster.figure_asset_figure_demo",
+            "kind": "figure_text",
+            "language_profile_id": "zh-hans",
+            "locator": "raster:figures/figure_demo.png",
+            "representation": "authoritative_raster_text",
+            "semantic_region": "figure_asset_figure_demo",
+            "source_artifact_logical_id": "figure_asset_figure_demo",
+            "source_generation": 1,
+            "source_sha256": asset_sha256,
+            "text_sha256": hashlib.sha256(old_caption.encode("utf-8")).hexdigest(),
+        }
+        item["item_sha256"] = fingerprint(item, "item_sha256")
+        inventory = {
+            "schema_name": "reader-facing-text-inventory",
+            "schema_version": "1.0.0",
+            "items": [item],
+            "declared_surface": [
+                {"kind": "figure_text", "region_id": item["item_id"]}
+            ],
+            "coverage_ledger": [
+                {
+                    "item_id": item["item_id"],
+                    "region_id": item["item_id"],
+                    "status": "covered",
+                }
+            ],
+        }
+        source_records = {}
+        for name, relative, value in (
+            ("manifest", "source/manifest.json", b"source manifest"),
+            ("video", "source/media/video.mp4", b"video"),
+            ("subtitle", "source/subtitles/subtitle.en.srt", b"subtitle"),
+            ("cover", "source/cover/cover.jpg", b"cover"),
+        ):
+            path = run / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+            source_records[name] = {
+                "path": relative,
+                "sha256": hashlib.sha256(value).hexdigest(),
+            }
+        provenance = {
+            "schema_name": "visual-source-provenance",
+            "schema_version": "1.0.0",
+            "created_at": "2026-09-04T00:00:00Z",
+            "run_id": "a" * 32,
+            "source": source_records,
+            "visual_evidence": [
+                {
+                    "scope_id": "visual-representation-01",
+                    "figure_asset": {
+                        "logical_id": "figure_asset_figure_demo",
+                        "path": "figures/figure_demo.png",
+                        "generation": 1,
+                        "sha256": asset_sha256,
+                    },
+                    "figure_manifest": {
+                        "logical_id": "figure_manifest_figure_demo",
+                        "path": "work/figures/figure_demo.manifest.json",
+                        "generation": 1,
+                        "sha256": "d" * 64,
+                    },
+                    "source": manifest["source"],
+                }
+            ],
+        }
+        provenance["manifest_sha256"] = fingerprint(provenance, "manifest_sha256")
+        provenance_path = write_json(
+            run / "review/precompile/original/evidence/visual-source-provenance.json",
+            provenance,
+        )
+        evidence = [*source_records.values()]
+        evidence.append(
+            {
+                "path": provenance_path.relative_to(run).as_posix(),
+                "sha256": hashlib.sha256(provenance_path.read_bytes()).hexdigest(),
+            }
+        )
+        evidence.extend(
+            {"path": entry["source_path"], "sha256": entry["sha256"]}
+            for entry in entries[:2]
+        )
+        projection = {
+            "evidence": evidence,
+            "primary_source": source_records["subtitle"]["path"],
+            "projection_id": "youtube-source-faithfulness-evaluation-with-visual-provenance",
+            "source_manifest": source_records["manifest"]["path"],
+            "visual_source_provenance": provenance_path.relative_to(run).as_posix(),
+        }
+        dependencies = {
+            "schema_name": "precompile-semantic-dependencies",
+            "schema_version": "1.0.0",
+            "dependencies": [
+                {
+                    "owner": "source-faithfulness-reviewer",
+                    "projection_id": projection["projection_id"],
+                    "projection": projection,
+                    "projection_sha256": hashlib.sha256(
+                        canonical_json_bytes(projection)
+                    ).hexdigest(),
+                }
+            ],
+        }
+        return (
+            run,
+            run / "review/precompile/production-repair-promotions/issue105-visual",
+            compile_manifest,
+            generations,
+            inventory,
+            canonical_json_bytes(provenance),
+        )
+
+    def test_successor_inventory_refreshes_raster_caption_from_current_manifest(self) -> None:
+        run, _output_root, compile_manifest, generations, inventory, _provenance = (
+            self._visual_derivation_fixture()
+        )
+        successor = PrecompileRepairPromotionProvider._derive_successor_inventory(
+            run_dir=run,
+            compile_manifest=compile_manifest,
+            generations=generations,
+            candidate=inventory,
+            operation_id="issue105visual",
+        )
+        raster = successor["items"][0]
+        self.assertEqual("current reviewed caption", raster["declared_text"])
+        self.assertEqual(
+            hashlib.sha256(b"current reviewed caption").hexdigest(),
+            raster["text_sha256"],
+        )
+
+    def test_successor_dependencies_publish_fresh_current_visual_provenance(self) -> None:
+        run, output_root, compile_manifest, generations, _inventory, original_bytes = (
+            self._visual_derivation_fixture()
+        )
+        original_path = (
+            run / "review/precompile/original/evidence/visual-source-provenance.json"
+        )
+        candidate = {
+            "schema_name": "precompile-semantic-dependencies",
+            "schema_version": "1.0.0",
+            "dependencies": [
+                {
+                    "owner": "source-faithfulness-reviewer",
+                    "projection_id": "youtube-source-faithfulness-evaluation-with-visual-provenance",
+                    "projection": {
+                        "evidence": [
+                            {
+                                "path": original_path.relative_to(run).as_posix(),
+                                "sha256": hashlib.sha256(original_path.read_bytes()).hexdigest(),
+                            }
+                        ],
+                        "primary_source": "source/subtitles/subtitle.en.srt",
+                        "projection_id": "youtube-source-faithfulness-evaluation-with-visual-provenance",
+                        "source_manifest": "source/manifest.json",
+                        "visual_source_provenance": original_path.relative_to(run).as_posix(),
+                    },
+                }
+            ],
+        }
+        successor = PrecompileRepairPromotionProvider._derive_successor_dependencies(
+            run_dir=run,
+            candidate=candidate,
+            compile_manifest=compile_manifest,
+            generations=generations,
+            output_root=output_root,
+            prepared_at="2026-09-05T12:00:00Z",
+        )
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        projection = successor["dependencies"][0]["projection"]
+        derived_path = run / projection["visual_source_provenance"]
+        derived = read_json(derived_path)
+        self.assertEqual(2, derived["visual_evidence"][0]["figure_asset"]["generation"])
+        self.assertEqual(2, derived["visual_evidence"][0]["figure_manifest"]["generation"])
+        self.assertEqual(
+            hashlib.sha256(
+                (run / "work/figures/figure_demo.manifest.json").read_bytes()
+            ).hexdigest(),
+            derived["visual_evidence"][0]["figure_manifest"]["sha256"],
+        )
+        self.assertEqual(
+            {"kind": "source_timestamp", "value": "00:05:03--00:05:20"},
+            derived["visual_evidence"][0]["source"],
+        )
+        self.assertEqual(
+            derived_path.relative_to(run).as_posix(),
+            projection["evidence"][0]["path"],
+        )
+
     def _integrated_main(self, first_section: str) -> str:
         root = new_case_dir(self.id(), label="issue105-frontmatter")
         run = root / "run"

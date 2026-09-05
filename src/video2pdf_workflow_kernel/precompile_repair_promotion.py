@@ -270,7 +270,7 @@ class PrecompileRepairPromotionProvider:
         operation_id = hashlib.sha256(
             canonical_json_bytes(
                 {
-                    "successor_inventory_derivation_version": "5",
+                    "successor_inventory_derivation_version": "6",
                     "bundle_sha256": sha256_file(bundle_path),
                     "predecessor_generation_set_sha256": predecessor[
                         "generation_set_sha256"
@@ -355,6 +355,10 @@ class PrecompileRepairPromotionProvider:
         successor_dependencies = self._derive_successor_dependencies(
             run_dir=run_dir,
             candidate=candidate_dependencies,
+            compile_manifest=compile_manifest,
+            generations=successor,
+            output_root=output_root,
+            prepared_at=prepared_at,
         )
         self.delivery_quality.validate(
             "precompile-semantic-dependencies", successor_dependencies
@@ -1090,7 +1094,21 @@ class PrecompileRepairPromotionProvider:
                 )
             ):
                 continue
-            if item.get("representation") == "structured_text":
+            if item.get("representation") == "authoritative_raster_text":
+                _asset, _manifest_artifact, figure_manifest = (
+                    PrecompileRepairPromotionProvider._current_figure_evidence(
+                        run_dir=run_dir,
+                        manifest_by_id=manifest_by_id,
+                        generation_by_id=generation_by_id,
+                        asset_logical_id=logical_id,
+                    )
+                )
+                declared_text = figure_manifest["caption"]
+                item["declared_text"] = declared_text
+                item["text_sha256"] = hashlib.sha256(
+                    declared_text.encode("utf-8")
+                ).hexdigest()
+            elif item.get("representation") == "structured_text":
                 source_path = require_contained_path(
                     run_dir / manifest_entry["source_path"],
                     run_dir,
@@ -1177,6 +1195,104 @@ class PrecompileRepairPromotionProvider:
             canonical_json_bytes(inventory)
         ).hexdigest()
         return inventory
+
+    @staticmethod
+    def _current_figure_evidence(
+        *,
+        run_dir: Path,
+        manifest_by_id: dict[str, dict[str, Any]],
+        generation_by_id: dict[str, dict[str, Any]],
+        asset_logical_id: object,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        if not isinstance(asset_logical_id, str) or not asset_logical_id.startswith(
+            "figure_asset_"
+        ):
+            raise ContractError("Precompile repair raster identity is invalid")
+        slot_id = asset_logical_id.removeprefix("figure_asset_")
+        manifest_logical_id = f"figure_manifest_{slot_id}"
+        asset = generation_by_id.get(asset_logical_id)
+        asset_entry = manifest_by_id.get(asset_logical_id)
+        production_state = read_json(run_dir / "workflow/production-state.json")
+        manifest_artifact = production_state.get("artifacts", {}).get(
+            manifest_logical_id
+        )
+        if any(
+            not isinstance(value, dict)
+            for value in (asset, manifest_artifact, asset_entry)
+        ):
+            raise ContractError(
+                f"Precompile repair current Figure binding is incomplete: {slot_id}"
+            )
+        if any(
+            asset.get(key) != asset_entry.get(key)
+            for key in ("logical_id", "generation", "sha256")
+        ):
+            raise ContractError(
+                f"Precompile repair current Figure generation is stale: {slot_id}"
+            )
+        asset_path = require_contained_path(
+            run_dir / str(asset_entry.get("source_path", "")),
+            run_dir,
+            purpose="Precompile repair current Figure asset",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        manifest_path = require_contained_path(
+            run_dir / str(manifest_artifact.get("path", "")),
+            run_dir,
+            purpose="Precompile repair current Figure Manifest",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if (
+            sha256_file(asset_path) != asset["sha256"]
+            or sha256_file(manifest_path) != manifest_artifact["sha256"]
+        ):
+            raise ContractError(
+                f"Precompile repair current Figure bytes drifted: {slot_id}"
+            )
+        figure_manifest = read_json(manifest_path)
+        if (
+            figure_manifest.get("schema_name") != "figure-manifest"
+            or figure_manifest.get("schema_version") != "2.0.0"
+            or figure_manifest.get("slot_id") != slot_id
+            or figure_manifest.get("asset_sha256") != asset["sha256"]
+            or not isinstance(figure_manifest.get("caption"), str)
+            or not figure_manifest["caption"]
+            or not isinstance(figure_manifest.get("source"), dict)
+        ):
+            raise ContractError(
+                f"Precompile repair current Figure Manifest is invalid: {slot_id}"
+            )
+        declared_asset_path = require_contained_path(
+            run_dir / str(figure_manifest["asset_path"]),
+            run_dir,
+            purpose="Precompile repair Figure Manifest asset binding",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if declared_asset_path != asset_path:
+            raise ContractError(
+                f"Precompile repair current Figure Manifest asset path changed: {slot_id}"
+            )
+        return (
+            {
+                "logical_id": asset_logical_id,
+                "path": asset_path.relative_to(run_dir).as_posix(),
+                "generation": asset["generation"],
+                "sha256": asset["sha256"],
+            },
+            {
+                "logical_id": manifest_logical_id,
+                "path": manifest_path.relative_to(run_dir).as_posix(),
+                "generation": manifest_artifact["generation"],
+                "sha256": manifest_artifact["sha256"],
+            },
+            figure_manifest,
+        )
 
     @staticmethod
     def _tcolorbox_titles(
@@ -1269,6 +1385,10 @@ class PrecompileRepairPromotionProvider:
         *,
         run_dir: Path,
         candidate: dict[str, Any],
+        compile_manifest: dict[str, Any],
+        generations: dict[str, Any],
+        output_root: Path,
+        prepared_at: str,
     ) -> dict[str, Any]:
         if (
             candidate.get("schema_name") != "precompile-semantic-dependencies"
@@ -1280,6 +1400,12 @@ class PrecompileRepairPromotionProvider:
             raise ContractError("Precompile repair semantic dependencies are missing")
         successor = deepcopy(candidate)
         successor.pop("dependencies_sha256", None)
+        manifest_by_id = {
+            item["logical_id"]: item for item in compile_manifest["entries"]
+        }
+        generation_by_id = {
+            item["logical_id"]: item for item in generations["artifacts"]
+        }
         for dependency in successor["dependencies"]:
             projection = dependency.get("projection")
             evidence = projection.get("evidence") if isinstance(projection, dict) else None
@@ -1287,6 +1413,148 @@ class PrecompileRepairPromotionProvider:
                 raise ContractError(
                     "Precompile repair semantic projection evidence is missing"
                 )
+            provenance_relative = projection.get("visual_source_provenance")
+            if provenance_relative is not None:
+                provenance_path = require_contained_path(
+                    run_dir / str(provenance_relative),
+                    run_dir,
+                    purpose="Precompile repair visual source provenance",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                provenance = read_json(provenance_path)
+                expected_fingerprint = hashlib.sha256(
+                    canonical_json_bytes(
+                        {
+                            key: value
+                            for key, value in provenance.items()
+                            if key != "manifest_sha256"
+                        }
+                    )
+                ).hexdigest()
+                run_record = read_json(run_dir / "workflow/run.json")
+                source = provenance.get("source")
+                visual_evidence = provenance.get("visual_evidence")
+                if (
+                    provenance.get("schema_name") != "visual-source-provenance"
+                    or provenance.get("schema_version") != "1.0.0"
+                    or provenance.get("manifest_sha256") != expected_fingerprint
+                    or provenance.get("run_id") != run_record.get("run_id")
+                    or not isinstance(source, dict)
+                    or set(source) != {"manifest", "video", "subtitle", "cover"}
+                    or not isinstance(visual_evidence, list)
+                    or not visual_evidence
+                    or projection.get("source_manifest")
+                    != source.get("manifest", {}).get("path")
+                    or projection.get("primary_source")
+                    != source.get("subtitle", {}).get("path")
+                ):
+                    raise ContractError(
+                        "Precompile repair visual source provenance identity is invalid"
+                    )
+                for source_item in source.values():
+                    if not isinstance(source_item, dict):
+                        raise ContractError(
+                            "Precompile repair visual source evidence is invalid"
+                        )
+                    source_path = require_contained_path(
+                        run_dir / str(source_item.get("path", "")),
+                        run_dir,
+                        purpose="Precompile repair visual source evidence",
+                        error_type=ContractError,
+                        leaf_kind="file",
+                        require_single_link=True,
+                    )
+                    if sha256_file(source_path) != source_item.get("sha256"):
+                        raise ContractError(
+                            "Precompile repair visual source evidence drifted"
+                        )
+                refreshed_visual_evidence = []
+                for visual in visual_evidence:
+                    if not isinstance(visual, dict):
+                        raise ContractError(
+                            "Precompile repair visual evidence entry is invalid"
+                        )
+                    prior_asset = visual.get("figure_asset")
+                    prior_manifest = visual.get("figure_manifest")
+                    if not isinstance(prior_asset, dict) or not isinstance(
+                        prior_manifest, dict
+                    ):
+                        raise ContractError(
+                            "Precompile repair visual evidence binding is invalid"
+                        )
+                    asset, manifest_artifact, figure_manifest = (
+                        PrecompileRepairPromotionProvider._current_figure_evidence(
+                            run_dir=run_dir,
+                            manifest_by_id=manifest_by_id,
+                            generation_by_id=generation_by_id,
+                            asset_logical_id=prior_asset.get("logical_id"),
+                        )
+                    )
+                    if (
+                        prior_manifest.get("logical_id")
+                        != manifest_artifact["logical_id"]
+                        or prior_asset.get("path") != asset["path"]
+                        or prior_asset.get("sha256") != asset["sha256"]
+                        or visual.get("source") != figure_manifest["source"]
+                    ):
+                        raise ContractError(
+                            "Precompile repair visual evidence source identity changed"
+                        )
+                    refreshed_visual_evidence.append(
+                        {
+                            "scope_id": visual.get("scope_id"),
+                            "figure_asset": asset,
+                            "figure_manifest": manifest_artifact,
+                            "source": figure_manifest["source"],
+                        }
+                    )
+                current_figure_ids = {
+                    logical_id
+                    for logical_id in generation_by_id
+                    if logical_id.startswith("figure_asset_")
+                }
+                if {
+                    item["figure_asset"]["logical_id"]
+                    for item in refreshed_visual_evidence
+                } != current_figure_ids:
+                    raise ContractError(
+                        "Precompile repair visual evidence scope is incomplete"
+                    )
+                derived_provenance = {
+                    "created_at": prepared_at,
+                    "run_id": provenance["run_id"],
+                    "schema_name": "visual-source-provenance",
+                    "schema_version": "1.0.0",
+                    "source": source,
+                    "visual_evidence": refreshed_visual_evidence,
+                }
+                derived_provenance["manifest_sha256"] = hashlib.sha256(
+                    canonical_json_bytes(derived_provenance)
+                ).hexdigest()
+                derived_path = output_root / "evidence/visual-source-provenance.json"
+                derived_bytes = canonical_json_bytes(derived_provenance)
+                if derived_path.exists() and derived_path.read_bytes() != derived_bytes:
+                    raise ContractError(
+                        "Precompile repair visual source provenance is already published immutably"
+                    )
+                if not derived_path.exists():
+                    derived_path.parent.mkdir(parents=True, exist_ok=True)
+                    write_json_atomic(derived_path, derived_provenance)
+                matching_evidence = [
+                    item
+                    for item in evidence
+                    if item.get("path") == provenance_relative
+                ]
+                if len(matching_evidence) != 1:
+                    raise ContractError(
+                        "Precompile repair visual provenance projection binding is invalid"
+                    )
+                derived_relative = derived_path.relative_to(run_dir).as_posix()
+                matching_evidence[0]["path"] = derived_relative
+                matching_evidence[0]["sha256"] = sha256_file(derived_path)
+                projection["visual_source_provenance"] = derived_relative
             for item in evidence:
                 path = require_contained_path(
                     run_dir / str(item.get("path", "")),

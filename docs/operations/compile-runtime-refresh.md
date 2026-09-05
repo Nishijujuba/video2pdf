@@ -46,6 +46,15 @@ target file before writing the Attempt. The repair bundle remains immutable.
 Changes to the target SHA, path, logical id, or evaluation context remain stale
 review evidence and block promotion.
 
+Successor semantic inputs are derived from current Production Figure bindings.
+Authoritative raster text takes its caption from the current Figure Manifest,
+after the provider verifies the bound image and manifest bytes. Visual source
+provenance is rebuilt under the new promotion output with current Figure asset
+and manifest generations while retaining the validated source document
+identities and unchanged Figure source timestamp. The predecessor provenance
+file remains unchanged, and the successor dependency projection points to the
+new derived provenance.
+
 Successful promotion records the provider-derived Artifact Generations,
 Reader-Facing Text Inventory, semantic dependencies, and repair workspace in the
 active handoff. Final Compile remains blocked while fresh isolated judgments and
@@ -78,6 +87,9 @@ recorded predecessor Final Compile Manifest.
 - Positive fixture: the focused Seal fault fixture now starts from a coherent
   promoted generation set, fails after Seal publication, then proves that replay
   writes one current successor manifest and remains idempotent.
+- Derived-input fixtures: focused caption and visual-provenance cases cover the
+  current Figure Manifest caption, current nested Figure generations, immutable
+  predecessor evidence, and the successor projection path.
 - Negative fixture: generation-file drift is introduced after promotion while
   the recorded file binding remains fixed. Its first failing gate is
   `content_repair_generation_file_binding`, with error code

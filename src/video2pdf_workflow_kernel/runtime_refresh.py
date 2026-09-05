@@ -648,8 +648,7 @@ class CompileRuntimeRefreshProvider:
                     "error_code": "runtime_refresh_continuation_generation_drift",
                 },
             )
-        retained = handoff.get("retained_prior_promotions", [])
-        predecessor_sequence = len(retained) + 1 if isinstance(retained, list) else 1
+        predecessor_sequence = repair_authority["predecessor_sequence"]
         disposition = (
             read_json(disposition_path.resolve())
             if disposition_path is not None
@@ -832,17 +831,8 @@ class CompileRuntimeRefreshProvider:
                 successor_workspace_root=workspace_root,
                 actual_write_set=actual_write_set,
             )
-            continuation = authorization.get("allow_generation_advance") is True
-            if handoff.get("promotion_refresh") is not None and not continuation:
-                if handoff.get("promotion") != bindings:
-                    raise ContractError(
-                        "content repair promotion refresh already owns another successor",
-                        data={
-                            "first_failing_gate": "content_repair_promotion_refresh_successor",
-                            "error_code": "runtime_refresh_promotion_refresh_competing_successor",
-                        },
-                    )
-                return handoff
+            if authorization.get("allow_generation_advance") is not True:
+                raise ContractError("content repair continuation authorization is invalid")
             old_promotion = handoff["promotion"]
             if workspace_root.resolve() == Path(old_promotion["workspace_root"]):
                 raise ContractError(
@@ -857,38 +847,6 @@ class CompileRuntimeRefreshProvider:
                 "generation_set_sha256",
                 "content repair successor Artifact Generation set",
             )
-            if (
-                not continuation
-                and (
-                generation_set.get("generation_set_sha256")
-                != old_promotion.get("generation_set_sha256")
-                or sha256_file(generation_set_path.resolve())
-                != old_promotion.get("generation_set_file_sha256")
-                )
-            ):
-                raise ContractError(
-                    "content repair promotion refresh changed Artifact Generations",
-                    data={
-                        "first_failing_gate": "content_repair_promotion_refresh_generation",
-                        "error_code": "runtime_refresh_promotion_refresh_generation_changed",
-                    },
-                )
-            if (
-                not continuation
-                and (
-                sha256_file(run / "workflow/production-state.json")
-                != authorization["production_state_sha256"]
-                or sha256_file(run / "workflow/compile-manifest.json")
-                != authorization["compile_manifest_sha256"]
-                )
-            ):
-                raise ContractError(
-                    "content repair promotion refresh changed Production authority",
-                    data={
-                        "first_failing_gate": "content_repair_promotion_refresh_authority",
-                        "error_code": "runtime_refresh_promotion_refresh_production_changed",
-                    },
-                )
             if (workspace_root.resolve() / "precompile-text-seal.json").exists():
                 raise ContractError(
                     "content repair promotion refresh successor already has a Seal",
@@ -913,10 +871,9 @@ class CompileRuntimeRefreshProvider:
                     deepcopy(handoff["promotion_refresh"]),
                 ]
             handoff["promotion_refresh"] = authorization
-            if continuation:
-                current_bundle = repair_bundle_path.resolve()
-                handoff["repair_bundle_path"] = str(current_bundle)
-                handoff["repair_bundle_sha256"] = sha256_file(current_bundle)
+            current_bundle = repair_bundle_path.resolve()
+            handoff["repair_bundle_path"] = str(current_bundle)
+            handoff["repair_bundle_sha256"] = sha256_file(current_bundle)
         handoff["state"] = "promotion_ready"
         handoff["promotion"] = bindings
         handoff["handoff_sha256"] = _fingerprint(handoff, "handoff_sha256")

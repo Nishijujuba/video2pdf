@@ -41,6 +41,65 @@ def fingerprint(value: dict, field: str) -> str:
 
 
 class Issue106ReaderTextContinuationTests(unittest.TestCase):
+    def test_changed_writer_result_is_part_of_the_authorized_producer_write_set(self) -> None:
+        root = new_case_dir(self.id(), label="issue106-writer-result-write-set")
+        run = root / "run"
+        task_id = "9" * 32
+        writer_path = run / "work/writers/section_02.tex"
+        result_path = run / "work/writers/section_02.result.json"
+        writer_path.parent.mkdir(parents=True)
+        writer_path.write_text("unchanged section", encoding="utf-8")
+        write_json(result_path, {"new_figure_candidates": []})
+        write_json(
+            run / "workflow/tasks" / task_id / "envelope.json",
+            {"role": "writer", "section_id": "section_02"},
+        )
+        payload_root = run / "retained/payload/writers"
+        payload_root.mkdir(parents=True)
+        (payload_root / "section_02.tex").write_bytes(writer_path.read_bytes())
+        payload_result = write_json(
+            payload_root / "section_02.result.json",
+            {
+                "new_figure_candidates": [
+                    {"slot_id": "figure_candidate", "teaching_purpose": "explain flow"}
+                ]
+            },
+        )
+        bundle_path = write_json(
+            run / "retained/bundle.json",
+            {
+                "derived_payload": [
+                    {
+                        "path": "retained/payload/writers/section_02.tex",
+                        "sha256": hashlib.sha256(writer_path.read_bytes()).hexdigest(),
+                    },
+                    {
+                        "path": "retained/payload/writers/section_02.result.json",
+                        "sha256": hashlib.sha256(payload_result.read_bytes()).hexdigest(),
+                    },
+                ]
+            },
+        )
+        state = {
+            "claims": {"writer-section_02": {"task_id": task_id}},
+            "artifacts": {
+                "writer_section_02": {"path": "work/writers/section_02.tex"},
+                "writer_result_section_02": {
+                    "path": "work/writers/section_02.result.json"
+                },
+            },
+        }
+
+        changed = PrecompileRepairPromotionProvider(PROJECT_ROOT)._changed_producer_write_set(
+            run_dir=run,
+            bundle_path=bundle_path,
+            bundle=read_json(bundle_path),
+            state=state,
+            task_order=["writer-section_02"],
+        )
+
+        self.assertEqual(["work/writers/section_02.result.json"], changed)
+
     def _inventory_fixture(
         self, *, completeness: str = "reviewed_complete", unresolved: list[str] | None = None
     ) -> tuple[Path, dict, dict, dict]:
@@ -486,7 +545,10 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                 {
                     "owner": "writing-quality-reviewer",
                     "result_key": "reader_wording:section_02",
-                    "repair_write_set": ["work/writers/section_02.tex"],
+                    "repair_write_set": [
+                        "work/writers/section_02.result.json",
+                        "work/writers/section_02.tex",
+                    ],
                 }
             ],
             "repair_routing": {
@@ -652,6 +714,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
         operation_id = "operation-106"
         write_set = [
             "work/figures/figure_demo.manifest.json",
+            "work/writers/section_02.result.json",
             "work/writers/section_02.tex",
         ]
         handoff = {
@@ -694,7 +757,7 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             "generation_set_sha256": generations["generation_set_sha256"],
             "runtime_refresh_operation_id": operation_id,
             "runtime_policy_sha256": handoff["runtime_policy_sha256"],
-            "predecessor_sequence": 1,
+            "predecessor_sequence": 0,
         }
         disposition["disposition_sha256"] = fingerprint(
             disposition, "disposition_sha256"
@@ -792,23 +855,140 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
         self.assertEqual(active_bytes, case["active_path"].read_bytes())
         self.assertEqual([case["old_promotion"]], first["retained_prior_promotions"])
         self.assertEqual(authorization, first["promotion_refresh"])
+        self.assertEqual(0, authorization["predecessor_sequence"])
+
+    def test_prepare_repair_rejects_disposition_for_semantic_failure_authority(self) -> None:
+        # scenario_id: issue106_semantic_failure_with_disposition
+        # target_invariant: semantic failure reports cannot consume human Gap disposition
+        # mutation_seam: repair_disposition_path supplied with a valid semantic failure report
+        # rematerialized_nodes: none
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_failure_authority
+        # expected_error_code: precompile_repair_semantic_authority_invalid
+        # scenario_class: single_contradiction
+        workspace, provider = self._materialization_fixture()
+        inventory = read_json(workspace / "reader-facing-text-inventory.json")
+        report = {
+            "schema_name": "precompile-quality-report",
+            "schema_version": "1.0.0",
+            "overall_decision": "fail",
+            "generation_set_sha256": "4" * 64,
+            "inventory_sha256": inventory["inventory_sha256"],
+            "semantic_dependencies_sha256": "7" * 64,
+            "failure_set": [
+                {
+                    "owner": "writing-quality-reviewer",
+                    "result_key": "reader_wording:section_02",
+                    "repair_write_set": [
+                        "work/writers/section_02.result.json",
+                        "work/writers/section_02.tex",
+                    ],
+                }
+            ],
+            "repair_routing": {
+                "parallel_repair_tasks": [
+                    {
+                        "failure_keys": [
+                            "writing-quality-reviewer:reader_wording:section_02"
+                        ]
+                    }
+                ],
+                "integration_repair_tasks": [],
+            },
+            "contract_gaps": [],
+            "semantic_attempt_budget_consumed": True,
+        }
+        report["report_sha256"] = fingerprint(report, "report_sha256")
+        write_json(workspace / "precompile-quality-report.json", report)
+        repaired = {
+            "generation_set_sha256": "c" * 64,
+            "producer_ids": ["producer-106"],
+            "artifacts": [
+                {
+                    "logical_id": "integrated_section_02",
+                    "generation": 2,
+                    "sha256": "d" * 64,
+                }
+            ],
+        }
+        repaired_path = write_json(workspace.parent / "semantic-candidate.json", repaired)
+        bundle_path = write_json(workspace.parent / "semantic-bundle.json", {})
+        disposition_path = write_json(
+            workspace.parent / "semantic-disposition.json",
+            {"disposition_sha256": "a" * 64},
+        )
+        with self.assertRaises(ContractError) as raised:
+            provider.prepare_repair(
+                predecessor_workspace_root=workspace,
+                workspace_root=workspace.parent / "semantic-successor",
+                inventory_path=workspace / "reader-facing-text-inventory.json",
+                artifact_generations_path=repaired_path,
+                semantic_dependencies_path=workspace / "semantic-dependencies.json",
+                repair_attempt_number=1,
+                prepared_at="2026-09-06T00:00:00Z",
+                repair_disposition_path=disposition_path,
+                repair_bundle_path=bundle_path,
+            )
+        self.assertEqual(
+            "precompile_repair_failure_authority",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "precompile_repair_semantic_authority_invalid",
+            raised.exception.data["error_code"],
+        )
 
     def test_runtime_continuation_rejects_competing_successor_before_writes(self) -> None:
+        # scenario_id: issue106_runtime_competing_successor
+        # target_invariant: one continuation authorization owns one successor workspace
+        # mutation_seam: a second successor path after a valid promotion refresh binding
+        # rematerialized_nodes: complete promotion refresh and journal fingerprints
+        # intentionally_stale_nodes: none
+        # expected_first_gate: content_repair_continuation_successor
+        # expected_error_code: runtime_refresh_continuation_competing_successor
+        # scenario_class: single_contradiction
         case = self._runtime_continuation_fixture()
-        journal = read_json(case["active_path"])
-        journal["content_repair_handoff"]["promotion_refresh"] = {
-            "disposition_sha256": read_json(case["disposition_path"])[
-                "disposition_sha256"
-            ]
+        failure_evidence = {
+            "failure_set": [
+                {
+                    "owner": "writing-quality-reviewer",
+                    "result_key": "first_use:section_02",
+                }
+            ],
+            "repair_routing": {},
         }
-        journal["content_repair_handoff"]["promotion"]["workspace_root"] = str(
-            case["new_workspace"].resolve()
+        with patch.object(
+            PrecompileQualityProvider,
+            "retained_contract_gap_evidence",
+            return_value=failure_evidence,
+        ):
+            authorization = case["provider"].preflight_content_repair_promotion_refresh(
+                run_dir=case["run"],
+                expected_operation_id=case["operation_id"],
+                repair_bundle_path=case["bundle_path"],
+                disposition_path=case["disposition_path"],
+                predecessor_contract_gap_brief_path=case["brief_path"],
+                successor_workspace_root=case["new_workspace"],
+                actual_write_set=case["write_set"],
+            )
+        case["new_workspace"].mkdir(parents=True)
+        inventory_path = write_json(case["run"] / "derived/competing-inventory.json", {})
+        dependencies_path = write_json(
+            case["run"] / "derived/competing-dependencies.json", {}
         )
-        journal["content_repair_handoff"]["handoff_sha256"] = fingerprint(
-            journal["content_repair_handoff"], "handoff_sha256"
+        case["provider"].bind_content_repair_promotion(
+            run_dir=case["run"],
+            expected_operation_id=case["operation_id"],
+            workspace_root=case["new_workspace"],
+            generation_set_path=case["successor_generation_path"],
+            inventory_path=inventory_path,
+            semantic_dependencies_path=dependencies_path,
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+            repair_bundle_path=case["bundle_path"],
+            actual_write_set=case["write_set"],
+            preflight_authorization=authorization,
         )
-        journal["journal_sha256"] = fingerprint(journal, "journal_sha256")
-        write_json(case["active_path"], journal)
         competing = case["run"] / "review/precompile/workspaces/competing"
         before = case["active_path"].read_bytes()
         with self.assertRaises(ContractError) as raised:
@@ -860,10 +1040,29 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
         )
 
     def test_runtime_continuation_rejects_a_sealed_predecessor(self) -> None:
+        # scenario_id: issue106_sealed_predecessor
+        # target_invariant: a sealed workspace cannot become a repair predecessor
+        # mutation_seam: publish a valid Seal at the predecessor lifecycle boundary
+        # rematerialized_nodes: Seal fingerprint
+        # intentionally_stale_nodes: none
+        # expected_first_gate: content_repair_continuation_predecessor
+        # expected_error_code: runtime_refresh_continuation_predecessor_sealed
+        # scenario_class: single_contradiction
         case = self._runtime_continuation_fixture()
-        Path(case["old_promotion"]["workspace_root"]).joinpath(
-            "precompile-text-seal.json"
-        ).write_bytes(b"retained passing seal")
+        predecessor = Path(case["old_promotion"]["workspace_root"])
+        seal = read_json(PROJECT_ROOT / "delivery-quality/v1/precompile-text-seal.example.v1.json")
+        seal["generation_set_sha256"] = read_json(case["generation_path"])[
+            "generation_set_sha256"
+        ]
+        seal["inventory_sha256"] = read_json(
+            predecessor / "reader-facing-text-inventory.json"
+        )["inventory_sha256"]
+        seal["semantic_dependencies_sha256"] = read_json(
+            predecessor / "semantic-dependencies.json"
+        )["dependencies_sha256"]
+        seal["seal_sha256"] = fingerprint(seal, "seal_sha256")
+        case["provider"].quality.validate("precompile-text-seal", seal)
+        write_json(predecessor / "precompile-text-seal.json", seal)
         with self.assertRaises(ContractError) as raised:
             case["provider"].preflight_content_repair_promotion_refresh(
                 run_dir=case["run"],
@@ -1020,6 +1219,126 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             },
         )
 
+    def _non_runtime_bound_repair_fixture(self) -> dict:
+        case = self._runtime_continuation_fixture()
+        retained_runtime = case["run"] / "待删除/retained-runtime-refresh-active.json"
+        retained_runtime.parent.mkdir(parents=True, exist_ok=True)
+        case["active_path"].replace(retained_runtime)
+        workspace = case["new_workspace"]
+        workspace.mkdir(parents=True)
+        generations = read_json(case["successor_generation_path"])
+        inventory = {"inventory_sha256": "f" * 64}
+        dependencies = {"dependencies_sha256": "9" * 64}
+        write_json(workspace / "artifact-generations.json", generations)
+        write_json(workspace / "reader-facing-text-inventory.json", inventory)
+        write_json(workspace / "semantic-dependencies.json", dependencies)
+        attempt = {
+            "schema_name": "precompile-repair-attempt",
+            "schema_version": "1.0.0",
+            "repair_attempt_number": 1,
+            "prepared_at": "2026-09-06T00:00:00Z",
+            "predecessor_failure_authority": {
+                "kind": "contract_gap_brief",
+                "path": str(case["brief_path"].resolve()),
+                "sha256": read_json(case["brief_path"])["brief_sha256"],
+            },
+            "predecessor_generation_set_sha256": read_json(case["generation_path"])[
+                "generation_set_sha256"
+            ],
+            "repaired_generation_set_sha256": generations["generation_set_sha256"],
+            "repaired_inventory_sha256": inventory["inventory_sha256"],
+            "repair_bundle": {
+                "path": str(case["bundle_path"].resolve()),
+                "sha256": hashlib.sha256(case["bundle_path"].read_bytes()).hexdigest(),
+            },
+            "repair_sequence": 1,
+        }
+        attempt["attempt_sha256"] = fingerprint(attempt, "attempt_sha256")
+        write_json(workspace / "repair-attempt.json", attempt)
+        case["retained_runtime"] = retained_runtime
+        return case
+
+    def test_non_runtime_exact_replay_reuses_the_bound_workspace_read_only(self) -> None:
+        case = self._non_runtime_bound_repair_fixture()
+        workspace_before = {
+            path: path.read_bytes()
+            for path in case["new_workspace"].rglob("*")
+            if path.is_file()
+        }
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        provider.contracts.validate = lambda *_args: None
+        provider.delivery_quality.validate = lambda *_args: None
+        with patch.object(
+            provider, "_required_replay_task_order", return_value=[]
+        ), patch.object(provider, "_preflight_claim_plan", return_value=None):
+            result = provider.promote(
+                run_dir=case["run"],
+                repair_bundle_path=case["bundle_path"],
+                predecessor_workspace_root=Path(case["old_promotion"]["workspace_root"]),
+                workspace_root=case["new_workspace"],
+                inventory_path=Path(case["old_promotion"]["inventory_path"]),
+                semantic_dependencies_path=Path(
+                    case["old_promotion"]["semantic_dependencies_path"]
+                ),
+                repair_attempt_number=1,
+                prepared_at="2026-09-06T00:00:00Z",
+                repair_failure_authority_path=case["brief_path"],
+                runtime_content_repair_disposition_path=case["disposition_path"],
+            )
+        self.assertEqual("precompile_repair_already_promoted", result["classification"])
+        self.assertEqual(
+            workspace_before,
+            {
+                path: path.read_bytes()
+                for path in case["new_workspace"].rglob("*")
+                if path.is_file()
+            },
+        )
+
+    def test_non_runtime_repair_attempt_rejects_a_competing_workspace_before_writes(self) -> None:
+        # scenario_id: issue106_non_runtime_competing_workspace
+        # target_invariant: one repair attempt owns exactly one successor workspace
+        # mutation_seam: substitute a fresh successor path for the bound workspace
+        # rematerialized_nodes: none
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_workspace_binding
+        # expected_error_code: precompile_repair_competing_workspace
+        # scenario_class: single_contradiction
+        case = self._non_runtime_bound_repair_fixture()
+        competing = case["run"] / "review/precompile/workspaces/competing-non-runtime"
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        provider.contracts.validate = lambda *_args: None
+        provider.delivery_quality.validate = lambda *_args: None
+        with patch.object(
+            provider, "_required_replay_task_order", return_value=[]
+        ), patch.object(provider, "_preflight_claim_plan", return_value=None):
+            with self.assertRaises(ContractError) as raised:
+                provider.promote(
+                    run_dir=case["run"],
+                    repair_bundle_path=case["bundle_path"],
+                    predecessor_workspace_root=Path(
+                        case["old_promotion"]["workspace_root"]
+                    ),
+                    workspace_root=competing,
+                    inventory_path=Path(case["old_promotion"]["inventory_path"]),
+                    semantic_dependencies_path=Path(
+                        case["old_promotion"]["semantic_dependencies_path"]
+                    ),
+                    repair_attempt_number=1,
+                    prepared_at="2026-09-06T00:00:00Z",
+                    repair_failure_authority_path=case["brief_path"],
+                    runtime_content_repair_disposition_path=case["disposition_path"],
+                )
+        self.assertEqual(
+            "precompile_repair_workspace_binding",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "precompile_repair_competing_workspace",
+            raised.exception.data["error_code"],
+        )
+        self.assertFalse(competing.exists())
+
     def test_public_promotion_admits_the_next_semantic_failure_continuation(self) -> None:
         case = self._runtime_continuation_fixture()
         old_workspace = Path(case["old_promotion"]["workspace_root"])
@@ -1041,7 +1360,10 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
                 {
                     "owner": "writing-quality-reviewer",
                     "result_key": "reader_wording:section_02",
-                    "repair_write_set": ["work/writers/section_02.tex"],
+                    "repair_write_set": [
+                        "work/writers/section_02.result.json",
+                        "work/writers/section_02.tex",
+                    ],
                 }
             ],
             "repair_routing": {
@@ -1072,14 +1394,21 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             }
         }
         writer_path = case["run"] / "work/writers/section_02.tex"
+        writer_result_path = case["run"] / "work/writers/section_02.result.json"
         writer_path.parent.mkdir(parents=True, exist_ok=True)
         writer_path.write_text("old section", encoding="utf-8")
+        write_json(writer_result_path, {"new_figure_candidates": []})
         state["artifacts"] = {
             "writer_section_02": {
                 "path": "work/writers/section_02.tex",
                 "sha256": hashlib.sha256(writer_path.read_bytes()).hexdigest(),
                 "generation": 1,
-            }
+            },
+            "writer_result_section_02": {
+                "path": "work/writers/section_02.result.json",
+                "sha256": hashlib.sha256(writer_result_path.read_bytes()).hexdigest(),
+                "generation": 1,
+            },
         }
         write_json(state_path, state)
         write_json(
@@ -1091,8 +1420,15 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             },
         )
         payload = case["bundle_path"].parent / "payload/writers/section_02.tex"
+        payload_result = (
+            case["bundle_path"].parent / "payload/writers/section_02.result.json"
+        )
         payload.parent.mkdir(parents=True, exist_ok=True)
         payload.write_text("new section", encoding="utf-8")
+        write_json(
+            payload_result,
+            {"new_figure_candidates": [{"slot_id": "figure_candidate"}]},
+        )
         bundle = read_json(case["bundle_path"])
         bundle["task_order"] = ["writer-section_02"]
         bundle["initial_claims"] = {
@@ -1105,7 +1441,11 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             {
                 "path": payload.relative_to(case["run"]).as_posix(),
                 "sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
-            }
+            },
+            {
+                "path": payload_result.relative_to(case["run"]).as_posix(),
+                "sha256": hashlib.sha256(payload_result.read_bytes()).hexdigest(),
+            },
         ]
         write_json(case["bundle_path"], bundle)
         journal = read_json(case["active_path"])
@@ -1167,14 +1507,21 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             }
         }
         writer_path = case["run"] / "work/writers/section_02.tex"
+        writer_result_path = case["run"] / "work/writers/section_02.result.json"
         writer_path.parent.mkdir(parents=True, exist_ok=True)
         writer_path.write_text("old section", encoding="utf-8")
+        write_json(writer_result_path, {"new_figure_candidates": []})
         state["artifacts"] = {
             "writer_section_02": {
                 "path": "work/writers/section_02.tex",
                 "sha256": hashlib.sha256(writer_path.read_bytes()).hexdigest(),
                 "generation": 1,
-            }
+            },
+            "writer_result_section_02": {
+                "path": "work/writers/section_02.result.json",
+                "sha256": hashlib.sha256(writer_result_path.read_bytes()).hexdigest(),
+                "generation": 1,
+            },
         }
         write_json(state_path, state)
         write_json(
@@ -1186,8 +1533,15 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             },
         )
         payload = case["bundle_path"].parent / "payload/writers/section_02.tex"
+        payload_result = (
+            case["bundle_path"].parent / "payload/writers/section_02.result.json"
+        )
         payload.parent.mkdir(parents=True, exist_ok=True)
         payload.write_text("new section", encoding="utf-8")
+        write_json(
+            payload_result,
+            {"new_figure_candidates": [{"slot_id": "figure_candidate"}]},
+        )
         bundle = read_json(case["bundle_path"])
         bundle["task_order"] = ["writer-section_02"]
         bundle["initial_claims"] = {
@@ -1200,14 +1554,21 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             {
                 "path": payload.relative_to(case["run"]).as_posix(),
                 "sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
-            }
+            },
+            {
+                "path": payload_result.relative_to(case["run"]).as_posix(),
+                "sha256": hashlib.sha256(payload_result.read_bytes()).hexdigest(),
+            },
         ]
         write_json(case["bundle_path"], bundle)
         disposition = read_json(case["disposition_path"])
         disposition["repair_bundle_sha256"] = hashlib.sha256(
             case["bundle_path"].read_bytes()
         ).hexdigest()
-        disposition["allowed_write_set"] = ["work/writers/section_02.tex"]
+        disposition["allowed_write_set"] = [
+            "work/writers/section_02.result.json",
+            "work/writers/section_02.tex",
+        ]
         disposition["disposition_sha256"] = fingerprint(
             disposition, "disposition_sha256"
         )

@@ -14,7 +14,18 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tests.video_workflow._test_run import new_case_dir
+from tests.video_workflow.test_precompile_quality import (
+    generation_set as valid_generation_set,
+    inventory as valid_inventory,
+    semantic_dependencies as valid_semantic_dependencies,
+)
+from tests.video_workflow.test_single_section_production import (
+    PROJECT_ROOT as PRODUCTION_PROJECT_ROOT,
+    SYSTEM_FONT,
+    SingleSectionProductionTests,
+)
 from video2pdf_workflow_kernel.errors import ContractError
+from video2pdf_workflow_kernel.guarded_compile import runtime_policy_for_fixture
 from video2pdf_workflow_kernel.precompile_repair_promotion import (
     PrecompileRepairPromotionProvider,
 )
@@ -1219,78 +1230,348 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             },
         )
 
-    def _non_runtime_bound_repair_fixture(self) -> dict:
-        case = self._runtime_continuation_fixture()
-        retained_runtime = case["run"] / "待删除/retained-runtime-refresh-active.json"
-        retained_runtime.parent.mkdir(parents=True, exist_ok=True)
-        case["active_path"].replace(retained_runtime)
-        workspace = case["new_workspace"]
-        workspace.mkdir(parents=True)
-        generations = read_json(case["successor_generation_path"])
-        inventory = {"inventory_sha256": "f" * 64}
-        dependencies = {"dependencies_sha256": "9" * 64}
-        write_json(workspace / "artifact-generations.json", generations)
-        write_json(workspace / "reader-facing-text-inventory.json", inventory)
-        write_json(workspace / "semantic-dependencies.json", dependencies)
-        attempt = {
-            "schema_name": "precompile-repair-attempt",
-            "schema_version": "1.0.0",
-            "repair_attempt_number": 1,
-            "prepared_at": "2026-09-06T00:00:00Z",
-            "predecessor_failure_authority": {
-                "kind": "contract_gap_brief",
-                "path": str(case["brief_path"].resolve()),
-                "sha256": read_json(case["brief_path"])["brief_sha256"],
+    def _complete_single_section_production(self) -> tuple[object, Path]:
+        lifecycle = SingleSectionProductionTests(
+            "test_public_plan_and_advance_reach_guarded_diagnostic_compile"
+        )
+        lifecycle.setUp()
+        kernel = lifecycle.kernel
+        run = lifecycle.run_dir
+
+        outline = kernel.production_plan(run)["runnable_tasks"][0]
+        attempt = lifecycle._attempt(
+            outline, {"outline.json": lifecycle._outline_payload()}
+        )
+        kernel.production_advance(run, outline["task_id"], attempt)
+        outline_gate = kernel.production_plan(run)["runnable_tasks"][0]
+        attempt = lifecycle._attempt(
+            outline_gate,
+            {"pyramid-report.json": lifecycle._pyramid_payload(outline_gate)},
+        )
+        kernel.production_advance(run, outline_gate["task_id"], attempt)
+
+        tasks = kernel.production_plan(run)["runnable_tasks"]
+        writer = next(task for task in tasks if task["role"] == "writer")
+        figure = next(task for task in tasks if task["role"] == "figure")
+        writer_result = canonical_json_bytes(
+            {
+                "schema_name": "writer-result",
+                "schema_version": "1.0.0",
+                "section_id": "section_01",
+                "new_figure_candidates": [],
+            }
+        )
+        attempt = lifecycle._attempt(
+            writer,
+            {
+                "section_01.tex": (
+                    b"\\section{Core claim}\nDeclared inputs establish closure.\n"
+                    b"% FIGURE_SLOT:figure_01\n"
+                ),
+                "writer-result.json": writer_result,
             },
-            "predecessor_generation_set_sha256": read_json(case["generation_path"])[
+        )
+        kernel.production_advance(run, writer["task_id"], attempt)
+        contribution = (
+            b"\\begin{figure}[H]\n\\centering\n"
+            b"\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,keepaspectratio]{figures/figure_01}\n"
+            b"\\caption{Declared and observed compile inputs.}\n"
+            b"\\par\\small Source (source\\_timestamp): 00:00:01\n"
+            b"\\end{figure}\n"
+        )
+        figure_manifest = canonical_json_bytes(
+            {
+                "schema_name": "figure-manifest",
+                "schema_version": "1.0.0",
+                "kernel_version": "2.0.0",
+                "slot_id": "figure_01",
+                "section_id": "section_01",
+                "asset_path": "figures/figure_01.png",
+                "asset_sha256": hashlib.sha256(b"fixture-png").hexdigest(),
+                "caption": "Declared and observed compile inputs.",
+                "source": {"kind": "source_timestamp", "value": "00:00:01"},
+                "slot_contribution_path": "work/figures/figure_01.tex",
+                "slot_contribution_sha256": hashlib.sha256(contribution).hexdigest(),
+            }
+        )
+        attempt = lifecycle._attempt(
+            figure,
+            {
+                "figure_01.png": b"fixture-png",
+                "figure-manifest.json": figure_manifest,
+                "figure_01.tex": contribution,
+            },
+        )
+        kernel.production_advance(run, figure["task_id"], attempt)
+        section_gate = kernel.production_plan(run)["runnable_tasks"][0]
+        attempt = lifecycle._attempt(
+            section_gate,
+            {"pyramid-report.json": lifecycle._pyramid_payload(section_gate)},
+        )
+        kernel.production_advance(run, section_gate["task_id"], attempt)
+        main_gate = kernel.production_plan(run)["runnable_tasks"][0]
+        attempt = lifecycle._attempt(
+            main_gate,
+            {"pyramid-report.json": lifecycle._pyramid_payload(main_gate)},
+        )
+        policy = runtime_policy_for_fixture(
+            run_dir=run,
+            engine_executable=Path(sys.executable),
+            engine_prefix_args=[
+                str(
+                    PRODUCTION_PROJECT_ROOT
+                    / "tests/video_workflow/fixtures/guarded-compile/fake_xelatex.py"
+                )
+            ],
+            system_fonts=[SYSTEM_FONT],
+        )
+        result = kernel.production_advance(
+            run,
+            main_gate["task_id"],
+            attempt,
+            compile_runtime_policy=policy,
+        )
+        self.assertEqual("diagnostic_compile_ready", result["classification"])
+        return kernel, run
+
+    def _non_runtime_bound_repair_fixture(self) -> dict:
+        kernel, run = self._complete_single_section_production()
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        state = read_json(run / "workflow/production-state.json")
+        task_order = provider._required_replay_task_order(state)
+        initial_claims = {
+            logical_key: {
+                "task_id": state["claims"][logical_key]["task_id"],
+                "claim_generation": state["claims"][logical_key][
+                    "claim_generation"
+                ],
+            }
+            for logical_key in task_order
+        }
+
+        bundle_root = run / "待删除/non-runtime-repair-bundle"
+        input_snapshot = []
+        for logical_key in task_order:
+            envelope_path = (
+                run
+                / "workflow/tasks"
+                / state["claims"][logical_key]["task_id"]
+                / "envelope.json"
+            )
+            input_snapshot.append(
+                {
+                    "path": envelope_path.relative_to(run).as_posix(),
+                    "sha256": hashlib.sha256(envelope_path.read_bytes()).hexdigest(),
+                }
+            )
+
+        payload_sources = {
+            "payload/outline.json": "outline_contract",
+            "payload/writers/section_01.tex": "writer_section_01",
+            "payload/writers/section_01.result.json": "writer_result_section_01",
+            "payload/figures/figure_01.png": "figure_asset_figure_01",
+            "payload/figures/figure_01.manifest.json": "figure_manifest_figure_01",
+            "payload/figures/figure_01.tex": "figure_contribution_figure_01",
+            "payload/pyramid/pyramid-outline.json": "pyramid_outline_report",
+            "payload/pyramid/pyramid-section-section-01.json": (
+                "pyramid_section_01_report"
+            ),
+            "payload/pyramid/pyramid-main.json": "pyramid_main_report",
+        }
+        derived_payload = []
+        for relative, logical_id in payload_sources.items():
+            source = run / state["artifacts"][logical_id]["path"]
+            target = bundle_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+            derived_payload.append(
+                {
+                    "path": target.relative_to(run).as_posix(),
+                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                }
+            )
+        policy_source = run / "workflow/compile-runtime-policy.json"
+        policy_target = bundle_root / "payload/compile-runtime-policy.json"
+        policy_target.parent.mkdir(parents=True, exist_ok=True)
+        policy_target.write_bytes(policy_source.read_bytes())
+        derived_payload.append(
+            {
+                "path": policy_target.relative_to(run).as_posix(),
+                "sha256": hashlib.sha256(policy_target.read_bytes()).hexdigest(),
+            }
+        )
+        bundle_path = write_json(
+            bundle_root / "bundle.json",
+            {
+                "schema_name": "production-repair-replay-bundle",
+                "schema_version": "1.0.0",
+                "run_id": state["run_id"],
+                "input_snapshot": input_snapshot,
+                "derived_payload": derived_payload,
+                "initial_claims": initial_claims,
+                "task_order": task_order,
+            },
+        )
+
+        predecessor = run / "review/precompile/workspaces/failed-current"
+        predecessor_generations = valid_generation_set()
+        predecessor_inventory = valid_inventory()
+        predecessor_dependencies = valid_semantic_dependencies()
+        write_json(predecessor / "artifact-generations.json", predecessor_generations)
+        write_json(
+            predecessor / "reader-facing-text-inventory.json", predecessor_inventory
+        )
+        write_json(
+            predecessor / "semantic-dependencies.json", predecessor_dependencies
+        )
+        failure = {
+            "schema_name": "precompile-quality-report",
+            "schema_version": "1.0.0",
+            "overall_decision": "fail",
+            "generation_set_sha256": predecessor_generations[
                 "generation_set_sha256"
             ],
-            "repaired_generation_set_sha256": generations["generation_set_sha256"],
-            "repaired_inventory_sha256": inventory["inventory_sha256"],
-            "repair_bundle": {
-                "path": str(case["bundle_path"].resolve()),
-                "sha256": hashlib.sha256(case["bundle_path"].read_bytes()).hexdigest(),
+            "inventory_sha256": predecessor_inventory["inventory_sha256"],
+            "semantic_dependencies_sha256": predecessor_dependencies[
+                "dependencies_sha256"
+            ],
+            "failure_set": [
+                {
+                    "owner": "writing-quality-reviewer",
+                    "result_key": "reader_wording:section_01",
+                    "repair_write_set": ["work/writers/section_01.tex"],
+                }
+            ],
+            "contract_gaps": [],
+            "semantic_attempt_budget_consumed": True,
+            "repair_routing": {
+                "parallel_repair_tasks": [
+                    {
+                        "failure_keys": [
+                            "writing-quality-reviewer:reader_wording:section_01"
+                        ]
+                    }
+                ],
+                "integration_repair_tasks": [],
             },
-            "repair_sequence": 1,
         }
-        attempt["attempt_sha256"] = fingerprint(attempt, "attempt_sha256")
-        write_json(workspace / "repair-attempt.json", attempt)
-        case["retained_runtime"] = retained_runtime
-        return case
+        failure["report_sha256"] = fingerprint(failure, "report_sha256")
+        failure_path = write_json(
+            predecessor / "precompile-quality-report.json", failure
+        )
+
+        successor_generations = json.loads(json.dumps(predecessor_generations))
+        successor_main = next(
+            item
+            for item in successor_generations["artifacts"]
+            if item["logical_id"] == "integrated_main_tex"
+        )
+        successor_main["generation"] += 1
+        successor_main["sha256"] = "c" * 64
+        successor_generations["generation_set_id"] = "integrated-draft-8"
+        successor_generations["generation_set_sha256"] = fingerprint(
+            successor_generations, "generation_set_sha256"
+        )
+        successor_inventory = json.loads(json.dumps(predecessor_inventory))
+        successor_inventory["inventory_id"] = "inventory-8"
+        successor_inventory["generation_set_sha256"] = successor_generations[
+            "generation_set_sha256"
+        ]
+        for item in successor_inventory["items"]:
+            if item["source_artifact_logical_id"] == "integrated_main_tex":
+                item["source_generation"] = successor_main["generation"]
+                item["source_sha256"] = successor_main["sha256"]
+            item["item_sha256"] = fingerprint(item, "item_sha256")
+        successor_inventory["reader_text_set_sha256"] = hashlib.sha256(
+            canonical_json_bytes(
+                [
+                    {
+                        "item_id": item["item_id"],
+                        "kind": item["kind"],
+                        "representation": item["representation"],
+                        "text_sha256": item["text_sha256"],
+                    }
+                    for item in successor_inventory["items"]
+                ]
+            )
+        ).hexdigest()
+        successor_inventory["inventory_sha256"] = fingerprint(
+            successor_inventory, "inventory_sha256"
+        )
+        candidate_root = run / "待删除/non-runtime-repair-inputs"
+        generation_path = write_json(
+            candidate_root / "artifact-generations.json", successor_generations
+        )
+        inventory_path = write_json(
+            candidate_root / "reader-facing-text-inventory.json", successor_inventory
+        )
+        dependencies_path = write_json(
+            candidate_root / "semantic-dependencies.json", predecessor_dependencies
+        )
+        workspace = run / "review/precompile/workspaces/repaired-current"
+        prepared = PrecompileQualityProvider(PROJECT_ROOT).prepare_repair(
+            predecessor_workspace_root=predecessor,
+            workspace_root=workspace,
+            inventory_path=inventory_path,
+            artifact_generations_path=generation_path,
+            semantic_dependencies_path=dependencies_path,
+            repair_attempt_number=1,
+            prepared_at="2026-09-06T00:00:00Z",
+            repair_bundle_path=bundle_path,
+            repair_sequence=1,
+            kernel_production_run_dir=run,
+            promotion_input_bindings={
+                "predecessor_workspace_root": str(predecessor.resolve()),
+                "inventory": {
+                    "path": str(inventory_path.resolve()),
+                    "sha256": hashlib.sha256(inventory_path.read_bytes()).hexdigest(),
+                },
+                "semantic_dependencies": {
+                    "path": str(dependencies_path.resolve()),
+                    "sha256": hashlib.sha256(
+                        dependencies_path.read_bytes()
+                    ).hexdigest(),
+                },
+            },
+        )
+        return {
+            "kernel": kernel,
+            "run": run,
+            "provider": provider,
+            "bundle_path": bundle_path,
+            "failure_path": failure_path,
+            "predecessor": predecessor,
+            "workspace": workspace,
+            "inventory_path": inventory_path,
+            "dependencies_path": dependencies_path,
+            "prepared": prepared,
+            "task_order": task_order,
+        }
 
     def test_non_runtime_exact_replay_reuses_the_bound_workspace_read_only(self) -> None:
         case = self._non_runtime_bound_repair_fixture()
-        workspace_before = {
-            path: path.read_bytes()
-            for path in case["new_workspace"].rglob("*")
+        run_before = {
+            path.relative_to(case["run"]): path.read_bytes()
+            for path in case["run"].rglob("*")
             if path.is_file()
         }
-        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
-        provider.contracts.validate = lambda *_args: None
-        provider.delivery_quality.validate = lambda *_args: None
-        with patch.object(
-            provider, "_required_replay_task_order", return_value=[]
-        ), patch.object(provider, "_preflight_claim_plan", return_value=None):
-            result = provider.promote(
-                run_dir=case["run"],
-                repair_bundle_path=case["bundle_path"],
-                predecessor_workspace_root=Path(case["old_promotion"]["workspace_root"]),
-                workspace_root=case["new_workspace"],
-                inventory_path=Path(case["old_promotion"]["inventory_path"]),
-                semantic_dependencies_path=Path(
-                    case["old_promotion"]["semantic_dependencies_path"]
-                ),
-                repair_attempt_number=1,
-                prepared_at="2026-09-06T00:00:00Z",
-                repair_failure_authority_path=case["brief_path"],
-                runtime_content_repair_disposition_path=case["disposition_path"],
-            )
+        result = case["provider"].promote(
+            run_dir=case["run"],
+            repair_bundle_path=case["bundle_path"],
+            predecessor_workspace_root=case["predecessor"],
+            workspace_root=case["workspace"],
+            inventory_path=case["inventory_path"],
+            semantic_dependencies_path=case["dependencies_path"],
+            repair_attempt_number=1,
+            prepared_at="2026-09-06T00:00:00Z",
+            repair_failure_authority_path=case["failure_path"],
+        )
         self.assertEqual("precompile_repair_already_promoted", result["classification"])
         self.assertEqual(
-            workspace_before,
+            run_before,
             {
-                path: path.read_bytes()
-                for path in case["new_workspace"].rglob("*")
+                path.relative_to(case["run"]): path.read_bytes()
+                for path in case["run"].rglob("*")
                 if path.is_file()
             },
         )
@@ -1306,29 +1587,18 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
         # scenario_class: single_contradiction
         case = self._non_runtime_bound_repair_fixture()
         competing = case["run"] / "review/precompile/workspaces/competing-non-runtime"
-        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
-        provider.contracts.validate = lambda *_args: None
-        provider.delivery_quality.validate = lambda *_args: None
-        with patch.object(
-            provider, "_required_replay_task_order", return_value=[]
-        ), patch.object(provider, "_preflight_claim_plan", return_value=None):
-            with self.assertRaises(ContractError) as raised:
-                provider.promote(
-                    run_dir=case["run"],
-                    repair_bundle_path=case["bundle_path"],
-                    predecessor_workspace_root=Path(
-                        case["old_promotion"]["workspace_root"]
-                    ),
-                    workspace_root=competing,
-                    inventory_path=Path(case["old_promotion"]["inventory_path"]),
-                    semantic_dependencies_path=Path(
-                        case["old_promotion"]["semantic_dependencies_path"]
-                    ),
-                    repair_attempt_number=1,
-                    prepared_at="2026-09-06T00:00:00Z",
-                    repair_failure_authority_path=case["brief_path"],
-                    runtime_content_repair_disposition_path=case["disposition_path"],
-                )
+        with self.assertRaises(ContractError) as raised:
+            case["provider"].promote(
+                run_dir=case["run"],
+                repair_bundle_path=case["bundle_path"],
+                predecessor_workspace_root=case["predecessor"],
+                workspace_root=competing,
+                inventory_path=case["inventory_path"],
+                semantic_dependencies_path=case["dependencies_path"],
+                repair_attempt_number=1,
+                prepared_at="2026-09-06T00:00:00Z",
+                repair_failure_authority_path=case["failure_path"],
+            )
         self.assertEqual(
             "precompile_repair_workspace_binding",
             raised.exception.data["first_failing_gate"],
@@ -1338,6 +1608,131 @@ class Issue106ReaderTextContinuationTests(unittest.TestCase):
             raised.exception.data["error_code"],
         )
         self.assertFalse(competing.exists())
+
+    def test_non_runtime_replay_rejects_stale_current_production_authority(self) -> None:
+        # scenario_id: issue106_replay_stale_production_state
+        # target_invariant: replay requires the current complete Production graph
+        # mutation_seam: current draft_compile_ready checkpoint
+        # rematerialized_nodes: Production State bytes only
+        # intentionally_stale_nodes: diagnostic authority binding
+        # expected_first_gate: precompile_repair_replay_production
+        # expected_error_code: precompile_repair_replay_production_authority_stale
+        # scenario_class: single_contradiction
+        #
+        # scenario_id: issue106_replay_stale_diagnostic_report
+        # target_invariant: replay requires current diagnostic Compile authority
+        # mutation_seam: current diagnostic report bytes
+        # rematerialized_nodes: none
+        # intentionally_stale_nodes: Production artifact binding
+        # expected_first_gate: precompile_repair_replay_production
+        # expected_error_code: precompile_repair_replay_production_authority_stale
+        # scenario_class: single_contradiction
+        for scenario in ("production_state", "diagnostic_report"):
+            with self.subTest(scenario=scenario):
+                case = self._non_runtime_bound_repair_fixture()
+                if scenario == "production_state":
+                    state_path = case["run"] / "workflow/production-state.json"
+                    state = read_json(state_path)
+                    state["checkpoints"]["draft_compile_ready"] = "pending"
+                    write_json(state_path, state)
+                else:
+                    report_path = (
+                        case["run"] / "review/latex/diagnostic-compile-report.json"
+                    )
+                    report_path.write_bytes(report_path.read_bytes() + b"\n")
+                with self.assertRaises(ContractError) as raised:
+                    case["provider"].promote(
+                        run_dir=case["run"],
+                        repair_bundle_path=case["bundle_path"],
+                        predecessor_workspace_root=case["predecessor"],
+                        workspace_root=case["workspace"],
+                        inventory_path=case["inventory_path"],
+                        semantic_dependencies_path=case["dependencies_path"],
+                        repair_attempt_number=1,
+                        prepared_at="2026-09-06T00:00:00Z",
+                        repair_failure_authority_path=case["failure_path"],
+                    )
+                self.assertEqual(
+                    "precompile_repair_replay_production",
+                    raised.exception.data["first_failing_gate"],
+                )
+                self.assertEqual(
+                    "precompile_repair_replay_production_authority_stale",
+                    raised.exception.data["error_code"],
+                )
+
+    def test_non_runtime_replay_rejects_changed_cli_input_identities(self) -> None:
+        # scenario_id: issue106_replay_changed_predecessor_identity
+        # target_invariant: replay uses the predecessor workspace bound at preparation
+        # mutation_seam: predecessor_workspace_root CLI argument
+        # rematerialized_nodes: byte-identical alternate predecessor workspace
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_replay_inputs
+        # expected_error_code: precompile_repair_replay_input_identity_changed
+        # scenario_class: single_contradiction
+        #
+        # scenario_id: issue106_replay_changed_inventory_identity
+        # target_invariant: replay uses the inventory path bound at preparation
+        # mutation_seam: inventory CLI argument
+        # rematerialized_nodes: byte-identical alternate inventory file
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_replay_inputs
+        # expected_error_code: precompile_repair_replay_input_identity_changed
+        # scenario_class: single_contradiction
+        #
+        # scenario_id: issue106_replay_changed_dependencies_identity
+        # target_invariant: replay uses the dependency path bound at preparation
+        # mutation_seam: semantic_dependencies CLI argument
+        # rematerialized_nodes: byte-identical alternate dependency file
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_replay_inputs
+        # expected_error_code: precompile_repair_replay_input_identity_changed
+        # scenario_class: single_contradiction
+        for scenario in ("predecessor", "inventory", "dependencies"):
+            with self.subTest(scenario=scenario):
+                case = self._non_runtime_bound_repair_fixture()
+                arguments = {
+                    "predecessor_workspace_root": case["predecessor"],
+                    "inventory_path": case["inventory_path"],
+                    "semantic_dependencies_path": case["dependencies_path"],
+                }
+                alternate_root = case["run"] / "待删除/replay-identity-alternate"
+                if scenario == "predecessor":
+                    alternate = alternate_root / "predecessor"
+                    for source in case["predecessor"].rglob("*"):
+                        if source.is_file():
+                            target = alternate / source.relative_to(case["predecessor"])
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            target.write_bytes(source.read_bytes())
+                    arguments["predecessor_workspace_root"] = alternate
+                elif scenario == "inventory":
+                    alternate = alternate_root / "reader-facing-text-inventory.json"
+                    alternate.parent.mkdir(parents=True, exist_ok=True)
+                    alternate.write_bytes(case["inventory_path"].read_bytes())
+                    arguments["inventory_path"] = alternate
+                else:
+                    alternate = alternate_root / "semantic-dependencies.json"
+                    alternate.parent.mkdir(parents=True, exist_ok=True)
+                    alternate.write_bytes(case["dependencies_path"].read_bytes())
+                    arguments["semantic_dependencies_path"] = alternate
+                with self.assertRaises(ContractError) as raised:
+                    case["provider"].promote(
+                        run_dir=case["run"],
+                        repair_bundle_path=case["bundle_path"],
+                        workspace_root=case["workspace"],
+                        repair_attempt_number=1,
+                        prepared_at="2026-09-06T00:00:00Z",
+                        repair_failure_authority_path=case["failure_path"],
+                        **arguments,
+                    )
+                self.assertEqual(
+                    "precompile_repair_replay_inputs",
+                    raised.exception.data["first_failing_gate"],
+                )
+                self.assertEqual(
+                    "precompile_repair_replay_input_identity_changed",
+                    raised.exception.data["error_code"],
+                )
 
     def test_public_promotion_admits_the_next_semantic_failure_continuation(self) -> None:
         case = self._runtime_continuation_fixture()

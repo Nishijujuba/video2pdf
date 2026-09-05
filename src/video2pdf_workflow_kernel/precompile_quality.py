@@ -540,6 +540,7 @@ class PrecompileQualityProvider:
         repair_disposition_path: Path | None = None,
         repair_bundle_path: Path | None = None,
         repair_sequence: int = 1,
+        promotion_input_bindings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         kernel_roots: set[Path] = set()
         for supplied_path in (
@@ -741,6 +742,7 @@ class PrecompileQualityProvider:
                 else None
             ),
             "repair_sequence": repair_sequence,
+            "promotion_input_bindings": promotion_input_bindings,
             "semantic_attempt_budget_consumed": semantic_attempt_budget_consumed,
             "semantic_attempt_number": semantic_attempt_number,
             "allowed_write_set": allowed_write_set,

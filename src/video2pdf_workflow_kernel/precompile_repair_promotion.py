@@ -10,7 +10,7 @@ from typing import Any
 from .contracts import ContractRegistry
 from .content_production import PRODUCTION_FAULT_POINTS, ContentProduction
 from .delivery_quality import DeliveryQualityRegistry
-from .errors import ContractError, ProductionFault
+from .errors import ArtifactDrift, ContractError, ProductionFault
 from .kernel import VideoWorkflowKernel
 from .latex_generated_text import extract_tcolorbox_titles
 from .precompile_quality import PrecompileQualityProvider
@@ -198,6 +198,10 @@ class PrecompileRepairPromotionProvider:
                 state=state,
                 bundle_path=bundle_path,
                 failure_authority_path=failure_authority_path,
+                predecessor_workspace_root=predecessor_workspace_root,
+                inventory_path=inventory_path,
+                semantic_dependencies_path=semantic_dependencies_path,
+                disposition_path=runtime_content_repair_disposition_path,
                 workspace_root=workspace_root,
                 repair_attempt_number=repair_attempt_number,
                 prepared_at=prepared_at,
@@ -829,6 +833,17 @@ class PrecompileRepairPromotionProvider:
                 if effective_authorization is not None
                 else 1
             ),
+            promotion_input_bindings={
+                "predecessor_workspace_root": str(predecessor_root),
+                "inventory": {
+                    "path": str(candidate_inventory_path),
+                    "sha256": sha256_file(candidate_inventory_path),
+                },
+                "semantic_dependencies": {
+                    "path": str(semantic_dependencies),
+                    "sha256": sha256_file(semantic_dependencies),
+                },
+            },
         )
         if runtime_handoff is not None:
             runtime_handoff = CompileRuntimeRefreshProvider(
@@ -893,6 +908,10 @@ class PrecompileRepairPromotionProvider:
         state: dict[str, Any],
         bundle_path: Path,
         failure_authority_path: Path,
+        predecessor_workspace_root: Path,
+        inventory_path: Path,
+        semantic_dependencies_path: Path,
+        disposition_path: Path | None,
         workspace_root: Path,
         repair_attempt_number: int,
         prepared_at: str,
@@ -971,6 +990,63 @@ class PrecompileRepairPromotionProvider:
                 "repair attempt replay arguments changed",
                 "precompile_repair_workspace_binding",
                 "precompile_repair_replay_identity_changed",
+            )
+        candidate_input_bindings = {
+            "predecessor_workspace_root": str(predecessor_workspace_root.resolve()),
+        }
+        for name, path in (
+            ("inventory", inventory_path),
+            ("semantic_dependencies", semantic_dependencies_path),
+        ):
+            resolved = require_contained_path(
+                path.resolve(),
+                run_dir,
+                purpose=f"Precompile repair replay {name}",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            candidate_input_bindings[name] = {
+                "path": str(resolved),
+                "sha256": sha256_file(resolved),
+            }
+        disposition = attempt.get("disposition")
+        supplied_disposition = (
+            {
+                "path": str(disposition_path.resolve()),
+                "disposition_sha256": read_json(disposition_path.resolve()).get(
+                    "disposition_sha256"
+                ),
+            }
+            if disposition_path is not None
+            else None
+        )
+        recorded_disposition = (
+            {key: disposition.get(key) for key in ("path", "disposition_sha256")}
+            if isinstance(disposition, dict)
+            else None
+        )
+        if (
+            attempt.get("promotion_input_bindings") != candidate_input_bindings
+            or recorded_disposition != supplied_disposition
+        ):
+            self._reject(
+                "Precompile repair replay input identity changed",
+                "precompile_repair_replay_inputs",
+                "precompile_repair_replay_input_identity_changed",
+            )
+        try:
+            if state.get("checkpoints", {}).get("draft_compile_ready") != "current":
+                raise ContractError("Production diagnostic compile checkpoint is stale")
+            ContentProduction(
+                VideoWorkflowKernel(run_dir.parent)
+            ).require_current_diagnostic_compile_authority(run_dir)
+        except (ArtifactDrift, ContractError) as error:
+            self._reject(
+                "Precompile repair replay lacks current Production compile authority",
+                "precompile_repair_replay_production",
+                "precompile_repair_replay_production_authority_stale",
+                cause=str(error),
             )
         generations_path = require_contained_path(
             published_workspace / "artifact-generations.json",
@@ -2014,6 +2090,201 @@ class PrecompileRepairPromotionProvider:
         )
 
     @staticmethod
+    def _figure_transform_evidence(
+        *,
+        run_dir: Path,
+        figure_manifest: dict[str, Any],
+        asset_path: Path,
+        expected_source_video: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        source = figure_manifest["source"]
+        binding = source.get("transform_evidence")
+        if binding is None:
+            return None
+        if (
+            source.get("kind") != "source_timestamp"
+            or not isinstance(binding, dict)
+            or set(binding) != {"path", "sha256"}
+        ):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform evidence binding is invalid",
+                "precompile_repair_figure_transform_record",
+                "precompile_repair_transform_binding_invalid",
+            )
+        record_path = require_contained_path(
+            run_dir / str(binding.get("path", "")),
+            run_dir,
+            purpose="Precompile repair Figure transform record",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if sha256_file(record_path) != binding.get("sha256"):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform evidence record drifted",
+                "precompile_repair_figure_transform_record",
+                "precompile_repair_transform_record_drift",
+            )
+        record = read_json(record_path)
+        source_video = record.get("source_video")
+        decoded = record.get("decoded_frame")
+        panels = record.get("panels")
+        composition = record.get("composition")
+        if (
+            record.get("schema_name") != "source-frame-detail-transform"
+            or record.get("schema_version") != "1.0.0"
+            or not isinstance(source_video, dict)
+            or set(source_video) != {"path", "sha256"}
+            or not isinstance(decoded, dict)
+            or not isinstance(panels, list)
+            or not panels
+            or not isinstance(composition, dict)
+            or not isinstance(composition.get("method"), str)
+            or not composition["method"]
+        ):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform evidence record is incomplete",
+                "precompile_repair_figure_transform_record",
+                "precompile_repair_transform_record_invalid",
+            )
+        if source_video != expected_source_video:
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform source video differs from verified provenance",
+                "precompile_repair_figure_transform_source",
+                "precompile_repair_transform_source_video_mismatch",
+            )
+        output = composition.get("output")
+        if (
+            not isinstance(output, dict)
+            or output.get("path") != asset_path.relative_to(run_dir).as_posix()
+            or output.get("sha256") != figure_manifest["asset_sha256"]
+        ):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform output differs from the current Figure asset",
+                "precompile_repair_figure_transform_output",
+                "precompile_repair_transform_output_asset_mismatch",
+            )
+        decoded_path = PrecompileRepairPromotionProvider._transform_image_path(
+            run_dir=run_dir,
+            record=decoded,
+            purpose="decoded source frame",
+        )
+        decoded_dimensions = PrecompileRepairPromotionProvider._png_dimensions(
+            decoded_path
+        )
+        if (
+            decoded_dimensions != (decoded.get("width"), decoded.get("height"))
+            or decoded.get("actual_frame_timestamp") != source.get("value")
+        ):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform decoded frame binding is invalid",
+                "precompile_repair_figure_transform_frame",
+                "precompile_repair_transform_frame_invalid",
+            )
+        panel_bindings = []
+        roles = []
+        orders = []
+        for panel in panels:
+            if not isinstance(panel, dict) or not isinstance(panel.get("crop"), dict):
+                PrecompileRepairPromotionProvider._reject(
+                    "Figure transform panel is invalid",
+                    "precompile_repair_figure_transform_panel",
+                    "precompile_repair_transform_panel_invalid",
+                )
+            panel_path = PrecompileRepairPromotionProvider._transform_image_path(
+                run_dir=run_dir,
+                record=panel,
+                purpose="source detail panel",
+            )
+            crop = panel["crop"]
+            values = [crop.get(key) for key in ("x", "y", "width", "height")]
+            panel_dimensions = PrecompileRepairPromotionProvider._png_dimensions(
+                panel_path
+            )
+            declared_panel_dimensions = (panel.get("width"), panel.get("height"))
+            if (
+                any(not isinstance(value, int) for value in values)
+                or values[0] < 0
+                or values[1] < 0
+                or values[2] <= 0
+                or values[3] <= 0
+                or values[0] + values[2] > decoded_dimensions[0]
+                or values[1] + values[3] > decoded_dimensions[1]
+                or panel_dimensions != (values[2], values[3])
+                or (
+                    any(value is not None for value in declared_panel_dimensions)
+                    and declared_panel_dimensions != panel_dimensions
+                )
+                or not isinstance(panel.get("role"), str)
+                or not panel["role"]
+                or not isinstance(panel.get("order"), int)
+                or panel["order"] < 1
+            ):
+                PrecompileRepairPromotionProvider._reject(
+                    "Figure transform panel crop is invalid",
+                    "precompile_repair_figure_transform_panel",
+                    "precompile_repair_transform_panel_invalid",
+                )
+            roles.append(panel["role"])
+            orders.append(panel["order"])
+            panel_bindings.append(
+                {"path": panel["path"], "sha256": panel["sha256"]}
+            )
+        output_dimensions = PrecompileRepairPromotionProvider._png_dimensions(asset_path)
+        if (
+            orders != list(range(1, len(panels) + 1))
+            or len(roles) != len(set(roles))
+            or composition.get("order") != roles
+            or composition.get("scaling") != "none"
+            or output_dimensions != (output.get("width"), output.get("height"))
+        ):
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform composition is invalid",
+                "precompile_repair_figure_transform_output",
+                "precompile_repair_transform_composition_invalid",
+            )
+        return {
+            "record": {"path": binding["path"], "sha256": binding["sha256"]},
+            "decoded_frame": {"path": decoded["path"], "sha256": decoded["sha256"]},
+            "panels": panel_bindings,
+        }
+
+    @staticmethod
+    def _transform_image_path(
+        *, run_dir: Path, record: dict[str, Any], purpose: str
+    ) -> Path:
+        path = require_contained_path(
+            run_dir / str(record.get("path", "")),
+            run_dir,
+            purpose=f"Precompile repair Figure transform {purpose}",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if sha256_file(path) != record.get("sha256"):
+            PrecompileRepairPromotionProvider._reject(
+                f"Figure transform {purpose} drifted",
+                "precompile_repair_figure_transform_record",
+                "precompile_repair_transform_image_drift",
+            )
+        return path
+
+    @staticmethod
+    def _png_dimensions(path: Path) -> tuple[int, int]:
+        with path.open("rb") as stream:
+            header = stream.read(24)
+        if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+            PrecompileRepairPromotionProvider._reject(
+                "Figure transform image must preserve supported native PNG pixels",
+                "precompile_repair_figure_transform_record",
+                "precompile_repair_transform_image_unsupported",
+            )
+        return (
+            int.from_bytes(header[16:20], "big"),
+            int.from_bytes(header[20:24], "big"),
+        )
+
+    @staticmethod
     def _tcolorbox_titles(
         *,
         source_path: Path,
@@ -2211,24 +2482,60 @@ class PrecompileRepairPromotionProvider:
                             asset_logical_id=prior_asset.get("logical_id"),
                         )
                     )
+                    transform = PrecompileRepairPromotionProvider._figure_transform_evidence(
+                        run_dir=run_dir,
+                        figure_manifest=figure_manifest,
+                        asset_path=run_dir / asset["path"],
+                        expected_source_video=source["video"],
+                    )
+                    current_source = {
+                        "kind": figure_manifest["source"]["kind"],
+                        "value": figure_manifest["source"]["value"],
+                    }
                     if (
                         prior_manifest.get("logical_id")
                         != manifest_artifact["logical_id"]
                         or prior_asset.get("path") != asset["path"]
-                        or prior_asset.get("sha256") != asset["sha256"]
-                        or visual.get("source") != figure_manifest["source"]
                     ):
                         raise ContractError(
                             "Precompile repair visual evidence source identity changed"
                         )
-                    refreshed_visual_evidence.append(
-                        {
-                            "scope_id": visual.get("scope_id"),
-                            "figure_asset": asset,
-                            "figure_manifest": manifest_artifact,
-                            "source": figure_manifest["source"],
-                        }
-                    )
+                    if (
+                        prior_asset.get("sha256") != asset["sha256"]
+                        or visual.get("source") != current_source
+                    ) and transform is None:
+                        PrecompileRepairPromotionProvider._reject(
+                            "changed source-backed Figure requires transform evidence",
+                            "precompile_repair_figure_transform_record",
+                            "precompile_repair_transform_required",
+                        )
+                    refreshed_visual = {
+                        "scope_id": visual.get("scope_id"),
+                        "figure_asset": asset,
+                        "figure_manifest": manifest_artifact,
+                        "source": current_source,
+                    }
+                    if transform is not None:
+                        refreshed_visual["transform_evidence"] = transform
+                        for transform_item in (
+                            transform["record"],
+                            transform["decoded_frame"],
+                            *transform["panels"],
+                        ):
+                            matching = [
+                                item
+                                for item in evidence
+                                if item.get("path") == transform_item["path"]
+                            ]
+                            if len(matching) > 1:
+                                raise ContractError(
+                                    "Precompile repair transform projection evidence is duplicated"
+                                )
+                            if matching:
+                                matching[0]["sha256"] = transform_item["sha256"]
+                            else:
+                                evidence.append(deepcopy(transform_item))
+                    refreshed_visual_evidence.append(refreshed_visual)
                 current_figure_ids = {
                     logical_id
                     for logical_id in generation_by_id

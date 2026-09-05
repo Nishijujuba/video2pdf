@@ -52,6 +52,7 @@ class PrecompileRepairPromotionProvider:
         runtime_predecessor_final_compile_manifest_path: Path | None = None,
         runtime_content_repair_disposition_path: Path | None = None,
         runtime_predecessor_contract_gap_brief_path: Path | None = None,
+        repair_failure_authority_path: Path | None = None,
         fault_point: str | None = None,
         fault_logical_task_key: str | None = None,
     ) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class PrecompileRepairPromotionProvider:
                 runtime_predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
                 runtime_content_repair_disposition_path=runtime_content_repair_disposition_path,
                 runtime_predecessor_contract_gap_brief_path=runtime_predecessor_contract_gap_brief_path,
+                repair_failure_authority_path=repair_failure_authority_path,
                 fault_point=fault_point,
                 fault_logical_task_key=fault_logical_task_key,
             )
@@ -98,10 +100,22 @@ class PrecompileRepairPromotionProvider:
         runtime_predecessor_final_compile_manifest_path: Path | None,
         runtime_content_repair_disposition_path: Path | None,
         runtime_predecessor_contract_gap_brief_path: Path | None,
+        repair_failure_authority_path: Path | None,
         fault_point: str | None,
         fault_logical_task_key: str | None,
     ) -> dict[str, Any]:
         run_dir = run_dir.resolve()
+        if (
+            repair_failure_authority_path is not None
+            and runtime_predecessor_contract_gap_brief_path is not None
+            and repair_failure_authority_path.resolve()
+            != runtime_predecessor_contract_gap_brief_path.resolve()
+        ):
+            raise ContractError("repair failure authority arguments conflict")
+        failure_authority_path = (
+            repair_failure_authority_path
+            or runtime_predecessor_contract_gap_brief_path
+        )
         bundle_path = require_contained_path(
             repair_bundle_path.resolve(),
             run_dir,
@@ -172,6 +186,15 @@ class PrecompileRepairPromotionProvider:
             initial_claims=initial_claims,
             task_order=expected_task_order,
         )
+        actual_write_set = None
+        if failure_authority_path is not None:
+            actual_write_set = self._changed_producer_write_set(
+                run_dir=run_dir,
+                bundle_path=bundle_path,
+                bundle=bundle,
+                state=state,
+                task_order=task_order,
+            )
         if (fault_point is None) != (fault_logical_task_key is None):
             raise ContractError(
                 "Precompile repair fault point and logical task key must be supplied together"
@@ -189,13 +212,12 @@ class PrecompileRepairPromotionProvider:
         runtime_handoff = None
         runtime_promotion_refresh = False
         runtime_refresh_authorization = None
+        repair_authorization = None
         ordinary_exact_replay = False
         active_runtime_path = run_dir / "workflow/runtime-refresh-active.json"
         runtime_handoff_requested = (
             runtime_refresh_operation_id is not None
             or runtime_predecessor_final_compile_manifest_path is not None
-            or runtime_content_repair_disposition_path is not None
-            or runtime_predecessor_contract_gap_brief_path is not None
         )
         pending_runtime_handoff = (
             active_runtime_path.is_file()
@@ -208,48 +230,95 @@ class PrecompileRepairPromotionProvider:
                     "content_repair_runtime_state",
                     "runtime_refresh_handoff_identity_required",
                 )
-            runtime_handoff = CompileRuntimeRefreshProvider(
-                self.project_root
-            ).prepare_content_repair_handoff(
-                run_dir=run_dir,
-                repair_bundle_path=bundle_path,
-                predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
-                expected_operation_id=runtime_refresh_operation_id,
+            existing_runtime = read_json(active_runtime_path).get(
+                "content_repair_handoff"
+            )
+            continuation_requested = (
+                actual_write_set is not None
+                and isinstance(existing_runtime, dict)
+                and existing_runtime.get("state") == "promotion_ready"
+            )
+            runtime_handoff = (
+                existing_runtime
+                if continuation_requested
+                else CompileRuntimeRefreshProvider(
+                    self.project_root
+                ).prepare_content_repair_handoff(
+                    run_dir=run_dir,
+                    repair_bundle_path=bundle_path,
+                    predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
+                    expected_operation_id=runtime_refresh_operation_id,
+                )
             )
             if runtime_handoff.get("state") == "promotion_ready":
                 recorded_promotion = runtime_handoff.get("promotion")
                 ordinary_exact_replay = (
-                    runtime_handoff.get("promotion_refresh") is None
-                    and isinstance(recorded_promotion, dict)
+                    isinstance(recorded_promotion, dict)
                     and recorded_promotion.get("workspace_root")
                     == str(workspace_root.resolve())
                 )
-                if not ordinary_exact_replay:
+                if ordinary_exact_replay and runtime_handoff.get(
+                    "promotion_refresh"
+                ) is not None:
+                    recorded_refresh = runtime_handoff["promotion_refresh"]
+                    recorded_authority_path = recorded_refresh.get(
+                        "failure_authority_path",
+                        recorded_refresh.get("predecessor_contract_gap_brief_path"),
+                    )
+                    supplied_disposition = (
+                        read_json(runtime_content_repair_disposition_path.resolve())
+                        if runtime_content_repair_disposition_path is not None
+                        else None
+                    )
                     if (
-                        runtime_content_repair_disposition_path is None
-                        or runtime_predecessor_contract_gap_brief_path is None
+                        (
+                            supplied_disposition.get("disposition_sha256")
+                            if supplied_disposition is not None
+                            else None
+                        )
+                        != recorded_refresh.get("disposition_sha256")
+                        or failure_authority_path is None
+                        or str(failure_authority_path.resolve())
+                        != recorded_authority_path
+                        or str(bundle_path)
+                        != runtime_handoff.get("repair_bundle_path")
+                        or sha256_file(bundle_path)
+                        != runtime_handoff.get("repair_bundle_sha256")
                     ):
                         self._reject(
-                            "promotion-ready content repair requires the exact human disposition",
-                            "content_repair_promotion_refresh_disposition",
-                            "runtime_refresh_promotion_refresh_disposition_required",
+                            "published content repair replay identity changed",
+                            "content_repair_continuation_replay",
+                            "runtime_refresh_continuation_replay_identity_changed",
+                        )
+                if not ordinary_exact_replay:
+                    if (
+                        failure_authority_path is None
+                    ):
+                        self._reject(
+                            "promotion-ready content repair requires its failure authority",
+                            "content_repair_continuation_predecessor",
+                            "runtime_refresh_continuation_authority_required",
                         )
                     runtime_refresh_authorization = CompileRuntimeRefreshProvider(
                         self.project_root
-                    ).preflight_content_repair_promotion_refresh(
+                    ).preflight_repair_continuation(
                         run_dir=run_dir,
                         expected_operation_id=runtime_refresh_operation_id,
                         repair_bundle_path=bundle_path,
                         disposition_path=runtime_content_repair_disposition_path,
-                        predecessor_contract_gap_brief_path=(
-                            runtime_predecessor_contract_gap_brief_path
-                        ),
+                        failure_authority_path=failure_authority_path,
                         successor_workspace_root=workspace_root,
+                        actual_write_set=actual_write_set,
                     )
-                    runtime_promotion_refresh = True
+                    runtime_promotion_refresh = (
+                        runtime_refresh_authorization.get(
+                            "allow_generation_advance"
+                        )
+                        is not True
+                    )
             elif (
                 runtime_content_repair_disposition_path is not None
-                or runtime_predecessor_contract_gap_brief_path is not None
+                or failure_authority_path is not None
             ):
                 self._reject(
                     "human disposition arguments require a promotion-ready handoff",
@@ -261,6 +330,22 @@ class PrecompileRepairPromotionProvider:
                 "content repair runtime handoff arguments require a pending refresh",
                 "content_repair_runtime_state",
                 "runtime_refresh_handoff_not_pending",
+            )
+        elif failure_authority_path is not None:
+            repair_authorization = PrecompileQualityProvider(
+                self.project_root
+            ).preflight_repair_authority(
+                predecessor_workspace_root=predecessor_workspace_root,
+                failure_authority_path=failure_authority_path,
+                repair_bundle_path=bundle_path,
+                actual_write_set=actual_write_set,
+                disposition_path=runtime_content_repair_disposition_path,
+            )
+        elif runtime_content_repair_disposition_path is not None:
+            self._reject(
+                "repair disposition requires its failure authority",
+                "precompile_repair_disposition",
+                "precompile_repair_failure_authority_required",
             )
 
         if ordinary_exact_replay:
@@ -374,27 +459,6 @@ class PrecompileRepairPromotionProvider:
             self.delivery_quality.validate(
                 "precompile-semantic-dependencies", candidate_dependencies
             )
-            predecessor_report_path = require_contained_path(
-                predecessor_root / "precompile-quality-report.json",
-                predecessor_root,
-                purpose="Precompile repair predecessor report",
-                error_type=ContractError,
-                leaf_kind="file",
-                require_single_link=True,
-            )
-            predecessor_report = read_json(predecessor_report_path)
-            if predecessor_report.get("report_sha256") != hashlib.sha256(
-                canonical_json_bytes(
-                    {
-                        key: value
-                        for key, value in predecessor_report.items()
-                        if key != "report_sha256"
-                    }
-                )
-            ).hexdigest():
-                raise ContractError(
-                    "ordinary Precompile promotion predecessor report drifted"
-                )
             repair_attempt_path = require_contained_path(
                 published_workspace / "repair-attempt.json",
                 published_workspace,
@@ -404,6 +468,85 @@ class PrecompileRepairPromotionProvider:
                 require_single_link=True,
             )
             repair_attempt = read_json(repair_attempt_path)
+            authority_binding = repair_attempt.get("predecessor_failure_authority")
+            legacy_report_replay = not isinstance(authority_binding, dict)
+            if isinstance(authority_binding, dict):
+                authority_path = require_contained_path(
+                    Path(str(authority_binding.get("path", ""))),
+                    predecessor_root,
+                    purpose="Precompile repair predecessor failure authority",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                authority = read_json(authority_path)
+                authority_kind = authority_binding.get("kind")
+                authority_field = (
+                    "brief_sha256"
+                    if authority_kind == "contract_gap_brief"
+                    else "report_sha256"
+                )
+                if authority_kind not in {
+                    "contract_gap_brief",
+                    "semantic_failure_report",
+                }:
+                    raise ContractError(
+                        "ordinary Precompile promotion failure authority is invalid"
+                    )
+                authority_sha256 = authority.get(authority_field)
+                if (
+                    authority_sha256
+                    != hashlib.sha256(
+                        canonical_json_bytes(
+                            {
+                                key: value
+                                for key, value in authority.items()
+                                if key != authority_field
+                            }
+                        )
+                    ).hexdigest()
+                    or authority_binding.get("sha256") != authority_sha256
+                    or authority.get("generation_set_sha256")
+                    != predecessor_generations.get("generation_set_sha256")
+                    or authority.get("inventory_sha256")
+                    != candidate_inventory.get("inventory_sha256")
+                ):
+                    raise ContractError(
+                        "ordinary Precompile promotion predecessor authority drifted"
+                    )
+                recorded_disposition = repair_attempt.get("disposition")
+                current_refresh = runtime_handoff.get("promotion_refresh")
+                if current_refresh is not None and (
+                    not isinstance(recorded_disposition, dict)
+                    or recorded_disposition.get("disposition_sha256")
+                    != current_refresh.get("disposition_sha256")
+                ):
+                    raise ContractError(
+                        "ordinary Precompile promotion disposition binding drifted"
+                    )
+            else:
+                predecessor_report_path = require_contained_path(
+                    predecessor_root / "precompile-quality-report.json",
+                    predecessor_root,
+                    purpose="Precompile repair predecessor report",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                authority = read_json(predecessor_report_path)
+                authority_sha256 = authority.get("report_sha256")
+                if authority_sha256 != hashlib.sha256(
+                    canonical_json_bytes(
+                        {
+                            key: value
+                            for key, value in authority.items()
+                            if key != "report_sha256"
+                        }
+                    )
+                ).hexdigest():
+                    raise ContractError(
+                        "ordinary Precompile promotion predecessor report drifted"
+                    )
             if (
                 repair_attempt.get("schema_name") != "precompile-repair-attempt"
                 or repair_attempt.get("schema_version") != "1.0.0"
@@ -419,16 +562,27 @@ class PrecompileRepairPromotionProvider:
                 ).hexdigest()
                 or repair_attempt.get("repair_attempt_number") != repair_attempt_number
                 or repair_attempt.get("prepared_at") != prepared_at
-                or repair_attempt.get("predecessor_report_sha256")
-                != predecessor_report.get("report_sha256")
                 or repair_attempt.get("predecessor_generation_set_sha256")
                 != predecessor_generations.get("generation_set_sha256")
-                or predecessor_report.get("generation_set_sha256")
-                != predecessor_generations.get("generation_set_sha256")
-                or predecessor_report.get("inventory_sha256")
-                != candidate_inventory.get("inventory_sha256")
-                or predecessor_report.get("semantic_dependencies_sha256")
-                != candidate_dependencies.get("dependencies_sha256")
+                or (
+                    legacy_report_replay
+                    and (
+                        repair_attempt.get("predecessor_report_sha256")
+                        != authority_sha256
+                        or authority.get("generation_set_sha256")
+                        != predecessor_generations.get("generation_set_sha256")
+                        or authority.get("inventory_sha256")
+                        != candidate_inventory.get("inventory_sha256")
+                        or authority.get("semantic_dependencies_sha256")
+                        != candidate_dependencies.get("dependencies_sha256")
+                    )
+                )
+                or (
+                    not legacy_report_replay
+                    and authority_binding.get("kind") == "semantic_failure_report"
+                    and authority.get("semantic_dependencies_sha256")
+                    != candidate_dependencies.get("dependencies_sha256")
+                )
                 or candidate_inventory_path.read_bytes()
                 != (predecessor_root / "reader-facing-text-inventory.json").read_bytes()
                 or candidate_dependencies_path.read_bytes()
@@ -550,7 +704,10 @@ class PrecompileRepairPromotionProvider:
         self.delivery_quality.validate(
             "precompile-artifact-generation-set", successor
         )
-        if runtime_refresh_authorization is not None:
+        if (
+            runtime_refresh_authorization is not None
+            and runtime_refresh_authorization.get("allow_generation_advance") is not True
+        ):
             if (
                 sha256_file(state_path)
                 != runtime_refresh_authorization["production_state_sha256"]
@@ -587,9 +744,11 @@ class PrecompileRepairPromotionProvider:
             "production_state_sha256": sha256_file(state_path),
             "compile_manifest_sha256": sha256_file(compile_manifest_path),
         }
-        if runtime_refresh_authorization is not None:
-            operation_identity["promotion_refresh_disposition_sha256"] = (
-                runtime_refresh_authorization["disposition_sha256"]
+        effective_authorization = runtime_refresh_authorization or repair_authorization
+        if effective_authorization is not None:
+            operation_identity["repair_authorization_sha256"] = (
+                effective_authorization.get("authorization_sha256")
+                or effective_authorization["sha256"]
             )
         operation_id = hashlib.sha256(
             canonical_json_bytes(operation_identity)
@@ -694,6 +853,23 @@ class PrecompileRepairPromotionProvider:
             repair_attempt_number=repair_attempt_number,
             prepared_at=prepared_at,
             kernel_production_run_dir=run_dir,
+            repair_disposition_path=(
+                runtime_content_repair_disposition_path
+                if effective_authorization is not None
+                and effective_authorization.get("kind", effective_authorization.get("failure_authority_kind"))
+                == "contract_gap_brief"
+                else None
+            ),
+            repair_bundle_path=(
+                bundle_path
+                if effective_authorization is not None
+                else None
+            ),
+            repair_sequence=(
+                effective_authorization.get("predecessor_sequence", 0) + 1
+                if effective_authorization is not None
+                else 1
+            ),
         )
         if runtime_handoff is not None:
             runtime_handoff = CompileRuntimeRefreshProvider(
@@ -709,6 +885,10 @@ class PrecompileRepairPromotionProvider:
                 predecessor_contract_gap_brief_path=(
                     runtime_predecessor_contract_gap_brief_path
                 ),
+                failure_authority_path=failure_authority_path,
+                repair_bundle_path=bundle_path,
+                actual_write_set=actual_write_set,
+                preflight_authorization=runtime_refresh_authorization,
             )
 
         return {
@@ -789,6 +969,7 @@ class PrecompileRepairPromotionProvider:
                     "precompile_repair_claim_missing",
                     logical_task_key=logical_key,
                 )
+
             if initial.get("task_id") != current.get("task_id"):
                 self._reject(
                     f"Precompile repair promotion task identity changed: {logical_key}",
@@ -825,6 +1006,72 @@ class PrecompileRepairPromotionProvider:
                     "precompile_repair_predecessor_not_committed",
                     logical_task_key=logical_key,
                 )
+
+    def _changed_producer_write_set(
+        self,
+        *,
+        run_dir: Path,
+        bundle_path: Path,
+        bundle: dict[str, Any],
+        state: dict[str, Any],
+        task_order: list[str],
+    ) -> list[str]:
+        bundle_root = bundle_path.parent
+        changed: set[str] = set()
+        artifacts = state.get("artifacts", {})
+        for logical_key in task_order:
+            claim = state["claims"][logical_key]
+            envelope = read_json(
+                run_dir / "workflow/tasks" / claim["task_id"] / "envelope.json"
+            )
+            role = envelope["role"]
+            payload_targets: list[tuple[str, str]] = []
+            if role == "outline":
+                payload_targets = [("payload/outline.json", "outline_contract")]
+            elif role == "writer":
+                section_id = envelope["section_id"]
+                payload_targets = [
+                    (f"payload/writers/{section_id}.tex", f"writer_{section_id}")
+                ]
+            elif role == "figure":
+                slot_id = envelope["slot_id"]
+                payload_targets = [
+                    (f"payload/figures/{slot_id}.png", f"figure_asset_{slot_id}"),
+                    (
+                        f"payload/figures/{slot_id}.manifest.json",
+                        f"figure_manifest_{slot_id}",
+                    ),
+                    (
+                        f"payload/figures/{slot_id}.tex",
+                        f"figure_contribution_{slot_id}",
+                    ),
+                ]
+            for payload_relative, artifact_id in payload_targets:
+                artifact = artifacts.get(artifact_id)
+                if not isinstance(artifact, dict):
+                    self._reject(
+                        f"content repair producer target is missing: {artifact_id}",
+                        "content_repair_allowed_write_set",
+                        "precompile_repair_allowed_target_missing",
+                        logical_id=artifact_id,
+                    )
+                payload_bytes = self._bound_payload_bytes(
+                    run_dir=run_dir,
+                    bundle_root=bundle_root,
+                    bundle=bundle,
+                    relative_path=payload_relative,
+                )
+                target = require_contained_path(
+                    run_dir / artifact["path"],
+                    run_dir,
+                    purpose="content repair current producer target",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                if target.read_bytes() != payload_bytes:
+                    changed.add(Path(artifact["path"]).as_posix())
+        return sorted(changed)
 
     @staticmethod
     def _reject(message: str, gate: str, code: str, **data: Any) -> None:
@@ -1419,7 +1666,39 @@ class PrecompileRepairPromotionProvider:
                         asset_logical_id=logical_id,
                     )
                 )
-                declared_text = figure_manifest["caption"]
+                reader_text = figure_manifest.get("authoritative_reader_text")
+                if (
+                    not isinstance(reader_text, dict)
+                    or not isinstance(reader_text.get("text"), str)
+                    or not reader_text["text"]
+                    or reader_text.get("asset_path")
+                    != figure_manifest.get("asset_path")
+                    or reader_text.get("asset_sha256")
+                    != figure_manifest.get("asset_sha256")
+                ):
+                    raise ContractError(
+                        "Precompile repair Figure reader text declaration is invalid",
+                        data={
+                            "first_failing_gate": "reader_text_raster_declaration",
+                            "error_code": "precompile_repair_raster_text_declaration_invalid",
+                            "logical_id": logical_id,
+                        },
+                    )
+                unresolved_spans = reader_text.get("unresolved_spans")
+                if (
+                    reader_text.get("completeness") != "reviewed_complete"
+                    or not isinstance(unresolved_spans, list)
+                    or unresolved_spans
+                ):
+                    raise ContractError(
+                        "Precompile repair Figure reader text remains unresolved",
+                        data={
+                            "first_failing_gate": "reader_text_raster_completeness",
+                            "error_code": "precompile_repair_raster_text_unresolved",
+                            "logical_id": logical_id,
+                        },
+                    )
+                declared_text = reader_text["text"]
                 item["declared_text"] = declared_text
                 item["text_sha256"] = hashlib.sha256(
                     declared_text.encode("utf-8")
@@ -1446,6 +1725,11 @@ class PrecompileRepairPromotionProvider:
                     error_type=ContractError,
                     leaf_kind="file",
                     require_single_link=True,
+                )
+                item["locator"] = (
+                    "latex-generated:"
+                    f"{Path(str(manifest_entry['source_path'])).as_posix()}"
+                    "/newtcolorbox-title"
                 )
                 declared_text = (
                     PrecompileRepairPromotionProvider._tcolorbox_titles(

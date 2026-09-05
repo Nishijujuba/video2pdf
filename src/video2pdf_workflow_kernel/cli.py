@@ -162,6 +162,9 @@ def _parser() -> argparse.ArgumentParser:
         "--repair-attempt-number", required=True, type=int
     )
     precompile_repair_prepare.add_argument("--prepared-at", required=True)
+    precompile_repair_prepare.add_argument("--repair-disposition", type=Path)
+    precompile_repair_prepare.add_argument("--repair-bundle", type=Path)
+    precompile_repair_prepare.add_argument("--repair-sequence", type=int, default=1)
 
     precompile_repair_promote = commands.add_parser(
         "delivery-quality-precompile-repair-promote"
@@ -188,8 +191,12 @@ def _parser() -> argparse.ArgumentParser:
         "--runtime-predecessor-final-compile-manifest", type=Path
     )
     precompile_repair_promote.add_argument(
-        "--runtime-content-repair-disposition", type=Path
+        "--repair-disposition",
+        "--runtime-content-repair-disposition",
+        dest="runtime_content_repair_disposition",
+        type=Path,
     )
+    precompile_repair_promote.add_argument("--repair-failure-authority", type=Path)
     precompile_repair_promote.add_argument(
         "--runtime-predecessor-contract-gap-brief", type=Path
     )
@@ -1202,6 +1209,9 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             semantic_dependencies_path=args.semantic_dependencies,
             repair_attempt_number=args.repair_attempt_number,
             prepared_at=args.prepared_at,
+            repair_disposition_path=args.repair_disposition,
+            repair_bundle_path=args.repair_bundle,
+            repair_sequence=args.repair_sequence,
         )
         return _ok(
             command,
@@ -1229,6 +1239,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             runtime_predecessor_contract_gap_brief_path=(
                 args.runtime_predecessor_contract_gap_brief
             ),
+            repair_failure_authority_path=args.repair_failure_authority,
             fault_point=args.fault_point,
             fault_logical_task_key=args.fault_logical_task_key,
         )

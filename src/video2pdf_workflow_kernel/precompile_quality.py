@@ -7,7 +7,7 @@ from typing import Any
 
 from .delivery_quality import DeliveryQualityRegistry
 from .errors import ContractError, PrecompileFault, TextEquivalenceRejected
-from .utils import canonical_json_bytes, read_json, write_json_atomic
+from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
 
 
 PRECOMPILE_OWNERS = (
@@ -58,6 +58,231 @@ class PrecompileQualityProvider:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root.resolve()
         self.registry = DeliveryQualityRegistry(self.project_root)
+
+    def retained_contract_gap_evidence(
+        self, *, workspace_root: Path, brief: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Validate and recover the committed review batch behind one Gap brief."""
+        root = workspace_root.resolve()
+        inventory = read_json(root / "reader-facing-text-inventory.json")
+        _require_fingerprint(
+            inventory,
+            "inventory_sha256",
+            "retained Reader-Facing Text Inventory",
+        )
+        if inventory.get("inventory_sha256") != brief.get("inventory_sha256"):
+            raise ContractError(
+                "retained Contract Gap inventory authority is stale",
+                data={
+                    "first_failing_gate": "precompile_repair_gap_predecessor_identity",
+                    "error_code": "precompile_repair_gap_inventory_mismatch",
+                },
+            )
+
+        failures = []
+        gaps = []
+        bindings = []
+        for owner in PRECOMPILE_OWNERS:
+            skeleton = read_json(_skeleton_path(root, owner))
+            patch = read_json(_patch_path(root, owner))
+            commit = read_json(_commit_path(root, owner))
+            _require_fingerprint(
+                skeleton, "skeleton_sha256", "retained Reviewer Skeleton"
+            )
+            self._validate_patch(patch, skeleton, owner)
+            _require_fingerprint(commit, "commit_sha256", "retained Patch commit")
+            if (
+                skeleton.get("generation_set_sha256")
+                != brief.get("generation_set_sha256")
+                or skeleton.get("inventory_sha256") != brief.get("inventory_sha256")
+                or commit.get("state") != "committed"
+                or commit.get("patch_sha256") != patch.get("patch_sha256")
+                or commit.get("generation_set_sha256")
+                != brief.get("generation_set_sha256")
+            ):
+                raise ContractError(
+                    "retained Contract Gap reviewer authority is stale",
+                    data={
+                        "first_failing_gate": "precompile_repair_gap_predecessor_identity",
+                        "error_code": "precompile_repair_gap_reviewer_binding_mismatch",
+                    },
+                )
+            failures.extend(
+                {
+                    "owner": owner,
+                    "result_key": item["result_key"],
+                    "violation_id": item.get("violation_id"),
+                    "evidence_locator": item["evidence_locator"],
+                    "repair_write_set": item["repair_write_set"],
+                }
+                for item in patch["results"]
+                if item["decision"] == "fail"
+            )
+            gaps.extend(
+                {"owner": owner, **item}
+                for item in patch.get("contract_gaps", [])
+            )
+            bindings.append(
+                {
+                    "owner": owner,
+                    "skeleton_sha256": skeleton["skeleton_sha256"],
+                    "patch_sha256": patch["patch_sha256"],
+                    "commit_sha256": commit["commit_sha256"],
+                }
+            )
+        routing = _route_failures(failures)
+        if gaps != brief.get("contract_gaps"):
+            raise ContractError("retained Contract Gap records do not match the brief")
+        if brief.get("failure_set") is not None and brief["failure_set"] != failures:
+            raise ContractError("retained Contract Gap failures do not match the brief")
+        if (
+            brief.get("repair_routing") is not None
+            and brief["repair_routing"] != routing
+        ):
+            raise ContractError("retained Contract Gap routing does not match the brief")
+        if (
+            brief.get("committed_patch_bindings") is not None
+            and brief["committed_patch_bindings"] != bindings
+        ):
+            raise ContractError("retained Contract Gap Patch bindings do not match")
+        return {"failure_set": failures, "repair_routing": routing}
+
+    def preflight_repair_authority(
+        self,
+        *,
+        predecessor_workspace_root: Path,
+        failure_authority_path: Path,
+        repair_bundle_path: Path,
+        actual_write_set: list[str],
+        disposition_path: Path | None = None,
+    ) -> dict[str, Any]:
+        """Authorize one repair from an exact failed report or dispositioned Gap."""
+        root = predecessor_workspace_root.resolve()
+        authority_path = failure_authority_path.resolve()
+        if authority_path.parent != root:
+            raise ContractError("repair failure authority is outside its workspace")
+        authority = read_json(authority_path)
+        bundle_path = repair_bundle_path.resolve()
+        predecessor_attempt_path = root / "repair-attempt.json"
+        predecessor_sequence = 0
+        if predecessor_attempt_path.is_file():
+            predecessor_attempt = read_json(predecessor_attempt_path)
+            _require_fingerprint(
+                predecessor_attempt,
+                "attempt_sha256",
+                "predecessor Precompile repair Attempt",
+            )
+            if (
+                predecessor_attempt.get("repaired_generation_set_sha256")
+                != authority.get("generation_set_sha256")
+                or predecessor_attempt.get("repaired_inventory_sha256")
+                != authority.get("inventory_sha256")
+            ):
+                raise ContractError("predecessor repair Attempt authority is stale")
+            predecessor_sequence = predecessor_attempt.get("repair_sequence", 1)
+        if authority.get("schema_name") == "precompile-quality-report":
+            _require_fingerprint(authority, "report_sha256", "Precompile Quality Report")
+            if (
+                authority_path.name != "precompile-quality-report.json"
+                or authority.get("overall_decision") != "fail"
+                or not authority.get("failure_set")
+                or authority.get("contract_gaps")
+                or authority.get("semantic_attempt_budget_consumed") is not True
+                or disposition_path is not None
+            ):
+                raise ContractError("semantic repair failure authority is invalid")
+            failures = authority["failure_set"]
+            allowed_write_set = sorted(
+                {
+                    path
+                    for failure in failures
+                    for path in failure.get("repair_write_set", [])
+                }
+            )
+            if actual_write_set != allowed_write_set:
+                raise ContractError(
+                    "semantic repair bundle changes exceed the failed result write set",
+                    data={
+                        "first_failing_gate": "precompile_repair_allowed_write_set",
+                        "error_code": "precompile_repair_write_set_mismatch",
+                    },
+                )
+            return {
+                "kind": "semantic_failure_report",
+                "path": str(authority_path),
+                "sha256": authority["report_sha256"],
+                "failure_set": failures,
+                "repair_routing": authority.get("repair_routing"),
+                "allowed_write_set": allowed_write_set,
+                "semantic_attempt_budget_consumed": True,
+                "disposition": None,
+                "predecessor_sequence": predecessor_sequence,
+            }
+        if authority.get("schema_name") != "precompile-contract-gap-brief":
+            raise ContractError("repair failure authority schema is unsupported")
+        _require_fingerprint(authority, "brief_sha256", "Precompile Contract Gap brief")
+        if (
+            authority_path.name != "precompile-contract-gap-brief.json"
+            or authority.get("schema_version") != "1.0.0"
+            or authority.get("routing") != "human_policy_disposition_required"
+            or authority.get("semantic_attempt_budget_consumed") is not False
+            or disposition_path is None
+        ):
+            raise ContractError("Contract Gap repair authority is invalid")
+        retained = self.retained_contract_gap_evidence(
+            workspace_root=root, brief=authority
+        )
+        disposition = read_json(disposition_path.resolve())
+        _require_fingerprint(
+            disposition, "disposition_sha256", "content repair disposition"
+        )
+        gap_ids = sorted(item.get("gap_id") for item in authority["contract_gaps"])
+        failure_keys = sorted(
+            f"{item['owner']}:{item['result_key']}"
+            for item in retained["failure_set"]
+        )
+        if (
+            disposition.get("schema_name") != "content-repair-human-disposition"
+            or disposition.get("schema_version") != "2.0.0"
+            or disposition.get("decision") != "provider_repair_authorized"
+            or not isinstance(disposition.get("approved_at"), str)
+            or not disposition["approved_at"]
+            or not isinstance(disposition.get("approval_reference"), str)
+            or not disposition["approval_reference"]
+            or disposition.get("predecessor_contract_gap_brief_path")
+            != str(authority_path)
+            or disposition.get("predecessor_contract_gap_brief_sha256")
+            != authority["brief_sha256"]
+            or disposition.get("generation_set_sha256")
+            != authority.get("generation_set_sha256")
+            or disposition.get("authorized_contract_gap_ids") != gap_ids
+            or disposition.get("authorized_failure_keys") != failure_keys
+            or disposition.get("allowed_write_set") != actual_write_set
+            or disposition.get("repair_bundle_path") != str(bundle_path)
+            or disposition.get("repair_bundle_sha256") != sha256_file(bundle_path)
+        ):
+            raise ContractError(
+                "content repair disposition is absent or stale",
+                data={
+                    "first_failing_gate": "precompile_repair_disposition",
+                    "error_code": "precompile_repair_disposition_invalid",
+                },
+            )
+        return {
+            "kind": "contract_gap_brief",
+            "path": str(authority_path),
+            "sha256": authority["brief_sha256"],
+            "failure_set": retained["failure_set"],
+            "repair_routing": retained["repair_routing"],
+            "allowed_write_set": actual_write_set,
+            "semantic_attempt_budget_consumed": False,
+            "disposition": {
+                "path": str(disposition_path.resolve()),
+                "disposition_sha256": disposition["disposition_sha256"],
+                "approval_reference": disposition["approval_reference"],
+            },
+            "predecessor_sequence": predecessor_sequence,
+        }
 
     def assess_current_seal(self, *, workspace_root: Path) -> dict[str, Any]:
         """Read and validate one existing Precompile authority without resealing it."""
@@ -292,6 +517,9 @@ class PrecompileQualityProvider:
         repair_attempt_number: int,
         prepared_at: str,
         kernel_production_run_dir: Path | None = None,
+        repair_disposition_path: Path | None = None,
+        repair_bundle_path: Path | None = None,
+        repair_sequence: int = 1,
     ) -> dict[str, Any]:
         kernel_roots: set[Path] = set()
         for supplied_path in (
@@ -323,19 +551,109 @@ class PrecompileQualityProvider:
             )
         if repair_attempt_number not in {1, 2, 3}:
             raise ContractError("repair attempt number must be within 1..3")
+        if not isinstance(repair_sequence, int) or repair_sequence < 1:
+            raise ContractError("repair sequence must be a positive integer")
         predecessor_root = predecessor_workspace_root.resolve()
-        report = read_json(predecessor_root / "precompile-quality-report.json")
-        _require_fingerprint(report, "report_sha256", "Precompile Quality Report")
-        if (
-            report.get("overall_decision") != "fail"
-            or not report.get("failure_set")
-            or report.get("contract_gaps")
-            or report.get("semantic_attempt_budget_consumed") is not True
-        ):
-            raise ContractError(
-                "repair preparation requires a materialized semantic failure"
+        report_path = predecessor_root / "precompile-quality-report.json"
+        brief_path = predecessor_root / "precompile-contract-gap-brief.json"
+        disposition_binding = None
+        allowed_write_set: list[str] = []
+        if report_path.is_file():
+            authority = read_json(report_path)
+            _require_fingerprint(
+                authority, "report_sha256", "Precompile Quality Report"
             )
-        routing = report.get("repair_routing")
+            if (
+                authority.get("overall_decision") != "fail"
+                or not authority.get("failure_set")
+                or authority.get("contract_gaps")
+                or authority.get("semantic_attempt_budget_consumed") is not True
+            ):
+                raise ContractError(
+                    "repair preparation requires a materialized semantic failure"
+                )
+            failures = authority["failure_set"]
+            routing = authority.get("repair_routing")
+            authority_kind = "semantic_failure_report"
+            authority_sha256 = authority["report_sha256"]
+            semantic_attempt_budget_consumed = True
+            if repair_bundle_path is not None:
+                allowed_write_set = sorted(
+                    {
+                        path
+                        for failure in failures
+                        for path in failure.get("repair_write_set", [])
+                    }
+                )
+        elif brief_path.is_file():
+            authority = read_json(brief_path)
+            _require_fingerprint(
+                authority, "brief_sha256", "Precompile Contract Gap brief"
+            )
+            if (
+                authority.get("schema_name") != "precompile-contract-gap-brief"
+                or authority.get("schema_version") != "1.0.0"
+                or authority.get("routing")
+                != "human_policy_disposition_required"
+                or authority.get("semantic_attempt_budget_consumed") is not False
+            ):
+                raise ContractError("repair predecessor Contract Gap brief is invalid")
+            retained = self.retained_contract_gap_evidence(
+                workspace_root=predecessor_root, brief=authority
+            )
+            failures = retained["failure_set"]
+            routing = retained["repair_routing"]
+            if repair_disposition_path is None or repair_bundle_path is None:
+                raise ContractError(
+                    "Contract Gap repair requires disposition and bundle authority"
+                )
+            disposition_path = repair_disposition_path.resolve()
+            disposition = read_json(disposition_path)
+            _require_fingerprint(
+                disposition, "disposition_sha256", "content repair disposition"
+            )
+            gap_ids = sorted(
+                item.get("gap_id") for item in authority.get("contract_gaps", [])
+            )
+            failure_keys = sorted(
+                f"{item['owner']}:{item['result_key']}" for item in failures
+            )
+            bundle_path = repair_bundle_path.resolve()
+            allowed_write_set = disposition.get("allowed_write_set")
+            if (
+                disposition.get("schema_name")
+                != "content-repair-human-disposition"
+                or disposition.get("schema_version") != "2.0.0"
+                or disposition.get("decision") != "provider_repair_authorized"
+                or not isinstance(disposition.get("approved_at"), str)
+                or not disposition["approved_at"]
+                or not isinstance(disposition.get("approval_reference"), str)
+                or not disposition["approval_reference"]
+                or disposition.get("predecessor_contract_gap_brief_path")
+                != str(brief_path.resolve())
+                or disposition.get("predecessor_contract_gap_brief_sha256")
+                != authority.get("brief_sha256")
+                or disposition.get("generation_set_sha256")
+                != authority.get("generation_set_sha256")
+                or disposition.get("authorized_contract_gap_ids") != gap_ids
+                or disposition.get("authorized_failure_keys") != failure_keys
+                or not isinstance(allowed_write_set, list)
+                or not allowed_write_set
+                or allowed_write_set != sorted(set(allowed_write_set))
+                or disposition.get("repair_bundle_path") != str(bundle_path)
+                or disposition.get("repair_bundle_sha256") != sha256_file(bundle_path)
+            ):
+                raise ContractError("content repair disposition is absent or stale")
+            disposition_binding = {
+                "path": str(disposition_path),
+                "disposition_sha256": disposition["disposition_sha256"],
+                "approval_reference": disposition["approval_reference"],
+            }
+            authority_kind = "contract_gap_brief"
+            authority_sha256 = authority["brief_sha256"]
+            semantic_attempt_budget_consumed = False
+        else:
+            raise ContractError("repair preparation lacks failure authority")
         if not isinstance(routing, dict):
             raise ContractError("failed report lacks deterministic repair routing")
         routed_keys = {
@@ -349,7 +667,7 @@ class PrecompileQualityProvider:
         }
         expected_keys = {
             f"{item['owner']}:{item['result_key']}"
-            for item in report["failure_set"]
+            for item in failures
         }
         if routed_keys != expected_keys:
             raise ContractError("deterministic repair routing is incomplete")
@@ -357,6 +675,58 @@ class PrecompileQualityProvider:
         predecessor_generations = read_json(
             predecessor_root / "artifact-generations.json"
         )
+        predecessor_attempt_path = predecessor_root / "repair-attempt.json"
+        prior_semantic_attempts = 0
+        if predecessor_attempt_path.is_file():
+            predecessor_attempt = read_json(predecessor_attempt_path)
+            _require_fingerprint(
+                predecessor_attempt,
+                "attempt_sha256",
+                "predecessor Precompile repair Attempt",
+            )
+            prior_semantic_attempts = predecessor_attempt.get(
+                "semantic_attempt_number"
+            )
+            if prior_semantic_attempts is None:
+                prior_semantic_attempts = (
+                    predecessor_attempt.get("repair_attempt_number", 0)
+                    if predecessor_attempt.get("predecessor_report_sha256")
+                    else 0
+                )
+            if (
+                not isinstance(prior_semantic_attempts, int)
+                or prior_semantic_attempts < 0
+                or predecessor_attempt.get("repaired_generation_set_sha256")
+                != authority.get("generation_set_sha256")
+                or predecessor_attempt.get("repaired_inventory_sha256")
+                != authority.get("inventory_sha256")
+            ):
+                raise ContractError(
+                    "predecessor repair Attempt budget authority is stale",
+                    data={
+                        "first_failing_gate": "precompile_repair_semantic_budget",
+                        "error_code": "precompile_repair_budget_authority_stale",
+                    },
+                )
+        semantic_attempt_number = prior_semantic_attempts + (
+            1 if semantic_attempt_budget_consumed else 0
+        )
+        if semantic_attempt_number > 3:
+            raise ContractError(
+                "Precompile semantic repair attempt budget is exhausted",
+                data={
+                    "first_failing_gate": "precompile_repair_semantic_budget",
+                    "error_code": "precompile_repair_semantic_budget_exhausted",
+                },
+            )
+        if repair_attempt_number != max(1, semantic_attempt_number):
+            raise ContractError(
+                "repair attempt number does not match the semantic repair budget",
+                data={
+                    "first_failing_gate": "precompile_repair_semantic_budget",
+                    "error_code": "precompile_repair_attempt_number_mismatch",
+                },
+            )
         repaired_generations = read_json(artifact_generations_path.resolve())
         self._validate_generation_set(predecessor_generations)
         self._validate_generation_set(repaired_generations)
@@ -404,7 +774,11 @@ class PrecompileQualityProvider:
             "activation_status": "target_only",
             "repair_attempt_number": repair_attempt_number,
             "prepared_at": prepared_at,
-            "predecessor_report_sha256": report["report_sha256"],
+            "predecessor_failure_authority": {
+                "kind": authority_kind,
+                "path": str((report_path if report_path.is_file() else brief_path).resolve()),
+                "sha256": authority_sha256,
+            },
             "predecessor_generation_set_sha256": predecessor_generations[
                 "generation_set_sha256"
             ],
@@ -414,11 +788,29 @@ class PrecompileQualityProvider:
             "repaired_inventory_sha256": prepared["inventory_sha256"],
             "advanced_logical_ids": advanced,
             "repair_routing": routing,
+            "failure_set": failures,
+            "disposition": disposition_binding,
+            "repair_bundle": (
+                {
+                    "path": str(repair_bundle_path.resolve()),
+                    "sha256": sha256_file(repair_bundle_path.resolve()),
+                }
+                if repair_bundle_path is not None
+                else None
+            ),
+            "repair_sequence": repair_sequence,
+            "semantic_attempt_budget_consumed": semantic_attempt_budget_consumed,
+            "semantic_attempt_number": semantic_attempt_number,
+            "allowed_write_set": allowed_write_set,
             "fresh_reviewer_task_ids": [
                 read_json(Path(path))["task_id"]
                 for path in prepared["skeleton_paths"]
             ],
         }
+        if authority_kind == "semantic_failure_report":
+            ledger["predecessor_report_sha256"] = authority_sha256
+        else:
+            ledger["predecessor_contract_gap_brief_sha256"] = authority_sha256
         ledger["attempt_sha256"] = hashlib.sha256(
             canonical_json_bytes(ledger)
         ).hexdigest()
@@ -658,6 +1050,17 @@ class PrecompileQualityProvider:
                 "generation_set_sha256": generations["generation_set_sha256"],
                 "inventory_sha256": inventory["inventory_sha256"],
                 "contract_gaps": contract_gaps,
+                "failure_set": failures,
+                "repair_routing": _route_failures(failures),
+                "committed_patch_bindings": [
+                    {
+                        "owner": item["owner"],
+                        "skeleton_sha256": item["skeleton_sha256"],
+                        "patch_sha256": item["patch_sha256"],
+                        "commit_sha256": item["commit_sha256"],
+                    }
+                    for item in owner_reports
+                ],
                 "semantic_attempt_budget_consumed": False,
                 "routing": "human_policy_disposition_required",
             }

@@ -29,8 +29,8 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\video_work
   --prepared-at "<timestamp>" `
   --runtime-refresh-operation-id "<operation-id>" `
   --runtime-predecessor-final-compile-manifest "<predecessor-final-compile-manifest.json>" `
-  --runtime-content-repair-disposition "<approved-disposition.json>" `
-  --runtime-predecessor-contract-gap-brief "<failed-workspace/precompile-contract-gap-brief.json>"
+  --repair-failure-authority "<failed-workspace/precompile-contract-gap-brief.json>" `
+  --repair-disposition "<approved-disposition.json>"
 ```
 
 The operation id must equal the active `precompile_refresh_required` journal.
@@ -42,13 +42,24 @@ before Production supersedes a task or materializes an Attempt.
 
 When an earlier promotion reached `promotion_ready` and its fresh Precompile
 workspace produced a Contract Gap brief, retry requires the two disposition
-arguments shown above. The disposition binds the published Issue #105 approval
-comment, approval time, gap id, runtime operation, immutable repair bundle,
-current generation-set fingerprint, and Runtime Policy. Its
-`contract_gap_brief_sha256` is the brief JSON's validated internal
-`brief_sha256`; it is distinct from the file byte SHA. The disposition grants
-the provider authority to rederive corrected inputs and does not grant a
-semantic pass.
+arguments shown above. The version 2 disposition binds an approval reference,
+approval time, the exact Gap and same-batch failure keys, producer payload write
+set, runtime operation, immutable successor repair bundle, current generation
+set, predecessor sequence, and Runtime Policy. Its
+`predecessor_contract_gap_brief_sha256` is the brief JSON's validated internal
+`brief_sha256`; it is distinct from the file byte SHA. No Issue or Gap identity
+is built into provider admission. Version 1 dispositions remain valid evidence
+for exact replay of their already published promotion and cannot admit another
+successor.
+
+When the predecessor instead contains a materialized semantic failure report,
+pass that report through `--repair-failure-authority` and omit
+`--repair-disposition`. The report's exact failure write sets authorize the new
+bundle. The same authority arguments also work without a Runtime refresh
+attachment; Runtime operation and predecessor-manifest arguments are then
+omitted. The legacy `--runtime-predecessor-contract-gap-brief` and
+`--runtime-content-repair-disposition` spellings remain accepted for exact
+replay of already recorded commands.
 
 An exact replay of the already recorded ordinary promotion workspace keeps the
 existing public command shape and does not require a disposition. After it
@@ -59,16 +70,19 @@ the existing promotion without resuming Production or deriving a new output
 root. A different workspace is a successor refresh and therefore requires the
 exact disposition.
 
-The provider validates the disposition and the failed workspace before creating
-the successor promotion directory. It requires every Production replacement
-from the original bundle to be committed already, leaves Production State and
-Compile Manifest bytes unchanged, and derives the successor generations from
-the original failed predecessor workspace. The new promotion therefore retains
-the exact generation-set identity while its disposition identity selects a new
-immutable output root. The active handoff retains the earlier promotion binding
-and records exactly one successor; replay with the same inputs preserves its
-bytes, while a stale disposition, generation drift, or competing workspace is
-rejected before the provider creates derived output or a Precompile workspace.
+The provider validates the disposition, retained committed Patches, failed
+workspace inventory and generations, bundle, and actual producer payload write
+set before creating the successor promotion directory. It then resumes the
+existing Production graph and derives a new Artifact Generation Set. The active
+handoff appends the earlier promotion and disposition to retained history and
+records exactly one current successor. Replay with the same inputs returns that
+authority without writes; a stale disposition, stale predecessor, or competing
+workspace is rejected before Production or Precompile publication. Contract
+Gaps advance `repair_sequence` without incrementing the retained
+`semantic_attempt_number`. A materialized semantic failure increments that
+number, and its predecessor Attempt binding prevents callers from resetting the
+counter through repeated `--repair-attempt-number 1` requests. A fourth
+semantic repair is rejected before successor publication.
 
 Pyramid review binds the target's content identity: logical id, path, SHA, and
 evaluation context. When later provider-owned integration retains that identity
@@ -79,13 +93,16 @@ Changes to the target SHA, path, logical id, or evaluation context remain stale
 review evidence and block promotion.
 
 Successor semantic inputs are derived from current Production Figure bindings.
-Authoritative raster text takes its caption from the current Figure Manifest,
-after the provider verifies the bound image and manifest bytes. Visual source
-provenance is rebuilt under the new promotion output with current Figure asset
-and manifest generations while retaining the validated source document
-identities and unchanged Figure source timestamp. The predecessor provenance
-file remains unchanged, and the successor dependency projection points to the
-new derived provenance.
+Each referenced raster requires a Figure Manifest
+`authoritative_reader_text` declaration containing its complete visible text,
+`reviewed_complete` status, no unresolved spans, and the current image path and
+SHA. A caption is descriptive metadata and is never substituted for the raster
+text. Generated-text locators are rebuilt from the current artifact path.
+Visual source provenance is rebuilt under the new promotion output with current
+Figure asset and manifest generations while retaining the validated source
+document identities and unchanged Figure source timestamp. The predecessor
+provenance file remains unchanged, and the successor dependency projection
+points to the new derived provenance.
 
 Successful promotion records the provider-derived Artifact Generations,
 Reader-Facing Text Inventory, semantic dependencies, and repair workspace in the
@@ -143,3 +160,13 @@ recorded predecessor Final Compile Manifest.
 - Verification boundary: only the new Issue #105 focused contract methods were
   run. The complete acceptance suite was not run under the user's explicit test
   constraint.
+
+Issue #106 adds positive fixtures for complete raster declarations, current
+generated-text locators, same-batch failure retention, dispositioned Gap
+continuation, successor history, and exact replay. Negative fixtures isolate an
+unresolved raster declaration, a same-generation wrong-inventory predecessor,
+a competing successor workspace, and legacy disposition admission. The affected
+modules are Figure Manifest validation, Precompile materialization and repair
+preparation, repair promotion, Runtime refresh handoff, and their CLI arguments.
+Only these new exact methods were run; the full and historical test collections
+remain excluded by the explicit verification boundary.

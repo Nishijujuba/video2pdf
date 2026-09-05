@@ -187,6 +187,12 @@ def _parser() -> argparse.ArgumentParser:
     precompile_repair_promote.add_argument(
         "--runtime-predecessor-final-compile-manifest", type=Path
     )
+    precompile_repair_promote.add_argument(
+        "--runtime-content-repair-disposition", type=Path
+    )
+    precompile_repair_promote.add_argument(
+        "--runtime-predecessor-contract-gap-brief", type=Path
+    )
     precompile_repair_promote.add_argument("--prepared-at", required=True)
     precompile_repair_promote.add_argument(
         "--fault-point",
@@ -1216,6 +1222,12 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             runtime_refresh_operation_id=args.runtime_refresh_operation_id,
             runtime_predecessor_final_compile_manifest_path=(
                 args.runtime_predecessor_final_compile_manifest
+            ),
+            runtime_content_repair_disposition_path=(
+                args.runtime_content_repair_disposition
+            ),
+            runtime_predecessor_contract_gap_brief_path=(
+                args.runtime_predecessor_contract_gap_brief
             ),
             fault_point=args.fault_point,
             fault_logical_task_key=args.fault_logical_task_key,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,13 @@ from .delivery_quality import DeliveryQualityRegistry
 from .errors import ContractError, RuntimeRefreshFault
 from .kernel import VideoWorkflowKernel
 from .precompile_quality import PrecompileQualityProvider
-from .utils import canonical_json_bytes, read_json, sha256_file, write_json_atomic
+from .utils import (
+    canonical_json_bytes,
+    read_json,
+    require_contained_path,
+    sha256_file,
+    write_json_atomic,
+)
 
 
 RUNTIME_REFRESH_FAULT_POINTS = {
@@ -19,6 +26,9 @@ RUNTIME_REFRESH_FAULT_POINTS = {
 }
 
 CONTENT_REPAIR_HANDOFF_FAULT_POINTS = {"after_seal_before_runtime_supersession"}
+ISSUE105_DISPOSITION_COMMENT_URL = (
+    "https://github.com/Nishijujuba/video2pdf/issues/105#issuecomment-5552293844"
+)
 
 
 def _fingerprint(value: dict[str, Any], field: str) -> str:
@@ -449,6 +459,222 @@ class CompileRuntimeRefreshProvider:
         write_json_atomic(active_path, journal)
         return handoff
 
+    def preflight_content_repair_promotion_refresh(
+        self,
+        *,
+        run_dir: Path,
+        expected_operation_id: str,
+        repair_bundle_path: Path,
+        disposition_path: Path,
+        predecessor_contract_gap_brief_path: Path,
+        successor_workspace_root: Path,
+    ) -> dict[str, Any]:
+        run = run_dir.resolve()
+        active_path = run / "workflow/runtime-refresh-active.json"
+        journal = read_json(active_path)
+        _require_fingerprint(journal, "journal_sha256", "Compile Runtime refresh journal")
+        handoff = journal.get("content_repair_handoff")
+        if (
+            journal.get("state") != "precompile_refresh_required"
+            or journal.get("operation_id") != expected_operation_id
+            or not isinstance(handoff, dict)
+            or handoff.get("state") != "promotion_ready"
+        ):
+            raise ContractError(
+                "content repair promotion refresh requires its pending promotion_ready handoff",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_state",
+                    "error_code": "runtime_refresh_promotion_refresh_state_invalid",
+                },
+            )
+        _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
+        current_promotion = handoff.get("promotion")
+        if (
+            handoff.get("promotion_refresh") is not None
+            and isinstance(current_promotion, dict)
+            and current_promotion.get("workspace_root")
+            != str(successor_workspace_root.resolve())
+        ):
+            raise ContractError(
+                "content repair promotion refresh already owns another successor",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_successor",
+                    "error_code": "runtime_refresh_promotion_refresh_competing_successor",
+                },
+            )
+        if (
+            handoff.get("repair_bundle_path") != str(repair_bundle_path.resolve())
+            or handoff.get("repair_bundle_sha256")
+            != sha256_file(repair_bundle_path.resolve())
+            or handoff.get("runtime_policy_sha256")
+            != sha256_file(run / "workflow/compile-runtime-policy.json")
+        ):
+            raise ContractError(
+                "content repair promotion refresh predecessor authority drifted",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_authority",
+                    "error_code": "runtime_refresh_promotion_refresh_authority_drift",
+                },
+            )
+        prior_promotions = handoff.get("retained_prior_promotions")
+        predecessor_promotion = (
+            prior_promotions[0]
+            if isinstance(prior_promotions, list) and len(prior_promotions) == 1
+            else handoff.get("promotion")
+        )
+        if not isinstance(predecessor_promotion, dict):
+            raise ContractError(
+                "content repair promotion refresh lacks its predecessor binding",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_state",
+                    "error_code": "runtime_refresh_promotion_refresh_predecessor_missing",
+                },
+            )
+        predecessor_generation_path = require_contained_path(
+            Path(str(predecessor_promotion.get("generation_set_path", ""))),
+            run,
+            purpose="content repair predecessor promotion generations",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        predecessor_generations = read_json(predecessor_generation_path)
+        _require_fingerprint(
+            predecessor_generations,
+            "generation_set_sha256",
+            "content repair predecessor Artifact Generation set",
+        )
+        if (
+            sha256_file(predecessor_generation_path)
+            != predecessor_promotion.get("generation_set_file_sha256")
+            or predecessor_generations.get("generation_set_sha256")
+            != predecessor_promotion.get("generation_set_sha256")
+        ):
+            raise ContractError(
+                "content repair predecessor promotion generations drifted",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_generation",
+                    "error_code": "runtime_refresh_promotion_refresh_predecessor_generation_drift",
+                },
+            )
+        predecessor_workspace = require_contained_path(
+            Path(str(predecessor_promotion.get("workspace_root", ""))),
+            run,
+            purpose="content repair predecessor promotion workspace",
+            error_type=ContractError,
+            leaf_kind="directory",
+        )
+        brief_path = require_contained_path(
+            predecessor_contract_gap_brief_path.resolve(),
+            predecessor_workspace,
+            purpose="content repair predecessor Contract Gap brief",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        if brief_path.parent != predecessor_workspace:
+            raise ContractError(
+                "content repair Contract Gap brief is outside the predecessor workspace root",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_disposition",
+                    "error_code": "runtime_refresh_promotion_refresh_brief_path_invalid",
+                },
+            )
+        brief = read_json(brief_path)
+        _require_fingerprint(brief, "brief_sha256", "Precompile Contract Gap brief")
+        gaps = brief.get("contract_gaps")
+        if (
+            brief.get("schema_name") != "precompile-contract-gap-brief"
+            or brief.get("schema_version") != "1.0.0"
+            or brief.get("routing") != "human_policy_disposition_required"
+            or brief.get("semantic_attempt_budget_consumed") is not False
+            or brief.get("generation_set_sha256")
+            != predecessor_promotion.get("generation_set_sha256")
+            or not isinstance(gaps, list)
+            or (predecessor_workspace / "precompile-text-seal.json").exists()
+        ):
+            raise ContractError(
+                "content repair predecessor Contract Gap authority is invalid",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_disposition",
+                    "error_code": "runtime_refresh_promotion_refresh_brief_invalid",
+                },
+            )
+        approved_path = require_contained_path(
+            disposition_path.resolve(),
+            run,
+            purpose="content repair human disposition",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        disposition = read_json(approved_path)
+        _require_fingerprint(
+            disposition, "disposition_sha256", "content repair human disposition"
+        )
+        gap_id = disposition.get("contract_gap_id")
+        if (
+            disposition.get("schema_name") != "content-repair-human-disposition"
+            or disposition.get("schema_version") != "1.0.0"
+            or disposition.get("decision") != "provider_conformance_rederive"
+            or disposition.get("issue_number") != 105
+            or disposition.get("approval_comment_url")
+            != ISSUE105_DISPOSITION_COMMENT_URL
+            or not isinstance(disposition.get("approved_at"), str)
+            or not disposition["approved_at"]
+            or disposition.get("contract_gap_brief_path") != str(brief_path)
+            or disposition.get("contract_gap_brief_sha256")
+            != brief.get("brief_sha256")
+            or disposition.get("runtime_refresh_operation_id")
+            != expected_operation_id
+            or disposition.get("repair_bundle_path")
+            != str(repair_bundle_path.resolve())
+            or disposition.get("repair_bundle_sha256")
+            != handoff.get("repair_bundle_sha256")
+            or disposition.get("generation_set_sha256")
+            != predecessor_promotion.get("generation_set_sha256")
+            or disposition.get("runtime_policy_sha256")
+            != handoff.get("runtime_policy_sha256")
+            or len([gap for gap in gaps if gap.get("gap_id") == gap_id]) != 1
+        ):
+            raise ContractError(
+                "content repair promotion refresh disposition is absent or stale",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_disposition",
+                    "error_code": "runtime_refresh_promotion_refresh_disposition_invalid",
+                },
+            )
+        authorization = {
+            "decision": disposition["decision"],
+            "approved_at": disposition["approved_at"],
+            "approval_comment_url": disposition["approval_comment_url"],
+            "disposition_path": str(approved_path),
+            "disposition_sha256": disposition["disposition_sha256"],
+            "predecessor_contract_gap_brief_path": str(brief_path),
+            "predecessor_contract_gap_brief_sha256": brief["brief_sha256"],
+            "contract_gap_id": gap_id,
+            "runtime_refresh_operation_id": expected_operation_id,
+            "repair_bundle_sha256": handoff["repair_bundle_sha256"],
+            "generation_set_sha256": predecessor_promotion["generation_set_sha256"],
+            "generation_set_path": str(predecessor_generation_path),
+            "generation_set_file_sha256": predecessor_promotion[
+                "generation_set_file_sha256"
+            ],
+            "runtime_policy_sha256": handoff["runtime_policy_sha256"],
+            "production_state_sha256": sha256_file(run / "workflow/production-state.json"),
+            "compile_manifest_sha256": sha256_file(run / "workflow/compile-manifest.json"),
+        }
+        existing_refresh = handoff.get("promotion_refresh")
+        if existing_refresh is not None and existing_refresh != authorization:
+            raise ContractError(
+                "content repair promotion refresh disposition competes with the recorded refresh",
+                data={
+                    "first_failing_gate": "content_repair_promotion_refresh_successor",
+                    "error_code": "runtime_refresh_promotion_refresh_competing_authority",
+                },
+            )
+        return authorization
+
     def bind_content_repair_promotion(
         self,
         *,
@@ -458,6 +684,8 @@ class CompileRuntimeRefreshProvider:
         generation_set_path: Path,
         inventory_path: Path,
         semantic_dependencies_path: Path,
+        disposition_path: Path | None = None,
+        predecessor_contract_gap_brief_path: Path | None = None,
     ) -> dict[str, Any]:
         run = run_dir.resolve()
         active_path = run / "workflow/runtime-refresh-active.json"
@@ -481,8 +709,89 @@ class CompileRuntimeRefreshProvider:
             "inventory_path": str(inventory_path.resolve()),
             "semantic_dependencies_path": str(semantic_dependencies_path.resolve()),
         }
-        if handoff.get("state") == "promotion_ready" and handoff.get("promotion") != bindings:
-            raise ContractError("content repair promotion replay identity changed")
+        if handoff.get("state") == "promotion_ready":
+            if handoff.get("promotion") == bindings and handoff.get(
+                "promotion_refresh"
+            ) is None:
+                return handoff
+            if disposition_path is None or predecessor_contract_gap_brief_path is None:
+                raise ContractError(
+                    "content repair promotion refresh requires the exact human disposition",
+                    data={
+                        "first_failing_gate": "content_repair_promotion_refresh_disposition",
+                        "error_code": "runtime_refresh_promotion_refresh_disposition_required",
+                    },
+                )
+            authorization = self.preflight_content_repair_promotion_refresh(
+                run_dir=run,
+                expected_operation_id=expected_operation_id,
+                repair_bundle_path=Path(handoff["repair_bundle_path"]),
+                disposition_path=disposition_path,
+                predecessor_contract_gap_brief_path=(
+                    predecessor_contract_gap_brief_path
+                ),
+                successor_workspace_root=workspace_root,
+            )
+            if handoff.get("promotion_refresh") is not None:
+                if handoff.get("promotion") != bindings:
+                    raise ContractError(
+                        "content repair promotion refresh already owns another successor",
+                        data={
+                            "first_failing_gate": "content_repair_promotion_refresh_successor",
+                            "error_code": "runtime_refresh_promotion_refresh_competing_successor",
+                        },
+                    )
+                return handoff
+            old_promotion = handoff["promotion"]
+            if workspace_root.resolve() == Path(old_promotion["workspace_root"]):
+                raise ContractError(
+                    "content repair promotion refresh requires a fresh workspace",
+                    data={
+                        "first_failing_gate": "content_repair_promotion_refresh_successor",
+                        "error_code": "runtime_refresh_promotion_refresh_workspace_reused",
+                    },
+                )
+            _require_fingerprint(
+                generation_set,
+                "generation_set_sha256",
+                "content repair successor Artifact Generation set",
+            )
+            if (
+                generation_set.get("generation_set_sha256")
+                != old_promotion.get("generation_set_sha256")
+                or sha256_file(generation_set_path.resolve())
+                != old_promotion.get("generation_set_file_sha256")
+            ):
+                raise ContractError(
+                    "content repair promotion refresh changed Artifact Generations",
+                    data={
+                        "first_failing_gate": "content_repair_promotion_refresh_generation",
+                        "error_code": "runtime_refresh_promotion_refresh_generation_changed",
+                    },
+                )
+            if (
+                sha256_file(run / "workflow/production-state.json")
+                != authorization["production_state_sha256"]
+                or sha256_file(run / "workflow/compile-manifest.json")
+                != authorization["compile_manifest_sha256"]
+            ):
+                raise ContractError(
+                    "content repair promotion refresh changed Production authority",
+                    data={
+                        "first_failing_gate": "content_repair_promotion_refresh_authority",
+                        "error_code": "runtime_refresh_promotion_refresh_production_changed",
+                    },
+                )
+            if (workspace_root.resolve() / "precompile-text-seal.json").exists():
+                raise ContractError(
+                    "content repair promotion refresh successor already has a Seal",
+                    data={
+                        "first_failing_gate": "content_repair_promotion_refresh_successor",
+                        "error_code": "runtime_refresh_promotion_refresh_successor_sealed",
+                    },
+                )
+            handoff["retained_prior_promotions"] = [deepcopy(old_promotion)]
+            handoff["promotion_refresh"] = authorization
         handoff["state"] = "promotion_ready"
         handoff["promotion"] = bindings
         handoff["handoff_sha256"] = _fingerprint(handoff, "handoff_sha256")

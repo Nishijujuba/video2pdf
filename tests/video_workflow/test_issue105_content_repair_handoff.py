@@ -52,7 +52,15 @@ class Issue105ContentRepairHandoffTests(unittest.TestCase):
         run = root / "run"
         (run / "workflow").mkdir(parents=True)
         write_json(run / "workflow/run.json", {"run_id": "run-105"})
-        write_json(run / "workflow/production-state.json", {})
+        write_json(
+            run / "workflow/production-state.json",
+            {
+                "run_id": "run-105",
+                "sections": {},
+                "claims": {},
+                "checkpoints": {"draft_compile_ready": "current"},
+            },
+        )
         policy_path = write_json(run / "workflow/compile-runtime-policy.json", {"policy": "current"})
         policy_sha256 = hashlib.sha256(policy_path.read_bytes()).hexdigest()
         bundle_root = run / "待删除/precompile-repair-promotion/bundle-105"
@@ -60,12 +68,16 @@ class Issue105ContentRepairHandoffTests(unittest.TestCase):
         bundle = {
             "schema_name": "production-repair-replay-bundle",
             "schema_version": "1.0.0",
+            "run_id": "run-105",
+            "input_snapshot": [],
             "derived_payload": [
                 {
                     "path": str(bundled_policy_path.relative_to(run)).replace("\\", "/"),
                     "sha256": hashlib.sha256(bundled_policy_path.read_bytes()).hexdigest(),
                 }
             ],
+            "initial_claims": {},
+            "task_order": [],
         }
         bundle_path = write_json(bundle_root / "bundle.json", bundle)
         report = write_json(run / "review/precompile/failed/precompile-quality-report.json", {"decision": "fail"})
@@ -205,6 +217,530 @@ class Issue105ContentRepairHandoffTests(unittest.TestCase):
             (run / "workflow/runtime-refresh-active.json").read_text(encoding="utf-8")
         )
         self.assertEqual(first, active["content_repair_handoff"])
+
+    def _promotion_refresh_fixture(self) -> tuple[dict, ...]:
+        run, bundle, predecessor_manifest, journal = self._pending_runtime_fixture(
+            "precompile_refresh_required"
+        )
+        task_order = ["outline", "pyramid-outline", "pyramid-main"]
+        initial_claims = {
+            logical_key: {
+                "task_id": f"{index + 1:032x}",
+                "claim_generation": 1,
+            }
+            for index, logical_key in enumerate(task_order)
+        }
+        production_state = read_json(run / "workflow/production-state.json")
+        production_state["claims"] = {
+            logical_key: {
+                **claim,
+                "claim_generation": 2,
+                "status": "committed",
+            }
+            for logical_key, claim in initial_claims.items()
+        }
+        write_json(run / "workflow/production-state.json", production_state)
+        bundle_value = read_json(bundle)
+        bundle_value["initial_claims"] = initial_claims
+        bundle_value["task_order"] = task_order
+        write_json(bundle, bundle_value)
+        write_json(run / "workflow/compile-manifest.json", {})
+        provider = CompileRuntimeRefreshProvider(PROJECT_ROOT)
+        provider.prepare_content_repair_handoff(
+            run_dir=run,
+            repair_bundle_path=bundle,
+            predecessor_final_compile_manifest_path=predecessor_manifest,
+            expected_operation_id=journal["operation_id"],
+        )
+        generations = {
+            "schema_name": "precompile-artifact-generation-set",
+            "schema_version": "1.0.0",
+            "generation_set_id": "issue105-refresh",
+            "producer_ids": ["writer-105"],
+            "artifacts": [
+                {
+                    "logical_id": "integrated_main",
+                    "generation": 2,
+                    "sha256": "a" * 64,
+                }
+            ],
+        }
+        generations["generation_set_sha256"] = fingerprint(
+            generations, "generation_set_sha256"
+        )
+        old_workspace = run / "review/precompile/workspaces/issue105-old-failed"
+        old_workspace.mkdir(parents=True)
+        old_generation_path = write_json(
+            run / "review/precompile/production-repair-promotions/v5/artifact-generations.json",
+            generations,
+        )
+        old_inventory = write_json(
+            run / "review/precompile/production-repair-promotions/v5/reader-facing-text-inventory.json",
+            {"inventory": "old", "inventory_sha256": "b" * 64},
+        )
+        old_dependencies = write_json(
+            run / "review/precompile/production-repair-promotions/v5/semantic-dependencies.json",
+            {"dependencies": "old", "dependencies_sha256": "c" * 64},
+        )
+        predecessor_generations = {
+            **generations,
+            "artifacts": [
+                {**generations["artifacts"][0], "generation": 1, "sha256": "0" * 64}
+            ],
+        }
+        predecessor_generations["generation_set_sha256"] = fingerprint(
+            predecessor_generations, "generation_set_sha256"
+        )
+        predecessor_precompile_workspace = (
+            run / "review/precompile/workspaces/issue105-original-failed"
+        )
+        write_json(
+            predecessor_precompile_workspace / "artifact-generations.json",
+            predecessor_generations,
+        )
+        predecessor_inventory = write_json(
+            predecessor_precompile_workspace / "reader-facing-text-inventory.json",
+            {"inventory": "candidate", "inventory_sha256": "d" * 64},
+        )
+        predecessor_dependencies = write_json(
+            predecessor_precompile_workspace / "semantic-dependencies.json",
+            {"dependencies": "candidate", "dependencies_sha256": "e" * 64},
+        )
+        predecessor_report = {
+            "schema_name": "precompile-quality-report",
+            "schema_version": "1.0.0",
+            "generation_set_sha256": predecessor_generations[
+                "generation_set_sha256"
+            ],
+            "inventory_sha256": "d" * 64,
+            "semantic_dependencies_sha256": "e" * 64,
+        }
+        predecessor_report["report_sha256"] = fingerprint(
+            predecessor_report, "report_sha256"
+        )
+        write_json(
+            predecessor_precompile_workspace / "precompile-quality-report.json",
+            predecessor_report,
+        )
+        provider.bind_content_repair_promotion(
+            run_dir=run,
+            expected_operation_id=journal["operation_id"],
+            workspace_root=old_workspace,
+            generation_set_path=old_generation_path,
+            inventory_path=old_inventory,
+            semantic_dependencies_path=old_dependencies,
+        )
+        gap_id = "reader-inventory-caption-drift-allowlist-bypass-001"
+        brief = {
+            "schema_name": "precompile-contract-gap-brief",
+            "schema_version": "1.0.0",
+            "routing": "human_policy_disposition_required",
+            "semantic_attempt_budget_consumed": False,
+            "generation_set_sha256": generations["generation_set_sha256"],
+            "inventory_sha256": "b" * 64,
+            "contract_gaps": [
+                {
+                    "gap_id": gap_id,
+                    "owner": "writing-quality-reviewer",
+                    "observation": "provider-derived caption is stale",
+                    "evidence_locator": "reader-facing-text-inventory.json",
+                }
+            ],
+        }
+        brief["brief_sha256"] = fingerprint(brief, "brief_sha256")
+        brief_path = write_json(
+            old_workspace / "precompile-contract-gap-brief.json", brief
+        )
+        (old_workspace / "artifact-generations.json").write_bytes(
+            old_generation_path.read_bytes()
+        )
+        (old_workspace / "reader-facing-text-inventory.json").write_bytes(
+            old_inventory.read_bytes()
+        )
+        (old_workspace / "semantic-dependencies.json").write_bytes(
+            old_dependencies.read_bytes()
+        )
+        repair_attempt = {
+            "schema_name": "precompile-repair-attempt",
+            "schema_version": "1.0.0",
+            "repair_attempt_number": 1,
+            "prepared_at": "2026-09-05T14:02:04Z",
+            "predecessor_report_sha256": predecessor_report["report_sha256"],
+            "predecessor_generation_set_sha256": predecessor_generations[
+                "generation_set_sha256"
+            ],
+            "repaired_generation_set_sha256": generations[
+                "generation_set_sha256"
+            ],
+            "repaired_inventory_sha256": "b" * 64,
+        }
+        repair_attempt["attempt_sha256"] = fingerprint(
+            repair_attempt, "attempt_sha256"
+        )
+        write_json(old_workspace / "repair-attempt.json", repair_attempt)
+        disposition = {
+            "schema_name": "content-repair-human-disposition",
+            "schema_version": "1.0.0",
+            "decision": "provider_conformance_rederive",
+            "issue_number": 105,
+            "approved_at": "2026-09-05T14:02:04Z",
+            "approval_comment_url": "https://github.com/Nishijujuba/video2pdf/issues/105#issuecomment-5552293844",
+            "contract_gap_brief_path": str(brief_path.resolve()),
+            "contract_gap_brief_sha256": brief["brief_sha256"],
+            "contract_gap_id": gap_id,
+            "runtime_refresh_operation_id": journal["operation_id"],
+            "repair_bundle_path": str(bundle.resolve()),
+            "repair_bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+            "generation_set_sha256": generations["generation_set_sha256"],
+            "runtime_policy_sha256": json.loads(
+                (run / "workflow/runtime-refresh-active.json").read_text(
+                    encoding="utf-8"
+                )
+            )["content_repair_handoff"]["runtime_policy_sha256"],
+        }
+        disposition["disposition_sha256"] = fingerprint(
+            disposition, "disposition_sha256"
+        )
+        disposition_path = write_json(
+            run / "待删除/issue105-disposition.json", disposition
+        )
+        new_workspace = run / "review/precompile/workspaces/issue105-fresh"
+        new_workspace.mkdir(parents=True)
+        new_generation_path = write_json(
+            run / "review/precompile/production-repair-promotions/v6/artifact-generations.json",
+            generations,
+        )
+        new_inventory = write_json(
+            run / "review/precompile/production-repair-promotions/v6/reader-facing-text-inventory.json",
+            {"inventory": "fresh"},
+        )
+        new_dependencies = write_json(
+            run / "review/precompile/production-repair-promotions/v6/semantic-dependencies.json",
+            {"dependencies": "fresh"},
+        )
+        return {
+            "provider": provider,
+            "run": run,
+            "bundle": bundle,
+            "journal": journal,
+            "predecessor_manifest": predecessor_manifest,
+            "predecessor_precompile_workspace": predecessor_precompile_workspace,
+            "predecessor_inventory": predecessor_inventory,
+            "predecessor_dependencies": predecessor_dependencies,
+            "brief_path": brief_path,
+            "disposition_path": disposition_path,
+            "new_workspace": new_workspace,
+            "new_generation_path": new_generation_path,
+            "new_inventory": new_inventory,
+            "new_dependencies": new_dependencies,
+        }
+
+    def test_public_promotion_parser_exposes_exact_human_disposition(self) -> None:
+        from video2pdf_workflow_kernel.cli import _parser
+
+        parsed = _parser().parse_args(
+            [
+                "delivery-quality-precompile-repair-promote",
+                "--run-dir", "run",
+                "--repair-bundle", "bundle.json",
+                "--predecessor-workspace-root", "old",
+                "--workspace-root", "fresh",
+                "--inventory", "inventory.json",
+                "--semantic-dependencies", "dependencies.json",
+                "--repair-attempt-number", "1",
+                "--prepared-at", "2026-09-05T19:30:00+08:00",
+                "--runtime-refresh-operation-id", "operation-105",
+                "--runtime-predecessor-final-compile-manifest", "manifest.json",
+                "--runtime-content-repair-disposition", "disposition.json",
+                "--runtime-predecessor-contract-gap-brief", "brief.json",
+            ]
+        )
+        self.assertEqual(Path("disposition.json"), parsed.runtime_content_repair_disposition)
+        self.assertEqual(Path("brief.json"), parsed.runtime_predecessor_contract_gap_brief)
+
+    def test_promotion_ready_handoff_refreshes_once_and_replays_exactly(self) -> None:
+        case = self._promotion_refresh_fixture()
+        provider = case["provider"]
+        provider.preflight_content_repair_promotion_refresh(
+            run_dir=case["run"],
+            expected_operation_id=case["journal"]["operation_id"],
+            repair_bundle_path=case["bundle"],
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+            successor_workspace_root=case["new_workspace"],
+        )
+        first = provider.bind_content_repair_promotion(
+            run_dir=case["run"],
+            expected_operation_id=case["journal"]["operation_id"],
+            workspace_root=case["new_workspace"],
+            generation_set_path=case["new_generation_path"],
+            inventory_path=case["new_inventory"],
+            semantic_dependencies_path=case["new_dependencies"],
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+        )
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        active_bytes = active_path.read_bytes()
+        repeated = provider.bind_content_repair_promotion(
+            run_dir=case["run"],
+            expected_operation_id=case["journal"]["operation_id"],
+            workspace_root=case["new_workspace"],
+            generation_set_path=case["new_generation_path"],
+            inventory_path=case["new_inventory"],
+            semantic_dependencies_path=case["new_dependencies"],
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+        )
+        self.assertEqual(first, repeated)
+        self.assertEqual(active_bytes, active_path.read_bytes())
+        self.assertEqual(1, len(first["retained_prior_promotions"]))
+        self.assertEqual("promotion_ready", first["state"])
+        self.assertEqual(
+            "provider_conformance_rederive",
+            first["promotion_refresh"]["decision"],
+        )
+        self.assertFalse((case["new_workspace"] / "precompile-text-seal.json").exists())
+        self.assertEqual(
+            "precompile_refresh_required",
+            read_json(active_path)["state"],
+        )
+        with self.assertRaisesRegex(ContractError, "Final Compile is blocked"):
+            ContentProduction(_Kernel()).require_current_diagnostic_compile_authority(
+                case["run"]
+            )
+
+    def test_promotion_ready_handoff_refresh_requires_exact_disposition(self) -> None:
+        # Negative fixture: the sole contradiction is the absent disposition.
+        case = self._promotion_refresh_fixture()
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        with self.assertRaises(ContractError) as raised:
+            case["provider"].bind_content_repair_promotion(
+                run_dir=case["run"],
+                expected_operation_id=case["journal"]["operation_id"],
+                workspace_root=case["new_workspace"],
+                generation_set_path=case["new_generation_path"],
+                inventory_path=case["new_inventory"],
+                semantic_dependencies_path=case["new_dependencies"],
+                predecessor_contract_gap_brief_path=case["brief_path"],
+            )
+        self.assertEqual(
+            "content_repair_promotion_refresh_disposition",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "runtime_refresh_promotion_refresh_disposition_required",
+            raised.exception.data["error_code"],
+        )
+        self.assertEqual(before, active_path.read_bytes())
+
+    def test_promotion_ready_handoff_refresh_rejects_stale_disposition(self) -> None:
+        # Negative fixture: every authority remains current except the approval URL.
+        case = self._promotion_refresh_fixture()
+        disposition = read_json(case["disposition_path"])
+        disposition["approval_comment_url"] = (
+            "https://github.com/Nishijujuba/video2pdf/issues/105#issuecomment-stale"
+        )
+        disposition["disposition_sha256"] = fingerprint(
+            disposition, "disposition_sha256"
+        )
+        write_json(case["disposition_path"], disposition)
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        with self.assertRaises(ContractError) as raised:
+            case["provider"].bind_content_repair_promotion(
+                run_dir=case["run"],
+                expected_operation_id=case["journal"]["operation_id"],
+                workspace_root=case["new_workspace"],
+                generation_set_path=case["new_generation_path"],
+                inventory_path=case["new_inventory"],
+                semantic_dependencies_path=case["new_dependencies"],
+                disposition_path=case["disposition_path"],
+                predecessor_contract_gap_brief_path=case["brief_path"],
+            )
+        self.assertEqual(
+            "content_repair_promotion_refresh_disposition",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "runtime_refresh_promotion_refresh_disposition_invalid",
+            raised.exception.data["error_code"],
+        )
+        self.assertEqual(before, active_path.read_bytes())
+
+    def test_promotion_ready_handoff_refresh_rejects_generation_drift(self) -> None:
+        # Negative fixture: only the proposed successor generation set drifts.
+        case = self._promotion_refresh_fixture()
+        generations = read_json(case["new_generation_path"])
+        generations["artifacts"][0]["generation"] += 1
+        generations["generation_set_sha256"] = fingerprint(
+            generations, "generation_set_sha256"
+        )
+        write_json(case["new_generation_path"], generations)
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        with self.assertRaises(ContractError) as raised:
+            case["provider"].bind_content_repair_promotion(
+                run_dir=case["run"],
+                expected_operation_id=case["journal"]["operation_id"],
+                workspace_root=case["new_workspace"],
+                generation_set_path=case["new_generation_path"],
+                inventory_path=case["new_inventory"],
+                semantic_dependencies_path=case["new_dependencies"],
+                disposition_path=case["disposition_path"],
+                predecessor_contract_gap_brief_path=case["brief_path"],
+            )
+        self.assertEqual(
+            "content_repair_promotion_refresh_generation",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "runtime_refresh_promotion_refresh_generation_changed",
+            raised.exception.data["error_code"],
+        )
+        self.assertEqual(before, active_path.read_bytes())
+
+    def test_promotion_ready_handoff_refresh_rejects_competing_successor(self) -> None:
+        # Precedence fixture: a valid recorded refresh makes workspace competition first.
+        case = self._promotion_refresh_fixture()
+        provider = case["provider"]
+        provider.bind_content_repair_promotion(
+            run_dir=case["run"],
+            expected_operation_id=case["journal"]["operation_id"],
+            workspace_root=case["new_workspace"],
+            generation_set_path=case["new_generation_path"],
+            inventory_path=case["new_inventory"],
+            semantic_dependencies_path=case["new_dependencies"],
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+        )
+        competing_workspace = case["run"] / "review/precompile/workspaces/competing"
+        competing_workspace.mkdir(parents=True)
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        with self.assertRaises(ContractError) as raised:
+            provider.bind_content_repair_promotion(
+                run_dir=case["run"],
+                expected_operation_id=case["journal"]["operation_id"],
+                workspace_root=competing_workspace,
+                generation_set_path=case["new_generation_path"],
+                inventory_path=case["new_inventory"],
+                semantic_dependencies_path=case["new_dependencies"],
+                disposition_path=case["disposition_path"],
+                predecessor_contract_gap_brief_path=case["brief_path"],
+            )
+        self.assertEqual(
+            "content_repair_promotion_refresh_successor",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "runtime_refresh_promotion_refresh_competing_successor",
+            raised.exception.data["error_code"],
+        )
+        self.assertEqual(before, active_path.read_bytes())
+
+    def test_public_promotion_preserves_ordinary_exact_replay(self) -> None:
+        case = self._promotion_refresh_fixture()
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        provider.contracts = _Contracts()
+        provider.delivery_quality = _Contracts()
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        handoff = read_json(active_path)["content_repair_handoff"]
+        workspace = Path(handoff["promotion"]["workspace_root"])
+        retained_bytes = {
+            path: path.read_bytes()
+            for path in workspace.rglob("*")
+            if path.is_file()
+        }
+        with patch.object(
+            ContentProduction,
+            "require_current_diagnostic_compile_authority",
+            return_value={"classification": "diagnostic_compile_current"},
+        ), patch.object(provider, "_resume_production_repair") as resume:
+            result = provider.promote(
+                run_dir=case["run"],
+                repair_bundle_path=case["bundle"],
+                predecessor_workspace_root=case[
+                    "predecessor_precompile_workspace"
+                ],
+                workspace_root=workspace,
+                inventory_path=case["predecessor_inventory"],
+                semantic_dependencies_path=case["predecessor_dependencies"],
+                repair_attempt_number=1,
+                prepared_at="2026-09-05T14:02:04Z",
+                runtime_refresh_operation_id=case["journal"]["operation_id"],
+                runtime_predecessor_final_compile_manifest_path=case[
+                    "predecessor_manifest"
+                ],
+            )
+        resume.assert_not_called()
+        self.assertEqual("precompile_repair_already_promoted", result["classification"])
+        self.assertEqual(handoff["promotion"], result["runtime_refresh_handoff"]["promotion"])
+        self.assertEqual(
+            handoff["promotion"]["generation_set_path"],
+            result["successor_generation_set_path"],
+        )
+        self.assertEqual(before, active_path.read_bytes())
+        self.assertEqual(
+            retained_bytes,
+            {
+                path: path.read_bytes()
+                for path in workspace.rglob("*")
+                if path.is_file()
+            },
+        )
+
+    def test_public_promotion_rejects_competing_refresh_before_writes(self) -> None:
+        case = self._promotion_refresh_fixture()
+        case["provider"].bind_content_repair_promotion(
+            run_dir=case["run"],
+            expected_operation_id=case["journal"]["operation_id"],
+            workspace_root=case["new_workspace"],
+            generation_set_path=case["new_generation_path"],
+            inventory_path=case["new_inventory"],
+            semantic_dependencies_path=case["new_dependencies"],
+            disposition_path=case["disposition_path"],
+            predecessor_contract_gap_brief_path=case["brief_path"],
+        )
+        active_path = case["run"] / "workflow/runtime-refresh-active.json"
+        before = active_path.read_bytes()
+        competing_workspace = (
+            case["run"] / "review/precompile/workspaces/public-competing"
+        )
+        provider = PrecompileRepairPromotionProvider(PROJECT_ROOT)
+        provider.contracts = _Contracts()
+        with self.assertRaises(ContractError) as raised:
+            provider.promote(
+                run_dir=case["run"],
+                repair_bundle_path=case["bundle"],
+                predecessor_workspace_root=Path(
+                    read_json(active_path)["content_repair_handoff"][
+                        "retained_prior_promotions"
+                    ][0]["workspace_root"]
+                ),
+                workspace_root=competing_workspace,
+                inventory_path=case["new_inventory"],
+                semantic_dependencies_path=case["new_dependencies"],
+                repair_attempt_number=1,
+                prepared_at="2026-09-05T14:02:04Z",
+                runtime_refresh_operation_id=case["journal"]["operation_id"],
+                runtime_predecessor_final_compile_manifest_path=case[
+                    "predecessor_manifest"
+                ],
+                runtime_content_repair_disposition_path=case["disposition_path"],
+                runtime_predecessor_contract_gap_brief_path=case["brief_path"],
+            )
+        self.assertEqual(
+            "content_repair_promotion_refresh_successor",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "runtime_refresh_promotion_refresh_competing_successor",
+            raised.exception.data["error_code"],
+        )
+        self.assertFalse(competing_workspace.exists())
+        self.assertEqual(before, active_path.read_bytes())
 
     def _supersession_fixture(self) -> tuple[Path, Path, dict, dict]:
         root = new_case_dir(self.id(), label="issue105-supersession")

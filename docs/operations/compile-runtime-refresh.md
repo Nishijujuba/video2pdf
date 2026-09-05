@@ -28,7 +28,9 @@ D:\Project\video2pdf\kimi\.venv\Scripts\python.exe -X utf8 -B scripts\video_work
   --repair-attempt-number <1..3> `
   --prepared-at "<timestamp>" `
   --runtime-refresh-operation-id "<operation-id>" `
-  --runtime-predecessor-final-compile-manifest "<predecessor-final-compile-manifest.json>"
+  --runtime-predecessor-final-compile-manifest "<predecessor-final-compile-manifest.json>" `
+  --runtime-content-repair-disposition "<approved-disposition.json>" `
+  --runtime-predecessor-contract-gap-brief "<failed-workspace/precompile-contract-gap-brief.json>"
 ```
 
 The operation id must equal the active `precompile_refresh_required` journal.
@@ -37,6 +39,36 @@ identity. The repair bundle's Run-relative
 `payload/compile-runtime-policy.json`, the canonical Runtime Policy, and the
 journal's successor policy must identify the same bytes. These checks finish
 before Production supersedes a task or materializes an Attempt.
+
+When an earlier promotion reached `promotion_ready` and its fresh Precompile
+workspace produced a Contract Gap brief, retry requires the two disposition
+arguments shown above. The disposition binds the published Issue #105 approval
+comment, approval time, gap id, runtime operation, immutable repair bundle,
+current generation-set fingerprint, and Runtime Policy. Its
+`contract_gap_brief_sha256` is the brief JSON's validated internal
+`brief_sha256`; it is distinct from the file byte SHA. The disposition grants
+the provider authority to rederive corrected inputs and does not grant a
+semantic pass.
+
+An exact replay of the already recorded ordinary promotion workspace keeps the
+existing public command shape and does not require a disposition. After it
+validates the recorded bundle, predecessor, repair Attempt, current Production
+and Diagnostic Compile authority, the predecessor candidate inventory and
+dependencies, and the separately published output bindings, the provider returns
+the existing promotion without resuming Production or deriving a new output
+root. A different workspace is a successor refresh and therefore requires the
+exact disposition.
+
+The provider validates the disposition and the failed workspace before creating
+the successor promotion directory. It requires every Production replacement
+from the original bundle to be committed already, leaves Production State and
+Compile Manifest bytes unchanged, and derives the successor generations from
+the original failed predecessor workspace. The new promotion therefore retains
+the exact generation-set identity while its disposition identity selects a new
+immutable output root. The active handoff retains the earlier promotion binding
+and records exactly one successor; replay with the same inputs preserves its
+bytes, while a stale disposition, generation drift, or competing workspace is
+rejected before the provider creates derived output or a Precompile workspace.
 
 Pyramid review binds the target's content identity: logical id, path, SHA, and
 evaluation context. When later provider-owned integration retains that identity
@@ -95,6 +127,11 @@ recorded predecessor Final Compile Manifest.
   `content_repair_generation_file_binding`, with error code
   `runtime_refresh_handoff_generation_file_drift`; the active journal remains
   pending and no successor manifest is written.
+- Disposition fixtures: the positive case records one successor and exact replay;
+  negative cases isolate an absent approval, a stale approval URL, changed
+  generations, and a competing successor. Each refusal leaves the active journal
+  byte-identical. The successful refresh also proves Final Compile remains
+  blocked until a fresh passing Seal supersedes the runtime operation.
 - Precedence fixture: the earlier forged supersession fixture combined missing
   Seal, manifest, and generation evidence, so it was removed instead of being
   treated as single-contradiction coverage.

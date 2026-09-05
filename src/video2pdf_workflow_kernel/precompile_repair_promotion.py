@@ -50,6 +50,8 @@ class PrecompileRepairPromotionProvider:
         prepared_at: str,
         runtime_refresh_operation_id: str | None = None,
         runtime_predecessor_final_compile_manifest_path: Path | None = None,
+        runtime_content_repair_disposition_path: Path | None = None,
+        runtime_predecessor_contract_gap_brief_path: Path | None = None,
         fault_point: str | None = None,
         fault_logical_task_key: str | None = None,
     ) -> dict[str, Any]:
@@ -65,6 +67,8 @@ class PrecompileRepairPromotionProvider:
                 prepared_at=prepared_at,
                 runtime_refresh_operation_id=runtime_refresh_operation_id,
                 runtime_predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
+                runtime_content_repair_disposition_path=runtime_content_repair_disposition_path,
+                runtime_predecessor_contract_gap_brief_path=runtime_predecessor_contract_gap_brief_path,
                 fault_point=fault_point,
                 fault_logical_task_key=fault_logical_task_key,
             )
@@ -92,6 +96,8 @@ class PrecompileRepairPromotionProvider:
         prepared_at: str,
         runtime_refresh_operation_id: str | None,
         runtime_predecessor_final_compile_manifest_path: Path | None,
+        runtime_content_repair_disposition_path: Path | None,
+        runtime_predecessor_contract_gap_brief_path: Path | None,
         fault_point: str | None,
         fault_logical_task_key: str | None,
     ) -> dict[str, Any]:
@@ -181,10 +187,15 @@ class PrecompileRepairPromotionProvider:
                 )
 
         runtime_handoff = None
+        runtime_promotion_refresh = False
+        runtime_refresh_authorization = None
+        ordinary_exact_replay = False
         active_runtime_path = run_dir / "workflow/runtime-refresh-active.json"
         runtime_handoff_requested = (
             runtime_refresh_operation_id is not None
             or runtime_predecessor_final_compile_manifest_path is not None
+            or runtime_content_repair_disposition_path is not None
+            or runtime_predecessor_contract_gap_brief_path is not None
         )
         pending_runtime_handoff = (
             active_runtime_path.is_file()
@@ -205,6 +216,46 @@ class PrecompileRepairPromotionProvider:
                 predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
                 expected_operation_id=runtime_refresh_operation_id,
             )
+            if runtime_handoff.get("state") == "promotion_ready":
+                recorded_promotion = runtime_handoff.get("promotion")
+                ordinary_exact_replay = (
+                    runtime_handoff.get("promotion_refresh") is None
+                    and isinstance(recorded_promotion, dict)
+                    and recorded_promotion.get("workspace_root")
+                    == str(workspace_root.resolve())
+                )
+                if not ordinary_exact_replay:
+                    if (
+                        runtime_content_repair_disposition_path is None
+                        or runtime_predecessor_contract_gap_brief_path is None
+                    ):
+                        self._reject(
+                            "promotion-ready content repair requires the exact human disposition",
+                            "content_repair_promotion_refresh_disposition",
+                            "runtime_refresh_promotion_refresh_disposition_required",
+                        )
+                    runtime_refresh_authorization = CompileRuntimeRefreshProvider(
+                        self.project_root
+                    ).preflight_content_repair_promotion_refresh(
+                        run_dir=run_dir,
+                        expected_operation_id=runtime_refresh_operation_id,
+                        repair_bundle_path=bundle_path,
+                        disposition_path=runtime_content_repair_disposition_path,
+                        predecessor_contract_gap_brief_path=(
+                            runtime_predecessor_contract_gap_brief_path
+                        ),
+                        successor_workspace_root=workspace_root,
+                    )
+                    runtime_promotion_refresh = True
+            elif (
+                runtime_content_repair_disposition_path is not None
+                or runtime_predecessor_contract_gap_brief_path is not None
+            ):
+                self._reject(
+                    "human disposition arguments require a promotion-ready handoff",
+                    "content_repair_promotion_refresh_state",
+                    "runtime_refresh_promotion_refresh_not_ready",
+                )
         elif runtime_handoff_requested:
             self._reject(
                 "content repair runtime handoff arguments require a pending refresh",
@@ -212,15 +263,247 @@ class PrecompileRepairPromotionProvider:
                 "runtime_refresh_handoff_not_pending",
             )
 
-        resumed_task_count = self._resume_production_repair(
-            run_dir=run_dir,
-            bundle_path=bundle_path,
-            bundle=bundle,
-            initial_claims=initial_claims,
-            task_order=task_order,
-            fault_point=fault_point,
-            fault_logical_task_key=fault_logical_task_key,
-        )
+        if ordinary_exact_replay:
+            ContentProduction(
+                VideoWorkflowKernel(run_dir.parent)
+            ).require_current_diagnostic_compile_authority(
+                run_dir,
+                content_repair_handoff_operation_id=runtime_refresh_operation_id,
+            )
+            promotion = runtime_handoff["promotion"]
+            published_workspace = require_contained_path(
+                Path(promotion["workspace_root"]),
+                run_dir,
+                purpose="published Precompile repair workspace",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+            published_generations_path = require_contained_path(
+                Path(promotion["generation_set_path"]),
+                run_dir,
+                purpose="published Precompile repair generations",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            published_inventory_path = require_contained_path(
+                Path(promotion["inventory_path"]),
+                run_dir,
+                purpose="published Precompile repair inventory",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            published_dependencies_path = require_contained_path(
+                Path(promotion["semantic_dependencies_path"]),
+                run_dir,
+                purpose="published Precompile repair dependencies",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            published_generations = read_json(published_generations_path)
+            published_inventory = read_json(published_inventory_path)
+            published_dependencies = read_json(published_dependencies_path)
+            self.delivery_quality.validate(
+                "precompile-artifact-generation-set", published_generations
+            )
+            self.delivery_quality.validate(
+                "reader-facing-text-inventory", published_inventory
+            )
+            self.delivery_quality.validate(
+                "precompile-semantic-dependencies", published_dependencies
+            )
+            if (
+                published_generations.get("generation_set_sha256")
+                != promotion.get("generation_set_sha256")
+                or sha256_file(published_generations_path)
+                != promotion.get("generation_set_file_sha256")
+                or (published_workspace / "artifact-generations.json").read_bytes()
+                != published_generations_path.read_bytes()
+                or (
+                    published_workspace / "reader-facing-text-inventory.json"
+                ).read_bytes()
+                != published_inventory_path.read_bytes()
+                or (published_workspace / "semantic-dependencies.json").read_bytes()
+                != published_dependencies_path.read_bytes()
+            ):
+                raise ContractError(
+                    "ordinary Precompile promotion replay authority drifted"
+                )
+            predecessor_root = require_contained_path(
+                predecessor_workspace_root.resolve(),
+                run_dir,
+                purpose="Precompile repair predecessor workspace",
+                error_type=ContractError,
+                leaf_kind="directory",
+            )
+            predecessor_generations_path = require_contained_path(
+                predecessor_root / "artifact-generations.json",
+                predecessor_root,
+                purpose="Precompile repair predecessor Artifact Generation set",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            predecessor_generations = read_json(predecessor_generations_path)
+            self.delivery_quality.validate(
+                "precompile-artifact-generation-set", predecessor_generations
+            )
+            candidate_inventory_path = require_contained_path(
+                inventory_path.resolve(),
+                run_dir,
+                purpose="Precompile repair replay candidate inventory",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            candidate_dependencies_path = require_contained_path(
+                semantic_dependencies_path.resolve(),
+                run_dir,
+                purpose="Precompile repair replay candidate dependencies",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            candidate_inventory = read_json(candidate_inventory_path)
+            candidate_dependencies = read_json(candidate_dependencies_path)
+            self.delivery_quality.validate(
+                "reader-facing-text-inventory", candidate_inventory
+            )
+            self.delivery_quality.validate(
+                "precompile-semantic-dependencies", candidate_dependencies
+            )
+            predecessor_report_path = require_contained_path(
+                predecessor_root / "precompile-quality-report.json",
+                predecessor_root,
+                purpose="Precompile repair predecessor report",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            predecessor_report = read_json(predecessor_report_path)
+            if predecessor_report.get("report_sha256") != hashlib.sha256(
+                canonical_json_bytes(
+                    {
+                        key: value
+                        for key, value in predecessor_report.items()
+                        if key != "report_sha256"
+                    }
+                )
+            ).hexdigest():
+                raise ContractError(
+                    "ordinary Precompile promotion predecessor report drifted"
+                )
+            repair_attempt_path = require_contained_path(
+                published_workspace / "repair-attempt.json",
+                published_workspace,
+                purpose="published Precompile repair Attempt",
+                error_type=ContractError,
+                leaf_kind="file",
+                require_single_link=True,
+            )
+            repair_attempt = read_json(repair_attempt_path)
+            if (
+                repair_attempt.get("schema_name") != "precompile-repair-attempt"
+                or repair_attempt.get("schema_version") != "1.0.0"
+                or repair_attempt.get("attempt_sha256")
+                != hashlib.sha256(
+                    canonical_json_bytes(
+                        {
+                            key: value
+                            for key, value in repair_attempt.items()
+                            if key != "attempt_sha256"
+                        }
+                    )
+                ).hexdigest()
+                or repair_attempt.get("repair_attempt_number") != repair_attempt_number
+                or repair_attempt.get("prepared_at") != prepared_at
+                or repair_attempt.get("predecessor_report_sha256")
+                != predecessor_report.get("report_sha256")
+                or repair_attempt.get("predecessor_generation_set_sha256")
+                != predecessor_generations.get("generation_set_sha256")
+                or predecessor_report.get("generation_set_sha256")
+                != predecessor_generations.get("generation_set_sha256")
+                or predecessor_report.get("inventory_sha256")
+                != candidate_inventory.get("inventory_sha256")
+                or predecessor_report.get("semantic_dependencies_sha256")
+                != candidate_dependencies.get("dependencies_sha256")
+                or candidate_inventory_path.read_bytes()
+                != (predecessor_root / "reader-facing-text-inventory.json").read_bytes()
+                or candidate_dependencies_path.read_bytes()
+                != (predecessor_root / "semantic-dependencies.json").read_bytes()
+                or repair_attempt.get("repaired_generation_set_sha256")
+                != published_generations.get("generation_set_sha256")
+                or repair_attempt.get("repaired_inventory_sha256")
+                != published_inventory.get("inventory_sha256")
+            ):
+                raise ContractError(
+                    "ordinary Precompile promotion replay request identity changed"
+                )
+            skeleton_paths = sorted(
+                str(path)
+                for path in published_workspace.glob(
+                    "reviewers/*/input/review-skeleton.json"
+                )
+            )
+            return {
+                "classification": "precompile_repair_already_promoted",
+                "run_id": state["run_id"],
+                "repair_bundle_path": str(bundle_path),
+                "production_state_path": str(state_path),
+                "production_state_sha256": sha256_file(state_path),
+                "promoted_task_count": len(task_order),
+                "resumed_task_count": 0,
+                "draft_compile_ready": "current",
+                "predecessor_generation_set_sha256": predecessor_generations[
+                    "generation_set_sha256"
+                ],
+                "successor_generation_set_path": str(published_generations_path),
+                "successor_generation_set_sha256": published_generations[
+                    "generation_set_sha256"
+                ],
+                "successor_inventory_path": str(published_inventory_path),
+                "successor_inventory_sha256": published_inventory[
+                    "inventory_sha256"
+                ],
+                "successor_semantic_dependencies_path": str(
+                    published_dependencies_path
+                ),
+                "successor_semantic_dependencies_sha256": published_dependencies[
+                    "dependencies_sha256"
+                ],
+                "repair_attempt_path": str(repair_attempt_path),
+                "reviewer_skeleton_paths": skeleton_paths,
+                "runtime_refresh_handoff": runtime_handoff,
+            }
+
+        if runtime_promotion_refresh:
+            for logical_key in task_order:
+                current = state["claims"][logical_key]
+                initial = initial_claims[logical_key]
+                if (
+                    current.get("claim_generation")
+                    != initial.get("claim_generation") + 1
+                    or current.get("status") != "committed"
+                ):
+                    self._reject(
+                        f"promotion refresh task is not already committed: {logical_key}",
+                        "content_repair_promotion_refresh_production",
+                        "runtime_refresh_promotion_refresh_task_not_committed",
+                        logical_task_key=logical_key,
+                    )
+            resumed_task_count = 0
+        else:
+            resumed_task_count = self._resume_production_repair(
+                run_dir=run_dir,
+                bundle_path=bundle_path,
+                bundle=bundle,
+                initial_claims=initial_claims,
+                task_order=task_order,
+                fault_point=fault_point,
+                fault_logical_task_key=fault_logical_task_key,
+            )
         state = read_json(state_path)
         self.contracts.validate("production-state", state)
         if state.get("checkpoints", {}).get("draft_compile_ready") != "current":
@@ -267,20 +550,49 @@ class PrecompileRepairPromotionProvider:
         self.delivery_quality.validate(
             "precompile-artifact-generation-set", successor
         )
-        operation_id = hashlib.sha256(
-            canonical_json_bytes(
-                {
-                    "successor_inventory_derivation_version": "6",
-                    "bundle_sha256": sha256_file(bundle_path),
-                    "predecessor_generation_set_sha256": predecessor[
-                        "generation_set_sha256"
-                    ],
-                    "production_state_sha256": sha256_file(state_path),
-                    "compile_manifest_sha256": sha256_file(
-                        compile_manifest_path
-                    ),
-                }
+        if runtime_refresh_authorization is not None:
+            if (
+                sha256_file(state_path)
+                != runtime_refresh_authorization["production_state_sha256"]
+                or sha256_file(compile_manifest_path)
+                != runtime_refresh_authorization["compile_manifest_sha256"]
+            ):
+                self._reject(
+                    "promotion refresh Production authority changed after preflight",
+                    "content_repair_promotion_refresh_authority",
+                    "runtime_refresh_promotion_refresh_production_changed",
+                )
+            predecessor_promotion_generations = Path(
+                runtime_refresh_authorization["generation_set_path"]
             )
+            if (
+                successor.get("generation_set_sha256")
+                != runtime_refresh_authorization["generation_set_sha256"]
+                or sha256_file(predecessor_promotion_generations)
+                != runtime_refresh_authorization["generation_set_file_sha256"]
+                or canonical_json_bytes(successor)
+                != predecessor_promotion_generations.read_bytes()
+            ):
+                self._reject(
+                    "promotion refresh changed the promoted Artifact Generations",
+                    "content_repair_promotion_refresh_generation",
+                    "runtime_refresh_promotion_refresh_generation_changed",
+                )
+        operation_identity = {
+            "successor_inventory_derivation_version": "6",
+            "bundle_sha256": sha256_file(bundle_path),
+            "predecessor_generation_set_sha256": predecessor[
+                "generation_set_sha256"
+            ],
+            "production_state_sha256": sha256_file(state_path),
+            "compile_manifest_sha256": sha256_file(compile_manifest_path),
+        }
+        if runtime_refresh_authorization is not None:
+            operation_identity["promotion_refresh_disposition_sha256"] = (
+                runtime_refresh_authorization["disposition_sha256"]
+            )
+        operation_id = hashlib.sha256(
+            canonical_json_bytes(operation_identity)
         ).hexdigest()[:24]
         output_root = (
             run_dir
@@ -393,6 +705,10 @@ class PrecompileRepairPromotionProvider:
                 generation_set_path=successor_path,
                 inventory_path=successor_inventory_path,
                 semantic_dependencies_path=successor_dependencies_path,
+                disposition_path=runtime_content_repair_disposition_path,
+                predecessor_contract_gap_brief_path=(
+                    runtime_predecessor_contract_gap_brief_path
+                ),
             )
 
         return {

@@ -2508,7 +2508,14 @@ class PrecompileRepairPromotionProvider:
                             "Precompile repair visual evidence source identity changed"
                         )
                     if (
-                        current_source["kind"] == "source_timestamp"
+                        (
+                            current_source["kind"] == "source_timestamp"
+                            or (
+                                isinstance(visual.get("source"), dict)
+                                and visual["source"].get("kind")
+                                == "source_timestamp"
+                            )
+                        )
                         and (
                             prior_asset.get("sha256") != asset["sha256"]
                             or visual.get("source") != current_source

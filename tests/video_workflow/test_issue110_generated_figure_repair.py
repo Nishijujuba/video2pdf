@@ -68,7 +68,7 @@ class Issue110GeneratedFigureRepairTests(unittest.TestCase):
         return generations
 
     def _generated_fixture(
-        self, *, regenerated: bool
+        self, *, regenerated: bool, prior_source_kind: str = "generated_diagram"
     ) -> tuple[Path, Path, dict, dict, dict, dict]:
         shared = Issue107SourceBackedFigureTests(
             "test_source_backed_replacement_derives_current_transform_evidence"
@@ -86,8 +86,12 @@ class Issue110GeneratedFigureRepairTests(unittest.TestCase):
             else asset_sha256
         )
         prior_source = {
-            "kind": "generated_diagram",
-            "value": "supporting source interval 00:05:03--00:05:20",
+            "kind": prior_source_kind,
+            "value": (
+                "00:05:03--00:05:20"
+                if prior_source_kind == "source_timestamp"
+                else "supporting source interval 00:05:03--00:05:20"
+            ),
         }
         current_source = {
             "kind": "generated_diagram",
@@ -279,6 +283,43 @@ class Issue110GeneratedFigureRepairTests(unittest.TestCase):
                 generations=generations,
                 output_root=output_root,
                 prepared_at="2026-09-06T04:32:00Z",
+            )
+        self.assertEqual(
+            "precompile_repair_figure_transform_record",
+            raised.exception.data["first_failing_gate"],
+        )
+        self.assertEqual(
+            "precompile_repair_transform_required",
+            raised.exception.data["error_code"],
+        )
+
+    def test_native_to_generated_transition_without_transform_fails_at_transform_gate(
+        self,
+    ) -> None:
+        # scenario_id: issue110_native_to_generated_missing_transform
+        # target_invariant: a Figure with prior source_timestamp evidence remains
+        # governed by native transform evidence through a source-mode transition
+        # mutation_seam: current Figure Manifest source becomes generated_diagram
+        # rematerialized_nodes: Figure Manifest, Production state, candidate evidence,
+        # provider-derived Artifact Generation Set and visual provenance fingerprint
+        # intentionally_stale_nodes: none
+        # expected_first_gate: precompile_repair_figure_transform_record
+        # expected_error_code: precompile_repair_transform_required
+        # scenario_class: single_contradiction
+        run, output_root, compile_manifest, generations, candidate, _inventory = (
+            self._generated_fixture(
+                regenerated=True,
+                prior_source_kind="source_timestamp",
+            )
+        )
+        with self.assertRaises(ContractError) as raised:
+            PrecompileRepairPromotionProvider._derive_successor_dependencies(
+                run_dir=run,
+                candidate=candidate,
+                compile_manifest=compile_manifest,
+                generations=generations,
+                output_root=output_root,
+                prepared_at="2026-09-06T04:45:00Z",
             )
         self.assertEqual(
             "precompile_repair_figure_transform_record",

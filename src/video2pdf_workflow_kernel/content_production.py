@@ -1070,13 +1070,29 @@ class ContentProduction:
         caption = manifest["caption"]
         source = manifest["source"]
         source_kind = source["kind"].replace("_", r"\_")
+        source_text_escapes = {
+            "\\": r"\textbackslash{}",
+            "{": r"\{",
+            "}": r"\}",
+            "$": r"\$",
+            "&": r"\&",
+            "#": r"\#",
+            "^": r"\textasciicircum{}",
+            "_": r"\_",
+            "%": r"\%",
+            "~": r"\textasciitilde{}",
+        }
+        source_value = "".join(
+            source_text_escapes.get(character, character)
+            for character in source["value"]
+        )
         return (
             "\\begin{figure}[H]\n"
             "\\centering\n"
             "\\includegraphics[width=0.76\\linewidth,height=0.34\\textheight,"
             f"keepaspectratio]{{figures/{manifest['slot_id']}}}\n"
             f"\\caption{{{caption}}}\n"
-            f"\\par\\small Source ({source_kind}): {source['value']}\n"
+            f"\\par\\small Source ({source_kind}): {source_value}\n"
             "\\end{figure}\n"
         ).encode("utf-8")
 

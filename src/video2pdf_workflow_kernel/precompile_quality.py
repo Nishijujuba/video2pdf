@@ -209,7 +209,7 @@ class PrecompileQualityProvider:
             )
             if (
                 actual_write_set is not None
-                and actual_write_set != allowed_write_set
+                and any(path not in allowed_write_set for path in actual_write_set)
             ):
                 raise ContractError(
                     "semantic repair bundle changes exceed the failed result write set",
@@ -276,7 +276,10 @@ class PrecompileQualityProvider:
             != sorted(set(disposition["allowed_write_set"]))
             or (
                 actual_write_set is not None
-                and disposition.get("allowed_write_set") != actual_write_set
+                and any(
+                    path not in disposition["allowed_write_set"]
+                    for path in actual_write_set
+                )
             )
             or disposition.get("repair_bundle_path") != str(bundle_path)
             or disposition.get("repair_bundle_sha256") != sha256_file(bundle_path)

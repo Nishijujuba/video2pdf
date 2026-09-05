@@ -16,8 +16,11 @@ if str(SRC) not in sys.path:
 from tests.video_workflow._test_run import new_case_dir
 from video2pdf_workflow_kernel.content_production import ContentProduction
 from video2pdf_workflow_kernel.errors import ContractError, RuntimeRefreshFault
+from video2pdf_workflow_kernel.precompile_repair_promotion import (
+    PrecompileRepairPromotionProvider,
+)
 from video2pdf_workflow_kernel.runtime_refresh import CompileRuntimeRefreshProvider
-from video2pdf_workflow_kernel.utils import canonical_json_bytes
+from video2pdf_workflow_kernel.utils import canonical_json_bytes, read_json
 
 
 def write_json(path: Path, value: dict) -> Path:
@@ -403,6 +406,170 @@ class Issue105ContentRepairHandoffTests(unittest.TestCase):
                 (item["logical_id"], item["generation"], item["sha256"])
                 for item in manifest["entries"]
             },
+        )
+
+    def _pyramid_rebind_fixture(
+        self,
+        *,
+        reviewed_generation: int,
+        reviewed_sha256: str | None = None,
+        reviewed_context: dict | None = None,
+    ) -> tuple[
+        PrecompileRepairPromotionProvider,
+        Path,
+        Path,
+        dict,
+        dict,
+        bytes,
+    ]:
+        root = new_case_dir(self.id(), label="issue105-pyramid-rebind")
+        run = root / "run"
+        target_path = run / "work/integration/section_02.tex"
+        target_path.parent.mkdir(parents=True)
+        target_path.write_bytes(b"reviewed section bytes")
+        actual_target = {
+            "logical_id": "integrated_section_02",
+            "path": "work/integration/section_02.tex",
+            "generation": 4,
+            "sha256": hashlib.sha256(target_path.read_bytes()).hexdigest(),
+        }
+        context = {
+            "pyramid_standard": "pyramid-principle-v1",
+            "checkpoint": "pyramid_section",
+            "audience": "reader-facing Chinese teaching PDF",
+        }
+        reviewed_target = {**actual_target, "generation": reviewed_generation}
+        if reviewed_sha256 is not None:
+            reviewed_target["sha256"] = reviewed_sha256
+        binding = {
+            "schema_name": "pyramid-evaluation-binding",
+            "schema_version": "1.0.0",
+            "kernel_version": "2.0.0",
+            "target": reviewed_target,
+            "evaluation_context": reviewed_context or context,
+            "status": "pass",
+        }
+        task_id = "8" * 32
+        envelope = {
+            "task_id": task_id,
+            "logical_task_key": "pyramid-section-section-02",
+            "role": "pyramid_section",
+            "claim_generation": 2,
+            "claim_token": "9" * 32,
+            "required_outputs": ["pyramid-report.json"],
+            "pyramid_target": actual_target,
+            "evaluation_context": context,
+        }
+        envelope_path = run / "workflow/tasks" / task_id / "envelope.json"
+        write_json(envelope_path, envelope)
+        bundle_root = run / "待删除/precompile-repair-promotion/issue105-rebind"
+        binding_path = (
+            bundle_root
+            / "payload/pyramid/pyramid-section-section-02.json"
+        )
+        binding_bytes = canonical_json_bytes(binding)
+        binding_path.parent.mkdir(parents=True)
+        binding_path.write_bytes(binding_bytes)
+        bundle = {
+            "derived_payload": [
+                {
+                    "path": binding_path.relative_to(run).as_posix(),
+                    "sha256": hashlib.sha256(binding_bytes).hexdigest(),
+                }
+            ]
+        }
+        return (
+            PrecompileRepairPromotionProvider(PROJECT_ROOT),
+            run,
+            bundle_root,
+            bundle,
+            envelope,
+            binding_bytes,
+        )
+
+    def test_pyramid_binding_rebinds_only_newer_generation_for_identical_content(self) -> None:
+        provider, run, bundle_root, bundle, envelope, binding_bytes = (
+            self._pyramid_rebind_fixture(reviewed_generation=3)
+        )
+        attempt_id = provider._materialize_replacement_attempt(
+            run_dir=run,
+            bundle_root=bundle_root,
+            bundle=bundle,
+            envelope=envelope,
+        )
+        binding_path = (
+            bundle_root
+            / "payload/pyramid/pyramid-section-section-02.json"
+        )
+        self.assertEqual(binding_bytes, binding_path.read_bytes())
+        attempt_report = read_json(
+            run
+            / "workflow/tasks"
+            / envelope["task_id"]
+            / "attempts"
+            / attempt_id
+            / "pyramid-report.json"
+        )
+        self.assertEqual(envelope["pyramid_target"], attempt_report["target"])
+
+    def test_pyramid_generation_rebind_rejects_changed_target_sha(self) -> None:
+        # scenario_id: issue105_pyramid_rebind_sha_changed
+        # target_invariant: reviewed and current target content identity must match
+        # mutation_seam: reviewed target SHA only
+        # rematerialized_nodes: bundle SHA declaration
+        # intentionally_stale_nodes: none
+        # expected_first_gate: repair_bundle_payload
+        # expected_error_code: precompile_repair_pyramid_evaluation_stale
+        # scenario_class: single_contradiction
+        provider, run, bundle_root, bundle, envelope, _binding_bytes = (
+            self._pyramid_rebind_fixture(
+                reviewed_generation=4,
+                reviewed_sha256="a" * 64,
+            )
+        )
+        with self.assertRaises(ContractError) as raised:
+            provider._materialize_replacement_attempt(
+                run_dir=run,
+                bundle_root=bundle_root,
+                bundle=bundle,
+                envelope=envelope,
+            )
+        self.assertEqual("repair_bundle_payload", raised.exception.data["first_failing_gate"])
+        self.assertEqual(
+            "precompile_repair_pyramid_evaluation_stale",
+            raised.exception.data["error_code"],
+        )
+
+    def test_pyramid_generation_rebind_rejects_changed_evaluation_context(self) -> None:
+        # scenario_id: issue105_pyramid_rebind_context_changed
+        # target_invariant: reviewed and current evaluation context must match
+        # mutation_seam: reviewed evaluation context only
+        # rematerialized_nodes: bundle SHA declaration
+        # intentionally_stale_nodes: none
+        # expected_first_gate: repair_bundle_payload
+        # expected_error_code: precompile_repair_pyramid_evaluation_stale
+        # scenario_class: single_contradiction
+        provider, run, bundle_root, bundle, envelope, _binding_bytes = (
+            self._pyramid_rebind_fixture(
+                reviewed_generation=4,
+                reviewed_context={
+                    "pyramid_standard": "pyramid-principle-v1",
+                    "checkpoint": "pyramid_section",
+                    "audience": "another audience",
+                },
+            )
+        )
+        with self.assertRaises(ContractError) as raised:
+            provider._materialize_replacement_attempt(
+                run_dir=run,
+                bundle_root=bundle_root,
+                bundle=bundle,
+                envelope=envelope,
+            )
+        self.assertEqual("repair_bundle_payload", raised.exception.data["first_failing_gate"])
+        self.assertEqual(
+            "precompile_repair_pyramid_evaluation_stale",
+            raised.exception.data["error_code"],
         )
 
     def _integrated_main(self, first_section: str) -> str:

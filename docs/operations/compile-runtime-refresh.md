@@ -38,6 +38,14 @@ identity. The repair bundle's Run-relative
 journal's successor policy must identify the same bytes. These checks finish
 before Production supersedes a task or materializes an Attempt.
 
+Pyramid review binds the target's content identity: logical id, path, SHA, and
+evaluation context. When later provider-owned integration retains that identity
+and advances only the target generation, promotion copies the reviewed binding,
+updates only its generation to the current envelope, and validates the current
+target file before writing the Attempt. The repair bundle remains immutable.
+Changes to the target SHA, path, logical id, or evaluation context remain stale
+review evidence and block promotion.
+
 Successful promotion records the provider-derived Artifact Generations,
 Reader-Facing Text Inventory, semantic dependencies, and repair workspace in the
 active handoff. Final Compile remains blocked while fresh isolated judgments and
@@ -79,8 +87,10 @@ recorded predecessor Final Compile Manifest.
   Seal, manifest, and generation evidence, so it was removed instead of being
   treated as single-contradiction coverage.
 - Affected modules: Compile Runtime refresh handoff validation and the focused
-  Issue #105 public-boundary fixtures. No shared golden data or cache requires
-  rematerialization.
+  Issue #105 public-boundary fixtures, plus Pyramid replacement Attempt
+  materialization. Repository search found no earlier generation-only stale or
+  `precompile_repair_pyramid_evaluation_stale` fixture to migrate. No shared
+  golden data or cache requires rematerialization.
 - Verification boundary: only the new Issue #105 focused contract methods were
   run. The complete acceptance suite was not run under the user's explicit test
   constraint.

@@ -843,6 +843,41 @@ class PrecompileRepairPromotionProvider:
             )
             binding = json.loads(binding_bytes)
             self.contracts.validate("pyramid-evaluation-binding", binding)
+            reviewed_target = binding.get("target")
+            actual_target = envelope["pyramid_target"]
+            if reviewed_target != actual_target and (
+                isinstance(reviewed_target, dict)
+                and set(reviewed_target) == set(actual_target)
+                and reviewed_target.get("logical_id")
+                == actual_target.get("logical_id")
+                and reviewed_target.get("path") == actual_target.get("path")
+                and reviewed_target.get("sha256") == actual_target.get("sha256")
+                and isinstance(reviewed_target.get("generation"), int)
+                and isinstance(actual_target.get("generation"), int)
+                and actual_target["generation"] > reviewed_target["generation"]
+                and binding.get("evaluation_context")
+                == envelope["evaluation_context"]
+                and binding.get("status") == "pass"
+            ):
+                target_path = require_contained_path(
+                    run_dir / str(actual_target["path"]),
+                    run_dir,
+                    purpose="Precompile repair Pyramid evaluation target",
+                    error_type=ContractError,
+                    leaf_kind="file",
+                    require_single_link=True,
+                )
+                if sha256_file(target_path) != actual_target["sha256"]:
+                    self._reject(
+                        f"Precompile repair Pyramid evaluation is stale: {logical_key}",
+                        "repair_bundle_payload",
+                        "precompile_repair_pyramid_evaluation_stale",
+                        logical_task_key=logical_key,
+                    )
+                binding = deepcopy(binding)
+                binding["target"]["generation"] = actual_target["generation"]
+                self.contracts.validate("pyramid-evaluation-binding", binding)
+                binding_bytes = canonical_json_bytes(binding)
             if (
                 binding.get("target") != envelope["pyramid_target"]
                 or binding.get("evaluation_context")

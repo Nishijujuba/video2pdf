@@ -705,14 +705,35 @@ class PrecompileRepairPromotionProvider:
         self.delivery_quality.validate(
             "precompile-artifact-generation-set", successor
         )
+        candidate_inventory_path = require_contained_path(
+            inventory_path.resolve(),
+            run_dir,
+            purpose="Precompile repair successor inventory source",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
+        semantic_dependencies = require_contained_path(
+            semantic_dependencies_path.resolve(),
+            run_dir,
+            purpose="Precompile repair semantic dependencies",
+            error_type=ContractError,
+            leaf_kind="file",
+            require_single_link=True,
+        )
         operation_identity = {
-            "successor_inventory_derivation_version": "6",
+            "successor_inventory_derivation_version": "7",
             "bundle_sha256": sha256_file(bundle_path),
             "predecessor_generation_set_sha256": predecessor[
                 "generation_set_sha256"
             ],
             "production_state_sha256": sha256_file(state_path),
             "compile_manifest_sha256": sha256_file(compile_manifest_path),
+            "prepared_at": prepared_at,
+            "candidate_inventory_sha256": sha256_file(candidate_inventory_path),
+            "candidate_semantic_dependencies_sha256": sha256_file(
+                semantic_dependencies
+            ),
         }
         effective_authorization = runtime_refresh_authorization or repair_authorization
         if effective_authorization is not None:
@@ -740,14 +761,6 @@ class PrecompileRepairPromotionProvider:
         else:
             write_json_atomic(successor_path, successor)
 
-        candidate_inventory_path = require_contained_path(
-            inventory_path.resolve(),
-            run_dir,
-            purpose="Precompile repair successor inventory source",
-            error_type=ContractError,
-            leaf_kind="file",
-            require_single_link=True,
-        )
         candidate_inventory = read_json(candidate_inventory_path)
         self.delivery_quality.validate(
             "reader-facing-text-inventory", candidate_inventory
@@ -780,14 +793,6 @@ class PrecompileRepairPromotionProvider:
             error_type=ContractError,
             leaf_kind="directory",
             allow_missing=True,
-        )
-        semantic_dependencies = require_contained_path(
-            semantic_dependencies_path.resolve(),
-            run_dir,
-            purpose="Precompile repair semantic dependencies",
-            error_type=ContractError,
-            leaf_kind="file",
-            require_single_link=True,
         )
         candidate_dependencies = read_json(semantic_dependencies)
         self.delivery_quality.validate(

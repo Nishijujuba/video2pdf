@@ -35,16 +35,9 @@ def validate_final_pdf_basename(value: str | None) -> str:
         or not value.endswith(".pdf")
         or "/" in value
         or "\\" in value
+        or not value[:-4]
+        or normalize_title(value[:-4]) != value[:-4]
     ):
-        raise ContractError(
-            "Final Compile requires a normalized PDF basename ending in .pdf",
-            data={
-                "first_failing_gate": "final_compile_pdf_basename",
-                "error_code": "final_compile_pdf_basename_invalid",
-            },
-        )
-    stem = value[:-4]
-    if not stem or normalize_title(stem) != stem:
         raise ContractError(
             "Final Compile requires a normalized PDF basename ending in .pdf",
             data={

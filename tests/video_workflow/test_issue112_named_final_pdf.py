@@ -104,6 +104,12 @@ class Issue112NamedFinalPdfTests(unittest.TestCase):
         self.assertEqual(str(expected_path), replay["final_pdf_path"])
 
     def test_changed_pdf_basename_cannot_reuse_completed_operation(self) -> None:
+        """Change only the public basename after a valid completed publication.
+
+        The provider derives the new operation identity; the old publication is
+        intentionally retained. No fixture node is rewritten or rematerialized.
+        The existing-publication gate must reject with final_compile_interrupted.
+        """
         baseline, request = self._completed_baseline()
         workspace = baseline.parent / "issue112-replay-identity"
         first = self._compile(
@@ -118,22 +124,29 @@ class Issue112NamedFinalPdfTests(unittest.TestCase):
                 pdf_basename="另一个标题.pdf",
             )
         self.assertNotEqual(first["operation_id"], raised.exception.data["operation_id"])
+        self.assertEqual("final_compile_interrupted", raised.exception.data["error_code"])
 
     def test_invalid_pdf_basename_fails_before_adapter_execution(self) -> None:
-        provider = GuardedFinalCompileProvider(PROJECT_ROOT)
+        """Change only the basename input of an otherwise valid compile graph.
+
+        The public input is the mutation seam. No nodes are stale or require
+        rematerialization because validation must precede workspace publication.
+        Expected gate/code: final_compile_pdf_basename /
+        final_compile_pdf_basename_invalid.
+        """
+        baseline, request = self._completed_baseline()
+        workspace = baseline.parent / "issue112-invalid-name"
         with mock.patch("video2pdf_workflow_kernel.final_compile.subprocess.Popen") as popen:
-            with self.assertRaisesRegex(ContractError, "normalized PDF basename"):
-                provider.compile(
-                    input_track="kernel",
-                    precompile_workspace_root=PROJECT_ROOT / "missing-precompile",
-                    compile_manifest_path=PROJECT_ROOT / "missing-manifest.json",
-                    compiler_adapter_path=ADAPTER,
-                    workspace_root=PROJECT_ROOT / "missing-final-workspace",
-                    compiled_at="2026-09-06T12:00:00+08:00",
-                    runtime_policy_path=PROJECT_ROOT / "missing-runtime-policy.json",
+            with self.assertRaisesRegex(ContractError, "normalized PDF basename") as raised:
+                self._compile(
+                    request=request,
+                    workspace=workspace,
                     pdf_basename="../unsealed-copy.pdf",
                 )
+        self.assertEqual("final_compile_pdf_basename", raised.exception.data["first_failing_gate"])
+        self.assertEqual("final_compile_pdf_basename_invalid", raised.exception.data["error_code"])
         popen.assert_not_called()
+        self.assertFalse(workspace.exists())
 
 
 if __name__ == "__main__":

@@ -18,11 +18,41 @@ from .errors import CompileDependencyGap, ContractError
 from .guarded_compile import GuardedCompileProvider
 from .utils import (
     canonical_json_bytes,
+    normalize_title,
     read_json,
     require_contained_path,
     sha256_file,
     write_json_atomic,
 )
+
+
+def validate_final_pdf_basename(value: str | None) -> str:
+    """Resolve and validate the governed adapter's PDF leaf name."""
+    if value is None:
+        return "final.pdf"
+    if (
+        not isinstance(value, str)
+        or not value.endswith(".pdf")
+        or "/" in value
+        or "\\" in value
+    ):
+        raise ContractError(
+            "Final Compile requires a normalized PDF basename ending in .pdf",
+            data={
+                "first_failing_gate": "final_compile_pdf_basename",
+                "error_code": "final_compile_pdf_basename_invalid",
+            },
+        )
+    stem = value[:-4]
+    if not stem or normalize_title(stem) != stem:
+        raise ContractError(
+            "Final Compile requires a normalized PDF basename ending in .pdf",
+            data={
+                "first_failing_gate": "final_compile_pdf_basename",
+                "error_code": "final_compile_pdf_basename_invalid",
+            },
+        )
+    return value
 
 
 def _fingerprint_without(value: dict[str, Any], field: str) -> str:
@@ -915,6 +945,8 @@ class GuardedFinalCompileProvider:
             != operation["compile_manifest_sha256"]
             or report.get("compiler_provider") != operation["compile_provider"]
             or report.get("compile_adapter") != operation["compile_adapter"]
+            or report.get("pdf", {}).get("path")
+            != f'adapter-output/{operation.get("pdf_basename", "final.pdf")}'
         ):
             raise ContractError("completed Final Compile replay binding is stale")
 
@@ -1180,7 +1212,9 @@ class GuardedFinalCompileProvider:
         workspace_root: Path,
         compiled_at: str,
         runtime_policy_path: Path,
+        pdf_basename: str | None = None,
     ) -> dict[str, Any]:
+        resolved_pdf_basename = validate_final_pdf_basename(pdf_basename)
         self.registry.check()
         precompile_root = precompile_workspace_root.resolve()
         seal = read_json(precompile_root / "precompile-text-seal.json")
@@ -1343,6 +1377,8 @@ class GuardedFinalCompileProvider:
             "compile_provider": final_compile_provider_identity(self.project_root),
             "compile_adapter": adapter_identity,
         }
+        if resolved_pdf_basename != "final.pdf":
+            operation["pdf_basename"] = resolved_pdf_basename
         operation["operation_id"] = hashlib.sha256(
             canonical_json_bytes(operation)
         ).hexdigest()[:32]
@@ -1366,6 +1402,17 @@ class GuardedFinalCompileProvider:
                         "workspace_root": str(root),
                         "operation_id": operation["operation_id"],
                         "report_path": str(root / "final-compile-report.json"),
+                        "final_pdf_path": str(root / existing_report["pdf"]["path"]),
+                        "final_artifact_seal_path": str(root / "final-artifact-seal.json"),
+                        "final_compile_report_path": str(root / "final-compile-report.json"),
+                        "render_evidence_manifest_path": str(
+                            root / "render-evidence-manifest.json"
+                        ),
+                        "rendered_text_inventory_path": str(
+                            root / "adapter-output/rendered-text-object-inventory.json"
+                        ),
+                        "text_origin_manifest_path": str(root / "text-origin-manifest.json"),
+                        "activation_status": "target_only",
                         "report_sha256": existing_report["report_sha256"],
                         "status": "pass",
                         "replayed": True,
@@ -1399,6 +1446,8 @@ class GuardedFinalCompileProvider:
             "compiled_at": compiled_at,
             "output_root": str(adapter_output),
         }
+        if resolved_pdf_basename != "final.pdf":
+            request["pdf_basename"] = resolved_pdf_basename
         request["runtime_policy_path"] = str(runtime_policy)
         request["runtime_policy_sha256"] = sha256_file(runtime_policy)
         request_path = root / "compile-request.json"
@@ -1469,7 +1518,7 @@ class GuardedFinalCompileProvider:
                 data={"exit_code": process.returncode},
             )
 
-        pdf_path = adapter_output / "final.pdf"
+        pdf_path = adapter_output / resolved_pdf_basename
         provenance_path = adapter_output / "compile-provenance.json"
         rendered_path = adapter_output / "rendered-text-object-inventory.json"
         trace_path = adapter_output / "text-origin-trace.json"
@@ -1608,7 +1657,11 @@ class GuardedFinalCompileProvider:
             or final_seal.get("compile_manifest_sha256") != compile_manifest["manifest_sha256"]
             or final_seal.get("compile_provider") != provider_identity
             or final_seal.get("final_pdf")
-            != {"path": "adapter-output/final.pdf", "sha256": pdf_sha256, "size": pdf_path.stat().st_size}
+            != {
+                "path": f"adapter-output/{resolved_pdf_basename}",
+                "sha256": pdf_sha256,
+                "size": pdf_path.stat().st_size,
+            }
             or provenance.get("final_artifact_seal_sha256") != final_seal["seal_sha256"]
         ):
             raise CompileDependencyGap("Final Artifact Seal is incomplete or stale")

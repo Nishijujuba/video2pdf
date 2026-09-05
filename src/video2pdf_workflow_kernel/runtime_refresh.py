@@ -988,7 +988,27 @@ class CompileRuntimeRefreshProvider:
             current = entries_by_id.get(generation["logical_id"])
             if current is None or (current["generation"], current["sha256"]) != (generation["generation"], generation["sha256"]):
                 raise ContractError("content repair successor generations are not current")
-            entries.append({key: current[key] for key in ("logical_id", "generation", "sha256", "source_path", "staging_path")})
+            source = require_contained_path(
+                run / current["source_path"],
+                run,
+                purpose="content repair successor Final Compile source",
+                error_type=ContractError,
+                allow_missing=True,
+            )
+            entries.append(
+                {
+                    **{
+                        key: current[key]
+                        for key in (
+                            "logical_id",
+                            "generation",
+                            "sha256",
+                            "staging_path",
+                        )
+                    },
+                    "source_path": str(source),
+                }
+            )
         policy_path = Path(authority["runtime_policy_path"])
         policy = read_json(policy_path)
         report = read_json(run / "review/latex/diagnostic-compile-report.json")

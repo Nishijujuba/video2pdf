@@ -24,7 +24,9 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
 )
 from video2pdf_workflow_kernel.final_compile import (  # noqa: E402
     registered_generator_identity,
+    validate_final_pdf_basename,
 )
+from video2pdf_workflow_kernel.errors import ContractError  # noqa: E402
 from video2pdf_workflow_kernel.latex_generated_text import (  # noqa: E402
     extract_tcolorbox_titles,
 )
@@ -1639,6 +1641,10 @@ def run(request_path: Path) -> None:
     request = read_object(contained(request_path, "compile request"), "compile request")
     if (request.get("schema_name"), request.get("schema_version")) != ("guarded-final-compile-request", "2.0.0"):
         raise AdapterError("compile request protocol is unsupported")
+    try:
+        pdf_basename = validate_final_pdf_basename(request.get("pdf_basename"))
+    except ContractError as exc:
+        raise AdapterError(str(exc)) from exc
     execution_path = contained(
         Path(str(request.get("execution_state_path", ""))),
         "Final Compile execution state",
@@ -1695,7 +1701,7 @@ def run(request_path: Path) -> None:
         engine_stderr,
         stable_final_round_auxiliaries,
     ) = compile_pdf(staging, entry, policy)
-    final_pdf, recorder = output / "final.pdf", output / "compile-recorder.fls"
+    final_pdf, recorder = output / pdf_basename, output / "compile-recorder.fls"
     shutil.copyfile(built_pdf, final_pdf)
     shutil.copyfile(built_recorder, recorder)
     declared_staged_paths = {
@@ -1739,7 +1745,7 @@ def run(request_path: Path) -> None:
             "precompile_text_seal_sha256": request.get("precompile_text_seal_sha256"),
             "generation_set_sha256": request.get("generation_set_sha256"),
             "compile_manifest_sha256": request.get("compile_manifest_sha256"), "compile_provider": request.get("compile_provider"),
-            "final_pdf": {"path": "adapter-output/final.pdf", "sha256": pdf_sha, "size": final_pdf.stat().st_size}}
+            "final_pdf": {"path": f"adapter-output/{pdf_basename}", "sha256": pdf_sha, "size": final_pdf.stat().st_size}}
     seal["seal_sha256"] = fingerprint(seal, "seal_sha256")
     write_object(output / "final-artifact-seal.json", seal)
     write_object(output / "text-origin-trace.json", {"schema_name": "text-origin-trace", "schema_version": "2.0.0",

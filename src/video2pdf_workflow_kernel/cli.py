@@ -284,6 +284,12 @@ def _parser() -> argparse.ArgumentParser:
     final_compile.add_argument("--runtime-policy", required=True, type=Path)
     final_compile.add_argument("--workspace-root", required=True, type=Path)
     final_compile.add_argument("--compiled-at", required=True)
+    final_compile.add_argument(
+        "--pdf-basename",
+        help=(
+            "normalized final PDF leaf name ending in .pdf; defaults to final.pdf"
+        ),
+    )
     final_compile_reconcile = commands.add_parser(
         "delivery-quality-final-compile-reconcile",
         help=(
@@ -1149,6 +1155,7 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             runtime_policy_path=args.runtime_policy,
             workspace_root=args.workspace_root,
             compiled_at=args.compiled_at,
+            pdf_basename=args.pdf_basename,
         )
         return _ok(
             command,

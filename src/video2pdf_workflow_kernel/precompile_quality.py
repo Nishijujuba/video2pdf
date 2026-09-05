@@ -704,8 +704,80 @@ class PrecompileQualityProvider:
                     "repair advanced a generation without changing its bytes"
                 )
             advanced.append(logical_id)
-        if not advanced:
-            raise ContractError("repair must advance at least one Artifact Generation")
+        predecessor_inventory = read_json(
+            predecessor_root / "reader-facing-text-inventory.json"
+        )
+        repaired_inventory = read_json(inventory_path.resolve())
+        predecessor_dependencies = read_json(
+            predecessor_root / "semantic-dependencies.json"
+        )
+        repaired_dependencies = read_json(semantic_dependencies_path.resolve())
+        advanced_semantic_inputs = []
+        if repaired_inventory.get("delivery_glossary") != predecessor_inventory.get(
+            "delivery_glossary"
+        ):
+            advanced_semantic_inputs.append("delivery_glossary")
+
+        def governed_dependency_bindings(
+            value: dict[str, Any],
+        ) -> list[dict[str, Any]]:
+            bindings = []
+            for dependency in value.get("dependencies", []):
+                projection = dependency.get("projection")
+                governed_projection = projection
+                if isinstance(projection, dict):
+                    # Promotion rematerializes this evidence at an operation-specific
+                    # path and time. Those publication details do not change the
+                    # Reviewer-facing semantic projection by themselves.
+                    visual_provenance = projection.get("visual_source_provenance")
+                    governed_projection = {
+                        key: item
+                        for key, item in projection.items()
+                        if key != "visual_source_provenance"
+                    }
+                    if isinstance(governed_projection.get("evidence"), list):
+                        governed_projection["evidence"] = [
+                            item
+                            for item in governed_projection["evidence"]
+                            if not (
+                                isinstance(item, dict)
+                                and item.get("path") == visual_provenance
+                            )
+                        ]
+                bindings.append(
+                    {
+                        "owner": dependency.get("owner"),
+                        "projection_id": dependency.get("projection_id"),
+                        "required_scope_ids": dependency.get("required_scope_ids"),
+                        "provider_id": dependency.get("provider_id"),
+                        "provider_sha256": dependency.get("provider_sha256"),
+                        "projection": governed_projection,
+                    }
+                )
+            return sorted(bindings, key=lambda item: str(item["owner"]))
+
+        predecessor_semantic_bindings = governed_dependency_bindings(
+            predecessor_dependencies
+        )
+        repaired_semantic_bindings = governed_dependency_bindings(repaired_dependencies)
+        if repaired_semantic_bindings != predecessor_semantic_bindings:
+            advanced_semantic_inputs.append("semantic_dependencies")
+        semantic_only_advance = (
+            not advanced
+            and repaired_inventory.get("reader_text_set_sha256")
+            == predecessor_inventory.get("reader_text_set_sha256")
+            and repaired_inventory.get("language_profile_id")
+            == predecessor_inventory.get("language_profile_id")
+            and bool(advanced_semantic_inputs)
+        )
+        if not advanced and not semantic_only_advance:
+            raise ContractError(
+                "repair must advance an Artifact Generation or governed semantic input",
+                data={
+                    "first_failing_gate": "precompile_repair_input_advance",
+                    "error_code": "precompile_repair_evaluation_inputs_unchanged",
+                },
+            )
 
         prepared = self.prepare(
             workspace_root=workspace_root,
@@ -733,6 +805,7 @@ class PrecompileQualityProvider:
             ],
             "repaired_inventory_sha256": prepared["inventory_sha256"],
             "advanced_logical_ids": advanced,
+            "advanced_semantic_input_ids": advanced_semantic_inputs,
             "repair_routing": routing,
             "failure_set": failures,
             "disposition": disposition_binding,
@@ -769,6 +842,7 @@ class PrecompileQualityProvider:
             "repair_attempt_sha256": ledger["attempt_sha256"],
             "repair_attempt_path": str(ledger_path),
             "advanced_logical_ids": advanced,
+            "advanced_semantic_input_ids": advanced_semantic_inputs,
         }
 
     def commit_patch(

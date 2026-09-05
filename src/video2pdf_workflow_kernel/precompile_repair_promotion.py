@@ -14,6 +14,7 @@ from .errors import ContractError, ProductionFault
 from .kernel import VideoWorkflowKernel
 from .latex_generated_text import extract_tcolorbox_titles
 from .precompile_quality import PrecompileQualityProvider
+from .runtime_refresh import CompileRuntimeRefreshProvider
 from .utils import (
     canonical_json_bytes,
     read_json,
@@ -47,6 +48,8 @@ class PrecompileRepairPromotionProvider:
         semantic_dependencies_path: Path,
         repair_attempt_number: int,
         prepared_at: str,
+        runtime_refresh_operation_id: str | None = None,
+        runtime_predecessor_final_compile_manifest_path: Path | None = None,
         fault_point: str | None = None,
         fault_logical_task_key: str | None = None,
     ) -> dict[str, Any]:
@@ -60,6 +63,8 @@ class PrecompileRepairPromotionProvider:
                 semantic_dependencies_path=semantic_dependencies_path,
                 repair_attempt_number=repair_attempt_number,
                 prepared_at=prepared_at,
+                runtime_refresh_operation_id=runtime_refresh_operation_id,
+                runtime_predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
                 fault_point=fault_point,
                 fault_logical_task_key=fault_logical_task_key,
             )
@@ -85,6 +90,8 @@ class PrecompileRepairPromotionProvider:
         semantic_dependencies_path: Path,
         repair_attempt_number: int,
         prepared_at: str,
+        runtime_refresh_operation_id: str | None,
+        runtime_predecessor_final_compile_manifest_path: Path | None,
         fault_point: str | None,
         fault_logical_task_key: str | None,
     ) -> dict[str, Any]:
@@ -173,6 +180,38 @@ class PrecompileRepairPromotionProvider:
                     "Precompile repair promotion fault target is outside the task closure"
                 )
 
+        runtime_handoff = None
+        active_runtime_path = run_dir / "workflow/runtime-refresh-active.json"
+        runtime_handoff_requested = (
+            runtime_refresh_operation_id is not None
+            or runtime_predecessor_final_compile_manifest_path is not None
+        )
+        pending_runtime_handoff = (
+            active_runtime_path.is_file()
+            and read_json(active_runtime_path).get("state") != "committed"
+        )
+        if pending_runtime_handoff:
+            if runtime_refresh_operation_id is None or runtime_predecessor_final_compile_manifest_path is None:
+                self._reject(
+                    "pending Compile Runtime repair requires an explicit content repair handoff",
+                    "content_repair_runtime_state",
+                    "runtime_refresh_handoff_identity_required",
+                )
+            runtime_handoff = CompileRuntimeRefreshProvider(
+                self.project_root
+            ).prepare_content_repair_handoff(
+                run_dir=run_dir,
+                repair_bundle_path=bundle_path,
+                predecessor_final_compile_manifest_path=runtime_predecessor_final_compile_manifest_path,
+                expected_operation_id=runtime_refresh_operation_id,
+            )
+        elif runtime_handoff_requested:
+            self._reject(
+                "content repair runtime handoff arguments require a pending refresh",
+                "content_repair_runtime_state",
+                "runtime_refresh_handoff_not_pending",
+            )
+
         resumed_task_count = self._resume_production_repair(
             run_dir=run_dir,
             bundle_path=bundle_path,
@@ -190,7 +229,12 @@ class PrecompileRepairPromotionProvider:
             )
         ContentProduction(
             VideoWorkflowKernel(run_dir.parent)
-        ).require_current_diagnostic_compile_authority(run_dir)
+        ).require_current_diagnostic_compile_authority(
+            run_dir,
+            content_repair_handoff_operation_id=(
+                runtime_refresh_operation_id if runtime_handoff is not None else None
+            ),
+        )
 
         predecessor_root = require_contained_path(
             predecessor_workspace_root.resolve(),
@@ -335,6 +379,17 @@ class PrecompileRepairPromotionProvider:
             prepared_at=prepared_at,
             kernel_production_run_dir=run_dir,
         )
+        if runtime_handoff is not None:
+            runtime_handoff = CompileRuntimeRefreshProvider(
+                self.project_root
+            ).bind_content_repair_promotion(
+                run_dir=run_dir,
+                expected_operation_id=runtime_refresh_operation_id,
+                workspace_root=successor_workspace,
+                generation_set_path=successor_path,
+                inventory_path=successor_inventory_path,
+                semantic_dependencies_path=successor_dependencies_path,
+            )
 
         return {
             "classification": (
@@ -368,6 +423,7 @@ class PrecompileRepairPromotionProvider:
             ],
             "repair_attempt_path": prepared["repair_attempt_path"],
             "reviewer_skeleton_paths": prepared["skeleton_paths"],
+            "runtime_refresh_handoff": runtime_handoff,
         }
 
     @staticmethod

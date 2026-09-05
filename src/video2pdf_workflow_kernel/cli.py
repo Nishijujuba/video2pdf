@@ -35,7 +35,11 @@ from .task_execution import (
 )
 from .content_production import PRODUCTION_FAULT_POINTS
 from .guarded_compile import GuardedCompileProvider
-from .runtime_refresh import CompileRuntimeRefreshProvider, RUNTIME_REFRESH_FAULT_POINTS
+from .runtime_refresh import (
+    CONTENT_REPAIR_HANDOFF_FAULT_POINTS,
+    CompileRuntimeRefreshProvider,
+    RUNTIME_REFRESH_FAULT_POINTS,
+)
 from .final_compile import GuardedFinalCompileProvider
 from .final_delivery_evidence import (
     FINAL_EVIDENCE_FAULT_POINTS,
@@ -179,6 +183,10 @@ def _parser() -> argparse.ArgumentParser:
     precompile_repair_promote.add_argument(
         "--repair-attempt-number", required=True, type=int
     )
+    precompile_repair_promote.add_argument("--runtime-refresh-operation-id")
+    precompile_repair_promote.add_argument(
+        "--runtime-predecessor-final-compile-manifest", type=Path
+    )
     precompile_repair_promote.add_argument("--prepared-at", required=True)
     precompile_repair_promote.add_argument(
         "--fault-point",
@@ -217,6 +225,9 @@ def _parser() -> argparse.ArgumentParser:
     precompile_seal = commands.add_parser("delivery-quality-seal")
     precompile_seal.add_argument("--workspace-root", required=True, type=Path)
     precompile_seal.add_argument("--sealed-at", required=True)
+    precompile_seal.add_argument(
+        "--fault-point", choices=sorted(CONTENT_REPAIR_HANDOFF_FAULT_POINTS)
+    )
 
     text_equivalence = commands.add_parser(
         "delivery-quality-text-equivalence"
@@ -1202,6 +1213,10 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             semantic_dependencies_path=args.semantic_dependencies,
             repair_attempt_number=args.repair_attempt_number,
             prepared_at=args.prepared_at,
+            runtime_refresh_operation_id=args.runtime_refresh_operation_id,
+            runtime_predecessor_final_compile_manifest_path=(
+                args.runtime_predecessor_final_compile_manifest
+            ),
             fault_point=args.fault_point,
             fault_logical_task_key=args.fault_logical_task_key,
         )
@@ -1255,6 +1270,14 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             workspace_root=args.workspace_root,
             sealed_at=args.sealed_at,
         )
+        runtime_handoff = CompileRuntimeRefreshProvider(
+            project_root
+        ).supersede_for_content_repair(
+            workspace_root=args.workspace_root,
+            fault_point=args.fault_point,
+        )
+        if runtime_handoff is not None:
+            result["runtime_refresh_handoff"] = runtime_handoff
         classification = (
             "precompile_text_successor_seal_created"
             if result["decision_origin"] == "reused_after_text_equivalence"

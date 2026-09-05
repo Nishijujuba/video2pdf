@@ -18,6 +18,8 @@ RUNTIME_REFRESH_FAULT_POINTS = {
     "after_diagnostic_publish",
 }
 
+CONTENT_REPAIR_HANDOFF_FAULT_POINTS = {"after_seal_before_runtime_supersession"}
+
 
 def _fingerprint(value: dict[str, Any], field: str) -> str:
     return hashlib.sha256(
@@ -52,6 +54,27 @@ class CompileRuntimeRefreshProvider:
         production = ContentProduction(VideoWorkflowKernel(run.parent))
         active_path = run / "workflow/runtime-refresh-active.json"
         existing = read_json(active_path) if active_path.is_file() else None
+        if existing is not None and existing.get("state") == "superseded_by_content_repair":
+            _require_fingerprint(existing, "journal_sha256", "Compile Runtime refresh journal")
+            self._validate_content_repair_supersession(existing, production, run)
+            handoff = existing["content_repair_handoff"]
+            if (
+                existing.get("refreshed_at") != refreshed_at
+                or (
+                    precompile_workspace_root is not None
+                    and precompile_workspace_root.resolve()
+                    != Path(handoff["promotion"]["workspace_root"])
+                )
+                or (
+                    final_compile_manifest_path is not None
+                    and final_compile_manifest_path.resolve()
+                    != Path(handoff["predecessor_final_compile_manifest_path"])
+                )
+            ):
+                raise ContractError(
+                    "superseded Compile Runtime refresh replay arguments changed"
+                )
+            return self._result(existing)
         if (
             existing is not None
             and existing.get("state") == "committed"
@@ -244,7 +267,7 @@ class CompileRuntimeRefreshProvider:
 
         if final_compile_manifest_path is None:
             raise ContractError("current Final Compile Manifest is required after Precompile reuse")
-        predecessor_manifest = self._preflight_predecessor_manifest(
+        self._preflight_predecessor_manifest(
             final_compile_manifest_path,
             expected_runtime_policy_sha256=journal[
                 "predecessor_runtime_policy_sha256"
@@ -308,6 +331,324 @@ class CompileRuntimeRefreshProvider:
         write_json_atomic(operation_root / "journal.json", journal)
         write_json_atomic(active_path, journal)
         return self._result(journal)
+
+    def prepare_content_repair_handoff(
+        self,
+        *,
+        run_dir: Path,
+        repair_bundle_path: Path,
+        predecessor_final_compile_manifest_path: Path,
+        expected_operation_id: str,
+    ) -> dict[str, Any]:
+        """Persist the one authorized bridge from a pending runtime refresh to repair."""
+        run = run_dir.resolve()
+        active_path = run / "workflow/runtime-refresh-active.json"
+        if not active_path.is_file():
+            raise ContractError(
+                "content repair handoff requires an active Compile Runtime refresh",
+                data={"first_failing_gate": "content_repair_runtime_state", "error_code": "runtime_refresh_handoff_missing"},
+            )
+        journal = read_json(active_path)
+        _require_fingerprint(journal, "journal_sha256", "Compile Runtime refresh journal")
+        if journal.get("operation_id") != expected_operation_id:
+            raise ContractError(
+                "content repair handoff names another Compile Runtime refresh",
+                data={"first_failing_gate": "content_repair_runtime_state", "error_code": "runtime_refresh_handoff_operation_mismatch"},
+            )
+        existing = journal.get("content_repair_handoff")
+        if journal.get("state") == "superseded_by_content_repair" and isinstance(existing, dict):
+            self._validate_content_repair_supersession(
+                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            )
+            if (
+                existing.get("repair_bundle_path") != str(repair_bundle_path.resolve())
+                or existing.get("repair_bundle_sha256")
+                != sha256_file(repair_bundle_path.resolve())
+                or existing.get("predecessor_final_compile_manifest_path")
+                != str(predecessor_final_compile_manifest_path.resolve())
+                or existing.get("predecessor_final_compile_manifest_sha256")
+                != sha256_file(predecessor_final_compile_manifest_path.resolve())
+            ):
+                raise ContractError("content repair handoff replay identity changed")
+            return existing
+        if journal.get("state") != "precompile_refresh_required":
+            raise ContractError(
+                "content repair handoff requires precompile_refresh_required",
+                data={"first_failing_gate": "content_repair_runtime_state", "error_code": "runtime_refresh_handoff_state_invalid"},
+            )
+
+        canonical_policy_path = run / "workflow/compile-runtime-policy.json"
+        canonical_policy_sha256 = sha256_file(canonical_policy_path)
+        if (
+            canonical_policy_sha256 != journal.get("canonical_runtime_policy_sha256")
+            or canonical_policy_sha256 != journal.get("successor_runtime_policy_sha256")
+        ):
+            raise ContractError(
+                "content repair handoff Runtime Policy is stale",
+                data={"first_failing_gate": "content_repair_runtime_policy", "error_code": "runtime_refresh_handoff_policy_stale"},
+            )
+        bundle = read_json(repair_bundle_path.resolve())
+        bundled_policy_path = repair_bundle_path.resolve().parent / "payload/compile-runtime-policy.json"
+        policy_entries = [
+            item for item in bundle.get("derived_payload", [])
+            if item.get("path", "").replace("\\", "/").endswith(
+                "/payload/compile-runtime-policy.json"
+            )
+            and (run / str(item.get("path", ""))).resolve() == bundled_policy_path
+        ]
+        if (
+            len(policy_entries) != 1
+            or not bundled_policy_path.is_file()
+            or sha256_file(bundled_policy_path) != policy_entries[0].get("sha256")
+            or sha256_file(bundled_policy_path) != canonical_policy_sha256
+        ):
+            raise ContractError(
+                "content repair bundle lacks the current Runtime Policy binding",
+                data={"first_failing_gate": "content_repair_bundle_policy", "error_code": "runtime_refresh_handoff_bundle_policy_mismatch"},
+            )
+        self._preflight_predecessor_manifest(
+            predecessor_final_compile_manifest_path,
+            expected_runtime_policy_sha256=journal["predecessor_runtime_policy_sha256"],
+        )
+        if isinstance(existing, dict):
+            _require_fingerprint(existing, "handoff_sha256", "content repair handoff")
+            if (
+                existing.get("repair_bundle_path") != str(repair_bundle_path.resolve())
+                or existing.get("repair_bundle_sha256") != sha256_file(repair_bundle_path.resolve())
+                or existing.get("predecessor_final_compile_manifest_path")
+                != str(predecessor_final_compile_manifest_path.resolve())
+                or existing.get("predecessor_final_compile_manifest_sha256")
+                != sha256_file(predecessor_final_compile_manifest_path.resolve())
+                or existing.get("runtime_policy_sha256") != canonical_policy_sha256
+            ):
+                raise ContractError("content repair handoff replay identity changed")
+            return existing
+        operation_root = run / "待删除/runtime-refresh" / expected_operation_id
+        archive_path = operation_root / "content-repair/precompile-refresh-required-journal.json"
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        archived_bytes = canonical_json_bytes(journal)
+        if archive_path.exists() and archive_path.read_bytes() != archived_bytes:
+            raise ContractError("retained precompile-refresh-required journal conflicts")
+        if not archive_path.exists():
+            archive_path.write_bytes(archived_bytes)
+        handoff = {
+            "schema_name": "runtime-refresh-content-repair-handoff",
+            "schema_version": "1.0.0",
+            "state": "prepared",
+            "runtime_refresh_operation_id": expected_operation_id,
+            "runtime_refresh_journal_archive_path": str(archive_path.resolve()),
+            "runtime_policy_sha256": canonical_policy_sha256,
+            "repair_bundle_path": str(repair_bundle_path.resolve()),
+            "repair_bundle_sha256": sha256_file(repair_bundle_path.resolve()),
+            "predecessor_final_compile_manifest_path": str(predecessor_final_compile_manifest_path.resolve()),
+            "predecessor_final_compile_manifest_sha256": sha256_file(predecessor_final_compile_manifest_path.resolve()),
+        }
+        handoff["handoff_sha256"] = _fingerprint(handoff, "handoff_sha256")
+        journal["content_repair_handoff"] = handoff
+        journal["journal_sha256"] = _fingerprint(journal, "journal_sha256")
+        write_json_atomic(active_path, journal)
+        return handoff
+
+    def bind_content_repair_promotion(
+        self,
+        *,
+        run_dir: Path,
+        expected_operation_id: str,
+        workspace_root: Path,
+        generation_set_path: Path,
+        inventory_path: Path,
+        semantic_dependencies_path: Path,
+    ) -> dict[str, Any]:
+        run = run_dir.resolve()
+        active_path = run / "workflow/runtime-refresh-active.json"
+        journal = read_json(active_path)
+        _require_fingerprint(journal, "journal_sha256", "Compile Runtime refresh journal")
+        handoff = journal.get("content_repair_handoff")
+        if journal.get("operation_id") != expected_operation_id or not isinstance(handoff, dict):
+            raise ContractError("content repair promotion lacks its runtime handoff")
+        _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
+        if journal.get("state") == "superseded_by_content_repair":
+            self._validate_content_repair_supersession(
+                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            )
+            return handoff
+        generation_set = read_json(generation_set_path.resolve())
+        bindings = {
+            "workspace_root": str(workspace_root.resolve()),
+            "generation_set_path": str(generation_set_path.resolve()),
+            "generation_set_sha256": generation_set["generation_set_sha256"],
+            "generation_set_file_sha256": sha256_file(generation_set_path.resolve()),
+            "inventory_path": str(inventory_path.resolve()),
+            "semantic_dependencies_path": str(semantic_dependencies_path.resolve()),
+        }
+        if handoff.get("state") == "promotion_ready" and handoff.get("promotion") != bindings:
+            raise ContractError("content repair promotion replay identity changed")
+        handoff["state"] = "promotion_ready"
+        handoff["promotion"] = bindings
+        handoff["handoff_sha256"] = _fingerprint(handoff, "handoff_sha256")
+        journal["content_repair_handoff"] = handoff
+        journal["journal_sha256"] = _fingerprint(journal, "journal_sha256")
+        write_json_atomic(active_path, journal)
+        return handoff
+
+    def supersede_for_content_repair(
+        self, *, workspace_root: Path, fault_point: str | None = None
+    ) -> dict[str, Any] | None:
+        if fault_point is not None and fault_point not in CONTENT_REPAIR_HANDOFF_FAULT_POINTS:
+            raise ContractError(f"unsupported content repair handoff fault point: {fault_point}")
+        workspace = workspace_root.resolve()
+        run = next(
+            (candidate for candidate in workspace.parents if (candidate / "workflow/run.json").is_file()),
+            None,
+        )
+        if run is None:
+            return None
+        active_path = run / "workflow/runtime-refresh-active.json"
+        if not active_path.is_file():
+            return None
+        journal = read_json(active_path)
+        _require_fingerprint(journal, "journal_sha256", "Compile Runtime refresh journal")
+        handoff = journal.get("content_repair_handoff")
+        if not isinstance(handoff, dict) or handoff.get("promotion", {}).get("workspace_root") != str(workspace):
+            return None
+        if journal.get("state") == "superseded_by_content_repair":
+            self._validate_content_repair_supersession(
+                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            )
+            return handoff
+        _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
+        if journal.get("state") != "precompile_refresh_required" or handoff.get("state") != "promotion_ready":
+            raise ContractError("content repair runtime handoff is not ready for supersession")
+        precompile = PrecompileQualityProvider(self.project_root).assess_current_seal(workspace_root=workspace)
+        if precompile.get("classification") != "precompile_seal_reused":
+            raise ContractError("content repair supersession requires a current passing Seal")
+        if fault_point == "after_seal_before_runtime_supersession":
+            raise RuntimeRefreshFault(fault_point)
+        generation_path = Path(handoff["promotion"]["generation_set_path"])
+        if sha256_file(generation_path) != handoff["promotion"].get(
+            "generation_set_file_sha256"
+        ):
+            raise ContractError(
+                "content repair Artifact Generation file binding is stale",
+                data={
+                    "first_failing_gate": "content_repair_generation_file_binding",
+                    "error_code": "runtime_refresh_handoff_generation_file_drift",
+                },
+            )
+        generations = read_json(generation_path)
+        if generations.get("generation_set_sha256") != _fingerprint(
+            generations, "generation_set_sha256"
+        ):
+            raise ContractError(
+                "content repair Artifact Generation fingerprint is stale",
+                data={
+                    "first_failing_gate": "content_repair_generation_fingerprint",
+                    "error_code": "runtime_refresh_handoff_generation_fingerprint_stale",
+                },
+            )
+        if generations["generation_set_sha256"] != handoff["promotion"].get(
+            "generation_set_sha256"
+        ):
+            raise ContractError(
+                "content repair Artifact Generation handoff binding is stale",
+                data={
+                    "first_failing_gate": "content_repair_generation_handoff_binding",
+                    "error_code": "runtime_refresh_handoff_generation_identity_changed",
+                },
+            )
+        if generations.get("artifacts") != precompile.get("artifact_generations"):
+            raise ContractError(
+                "content repair Artifact Generations differ from the current Seal",
+                data={
+                    "first_failing_gate": "content_repair_seal_generation_binding",
+                    "error_code": "runtime_refresh_handoff_seal_generation_mismatch",
+                },
+            )
+        production = ContentProduction(VideoWorkflowKernel(run.parent))
+        authority = production.require_current_diagnostic_compile_authority(
+            run, content_repair_handoff_operation_id=journal["operation_id"]
+        )
+        compile_manifest = read_json(run / "workflow/compile-manifest.json")
+        entries_by_id = {item["logical_id"]: item for item in compile_manifest["entries"]}
+        entries = []
+        for generation in generations["artifacts"]:
+            current = entries_by_id.get(generation["logical_id"])
+            if current is None or (current["generation"], current["sha256"]) != (generation["generation"], generation["sha256"]):
+                raise ContractError("content repair successor generations are not current")
+            entries.append({key: current[key] for key in ("logical_id", "generation", "sha256", "source_path", "staging_path")})
+        policy_path = Path(authority["runtime_policy_path"])
+        policy = read_json(policy_path)
+        report = read_json(run / "review/latex/diagnostic-compile-report.json")
+        manifest = {
+            "schema_name": "final-compile-manifest",
+            "schema_version": "1.0.0",
+            "activation_status": "target_only",
+            "mode": "final",
+            "precompile_text_seal_sha256": precompile["seal_sha256"],
+            "entries": entries,
+            "approved_runtime_inputs": self._approved_runtime_inputs(report, policy),
+            "runtime_policy": {"path": str(policy_path.resolve()), "sha256": sha256_file(policy_path)},
+        }
+        manifest["manifest_sha256"] = _fingerprint(manifest, "manifest_sha256")
+        self.quality.validate("final-compile-manifest", manifest)
+        output_path = run / "待删除/runtime-refresh" / journal["operation_id"] / "content-repair/final-compile-manifest.json"
+        if output_path.exists() and output_path.read_bytes() != canonical_json_bytes(manifest):
+            raise ContractError("content repair successor Final Compile Manifest conflicts")
+        write_json_atomic(output_path, manifest)
+        handoff["state"] = "superseded"
+        handoff["seal_sha256"] = precompile["seal_sha256"]
+        handoff["successor_final_compile_manifest_path"] = str(output_path.resolve())
+        handoff["successor_final_compile_manifest_sha256"] = sha256_file(output_path)
+        handoff["successor_diagnostic_report_sha256"] = sha256_file(run / "review/latex/diagnostic-compile-report.json")
+        handoff["handoff_sha256"] = _fingerprint(handoff, "handoff_sha256")
+        journal["state"] = "superseded_by_content_repair"
+        journal["content_repair_handoff"] = handoff
+        journal["successor_final_compile_manifest_path"] = str(output_path.resolve())
+        journal["successor_final_compile_manifest_sha256"] = sha256_file(output_path)
+        journal["journal_sha256"] = _fingerprint(journal, "journal_sha256")
+        write_json_atomic(active_path, journal)
+        return handoff
+
+    def _validate_content_repair_supersession(
+        self, journal: dict[str, Any], production: ContentProduction, run: Path
+    ) -> None:
+        handoff = journal.get("content_repair_handoff")
+        if not isinstance(handoff, dict):
+            raise ContractError("superseded Compile Runtime refresh lacks content repair authority")
+        _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
+        manifest_path = Path(handoff.get("successor_final_compile_manifest_path", ""))
+        workspace = Path(handoff.get("promotion", {}).get("workspace_root", ""))
+        precompile = PrecompileQualityProvider(self.project_root).assess_current_seal(workspace_root=workspace)
+        if (
+            handoff.get("state") != "superseded"
+            or precompile.get("classification") != "precompile_seal_reused"
+            or precompile.get("seal_sha256") != handoff.get("seal_sha256")
+            or not manifest_path.is_file()
+            or sha256_file(manifest_path) != handoff.get("successor_final_compile_manifest_sha256")
+        ):
+            raise ContractError("content repair supersession authority is stale")
+        manifest = read_json(manifest_path)
+        self.quality.validate("final-compile-manifest", manifest)
+        _require_fingerprint(manifest, "manifest_sha256", "Final Compile Manifest")
+        authority = production.require_current_diagnostic_compile_authority(run)
+        generations = read_json(Path(handoff["promotion"]["generation_set_path"]))
+        manifest_bindings = {
+            (item["logical_id"], item["generation"], item["sha256"])
+            for item in manifest["entries"]
+        }
+        generation_bindings = {
+            (item["logical_id"], item["generation"], item["sha256"])
+            for item in generations["artifacts"]
+        }
+        if (
+            manifest_bindings != generation_bindings
+            or manifest.get("precompile_text_seal_sha256") != handoff.get("seal_sha256")
+            or manifest.get("runtime_policy", {}).get("sha256")
+            != authority["runtime_policy_sha256"]
+            or sha256_file(run / "review/latex/diagnostic-compile-report.json")
+            != handoff.get("successor_diagnostic_report_sha256")
+        ):
+            raise ContractError("content repair supersession bindings are stale")
 
     @staticmethod
     def _approved_runtime_inputs(
@@ -508,7 +849,11 @@ class CompileRuntimeRefreshProvider:
         classification = (
             "compile_runtime_refresh_complete"
             if journal["state"] == "committed"
-            else "precompile_refresh_required"
+            else (
+                "compile_runtime_refresh_superseded_by_content_repair"
+                if journal["state"] == "superseded_by_content_repair"
+                else "precompile_refresh_required"
+            )
         )
         return {
             "classification": classification,

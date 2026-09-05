@@ -19,7 +19,7 @@ from .errors import (
     SupersededProductionAttempt,
 )
 from .guarded_compile import GuardedCompileProvider
-from .utils import read_json, require_contained_path, sha256_file, write_json_atomic
+from .utils import canonical_json_bytes, read_json, require_contained_path, sha256_file, write_json_atomic
 
 
 def _digest(*values: str, length: int = 32) -> str:
@@ -149,7 +149,10 @@ class ContentProduction:
         return state
 
     def require_current_diagnostic_compile_authority(
-        self, run_dir: Path
+        self,
+        run_dir: Path,
+        *,
+        content_repair_handoff_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Prove that the complete production graph owns the diagnostic compile."""
         run_dir = run_dir.resolve()
@@ -159,7 +162,62 @@ class ContentProduction:
         refresh_path = run_dir / "workflow/runtime-refresh-active.json"
         if refresh_path.is_file():
             refresh = read_json(refresh_path)
-            if refresh.get("state") != "committed":
+            refresh_state = refresh.get("state")
+            handoff = refresh.get("content_repair_handoff")
+            refresh_fingerprint_current = refresh.get("journal_sha256") == hashlib.sha256(
+                canonical_json_bytes(
+                    {key: value for key, value in refresh.items() if key != "journal_sha256"}
+                )
+            ).hexdigest()
+            handoff_fingerprint_current = (
+                isinstance(handoff, dict)
+                and handoff.get("handoff_sha256")
+                == hashlib.sha256(
+                    canonical_json_bytes(
+                        {key: value for key, value in handoff.items() if key != "handoff_sha256"}
+                    )
+                ).hexdigest()
+            )
+            repair_promotion = (
+                content_repair_handoff_operation_id is not None
+                and refresh_fingerprint_current
+                and refresh_state == "precompile_refresh_required"
+                and refresh.get("operation_id") == content_repair_handoff_operation_id
+                and isinstance(handoff, dict)
+                and handoff_fingerprint_current
+                and handoff.get("runtime_refresh_operation_id")
+                == content_repair_handoff_operation_id
+                and handoff.get("state") in {"prepared", "promotion_ready"}
+                and handoff.get("runtime_policy_sha256")
+                == refresh.get("canonical_runtime_policy_sha256")
+                and Path(str(handoff.get("repair_bundle_path", ""))).is_file()
+                and sha256_file(Path(handoff["repair_bundle_path"]))
+                == handoff.get("repair_bundle_sha256")
+                and sha256_file(run_dir / "workflow/compile-runtime-policy.json")
+                == handoff.get("runtime_policy_sha256")
+            )
+            repair_superseded = (
+                refresh_state == "superseded_by_content_repair"
+                and refresh_fingerprint_current
+                and isinstance(handoff, dict)
+                and handoff_fingerprint_current
+                and handoff.get("state") == "superseded"
+                and handoff.get("runtime_refresh_operation_id")
+                == refresh.get("operation_id")
+                and handoff.get("runtime_policy_sha256")
+                == refresh.get("canonical_runtime_policy_sha256")
+                and Path(str(handoff.get("successor_final_compile_manifest_path", ""))).is_file()
+                and Path(str(handoff.get("promotion", {}).get("workspace_root", "")), "precompile-text-seal.json").is_file()
+                and sha256_file(Path(handoff["successor_final_compile_manifest_path"]))
+                == handoff.get("successor_final_compile_manifest_sha256")
+                and read_json(Path(handoff["promotion"]["workspace_root"]) / "precompile-text-seal.json").get("seal_sha256")
+                == handoff.get("seal_sha256")
+                and sha256_file(Path(handoff["promotion"]["generation_set_path"]))
+                == handoff.get("promotion", {}).get("generation_set_file_sha256")
+                and sha256_file(run_dir / "review/latex/diagnostic-compile-report.json")
+                == handoff.get("successor_diagnostic_report_sha256")
+            )
+            if refresh_state != "committed" and not repair_promotion and not repair_superseded:
                 raise ContractError(
                     "Final Compile is blocked while Compile Runtime refresh is incomplete"
                 )
@@ -1263,12 +1321,23 @@ class ContentProduction:
             path = run_dir / relative
             path.write_text(content, encoding="utf-8")
             self._record_artifact(state, logical_id, relative, path, "kernel:main-integration")
+        first_section_id = next(iter(state["sections"]))
+        first_section_text = (
+            run_dir / f"work/integration/{first_section_id}.tex"
+        ).read_text(encoding="utf-8")
+        title_page_at = first_section_text.find("\\begin{titlepage}")
+        table_of_contents_at = first_section_text.find("\\tableofcontents")
+        section_owns_front_matter = (
+            title_page_at >= 0
+            and table_of_contents_at > title_page_at
+        )
         main = run_dir / "work/integration/main.tex"
         main.write_text(
             f"\\documentclass{{{support['document_class']}}}\n"
             f"\\usepackage{{{support['style_name']}}}\n"
             "\\usepackage{graphicx}\n\\usepackage{fontspec}\n\\setmainfont{Arial}\n"
-            "\\begin{document}\n\\tableofcontents\n"
+            "\\begin{document}\n"
+            + ("" if section_owns_front_matter else "\\tableofcontents\n")
             + "".join(f"\\input{{{section_id}.tex}}\n" for section_id in state["sections"])
             + f"\\bibliography{{{Path(support['bibliography_name']).stem}}}\n"
             +

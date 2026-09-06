@@ -196,27 +196,16 @@ class ContentProduction:
                 and sha256_file(run_dir / "workflow/compile-runtime-policy.json")
                 == handoff.get("runtime_policy_sha256")
             )
-            repair_superseded = (
-                refresh_state == "superseded_by_content_repair"
-                and refresh_fingerprint_current
-                and isinstance(handoff, dict)
-                and handoff_fingerprint_current
-                and handoff.get("state") == "superseded"
-                and handoff.get("runtime_refresh_operation_id")
-                == refresh.get("operation_id")
-                and handoff.get("runtime_policy_sha256")
-                == refresh.get("canonical_runtime_policy_sha256")
-                and Path(str(handoff.get("successor_final_compile_manifest_path", ""))).is_file()
-                and Path(str(handoff.get("promotion", {}).get("workspace_root", "")), "precompile-text-seal.json").is_file()
-                and sha256_file(Path(handoff["successor_final_compile_manifest_path"]))
-                == handoff.get("successor_final_compile_manifest_sha256")
-                and read_json(Path(handoff["promotion"]["workspace_root"]) / "precompile-text-seal.json").get("seal_sha256")
-                == handoff.get("seal_sha256")
-                and sha256_file(Path(handoff["promotion"]["generation_set_path"]))
-                == handoff.get("promotion", {}).get("generation_set_file_sha256")
-                and sha256_file(run_dir / "review/latex/diagnostic-compile-report.json")
-                == handoff.get("successor_diagnostic_report_sha256")
-            )
+            repair_superseded = False
+            if refresh_state == "superseded_by_content_repair":
+                from .runtime_refresh import CompileRuntimeRefreshProvider
+
+                CompileRuntimeRefreshProvider(
+                    self.kernel.project_root
+                ).validate_retained_content_repair_closure(
+                    run_dir=run_dir, journal=refresh
+                )
+                repair_superseded = True
             if refresh_state != "committed" and not repair_promotion and not repair_superseded:
                 raise ContractError(
                     "Final Compile is blocked while Compile Runtime refresh is incomplete"

@@ -190,10 +190,17 @@ class PrecompileRepairPromotionProvider:
             task_order=expected_task_order,
         )
         active_runtime_path = run_dir / "workflow/runtime-refresh-active.json"
-        pending_runtime_handoff = (
-            active_runtime_path.is_file()
-            and read_json(active_runtime_path).get("state") != "committed"
-        )
+        pending_runtime_handoff = False
+        if active_runtime_path.is_file():
+            active_runtime = read_json(active_runtime_path)
+            if active_runtime.get("state") == "superseded_by_content_repair":
+                CompileRuntimeRefreshProvider(
+                    self.project_root
+                ).validate_retained_content_repair_closure(
+                    run_dir=run_dir, journal=active_runtime
+                )
+            else:
+                pending_runtime_handoff = active_runtime.get("state") != "committed"
         if failure_authority_path is not None and not pending_runtime_handoff:
             bound_replay = self._bound_workspace_replay(
                 run_dir=run_dir,

@@ -60,8 +60,9 @@ class CompileRuntimeRefreshProvider:
         active_path = run / "workflow/runtime-refresh-active.json"
         existing = read_json(active_path) if active_path.is_file() else None
         if existing is not None and existing.get("state") == "superseded_by_content_repair":
-            _require_fingerprint(existing, "journal_sha256", "Compile Runtime refresh journal")
-            self._validate_content_repair_supersession(existing, production, run)
+            self.validate_retained_content_repair_closure(
+                run_dir=run, journal=existing
+            )
             handoff = existing["content_repair_handoff"]
             if (
                 existing.get("refreshed_at") != refreshed_at
@@ -362,8 +363,8 @@ class CompileRuntimeRefreshProvider:
             )
         existing = journal.get("content_repair_handoff")
         if journal.get("state") == "superseded_by_content_repair" and isinstance(existing, dict):
-            self._validate_content_repair_supersession(
-                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            self.validate_retained_content_repair_closure(
+                run_dir=run, journal=journal
             )
             if (
                 existing.get("repair_bundle_path") != str(repair_bundle_path.resolve())
@@ -778,8 +779,8 @@ class CompileRuntimeRefreshProvider:
             raise ContractError("content repair promotion lacks its runtime handoff")
         _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
         if journal.get("state") == "superseded_by_content_repair":
-            self._validate_content_repair_supersession(
-                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            self.validate_retained_content_repair_closure(
+                run_dir=run, journal=journal
             )
             return handoff
         generation_set = read_json(generation_set_path.resolve())
@@ -925,8 +926,8 @@ class CompileRuntimeRefreshProvider:
         if not isinstance(handoff, dict) or handoff.get("promotion", {}).get("workspace_root") != str(workspace):
             return None
         if journal.get("state") == "superseded_by_content_repair":
-            self._validate_content_repair_supersession(
-                journal, ContentProduction(VideoWorkflowKernel(run.parent)), run
+            self.validate_retained_content_repair_closure(
+                run_dir=run, journal=journal
             )
             return handoff
         _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
@@ -1042,29 +1043,235 @@ class CompileRuntimeRefreshProvider:
         write_json_atomic(active_path, journal)
         return handoff
 
-    def _validate_content_repair_supersession(
-        self, journal: dict[str, Any], production: ContentProduction, run: Path
-    ) -> None:
-        handoff = journal.get("content_repair_handoff")
+    @staticmethod
+    def _reject_terminal(message: str, gate: str, code: str) -> None:
+        raise ContractError(
+            message,
+            data={"first_failing_gate": gate, "error_code": code},
+        )
+
+    def validate_retained_content_repair_closure(
+        self, *, run_dir: Path, journal: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Authenticate one immutable completed Runtime-to-content closure."""
+        run = run_dir.resolve()
+        retained = journal or read_json(
+            run / "workflow/runtime-refresh-active.json"
+        )
+        try:
+            _require_fingerprint(
+                retained, "journal_sha256", "Compile Runtime refresh journal"
+            )
+        except ContractError:
+            self._reject_terminal(
+                "terminal Compile Runtime journal fingerprint is stale",
+                "content_repair_terminal_journal",
+                "runtime_refresh_terminal_journal_fingerprint_stale",
+            )
+        if retained.get("state") != "superseded_by_content_repair":
+            self._reject_terminal(
+                "Compile Runtime content repair is not terminal",
+                "content_repair_terminal_state",
+                "runtime_refresh_terminal_state_invalid",
+            )
+        handoff = retained.get("content_repair_handoff")
         if not isinstance(handoff, dict):
-            raise ContractError("superseded Compile Runtime refresh lacks content repair authority")
-        _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
-        manifest_path = Path(handoff.get("successor_final_compile_manifest_path", ""))
-        workspace = Path(handoff.get("promotion", {}).get("workspace_root", ""))
-        precompile = PrecompileQualityProvider(self.project_root).assess_current_seal(workspace_root=workspace)
+            self._reject_terminal(
+                "terminal Compile Runtime closure lacks its handoff",
+                "content_repair_terminal_handoff",
+                "runtime_refresh_terminal_handoff_missing",
+            )
+        try:
+            _require_fingerprint(handoff, "handoff_sha256", "content repair handoff")
+        except ContractError:
+            self._reject_terminal(
+                "terminal content repair handoff fingerprint is stale",
+                "content_repair_terminal_handoff",
+                "runtime_refresh_terminal_handoff_fingerprint_stale",
+            )
         if (
             handoff.get("state") != "superseded"
-            or precompile.get("classification") != "precompile_seal_reused"
-            or precompile.get("seal_sha256") != handoff.get("seal_sha256")
-            or not manifest_path.is_file()
-            or sha256_file(manifest_path) != handoff.get("successor_final_compile_manifest_sha256")
+            or handoff.get("runtime_refresh_operation_id")
+            != retained.get("operation_id")
+            or handoff.get("runtime_policy_sha256")
+            != retained.get("canonical_runtime_policy_sha256")
         ):
-            raise ContractError("content repair supersession authority is stale")
+            self._reject_terminal(
+                "terminal content repair handoff identity is stale",
+                "content_repair_terminal_handoff",
+                "runtime_refresh_terminal_handoff_identity_stale",
+            )
+        for path_field, sha_field in (
+            ("repair_bundle_path", "repair_bundle_sha256"),
+            (
+                "predecessor_final_compile_manifest_path",
+                "predecessor_final_compile_manifest_sha256",
+            ),
+        ):
+            path = Path(str(handoff.get(path_field, "")))
+            if not path.is_file() or sha256_file(path) != handoff.get(sha_field):
+                self._reject_terminal(
+                    "terminal content repair input binding is stale",
+                    "content_repair_terminal_handoff",
+                    "runtime_refresh_terminal_handoff_input_drift",
+                )
+
+        promotion = handoff.get("promotion")
+        if not isinstance(promotion, dict):
+            self._reject_terminal(
+                "terminal content repair promotion is missing",
+                "content_repair_terminal_promotion",
+                "runtime_refresh_terminal_promotion_missing",
+            )
+        workspace = Path(str(promotion.get("workspace_root", "")))
+        generation_path = Path(str(promotion.get("generation_set_path", "")))
+        promotion_inventory_path = Path(str(promotion.get("inventory_path", "")))
+        promotion_dependencies_path = Path(
+            str(promotion.get("semantic_dependencies_path", ""))
+        )
+        report_path = workspace / "precompile-quality-report.json"
+        seal_path = workspace / "precompile-text-seal.json"
+        inventory_path = workspace / "reader-facing-text-inventory.json"
+        dependencies_path = workspace / "semantic-dependencies.json"
+        required_paths = (
+            workspace,
+            generation_path,
+            promotion_inventory_path,
+            promotion_dependencies_path,
+            report_path,
+            seal_path,
+            inventory_path,
+            dependencies_path,
+        )
+        if not workspace.is_dir() or any(
+            not path.is_file() for path in required_paths[1:]
+        ):
+            self._reject_terminal(
+                "terminal content repair promotion evidence is unavailable",
+                "content_repair_terminal_promotion",
+                "runtime_refresh_terminal_promotion_evidence_missing",
+            )
+        if sha256_file(generation_path) != promotion.get(
+            "generation_set_file_sha256"
+        ):
+            self._reject_terminal(
+                "terminal Artifact Generation file binding is stale",
+                "content_repair_terminal_generation_binding",
+                "runtime_refresh_terminal_generation_file_drift",
+            )
+        generations = read_json(generation_path)
+        report = read_json(report_path)
+        seal = read_json(seal_path)
+        inventory = read_json(inventory_path)
+        dependencies = read_json(dependencies_path)
+        try:
+            self.quality.validate("precompile-artifact-generation-set", generations)
+            self.quality.validate("precompile-quality-report", report)
+            self.quality.validate("precompile-text-seal", seal)
+            self.quality.validate("reader-facing-text-inventory", inventory)
+            self.quality.validate("precompile-semantic-dependencies", dependencies)
+            _require_fingerprint(
+                generations,
+                "generation_set_sha256",
+                "retained Artifact Generation set",
+            )
+            _require_fingerprint(report, "report_sha256", "retained PRE report")
+            _require_fingerprint(seal, "seal_sha256", "retained PRE Seal")
+            _require_fingerprint(
+                inventory, "inventory_sha256", "retained reader inventory"
+            )
+            _require_fingerprint(
+                dependencies,
+                "dependencies_sha256",
+                "retained semantic dependencies",
+            )
+        except ContractError:
+            self._reject_terminal(
+                "terminal content repair promotion evidence is invalid",
+                "content_repair_terminal_promotion",
+                "runtime_refresh_terminal_promotion_evidence_invalid",
+            )
+        bound_generation_path = (
+            workspace
+            / "seal-bindings"
+            / seal["seal_sha256"]
+            / "artifact-generations.json"
+        )
+        bound_inventory_path = (
+            workspace
+            / "seal-bindings"
+            / seal["seal_sha256"]
+            / "reader-facing-text-inventory.json"
+        )
+        if (
+            not bound_generation_path.is_file()
+            or not bound_inventory_path.is_file()
+            or read_json(bound_generation_path).get("generation_set_sha256")
+            != generations.get("generation_set_sha256")
+            or read_json(bound_inventory_path).get("inventory_sha256")
+            != inventory.get("inventory_sha256")
+            or read_json(promotion_inventory_path).get("inventory_sha256")
+            != inventory.get("inventory_sha256")
+            or read_json(promotion_dependencies_path).get("dependencies_sha256")
+            != dependencies.get("dependencies_sha256")
+        ):
+            self._reject_terminal(
+                "terminal PRE retained inputs are stale",
+                "content_repair_terminal_precompile_binding",
+                "runtime_refresh_terminal_precompile_input_drift",
+            )
+        if (
+            generations.get("generation_set_sha256")
+            != promotion.get("generation_set_sha256")
+            or report.get("overall_decision") != "pass"
+            or report.get("contract_gaps")
+            or report.get("generation_set_sha256")
+            != generations.get("generation_set_sha256")
+            or report.get("inventory_sha256") != inventory.get("inventory_sha256")
+            or report.get("semantic_dependencies_sha256")
+            != dependencies.get("dependencies_sha256")
+            or seal.get("seal_sha256") != handoff.get("seal_sha256")
+            or seal.get("precompile_quality_report_sha256")
+            != report.get("report_sha256")
+            or seal.get("generation_set_sha256")
+            != generations.get("generation_set_sha256")
+            or seal.get("inventory_sha256") != inventory.get("inventory_sha256")
+            or seal.get("reader_text_set_sha256")
+            != inventory.get("reader_text_set_sha256")
+            or seal.get("semantic_dependencies_sha256")
+            != dependencies.get("dependencies_sha256")
+        ):
+            self._reject_terminal(
+                "terminal PRE report and Seal bindings are stale",
+                "content_repair_terminal_precompile_binding",
+                "runtime_refresh_terminal_precompile_binding_stale",
+            )
+
+        manifest_path = Path(
+            str(handoff.get("successor_final_compile_manifest_path", ""))
+        )
+        if (
+            not manifest_path.is_file()
+            or sha256_file(manifest_path)
+            != handoff.get("successor_final_compile_manifest_sha256")
+        ):
+            self._reject_terminal(
+                "terminal successor Final Compile Manifest binding is stale",
+                "content_repair_terminal_manifest_binding",
+                "runtime_refresh_terminal_manifest_file_drift",
+            )
         manifest = read_json(manifest_path)
-        self.quality.validate("final-compile-manifest", manifest)
-        _require_fingerprint(manifest, "manifest_sha256", "Final Compile Manifest")
-        authority = production.require_current_diagnostic_compile_authority(run)
-        generations = read_json(Path(handoff["promotion"]["generation_set_path"]))
+        try:
+            self.quality.validate("final-compile-manifest", manifest)
+            _require_fingerprint(
+                manifest, "manifest_sha256", "retained Final Compile Manifest"
+            )
+        except ContractError:
+            self._reject_terminal(
+                "terminal successor Final Compile Manifest is invalid",
+                "content_repair_terminal_manifest_binding",
+                "runtime_refresh_terminal_manifest_invalid",
+            )
         manifest_bindings = {
             (item["logical_id"], item["generation"], item["sha256"])
             for item in manifest["entries"]
@@ -1075,13 +1282,27 @@ class CompileRuntimeRefreshProvider:
         }
         if (
             manifest_bindings != generation_bindings
-            or manifest.get("precompile_text_seal_sha256") != handoff.get("seal_sha256")
+            or manifest.get("precompile_text_seal_sha256")
+            != seal.get("seal_sha256")
             or manifest.get("runtime_policy", {}).get("sha256")
-            != authority["runtime_policy_sha256"]
-            or sha256_file(run / "review/latex/diagnostic-compile-report.json")
-            != handoff.get("successor_diagnostic_report_sha256")
+            != handoff.get("runtime_policy_sha256")
+            or retained.get("successor_final_compile_manifest_path")
+            != str(manifest_path.resolve())
+            or retained.get("successor_final_compile_manifest_sha256")
+            != handoff.get("successor_final_compile_manifest_sha256")
         ):
-            raise ContractError("content repair supersession bindings are stale")
+            self._reject_terminal(
+                "terminal successor Final Compile Manifest authority is stale",
+                "content_repair_terminal_manifest_binding",
+                "runtime_refresh_terminal_manifest_binding_stale",
+            )
+        return {
+            "classification": "runtime_content_repair_closure_retained",
+            "operation_id": retained["operation_id"],
+            "handoff_sha256": handoff["handoff_sha256"],
+            "seal_sha256": seal["seal_sha256"],
+            "manifest_sha256": manifest["manifest_sha256"],
+        }
 
     @staticmethod
     def _approved_runtime_inputs(

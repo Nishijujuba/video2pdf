@@ -392,7 +392,11 @@ def _synctex_source_location(
             f"timeout_seconds={query_timeout_seconds}"
         ) from exc
     if completed.returncode != 0:
-        raise AdapterError("compiler source map query failed")
+        raise AdapterError(
+            "compiler_source_map_query_nonzero: "
+            f"page={obj['page']}; x={x}; y={y}; "
+            f"exit_code={completed.returncode}; stderr={completed.stderr.strip()}"
+        )
     records: list[dict[str, str]] = []
     fields: dict[str, str] = {}
     for line in completed.stdout.splitlines():

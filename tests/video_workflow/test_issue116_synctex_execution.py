@@ -129,6 +129,33 @@ class Issue116SyncTexExecutionTests(unittest.TestCase):
         self.assertEqual(8, len(set().union(*worker_logs.values())))
         self.assertEqual(base_environment, self.arguments["runtime_environment"])
 
+    def test_registered_synctex_nonzero_retains_exact_query_and_native_error(self) -> None:
+        # scenario_id: issue116-nonzero-source-map-query-diagnostic
+        # target_invariant: native query failure retains actionable local evidence
+        # mutation_seam: registered SyncTeX subprocess completion
+        # rematerialized_nodes: none; intentionally_stale_nodes: none
+        # expected_first_gate: source-map query completion
+        # expected_error_code: unavailable (existing AdapterError text interface)
+        # expected_message_fragment: compiler_source_map_query_nonzero
+        # scenario_class: single_contradiction
+        obj = {**self.arguments["objects"][14], "bbox": [10, 20, 30, 40]}
+        arguments = {**self.arguments, "objects": [obj]}
+        with mock.patch.object(self.adapter.subprocess, "run", return_value=self.positive):
+            locations, _ = self.adapter.compiler_source_locations(**arguments)
+        self.assertEqual(["page-15-text-1"], list(locations))
+        failed = subprocess.CompletedProcess(
+            self.positive.args, 77, "", "native SyncTeX process failure\n"
+        )
+        with mock.patch.object(self.adapter.subprocess, "run", return_value=failed) as query:
+            with self.assertRaises(self.adapter.AdapterError) as raised:
+                self.adapter.compiler_source_locations(**arguments)
+        query.assert_called_once()
+        message = str(raised.exception)
+        self.assertIn("compiler_source_map_query_nonzero", message)
+        self.assertIn("page=15; x=20.0; y=30.0", message)
+        self.assertIn("exit_code=77", message)
+        self.assertIn("stderr=native SyncTeX process failure", message)
+
 
 if __name__ == "__main__":
     unittest.main()

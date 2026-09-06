@@ -71,6 +71,17 @@ Each Seal owns immutable inventory and Artifact Generation snapshots. Successor
 lineage always starts from the current Seal snapshots, and successor inputs are
 fingerprinted again when the new Seal is materialized.
 
+## Precompile Derived-Inventory Refresh
+
+The explicit technical recovery from a current passing Precompile Text Seal
+when retained downstream Final Compile evidence proves that a generated-text
+declaration was derived incorrectly. The provider requires unchanged Production
+generations and semantic dependencies, preserves the immediate predecessor
+Seal and repair history, consumes no semantic attempt, and dispatches fresh
+semantic Reviewers over the corrected reader-facing surface. Its Run-scoped
+claim permits exact replay to one successor workspace and rejects competing
+successors.
+
 ## Text Equivalence Report
 
 The deterministic proof for a classified presentation-only mutation. It requires a bijection over stable item identities and unchanged text, declared surface, policy, Language Profile, Delivery Glossary, and semantic dependencies. It performs no semantic interpretation.

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-inventory-refresh.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "activation_status", "operation_id", "run_id", "prepared_at", "approval_reference", "predecessor", "successor", "downstream_failure_authority", "changed_generated_item_ids", "semantic_attempt_number", "semantic_attempt_budget_consumed", "repair_sequence", "fresh_reviewer_task_ids", "refresh_sha256"],
+  "properties": {
+    "schema_name": {"const": "precompile-inventory-refresh"},
+    "schema_version": {"const": "1.0.0"},
+    "activation_status": {"const": "target_only"},
+    "operation_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+    "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "prepared_at": {"type": "string", "minLength": 1},
+    "approval_reference": {"type": "string", "minLength": 1},
+    "predecessor": {"$ref": "#/$defs/predecessor"},
+    "successor": {"$ref": "#/$defs/successor"},
+    "downstream_failure_authority": {"$ref": "#/$defs/failureAuthority"},
+    "changed_generated_item_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "semantic_attempt_number": {"type": "integer", "minimum": 0, "maximum": 3},
+    "semantic_attempt_budget_consumed": {"const": false},
+    "repair_sequence": {"type": "integer", "minimum": 1},
+    "fresh_reviewer_task_ids": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
+    "refresh_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_root", "seal_sha256", "inventory_sha256", "generation_set_sha256", "semantic_dependencies_sha256", "repair_attempt_sha256"],
+      "properties": {
+        "workspace_root": {"type": "string", "minLength": 1},
+        "seal_sha256": {"$ref": "#/$defs/sha256"},
+        "inventory_sha256": {"$ref": "#/$defs/sha256"},
+        "generation_set_sha256": {"$ref": "#/$defs/sha256"},
+        "semantic_dependencies_sha256": {"$ref": "#/$defs/sha256"},
+        "repair_attempt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "successor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_root", "inventory_sha256", "generation_set_sha256", "semantic_dependencies_sha256", "repair_attempt_sha256"],
+      "properties": {
+        "workspace_root": {"type": "string", "minLength": 1},
+        "inventory_sha256": {"$ref": "#/$defs/sha256"},
+        "generation_set_sha256": {"$ref": "#/$defs/sha256"},
+        "semantic_dependencies_sha256": {"$ref": "#/$defs/sha256"},
+        "repair_attempt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "failureAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation_id", "generated_item_id", "custody_root", "bindings", "approval_reference"],
+      "properties": {
+        "kind": {"const": "downstream_final_compile_failure"},
+        "operation_id": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+        "generated_item_id": {"type": "string", "minLength": 1},
+        "custody_root": {"type": "string", "minLength": 1},
+        "bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter-stderr.log", "command.json", "compile-manifest.json", "exit-code.txt", "status.json", "stdout.log"],
+          "properties": {
+            "adapter-stderr.log": {"$ref": "#/$defs/binding"},
+            "command.json": {"$ref": "#/$defs/binding"},
+            "compile-manifest.json": {"$ref": "#/$defs/binding"},
+            "exit-code.txt": {"$ref": "#/$defs/binding"},
+            "status.json": {"$ref": "#/$defs/binding"},
+            "stdout.log": {"$ref": "#/$defs/binding"}
+          }
+        },
+        "approval_reference": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

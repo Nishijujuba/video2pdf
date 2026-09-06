@@ -51,6 +51,7 @@ from .precompile_quality import (
     PREPARE_FAULT_POINTS,
     PrecompileQualityProvider,
 )
+from .precompile_inventory_refresh import PrecompileInventoryRefreshProvider
 from .precompile_repair_promotion import (
     PRECOMPILE_REPAIR_PROMOTION_FAULT_POINTS,
     PrecompileRepairPromotionProvider,
@@ -165,6 +166,27 @@ def _parser() -> argparse.ArgumentParser:
     precompile_repair_prepare.add_argument("--repair-disposition", type=Path)
     precompile_repair_prepare.add_argument("--repair-bundle", type=Path)
     precompile_repair_prepare.add_argument("--repair-sequence", type=int, default=1)
+
+    precompile_inventory_refresh = commands.add_parser(
+        "delivery-quality-precompile-inventory-refresh"
+    )
+    precompile_inventory_refresh.add_argument("--run-dir", required=True, type=Path)
+    precompile_inventory_refresh.add_argument(
+        "--predecessor-workspace-root", required=True, type=Path
+    )
+    precompile_inventory_refresh.add_argument(
+        "--workspace-root", required=True, type=Path
+    )
+    precompile_inventory_refresh.add_argument(
+        "--compile-manifest", required=True, type=Path
+    )
+    precompile_inventory_refresh.add_argument(
+        "--failed-command-run-dir", required=True, type=Path
+    )
+    precompile_inventory_refresh.add_argument(
+        "--approval-reference", required=True
+    )
+    precompile_inventory_refresh.add_argument("--prepared-at", required=True)
 
     precompile_repair_promote = commands.add_parser(
         "delivery-quality-precompile-repair-promote"
@@ -1225,6 +1247,22 @@ def _execute(args: argparse.Namespace, project_root: Path) -> dict:
             "precompile_repair_attempt_prepared",
             result,
             result["repair_attempt_path"],
+        )
+    if command == "delivery-quality-precompile-inventory-refresh":
+        result = PrecompileInventoryRefreshProvider(project_root).refresh(
+            run_dir=args.run_dir,
+            predecessor_workspace_root=args.predecessor_workspace_root,
+            workspace_root=args.workspace_root,
+            compile_manifest_path=args.compile_manifest,
+            failed_command_run_dir=args.failed_command_run_dir,
+            approval_reference=args.approval_reference,
+            prepared_at=args.prepared_at,
+        )
+        return _ok(
+            command,
+            str(result["classification"]),
+            result,
+            result["refresh_path"],
         )
     if command == "delivery-quality-precompile-repair-promote":
         result = PrecompileRepairPromotionProvider(project_root).promote(

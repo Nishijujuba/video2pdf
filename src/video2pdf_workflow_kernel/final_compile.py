@@ -155,6 +155,18 @@ def registered_generator_identity(generator_id: str) -> dict[str, str]:
     }
 
 
+def pdf_page_labels(document: fitz.Document) -> list[str]:
+    """Return one authoritative display label per physical PDF page."""
+
+    rules = document.get_page_labels()
+    if not rules:
+        return [str(index) for index in range(1, document.page_count + 1)]
+    labels = [document[index].get_label() for index in range(document.page_count)]
+    if any(not isinstance(value, str) or not value for value in labels):
+        raise ContractError("Final Compile PDF PageLabels are invalid")
+    return labels
+
+
 def _normalized_layout_text(value: str) -> str:
     return "".join(unicodedata.normalize("NFKC", value).split())
 
@@ -270,11 +282,30 @@ def validate_latex_running_header(
     inputs = generator.get("inputs")
     if (
         not isinstance(inputs, dict)
-        or set(inputs) != {"page_count", "toc_source_path", "toc_source_sha256"}
+        or set(inputs)
+        != {
+            "page_count",
+            "toc_source_path",
+            "toc_source_sha256",
+            "final_pdf_sha256",
+            "pdf_page_labels",
+        }
         or not isinstance(inputs.get("page_count"), int)
         or isinstance(inputs.get("page_count"), bool)
         or inputs["page_count"] < 2
         or inputs["page_count"] != expected_page_count
+        or not isinstance(inputs.get("final_pdf_sha256"), str)
+        or len(inputs["final_pdf_sha256"]) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in inputs["final_pdf_sha256"]
+        )
+        or not isinstance(inputs.get("pdf_page_labels"), list)
+        or len(inputs["pdf_page_labels"]) != expected_page_count
+        or any(
+            not isinstance(value, str) or not value
+            for value in inputs["pdf_page_labels"]
+        )
     ):
         return False
     toc_path = Path(str(inputs.get("toc_source_path", ""))).resolve()
@@ -346,12 +377,15 @@ def validate_latex_running_header(
     if any(
         page >= min(body_pages)
         or headers[page][0].casefold() not in {"", "目录".casefold()}
-        or headers[page][1] != str(page)
+        or headers[page][1] != inputs["pdf_page_labels"][page - 1]
         for page in frontmatter_pages
     ):
         return False
-    body_display_pages = [int(headers[page][1]) for page in sorted(body_pages)]
-    if body_display_pages != list(range(1, len(body_pages) + 1)):
+    if any(
+        headers[page][1] != inputs["pdf_page_labels"][page - 1]
+        or not headers[page][1].isdigit()
+        for page in body_pages
+    ):
         return False
     for page in sorted(body_pages):
         left, right = headers[page]
@@ -1710,6 +1744,7 @@ class GuardedFinalCompileProvider:
         try:
             with fitz.open(pdf_path) as document:
                 pdf_page_count = document.page_count
+                actual_pdf_page_labels = pdf_page_labels(document)
         except Exception as exc:
             raise CompileDependencyGap("Final Compile PDF is unreadable") from exc
         derived_contract = {
@@ -1833,6 +1868,13 @@ class GuardedFinalCompileProvider:
                 ):
                     raise CompileDependencyGap(
                         "generated running-header authority is stale"
+                    )
+                if (
+                    inputs.get("final_pdf_sha256") != pdf_sha256
+                    or inputs.get("pdf_page_labels") != actual_pdf_page_labels
+                ):
+                    raise CompileDependencyGap(
+                        "generated running-header PDF label binding is stale"
                     )
             provider = source_mapping.get("provider", {})
             if policy["policy_id"] == "miktex-xelatex-runtime":

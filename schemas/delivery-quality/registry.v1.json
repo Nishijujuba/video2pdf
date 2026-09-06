@@ -144,6 +144,16 @@
       "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-text-seal.invalid.json"
     },
     {
+      "schema_name": "precompile-inventory-refresh",
+      "schema_version": "1.0.0",
+      "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/precompile-inventory-refresh.v1.schema.json",
+      "schema_path": "schemas/delivery-quality/v1/precompile-inventory-refresh.v1.schema.json",
+      "canonical_instance": "delivery-quality/v1/precompile-inventory-refresh.example.v1.json",
+      "canonical_sha256": "4bc2f03e81d76aca3531e5ad4526889957a9d70f28032183fb8f8b146a1469fb",
+      "positive_example": "delivery-quality/v1/precompile-inventory-refresh.example.v1.json",
+      "negative_example": "tests/video_workflow/fixtures/delivery-quality/precompile-inventory-refresh.invalid.json"
+    },
+    {
       "schema_name": "text-equivalence-report",
       "schema_version": "1.0.0",
       "schema_id": "https://video2pdf.local/schemas/delivery-quality/v1/text-equivalence-report.v1.schema.json",

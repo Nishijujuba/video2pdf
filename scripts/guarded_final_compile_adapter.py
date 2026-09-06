@@ -25,11 +25,14 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
     _MIKTEX_RUNTIME_ROOTS,
 )
 from video2pdf_workflow_kernel.final_compile import (  # noqa: E402
+    pdf_page_labels,
     registered_generator_identity,
     validate_final_pdf_basename,
 )
 from video2pdf_workflow_kernel.errors import ContractError  # noqa: E402
 from video2pdf_workflow_kernel.latex_generated_text import (  # noqa: E402
+    TcolorboxInvocation,
+    extract_tcolorbox_invocations,
     extract_tcolorbox_titles,
 )
 from video2pdf_workflow_kernel.utils import (  # noqa: E402
@@ -661,6 +664,26 @@ def _complete_compiler_source_locations(
         if path.is_file()
         and path.suffix.casefold() in {".tex", ".toc", ".sty", ".cls"}
     }
+    tcolorbox_environments = {
+        environment
+        for path, lines in source_lines.items()
+        if path.suffix.casefold() == ".sty"
+        for environment in extract_tcolorbox_titles("\n".join(lines))
+    }
+    box_invocations_by_end: dict[tuple[Path, int], TcolorboxInvocation] = {}
+    if tcolorbox_environments:
+        for path, lines in source_lines.items():
+            if path.suffix.casefold() != ".tex":
+                continue
+            try:
+                invocations = extract_tcolorbox_invocations(
+                    "\n".join(lines),
+                    tcolorbox_environments,
+                )
+            except ValueError:
+                continue
+            for invocation in invocations:
+                box_invocations_by_end[(path, invocation.end_line)] = invocation
 
     def presentation_text(value: str) -> str:
         normalized = _normalized_layout_text(value).replace("--", "–")
@@ -682,6 +705,8 @@ def _complete_compiler_source_locations(
         location: dict[str, Any],
     ) -> bool:
         if location.get("completion") == "compiler-line-layout-v1":
+            return True
+        if identity in box_invocations_by_end:
             return True
         token = _normalized_layout_text(obj["exact_utf8_text"])
         if not token:
@@ -708,6 +733,43 @@ def _complete_compiler_source_locations(
             anchors_by_page.setdefault(anchor["page"], []).append(
                 (anchor, identity)
             )
+
+    def box_title_prefix_supports(
+        obj: dict[str, Any], identity: tuple[Path, int]
+    ) -> bool:
+        invocation = box_invocations_by_end.get(identity)
+        if invocation is None:
+            return False
+        bbox = obj["bbox"]
+        center_y = (bbox[1] + bbox[3]) / 2
+        prefix = "".join(
+            candidate["exact_utf8_text"]
+            for candidate in sorted(objects, key=lambda value: value["bbox"][0])
+            if candidate.get("object_kind", "pdf_text_run") == "pdf_text_run"
+            and candidate["page"] == obj["page"]
+            and abs(
+                (candidate["bbox"][1] + candidate["bbox"][3]) / 2
+                - center_y
+            )
+            <= 1.2
+            and candidate["bbox"][0] <= bbox[0] + 0.5
+        )
+        rendered_prefix = presentation_text(prefix)
+        if invocation.title_override is not None:
+            return rendered_prefix == presentation_text(
+                invocation.title_override
+            )
+        heading_lines = [
+            line_number
+            for line_number in range(
+                invocation.begin_line + 1,
+                invocation.end_line,
+            )
+            if rendered_prefix
+            and rendered_prefix
+            in presentation_text(source_lines[identity[0]][line_number - 1])
+        ]
+        return len(heading_lines) == 1
 
     for obj in objects:
         current_location = locations.get(obj["object_id"])
@@ -790,6 +852,11 @@ def _complete_compiler_source_locations(
                 if len(matching) == 1:
                     identity = next(iter(matching))
         if identity is None:
+            continue
+        if (
+            identity in box_invocations_by_end
+            and not box_title_prefix_supports(obj, identity)
+        ):
             continue
         source_path, line_number = identity
         locations[obj["object_id"]] = {
@@ -878,14 +945,17 @@ def _complete_compiler_source_locations(
         if previous[0]["page"] != current[0]["page"]:
             continue
         previous_bottom = max(item["bbox"][2] for item in previous)
-        current_left = min(item["bbox"][0] for item in current)
         previous_y = sum(
             (item["bbox"][1] + item["bbox"][3]) / 2 for item in previous
         ) / len(previous)
         current_y = sum(
             (item["bbox"][1] + item["bbox"][3]) / 2 for item in current
         ) / len(current)
-        if previous_bottom < 500 or current_left > 80 or current_y - previous_y > 25:
+        if (
+            previous_bottom < 500
+            or current_y <= previous_y
+            or current_y - previous_y > 25
+        ):
             continue
         previous_identities = {
             identity
@@ -906,9 +976,12 @@ def _complete_compiler_source_locations(
                 for item in sorted(current, key=lambda value: value["bbox"][0])
             )
         )
-        if rendered_wrap not in presentation_text(
-            source_lines[identity[0]][identity[1] - 1]
-        ):
+        matching_wrap_lines = [
+            line_number
+            for line_number, source_line in enumerate(source_lines[identity[0]], 1)
+            if rendered_wrap and rendered_wrap in presentation_text(source_line)
+        ]
+        if matching_wrap_lines != [identity[1]]:
             continue
         for obj in current:
             location = locations.get(obj["object_id"])
@@ -992,6 +1065,7 @@ def render_and_derive(
     }
     try:
         with fitz.open(pdf) as document:
+            authoritative_page_labels = pdf_page_labels(document)
             sequence = 0
             raster_sequence = 0
             for page_index, page in enumerate(document):
@@ -1198,40 +1272,39 @@ def render_and_derive(
             )
         expected_invocations: dict[tuple[str, int, str], str] = {}
         expected_occurrences: dict[str, int] = {}
-        begin_counts: dict[str, int] = {}
-        end_counts: dict[str, int] = {}
         for source_entry in manifest_entries:
             source_path = staging / Path(source_entry["staging_path"])
             if source_path.suffix.casefold() != ".tex" or not source_path.is_file():
                 continue
-            for line_number, source_line in enumerate(
-                source_path.read_text(encoding="utf-8").splitlines(), 1
-            ):
-                invocation = re.fullmatch(
-                    r"\s*\\(begin|end)\{([^{}]+)\}\s*(?:%.*)?",
-                    source_line,
+            try:
+                invocations = extract_tcolorbox_invocations(
+                    source_path.read_text(encoding="utf-8"),
+                    set(title_by_environment),
                 )
-                if invocation is None:
+            except ValueError as exc:
+                raise AdapterError(
+                    f"declared generated text invocation is unsupported: {item_id}"
+                ) from exc
+            for invocation in invocations:
+                expected_title = title_by_environment[invocation.environment]
+                if (
+                    invocation.title_override is not None
+                    or expected_title not in declared_tokens
+                ):
                     continue
-                expected_title = title_by_environment.get(invocation.group(2))
-                if expected_title in declared_tokens:
+                expected_occurrences[expected_title] = (
+                    expected_occurrences.get(expected_title, 0) + 1
+                )
+                for line_number in (invocation.begin_line, invocation.end_line):
                     expected_invocations[
                         (
                             str(source_path.resolve()).casefold(),
                             line_number,
-                            invocation.group(2),
+                            invocation.environment,
                         )
                     ] = expected_title
-                    counts = (
-                        begin_counts
-                        if invocation.group(1) == "begin"
-                        else end_counts
-                    )
-                    counts[expected_title] = counts.get(expected_title, 0) + 1
         for title in declared_tokens:
-            expected_occurrences[title] = begin_counts.get(
-                title, end_counts.get(title, 0)
-            )
+            expected_occurrences.setdefault(title, 0)
         if not expected_invocations:
             raise AdapterError(
                 f"declared generated text is absent from compile inputs: {item_id}"
@@ -1251,7 +1324,7 @@ def render_and_derive(
             if line_number < 1 or line_number > len(source_lines):
                 raise AdapterError("compiler source map line is invalid")
             invocation = re.fullmatch(
-                r"\s*\\(begin|end)\{([^{}]+)\}\s*(?:%.*)?",
+                r"\s*\\(begin|end)\{([^{}]+)\}(?:\[[^\[\]]*\])?\s*(?:%.*)?",
                 source_lines[line_number - 1],
             )
             if invocation is None:
@@ -1397,12 +1470,7 @@ def render_and_derive(
                 },
                 "completion": "latex-running-header-layout-v1",
             }
-    running_header_objects = [
-        item
-        for item in header_candidates
-        if locations[item["object_id"]].get("completion")
-        != "compiler-line-layout-v1"
-    ]
+    running_header_objects = list(header_candidates)
     if running_header_objects:
         toc_source, toc_source_sha256 = stable_toc_sources[0]
         generator = registered_generator_identity("latex-running-header-v1")
@@ -1420,6 +1488,8 @@ def render_and_derive(
                         "page_count": page_count,
                         "toc_source_path": str(toc_source),
                         "toc_source_sha256": toc_source_sha256,
+                        "final_pdf_sha256": sha(pdf),
+                        "pdf_page_labels": authoritative_page_labels,
                     },
                     "source_mapping": {
                         "method": "compiler_synctex_v1",

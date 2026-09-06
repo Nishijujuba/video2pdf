@@ -205,6 +205,7 @@ class DeliveryQualityRegistry:
             "precompile-judgment-patch",
             "precompile-quality-report",
             "precompile-text-seal",
+            "precompile-inventory-refresh",
             "text-equivalence-report",
             "final-artifact-seal",
             "render-evidence-manifest",

@@ -12,7 +12,10 @@ from .content_production import PRODUCTION_FAULT_POINTS, ContentProduction
 from .delivery_quality import DeliveryQualityRegistry
 from .errors import ArtifactDrift, ContractError, ProductionFault
 from .kernel import VideoWorkflowKernel
-from .latex_generated_text import extract_tcolorbox_titles
+from .latex_generated_text import (
+    extract_tcolorbox_invocations,
+    extract_tcolorbox_titles,
+)
 from .precompile_quality import PrecompileQualityProvider
 from .runtime_refresh import CompileRuntimeRefreshProvider
 from .utils import (
@@ -1947,6 +1950,8 @@ class PrecompileRepairPromotionProvider:
                         item_id=item.get("item_id"),
                     )
                 )
+                if declared_text is None:
+                    continue
                 item["declared_text"] = declared_text
                 item["text_sha256"] = hashlib.sha256(
                     declared_text.encode("utf-8")
@@ -2304,7 +2309,7 @@ class PrecompileRepairPromotionProvider:
         manifest_entries: list[dict[str, Any]],
         locator: object,
         item_id: object,
-    ) -> str:
+    ) -> str | None:
         if (
             not isinstance(locator, str)
             or not locator.startswith("latex-generated:")
@@ -2317,7 +2322,11 @@ class PrecompileRepairPromotionProvider:
         titles_by_environment = extract_tcolorbox_titles(
             source_path.read_text(encoding="utf-8")
         )
-        used_environments: set[str] = set()
+        if not titles_by_environment:
+            raise ContractError(
+                f"Precompile repair generated-text titles are invalid: {item_id}"
+            )
+        default_using_environments: set[str] = set()
         for manifest_entry in manifest_entries:
             declared_path = manifest_entry.get("source_path")
             if not isinstance(declared_path, str):
@@ -2334,15 +2343,28 @@ class PrecompileRepairPromotionProvider:
             )
             if candidate.suffix.casefold() != ".tex":
                 continue
-            used_environments.update(
-                re.findall(r"\\begin\{([^{}]+)\}", candidate.read_text(encoding="utf-8"))
+            try:
+                invocations = extract_tcolorbox_invocations(
+                    candidate.read_text(encoding="utf-8"),
+                    set(titles_by_environment),
+                )
+            except ValueError as exc:
+                raise ContractError(
+                    f"Precompile repair generated-text usage is unsupported: {item_id}"
+                ) from exc
+            default_using_environments.update(
+                invocation.environment
+                for invocation in invocations
+                if invocation.title_override is None
             )
         titles = [
             title
             for environment, title in titles_by_environment.items()
-            if environment in used_environments
+            if environment in default_using_environments
         ]
-        if not titles or len(titles) != len(set(titles)):
+        if not titles:
+            return None
+        if len(titles) != len(set(titles)):
             raise ContractError(
                 f"Precompile repair generated-text titles are invalid: {item_id}"
             )

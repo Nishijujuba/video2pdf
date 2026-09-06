@@ -365,17 +365,25 @@ def _synctex_source_location(
     bbox = obj["bbox"]
     x = (float(bbox[0]) + float(bbox[2])) / 2
     y = (float(bbox[1]) + float(bbox[3])) / 2
-    completed = subprocess.run(
-        [str(tool), "edit", "-o", f"{obj['page']}:{x}:{y}:{pdf}", "-d", str(staging)],
-        cwd=staging,
-        text=True,
-        encoding="utf-8",
-        errors="strict",
-        capture_output=True,
-        check=False,
-        timeout=90,
-        env=runtime_environment,
-    )
+    query_timeout_seconds = 90
+    try:
+        completed = subprocess.run(
+            [str(tool), "edit", "-o", f"{obj['page']}:{x}:{y}:{pdf}", "-d", str(staging)],
+            cwd=staging,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            capture_output=True,
+            check=False,
+            timeout=query_timeout_seconds,
+            env=runtime_environment,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AdapterError(
+            "compiler_source_map_query_timeout: "
+            f"page={obj['page']}; x={x}; y={y}; "
+            f"timeout_seconds={query_timeout_seconds}"
+        ) from exc
     if completed.returncode != 0:
         raise AdapterError("compiler source map query failed")
     records: list[dict[str, str]] = []

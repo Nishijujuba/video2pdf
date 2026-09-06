@@ -25,6 +25,16 @@ $python = 'D:\Project\video2pdf\kimi\.venv\Scripts\python.exe'
 
 On Windows, persisted execution must not leave a visible PowerShell window open. Let `start` return immediately after it launches the detached supervisor, then observe the run later with non-blocking `show` or `reconcile` calls. Use `wait` only when the calling tool guarantees hidden-window execution. Launch one `wait` process and keep observing that same process through the tool layer; timed relaunches recreate model wakeups and JSON payloads. Set the calling tool's command timeout longer than the expected wait duration because a short command timeout terminates the observer.
 
+PowerShell coordinators that capture the runner's native JSON output must establish UTF-8 in their own process before the first native invocation:
+
+```powershell
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+```
+
+In PowerShell 7, `[Console]::OutputEncoding` governs decoding of captured native stdout, while `$OutputEncoding` governs text sent from PowerShell to native stdin. Setting both to the same UTF-8 encoding keeps the boundary consistent without changing the system locale. If `start` exits successfully and the consumer cannot parse its response, treat that as a consumer transport failure. Recover the retained run through `list`, `show`, and `reconcile`; do not invoke `start` again solely because response parsing failed.
+
 ## User-facing notification policy
 
 The supervisor heartbeat proves that execution remains observable. It is durable operation evidence and does not by itself justify a user-facing progress message. After `start`, report the stable task name and `data.run_dir` once.

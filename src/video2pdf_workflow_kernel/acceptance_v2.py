@@ -626,6 +626,23 @@ class AcceptanceV2Provider:
         if patch_path.resolve() != authorized_patch_path:
             _reject("Patch is outside the provider-created Attempt staging path", "patch_write_boundary", "acceptance_patch_staging_path_invalid")
         patch = read_json(authorized_patch_path)
+        if not isinstance(patch, dict):
+            self.registry.validate("acceptance-v2-judgment-patch", patch)
+            raise AssertionError("Patch schema accepted a non-object root")
+        fingerprint_supplied = "patch_sha256" in patch
+        supplied_patch_sha256 = patch.get("patch_sha256")
+        derived_patch_sha256 = _fingerprint_without(patch, "patch_sha256")
+        if (
+            fingerprint_supplied
+            and supplied_patch_sha256 != derived_patch_sha256
+        ):
+            _reject(
+                "Patch fingerprint is stale",
+                "patch_identity",
+                "acceptance_patch_fingerprint_invalid",
+            )
+        if not fingerprint_supplied:
+            patch = {**patch, "patch_sha256": derived_patch_sha256}
         self.registry.validate("acceptance-v2-judgment-patch", patch)
         self._validate_patch(patch, dimension, skeleton, binding)
         pending = self._controlled_pending_file_intents(root, execution_root)
@@ -655,6 +672,7 @@ class AcceptanceV2Provider:
                     or read_json(committed_path) != patch
                 ):
                     _reject("committed Patch bytes drifted", "patch_freshness", "acceptance_patch_stale")
+                write_json_atomic(authorized_patch_path, patch)
                 return {"dimension": dimension, "patch_sha256": patch["patch_sha256"], "idempotent": True}
             _reject("dimension already has a different committed Patch", "patch_fencing", "acceptance_patch_conflict")
         intent_id = _id(execution["execution_id"], dimension, patch["patch_sha256"])
@@ -721,6 +739,7 @@ class AcceptanceV2Provider:
                     "acceptance_patch_fencing_stale",
                 )
             try:
+                write_json_atomic(authorized_patch_path, patch)
                 _write_competing_prepared_json(
                     intent_path,
                     intent,

@@ -26,6 +26,128 @@ from .utils import (
 )
 
 
+DISPLAY_MATH_RESOLUTION_KIND = "display_math_span_v1"
+DISPLAY_MATH_DERIVATION = "compiler-display-math-span-v1"
+
+
+def source_origin_presentation_text(value: str) -> str:
+    replacements = {
+        r"\cdot": "·",
+        r"\times": "×",
+        r"\pm": "±",
+        r"\leq": "≤",
+        r"\geq": "≥",
+        r"\neq": "≠",
+    }
+    for source, rendered in replacements.items():
+        value = value.replace(source, rendered)
+    value = (
+        value.replace("−", "-")
+        .replace("–", "-")
+        .replace("--", "-")
+        .replace("``", "“")
+        .replace("''", "”")
+    )
+    value = re.sub(r"\\(?:frac|dfrac|tfrac)", "", value)
+    value = re.sub(r"\\(?:left|right)", "", value)
+    value = re.sub(r"\\[A-Za-z]+", "", value)
+    value = re.sub(r"\\([_%&#{}])", r"\1", value)
+    value = value.translate(str.maketrans("", "", "{}_^"))
+    return "".join(unicodedata.normalize("NFKC", value).split())
+
+
+def source_text_supports_rendered_text(source_text: str, rendered_text: str) -> bool:
+    if not rendered_text.strip():
+        return bool(source_text.strip())
+    rendered = source_origin_presentation_text(rendered_text)
+    if len(rendered) == 1 and rendered.isascii() and rendered.isalnum():
+        return re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(rendered)}(?![A-Za-z0-9])",
+            source_text,
+        ) is not None
+    return bool(rendered) and rendered in source_origin_presentation_text(source_text)
+
+
+def resolve_display_math_source(
+    source_path: Path,
+    *,
+    compiler_line: int,
+    compiler_column: int,
+    rendered_text: str,
+) -> dict[str, Any] | None:
+    source_path = source_path.resolve()
+    if source_path.suffix.casefold() != ".tex" or not source_path.is_file():
+        return None
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    if not 1 <= compiler_line <= len(lines) or lines[compiler_line - 1].strip() != "$$":
+        return None
+    delimiter_lines = [
+        line_number
+        for line_number, line in enumerate(lines, 1)
+        if line.strip() == "$$"
+    ]
+    spans: list[tuple[int, int, int, int]] = []
+    for index in range(0, len(delimiter_lines) - 1, 2):
+        opening = delimiter_lines[index]
+        closing = delimiter_lines[index + 1]
+        if closing > opening + 1:
+            spans.append((opening, opening + 1, closing - 1, closing))
+    candidates = [
+        span
+        for span in spans
+        if compiler_line in {span[0], span[3]}
+        and source_text_supports_rendered_text(
+            "\n".join(lines[span[1] - 1 : span[2]]), rendered_text
+        )
+    ]
+    if len(candidates) != 1:
+        return None
+    opening, start_line, end_line, closing = candidates[0]
+    return {
+        "kind": DISPLAY_MATH_RESOLUTION_KIND,
+        "compiler_source_path": str(source_path),
+        "compiler_line": compiler_line,
+        "compiler_column": compiler_column,
+        "delimiter_lines": {"opening": opening, "closing": closing},
+        "resolved_span": {"start_line": start_line, "end_line": end_line},
+        "supported_rendered_text": rendered_text,
+    }
+
+
+def display_math_resolution_is_valid(
+    source_path: Path,
+    resolution: object,
+    *,
+    rendered_text: str,
+) -> bool:
+    source_path = source_path.resolve()
+    if not isinstance(resolution, dict):
+        return False
+    if (
+        resolution.get("kind") != DISPLAY_MATH_RESOLUTION_KIND
+        or resolution.get("compiler_source_path") != str(source_path)
+        or resolution.get("supported_rendered_text") != rendered_text
+    ):
+        return False
+    compiler_line = resolution.get("compiler_line")
+    compiler_column = resolution.get("compiler_column")
+    if (
+        not isinstance(compiler_line, int)
+        or isinstance(compiler_line, bool)
+        or not isinstance(compiler_column, int)
+        or isinstance(compiler_column, bool)
+        or not isinstance(resolution.get("delimiter_lines"), dict)
+        or not isinstance(resolution.get("resolved_span"), dict)
+    ):
+        return False
+    return resolve_display_math_source(
+        source_path,
+        compiler_line=compiler_line,
+        compiler_column=compiler_column,
+        rendered_text=rendered_text,
+    ) == resolution
+
+
 def validate_final_pdf_basename(value: str | None) -> str:
     """Resolve and validate the governed adapter's PDF leaf name."""
     if value is None:
@@ -1773,6 +1895,9 @@ class GuardedFinalCompileProvider:
                 for item in inventory["items"]
             ],
         }
+        rendered_objects_by_id = {
+            item["object_id"]: item for item in rendered["objects"]
+        }
         for edge in derived_contract["edges"]:
             expected_source = None
             if edge.get("recipe") == "compiler_source_map":
@@ -1852,6 +1977,36 @@ class GuardedFinalCompileProvider:
                 raise CompileDependencyGap(
                     "compiler source map input identity is stale"
                 )
+            if edge.get("recipe") == "compiler_source_map":
+                for value in object_sources:
+                    rendered_object = rendered_objects_by_id.get(value.get("object_id"))
+                    source_path = Path(value["source_path"]).resolve()
+                    resolution = value.get("resolution")
+                    display_span_derived = (
+                        value.get("derivation") == DISPLAY_MATH_DERIVATION
+                    )
+                    supported = rendered_object is not None and (
+                        (
+                            display_math_resolution_is_valid(
+                                source_path,
+                                resolution,
+                                rendered_text=rendered_object["exact_utf8_text"],
+                            )
+                            and value["line"]
+                            == resolution["resolved_span"]["start_line"]
+                            and value["column"] == -1
+                        )
+                        if display_span_derived or resolution is not None
+                        else True
+                    )
+                    if not supported:
+                        raise CompileDependencyGap(
+                            "compiler source origin evidence is unsupported or inconsistent",
+                            data={
+                                "first_failing_gate": "final_compile_source_origin_evidence",
+                                "error_code": "compile_dependency_gap",
+                            },
+                        )
             if (
                 edge.get("disposition") == "generated"
                 and isinstance(edge.get("generator"), dict)

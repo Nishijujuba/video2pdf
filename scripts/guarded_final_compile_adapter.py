@@ -25,8 +25,11 @@ from video2pdf_workflow_kernel.guarded_compile import (  # noqa: E402
     _MIKTEX_RUNTIME_ROOTS,
 )
 from video2pdf_workflow_kernel.final_compile import (  # noqa: E402
+    DISPLAY_MATH_DERIVATION,
     pdf_page_labels,
     registered_generator_identity,
+    resolve_display_math_source,
+    source_text_supports_rendered_text,
     validate_final_pdf_basename,
 )
 from video2pdf_workflow_kernel.errors import ContractError  # noqa: E402
@@ -428,32 +431,9 @@ def _synctex_source_location(
             and obj["exact_utf8_text"] in source_lines[line_number - 1]
         ):
             exact_candidates.append(value)
-    virtual_candidates: list[dict[str, str]] = []
-    for value in candidates:
-        line_number = int(value["Line"])
-        for entry_value in manifest_entries:
-            source_path = staging / Path(entry_value["staging_path"])
-            if (
-                source_path.resolve() not in observed_declared_paths
-                or source_path.suffix.casefold() != ".tex"
-                or not source_path.is_file()
-            ):
-                continue
-            source_lines = source_path.read_text(encoding="utf-8").splitlines()
-            if (
-                1 <= line_number <= len(source_lines)
-                and obj["exact_utf8_text"] in source_lines[line_number - 1]
-            ):
-                virtual_candidates.append(
-                    {
-                        "Input": str(source_path.resolve()),
-                        "Line": str(line_number),
-                        "Column": value.get("Column", "-1"),
-                    }
-                )
     resolved_candidates = {
         (value["Input"].casefold(), value["Line"], value.get("Column", "-1")): value
-        for value in exact_candidates + virtual_candidates
+        for value in exact_candidates
     }
     if len(toc_candidates) == 1:
         fields = toc_candidates[0]
@@ -478,13 +458,38 @@ def _synctex_source_location(
         fields = candidates[0]
     else:
         return None
-    return {
+    source_path = Path(fields["Input"]).resolve()
+    source_line = int(fields["Line"])
+    source_column = int(fields.get("Column", "-1"))
+    resolution = resolve_display_math_source(
+        source_path,
+        compiler_line=source_line,
+        compiler_column=source_column,
+        rendered_text=obj["exact_utf8_text"],
+    )
+    if source_path.suffix.casefold() == ".tex" and source_path.is_file():
+        source_lines = source_path.read_text(encoding="utf-8").splitlines()
+        if (
+            1 <= source_line <= len(source_lines)
+            and source_lines[source_line - 1].strip() == "$$"
+        ):
+            if resolution is None:
+                raise AdapterError(
+                    "compiler display-math source resolution is ambiguous or unsupported"
+                )
+            source_line = resolution["resolved_span"]["start_line"]
+            source_column = -1
+    result = {
         "object_id": obj["object_id"],
-        "source_path": str(Path(fields["Input"]).resolve()),
-        "line": int(fields["Line"]),
-        "column": int(fields.get("Column", "-1")),
+        "source_path": str(source_path),
+        "line": source_line,
+        "column": source_column,
         "query": {"page": obj["page"], "x": x, "y": y},
     }
+    if resolution is not None:
+        result["derivation"] = DISPLAY_MATH_DERIVATION
+        result["resolution"] = resolution
+    return result
 
 
 def compiler_source_locations(
@@ -771,6 +776,47 @@ def _complete_compiler_source_locations(
         ]
         return len(heading_lines) == 1
 
+    def display_resolution_for_identity(
+        identity: tuple[Path, int],
+        candidates: list[tuple[dict[str, Any], tuple[Path, int]]],
+        rendered_text: str,
+    ) -> dict[str, Any] | None:
+        resolutions = {
+            json.dumps(
+                {
+                    key: value
+                    for key, value in location["resolution"].items()
+                    if key != "supported_rendered_text"
+                },
+                sort_keys=True,
+            ): location["resolution"]
+            for anchor, candidate_identity in candidates
+            if candidate_identity == identity
+            if (location := locations.get(anchor["object_id"])) is not None
+            if isinstance(location.get("resolution"), dict)
+        }
+        if len(resolutions) != 1:
+            return None
+        resolution = dict(next(iter(resolutions.values())))
+        resolution["supported_rendered_text"] = rendered_text
+        span = resolution.get("resolved_span", {})
+        if not (
+            isinstance(span, dict)
+            and isinstance(span.get("start_line"), int)
+            and isinstance(span.get("end_line"), int)
+            and span["start_line"] <= identity[1] <= span["end_line"]
+            and source_text_supports_rendered_text(
+                "\n".join(
+                    source_lines[identity[0]][
+                        span["start_line"] - 1 : span["end_line"]
+                    ]
+                ),
+                rendered_text,
+            )
+        ):
+            return None
+        return resolution
+
     for obj in objects:
         current_location = locations.get(obj["object_id"])
         current_identity = (
@@ -859,7 +905,7 @@ def _complete_compiler_source_locations(
         ):
             continue
         source_path, line_number = identity
-        locations[obj["object_id"]] = {
+        completed = {
             "object_id": obj["object_id"],
             "source_path": str(source_path),
             "line": line_number,
@@ -871,6 +917,13 @@ def _complete_compiler_source_locations(
             },
             "completion": "compiler-line-layout-v1",
         }
+        resolution = display_resolution_for_identity(
+            identity, visual_anchors, obj["exact_utf8_text"]
+        )
+        if resolution is not None:
+            completed["derivation"] = DISPLAY_MATH_DERIVATION
+            completed["resolution"] = resolution
+        locations[obj["object_id"]] = completed
 
     visual_lines: list[list[dict[str, Any]]] = []
     for obj in sorted(
@@ -900,7 +953,7 @@ def _complete_compiler_source_locations(
         obj: dict[str, Any], identity: tuple[Path, int]
     ) -> dict[str, Any]:
         bbox = obj["bbox"]
-        return {
+        completed = {
             "object_id": obj["object_id"],
             "source_path": str(identity[0]),
             "line": identity[1],
@@ -912,6 +965,19 @@ def _complete_compiler_source_locations(
             },
             "completion": "compiler-line-layout-v1",
         }
+        candidates = [
+            (candidate, candidate_identity)
+            for candidate in objects
+            if (location := locations.get(candidate["object_id"])) is not None
+            if (candidate_identity := source_identity(location)) is not None
+        ]
+        resolution = display_resolution_for_identity(
+            identity, candidates, obj["exact_utf8_text"]
+        )
+        if resolution is not None:
+            completed["derivation"] = DISPLAY_MATH_DERIVATION
+            completed["resolution"] = resolution
+        return completed
 
     for line_objects in visual_lines:
         identities = [
@@ -987,7 +1053,6 @@ def _complete_compiler_source_locations(
             location = locations.get(obj["object_id"])
             if location is None or not source_line_supports(obj, identity, location):
                 locations[obj["object_id"]] = completed_location(obj, identity)
-
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
     normalized = pixmap

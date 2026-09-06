@@ -918,7 +918,7 @@ def _complete_compiler_source_locations(
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
     normalized = pixmap
-    if pixmap.alpha or pixmap.colorspace is None or pixmap.colorspace.n != 3:
+    if pixmap.colorspace is None or pixmap.colorspace.n != 3:
         normalized = fitz.Pixmap(fitz.csRGB, pixmap)
     try:
         return normalized.width, normalized.height, hashlib.sha256(normalized.samples).hexdigest()

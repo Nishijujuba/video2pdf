@@ -704,6 +704,76 @@ def _complete_compiler_source_locations(
             return None
         return path, line
 
+    presentation_source_lines = {
+        path: [presentation_text(line) for line in lines]
+        for path, lines in source_lines.items()
+    }
+    display_math_source_lines: set[tuple[Path, int]] = set()
+    display_token = re.compile(
+        r"(?P<dollars>\$\$)"
+        r"|(?P<bracket_open>\\\[)"
+        r"|(?P<bracket_close>\\\])"
+        r"|\\(?P<environment_action>begin|end)\{"
+        r"(?P<environment_name>"
+        r"displaymath|equation\*?|eqnarray\*?|align\*?|alignat\*?|"
+        r"flalign\*?|gather\*?|multline\*?|xalignat\*?|xxalignat\*?"
+        r")\}"
+    )
+
+    def tex_code_before_comment(line: str) -> str:
+        for index, character in enumerate(line):
+            if character != "%":
+                continue
+            preceding_backslashes = 0
+            cursor = index - 1
+            while cursor >= 0 and line[cursor] == "\\":
+                preceding_backslashes += 1
+                cursor -= 1
+            if preceding_backslashes % 2 == 0:
+                return line[:index]
+        return line
+
+    for path, lines in source_lines.items():
+        if path.suffix.casefold() != ".tex":
+            continue
+        active_display: tuple[str, str] | None = None
+        for line_number, line in enumerate(lines, 1):
+            code = tex_code_before_comment(line)
+            line_is_display = active_display is not None
+            for token in display_token.finditer(code):
+                preceding_backslashes = 0
+                cursor = token.start() - 1
+                while cursor >= 0 and code[cursor] == "\\":
+                    preceding_backslashes += 1
+                    cursor -= 1
+                if preceding_backslashes % 2 == 1:
+                    continue
+                line_is_display = True
+                if token.group("dollars") is not None:
+                    if active_display is None:
+                        active_display = ("dollars", "")
+                    elif active_display[0] == "dollars":
+                        active_display = None
+                elif token.group("bracket_open") is not None:
+                    if active_display is None:
+                        active_display = ("bracket", "")
+                elif token.group("bracket_close") is not None:
+                    if active_display is not None and active_display[0] == "bracket":
+                        active_display = None
+                elif token.group("environment_action") == "begin":
+                    if active_display is None:
+                        active_display = (
+                            "environment",
+                            str(token.group("environment_name")),
+                        )
+                elif (
+                    active_display
+                    == ("environment", str(token.group("environment_name")))
+                ):
+                    active_display = None
+            if line_is_display or active_display is not None:
+                display_math_source_lines.add((path, line_number))
+
     def source_line_supports(
         obj: dict[str, Any],
         identity: tuple[Path, int],
@@ -716,13 +786,50 @@ def _complete_compiler_source_locations(
         token = _normalized_layout_text(obj["exact_utf8_text"])
         if not token:
             return True
-        source_text = presentation_text(source_lines[identity[0]][identity[1] - 1])
+        source_text = presentation_source_lines[identity[0]][identity[1] - 1]
         if len(token) <= 2 and token.isascii() and token.isalnum():
             return re.search(
                 rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])",
                 source_text,
             ) is not None
         return token in source_text
+
+    prose_seed_object_ids: set[str] = set()
+    for obj in objects:
+        if (
+            obj["object_id"] in locations
+            or obj.get("object_kind", "pdf_text_run") != "pdf_text_run"
+            or "\n" in obj["exact_utf8_text"]
+            or "\r" in obj["exact_utf8_text"]
+            or not any(character.isalnum() for character in obj["exact_utf8_text"])
+        ):
+            continue
+        rendered_text = presentation_text(obj["exact_utf8_text"])
+        matches = {
+            (path, line_number)
+            for path, lines in presentation_source_lines.items()
+            for line_number, source_line in enumerate(lines, 1)
+            if rendered_text and rendered_text in source_line
+        }
+        if len(matches) != 1:
+            continue
+        identity = next(iter(matches))
+        if identity in display_math_source_lines:
+            continue
+        bbox = obj["bbox"]
+        locations[obj["object_id"]] = {
+            "object_id": obj["object_id"],
+            "source_path": str(identity[0]),
+            "line": identity[1],
+            "column": -1,
+            "query": {
+                "page": obj["page"],
+                "x": (bbox[0] + bbox[2]) / 2,
+                "y": (bbox[1] + bbox[3]) / 2,
+            },
+            "completion": "compiler-source-text-v1",
+        }
+        prose_seed_object_ids.add(obj["object_id"])
 
     anchors_by_page: dict[
         int, list[tuple[dict[str, Any], tuple[Path, int]]]
@@ -1018,8 +1125,13 @@ def _complete_compiler_source_locations(
         if len(matching_lines) != 1:
             continue
         identity = (source_path, matching_lines[0])
+        line_uses_prose_seed = any(
+            obj["object_id"] in prose_seed_object_ids for obj in line_objects
+        )
         for obj in line_objects:
             locations[obj["object_id"]] = completed_location(obj, identity)
+            if line_uses_prose_seed:
+                prose_seed_object_ids.add(obj["object_id"])
 
     for previous, current in zip(visual_lines, visual_lines[1:]):
         if previous[0]["page"] != current[0]["page"]:
@@ -1040,6 +1152,7 @@ def _complete_compiler_source_locations(
         pair_identities = {
             identity
             for obj in (*previous, *current)
+            if obj["object_id"] not in prose_seed_object_ids
             if (location := locations.get(obj["object_id"])) is not None
             if (identity := source_identity(location)) is not None
             if source_line_supports(obj, identity, location)

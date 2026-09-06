@@ -713,13 +713,17 @@ class DeliveryLifecycleProvider:
         task_index_predecessor_sha = sha256_file(task_index_path)
         old_index = read_json(task_index_path)
         artifacts = dict(old_video["artifacts"])
+        if (from_stage, to_stage) == ("generating", "ready_for_delivery"):
+            artifacts["acceptance_report"] = None
+            artifacts["delivery_guard_report"] = None
         for role in ("final_pdf", "main_tex", "final_compile_report"):
             if role in evidence["artifacts"]:
                 artifacts[role] = evidence["artifacts"][role]
-        if "acceptance_report" in evidence["artifacts"]:
-            artifacts["acceptance_report"] = evidence["artifacts"]["acceptance_report"]
-        if "delivery_guard_report" in evidence["artifacts"]:
-            artifacts["delivery_guard_report"] = evidence["artifacts"]["delivery_guard_report"]
+        if (from_stage, to_stage) != ("generating", "ready_for_delivery"):
+            if "acceptance_report" in evidence["artifacts"]:
+                artifacts["acceptance_report"] = evidence["artifacts"]["acceptance_report"]
+            if "delivery_guard_report" in evidence["artifacts"]:
+                artifacts["delivery_guard_report"] = evidence["artifacts"]["delivery_guard_report"]
         video = {
             **old_video,
             "projection_revision": old_video["projection_revision"] + 1,

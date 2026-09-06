@@ -17,6 +17,7 @@ import fitz
 from .acceptance_v2 import (
     AcceptanceV2Provider,
     FINAL_AUTHORITY_DB_NAME,
+    changed_artifact_logical_ids,
     final_authority_generations,
     fingerprint_contract_without,
 )
@@ -532,12 +533,11 @@ class FinalDeliveryEvidenceProvider:
             cls._move_failed_publication(root, publication_paths.candidate)
             if canonical_is_previous:
                 if publication_paths.previous.exists():
-                    raise ContractError(
-                        "two preceding rendered-page sets exist during reconciliation",
-                        data={
-                            "first_failing_gate": "final_evidence_page_reconciliation",
-                            "error_code": "final_evidence_previous_page_set_conflict",
-                        },
+                    cls._restore_previous_rendered_pages(
+                        root=root,
+                        revision=revision,
+                        previous_present=previous_present,
+                        previous_pages_json=pending["previous_pages_json"],
                     )
             else:
                 cls._restore_previous_rendered_pages(
@@ -975,6 +975,10 @@ class FinalDeliveryEvidenceProvider:
                 if supplied_paths == expected_paths:
                     return self._result(existing, binding_path, idempotent=True)
                 raise ArtifactDrift("Prepared Final Evidence conflicts with current inputs")
+            repair_predecessor = self.acceptance._load_repair_predecessor(
+                binding_path.parent,
+                allow_absent=True,
+            )
             self._move_failed_publication(root, binding_path)
             if not intent_exact:
                 authority_value = existing_checkpoint.get("authority_path")
@@ -982,6 +986,12 @@ class FinalDeliveryEvidenceProvider:
                     authority_candidate = Path(authority_value).resolve()
                     if authority_candidate.is_relative_to(root):
                         self._move_failed_publication(root, authority_candidate)
+
+        else:
+            repair_predecessor = self.acceptance._load_repair_predecessor(
+                binding_path.parent,
+                allow_absent=True,
+            )
 
         with self._connect_intents(control_store_root) as intents:
             active_intent = intents.execute(
@@ -1006,6 +1016,17 @@ class FinalDeliveryEvidenceProvider:
             if glossary_binding is not None:
                 artifacts.append(
                     {"logical_id": "delivery_glossary", **glossary_binding}
+                )
+            predecessor_generation_set_sha256 = None
+            changed_generation_ids: list[str] = []
+            if repair_predecessor is not None:
+                predecessor_generation_set_sha256 = repair_predecessor["seal"][
+                    "generation_set_sha256"
+                ]
+                changed_generation_ids = sorted(
+                    changed_artifact_logical_ids(
+                        repair_predecessor["binding"]["artifacts"], artifacts
+                    )
                 )
             binding: dict[str, Any] = {
                 "schema_name": "acceptance-v2-input-binding",
@@ -1043,8 +1064,8 @@ class FinalDeliveryEvidenceProvider:
                         }
                     ),
                     "repairer_ids": [],
-                    "predecessor_generation_set_sha256": None,
-                    "changed_generation_ids": [],
+                    "predecessor_generation_set_sha256": predecessor_generation_set_sha256,
+                    "changed_generation_ids": changed_generation_ids,
                 },
                 "quality_inputs": quality_inputs,
                 "artifacts": artifacts,

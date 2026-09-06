@@ -87,6 +87,34 @@ def fingerprint_contract_without(value: dict[str, Any], field: str) -> str:
     return _fingerprint_without(value, field)
 
 
+def changed_artifact_logical_ids(
+    predecessor: list[dict[str, Any]],
+    successor: list[dict[str, Any]],
+) -> frozenset[str]:
+    """Return logical IDs whose complete Acceptance artifact records differ."""
+    predecessor_by_id = {item["logical_id"]: item for item in predecessor}
+    successor_by_id = {item["logical_id"]: item for item in successor}
+    return frozenset(
+        logical_id
+        for logical_id in predecessor_by_id.keys() | successor_by_id.keys()
+        if predecessor_by_id.get(logical_id) != successor_by_id.get(logical_id)
+    )
+
+
+def require_exact_changed_artifact_logical_ids(
+    declared: list[str],
+    predecessor: list[dict[str, Any]],
+    successor: list[dict[str, Any]],
+) -> None:
+    """Reject repair lineage that omits or invents any full-record change."""
+    if set(declared) != changed_artifact_logical_ids(predecessor, successor):
+        _reject(
+            "declared changed generations do not match predecessor bytes",
+            "repair_generation",
+            "acceptance_changed_generation_ids_mismatch",
+        )
+
+
 def _id(*parts: object, length: int = 32) -> str:
     return hashlib.sha256("\0".join(str(part) for part in parts).encode()).hexdigest()[:length]
 
@@ -1143,38 +1171,220 @@ class AcceptanceV2Provider:
             "idempotent": False,
         }
 
+    def _load_repair_predecessor(
+        self,
+        workspace_root: Path,
+        *,
+        allow_absent: bool = False,
+    ) -> dict[str, Any] | None:
+        """Authenticate the current immutable failed Acceptance execution."""
+        root = workspace_root.resolve()
+        current_path = root / "current.json"
+        if not current_path.is_file():
+            if allow_absent:
+                return None
+            _reject(
+                "repair predecessor is absent",
+                "repair_admission",
+                "acceptance_repair_history_incomplete",
+            )
+        current = read_json(current_path)
+        execution_root = Path(current.get("execution_root", "")).resolve()
+        executions_root = (root / "executions").resolve()
+        if (
+            not execution_root.is_relative_to(executions_root)
+            or execution_root.parent != executions_root
+            or execution_root.name != current.get("execution_id")
+        ):
+            _reject(
+                "repair predecessor execution identity is invalid",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+            )
+        execution_path = execution_root / "execution.json"
+        binding_path = execution_root / "input-binding.json"
+        if not execution_path.is_file() or not binding_path.is_file():
+            _reject(
+                "repair predecessor execution is incomplete",
+                "repair_admission",
+                "acceptance_repair_history_incomplete",
+            )
+        execution = read_json(execution_path)
+        binding = read_json(binding_path)
+        try:
+            self.registry.validate("acceptance-v2-execution-context", execution)
+            self.registry.validate("acceptance-v2-input-binding", binding)
+        except ContractError as exc:
+            _reject(
+                "repair predecessor contract is invalid",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+                detail=str(exc),
+            )
+        publication = execution.get("report_publication")
+        if (
+            execution.get("execution_id") != current.get("execution_id")
+            or execution.get("state") != "materialized"
+            or execution.get("execution_sha256")
+            != _fingerprint_without(execution, "execution_sha256")
+            or execution.get("input_binding_sha256") != binding.get("binding_sha256")
+            or binding.get("binding_sha256")
+            != _fingerprint_without(binding, "binding_sha256")
+            or not isinstance(publication, dict)
+        ):
+            _reject(
+                "repair predecessor execution authority is stale",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+            )
+        report_path = Path(publication.get("path", "")).resolve()
+        expected_report_root = execution_root / "reports" / str(publication.get("intent_id", ""))
+        attempt_path = expected_report_root / "attempt-record.json"
+        ledger_path = expected_report_root / "repair-ledger.json"
+        intent_path = execution_root / "intents" / f"report-{publication.get('intent_id', '')}.json"
+        if (
+            report_path != expected_report_root / "acceptance_report.json"
+            or not report_path.is_file()
+            or not attempt_path.is_file()
+            or not ledger_path.is_file()
+            or not intent_path.is_file()
+        ):
+            _reject(
+                "repair predecessor report history is incomplete",
+                "repair_admission",
+                "acceptance_repair_history_incomplete",
+            )
+        report = read_json(report_path)
+        attempt = read_json(attempt_path)
+        ledger = read_json(ledger_path)
+        intent = read_json(intent_path)
+        try:
+            self.registry.validate("acceptance-report-v2", report)
+            self.registry.validate("acceptance-v2-attempt-record", attempt)
+            self.registry.validate("acceptance-v2-repair-ledger", ledger)
+        except ContractError as exc:
+            _reject(
+                "repair predecessor report history is invalid",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+                detail=str(exc),
+            )
+        semantic_attempts = ledger.get("semantic_attempts", [])
+        latest = semantic_attempts[-1] if semantic_attempts else None
+        with self._connect_control(root) as control:
+            authority = control.execute(
+                "SELECT * FROM execution_authority WHERE singleton=1"
+            ).fetchone()
+            stored_intent = control.execute(
+                "SELECT * FROM publication_intents WHERE intent_id=?",
+                (publication["intent_id"],),
+            ).fetchone()
+        if (
+            report.get("overall_status") != "fail"
+            or report.get("routing_state") != "repair_required"
+            or report.get("report_sha256") != publication.get("report_sha256")
+            or report.get("report_sha256")
+            != _fingerprint_without(report, "report_sha256")
+            or report.get("execution_id") != execution["execution_id"]
+            or report.get("input_binding_sha256") != binding["binding_sha256"]
+            or attempt.get("attempt_record_sha256")
+            != _fingerprint_without(attempt, "attempt_record_sha256")
+            or attempt.get("attempt_record_sha256")
+            != report.get("attempt_record_sha256")
+            or attempt.get("execution_id") != execution["execution_id"]
+            or attempt.get("input_binding_sha256") != binding["binding_sha256"]
+            or ledger.get("ledger_sha256")
+            != _fingerprint_without(ledger, "ledger_sha256")
+            or report.get("repair_ledger_sha256") != ledger.get("ledger_sha256")
+            or not isinstance(latest, dict)
+            or latest.get("execution_id") != execution["execution_id"]
+            or latest.get("attempt") != execution.get("attempt_number")
+            or latest.get("input_binding_sha256") != binding["binding_sha256"]
+            or latest.get("decision") != "fail"
+            or latest.get("routing_state") != "repair_required"
+            or not self._report_bundle_valid(expected_report_root, intent)
+            or intent.get("state") != "COMMITTED"
+            or authority is None
+            or authority["execution_id"] != execution["execution_id"]
+            or authority["execution_revision"] != execution["execution_revision"]
+            or authority["state"] != "terminal"
+            or authority["binding_sha256"] != binding["binding_sha256"]
+            or stored_intent is None
+            or stored_intent["state"] != "COMMITTED"
+            or stored_intent["artifact_sha256"] != intent.get("bundle_sha256")
+        ):
+            _reject(
+                "repair predecessor authority is stale or contradictory",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+            )
+        seal_binding = binding.get("quality_inputs", {}).get("precompile_text_seal")
+        seal_path = Path(seal_binding.get("path", "")).resolve() if isinstance(seal_binding, dict) else Path()
+        if (
+            not isinstance(seal_binding, dict)
+            or not seal_path.is_file()
+            or sha256_file(seal_path) != seal_binding.get("sha256")
+        ):
+            _reject(
+                "repair predecessor Precompile Text Seal is incomplete",
+                "repair_admission",
+                "acceptance_repair_history_incomplete",
+            )
+        seal = read_json(seal_path)
+        try:
+            self.registry.validate("precompile-text-seal", seal)
+        except ContractError as exc:
+            _reject(
+                "repair predecessor Precompile Text Seal is invalid",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+                detail=str(exc),
+            )
+        if seal.get("seal_sha256") != _fingerprint_without(seal, "seal_sha256"):
+            _reject(
+                "repair predecessor Precompile Text Seal is stale",
+                "repair_admission",
+                "acceptance_repair_history_invalid",
+            )
+        return {
+            "execution_root": execution_root,
+            "execution": execution,
+            "binding": binding,
+            "report": report,
+            "attempt": attempt,
+            "ledger": ledger,
+            "seal": seal,
+            "report_path": report_path,
+            "attempt_path": attempt_path,
+        }
+
     def prepare_repair(self, *, workspace_root: Path, input_binding_path: Path, prepared_at: str, coordinator_session: str) -> dict[str, Any]:
         root = workspace_root.resolve()
         if not isinstance(coordinator_session, str) or not coordinator_session.strip():
             _reject("Acceptance coordinator session is empty", "claim_identity", "acceptance_coordinator_session_invalid")
-        report = read_json(root / "acceptance_report.json")
-        if report.get("overall_status") != "fail" or report.get("routing_state") != "repair_required":
-            _reject("repair requires a complete repairable semantic failure", "repair_admission", "acceptance_repair_not_admissible")
-        ledger = read_json(root / "repair-ledger.json")
-        self.registry.validate("acceptance-v2-repair-ledger", ledger)
-        if ledger.get("ledger_sha256") != _fingerprint_without(ledger, "ledger_sha256"):
-            _reject("repair ledger fingerprint is stale", "repair_admission", "acceptance_repair_ledger_stale")
+        predecessor = self._load_repair_predecessor(root)
+        assert predecessor is not None
+        report = predecessor["report"]
+        ledger = copy.deepcopy(predecessor["ledger"])
         next_attempt = len(ledger["semantic_attempts"]) + 1
         if next_attempt > ATTEMPT_LIMIT:
             _reject("semantic repair budget is exhausted", "repair_budget", "acceptance_repair_budget_exhausted")
-        prior_current = read_json(root / "current.json")
-        prior_execution = read_json(Path(prior_current["execution_root"]) / "execution.json")
-        prior_report_path = Path(prior_execution["report_publication"]["path"])
-        prior_attempt_path = prior_report_path.parent / "attempt-record.json"
+        prior_execution = predecessor["execution"]
+        prior_report_path = predecessor["report_path"]
+        prior_attempt_path = predecessor["attempt_path"]
         prior_entry = next(
             (item for item in ledger["semantic_attempts"] if item["execution_id"] == prior_execution["execution_id"]),
             None,
         )
-        if prior_entry is None or not prior_report_path.is_file() or not prior_attempt_path.is_file():
-            _reject("repair history is incomplete", "repair_admission", "acceptance_repair_history_incomplete")
+        assert prior_entry is not None
         prior_entry.update({
             "report_path": str(prior_report_path),
             "report_sha256": report["report_sha256"],
             "attempt_record_path": str(prior_attempt_path),
-            "attempt_record_sha256": read_json(prior_attempt_path)["attempt_record_sha256"],
+            "attempt_record_sha256": predecessor["attempt"]["attempt_record_sha256"],
         })
         ledger["ledger_sha256"] = _fingerprint_without(ledger, "ledger_sha256")
-        prior_binding = read_json(root / "input-binding.json")
+        prior_binding = predecessor["binding"]
         binding = read_json(input_binding_path.resolve())
         self._validate_binding(binding, verify_files=True)
         prior_domain = AcceptanceInputDomain.from_binding(prior_binding)
@@ -1183,7 +1393,7 @@ class AcceptanceV2Provider:
             _reject("Legacy repair admission requires a freshly adopted input set and new execution", "repair_lineage", "legacy_repair_admission_unsupported")
         if domain.fingerprint == prior_domain.fingerprint:
             _reject("semantic repair requires a new Artifact Generation binding", "repair_generation", "acceptance_repair_generation_unchanged")
-        prior_seal = read_json(Path(prior_binding["quality_inputs"]["precompile_text_seal"]["path"]))
+        prior_seal = predecessor["seal"]
         current_seal = read_json(Path(binding["quality_inputs"]["precompile_text_seal"]["path"]))
         prior_run = prior_binding["run"]
         current_run = binding["run"]
@@ -1200,14 +1410,11 @@ class AcceptanceV2Provider:
             or _artifact_set_sha(domain.artifacts, domain.pages) == _artifact_set_sha(prior_domain.artifacts, prior_domain.pages)
         ):
             _reject("semantic repair requires a new Artifact Generation binding", "repair_generation", "acceptance_repair_generation_unchanged")
-        actual_changed_generation_ids = {
-            logical_id
-            for logical_id in {item["logical_id"] for item in prior_binding["artifacts"]} | {item["logical_id"] for item in binding["artifacts"]}
-            if next((item for item in prior_binding["artifacts"] if item["logical_id"] == logical_id), None)
-            != next((item for item in binding["artifacts"] if item["logical_id"] == logical_id), None)
-        }
-        if set(current_run["changed_generation_ids"]) != actual_changed_generation_ids:
-            _reject("declared changed generations do not match predecessor bytes", "repair_generation", "acceptance_changed_generation_ids_mismatch")
+        require_exact_changed_artifact_logical_ids(
+            current_run["changed_generation_ids"],
+            prior_binding["artifacts"],
+            binding["artifacts"],
+        )
         self._preflight_delivery_binding(
             domain=domain,
             coordinator_session=coordinator_session,
@@ -2314,7 +2521,6 @@ class AcceptanceV2Provider:
         if (
             not isinstance(changed_generation_ids, list)
             or len(changed_generation_ids) != len(set(changed_generation_ids))
-            or not set(changed_generation_ids) <= set(logical_ids)
             or (predecessor is None and changed_generation_ids)
             or (predecessor is not None and not changed_generation_ids)
         ):

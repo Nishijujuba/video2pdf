@@ -776,25 +776,21 @@ def _complete_compiler_source_locations(
         ]
         return len(heading_lines) == 1
 
+    def display_resolution_identity(resolution: dict[str, Any]) -> str:
+        return json.dumps(
+            {
+                key: value
+                for key, value in resolution.items()
+                if key != "supported_rendered_text"
+            },
+            sort_keys=True,
+        )
+
     def display_resolution_for_identity(
         identity: tuple[Path, int],
-        candidates: list[tuple[dict[str, Any], tuple[Path, int]]],
+        resolutions: dict[str, dict[str, Any]],
         rendered_text: str,
     ) -> dict[str, Any] | None:
-        resolutions = {
-            json.dumps(
-                {
-                    key: value
-                    for key, value in location["resolution"].items()
-                    if key != "supported_rendered_text"
-                },
-                sort_keys=True,
-            ): location["resolution"]
-            for anchor, candidate_identity in candidates
-            if candidate_identity == identity
-            if (location := locations.get(anchor["object_id"])) is not None
-            if isinstance(location.get("resolution"), dict)
-        }
         if len(resolutions) != 1:
             return None
         resolution = dict(next(iter(resolutions.values())))
@@ -917,13 +913,35 @@ def _complete_compiler_source_locations(
             },
             "completion": "compiler-line-layout-v1",
         }
+        visual_resolutions = {
+            display_resolution_identity(location["resolution"]): location["resolution"]
+            for anchor, candidate_identity in visual_anchors
+            if candidate_identity == identity
+            if (location := locations.get(anchor["object_id"])) is not None
+            if isinstance(location.get("resolution"), dict)
+        }
         resolution = display_resolution_for_identity(
-            identity, visual_anchors, obj["exact_utf8_text"]
+            identity, visual_resolutions, obj["exact_utf8_text"]
         )
         if resolution is not None:
             completed["derivation"] = DISPLAY_MATH_DERIVATION
             completed["resolution"] = resolution
         locations[obj["object_id"]] = completed
+
+    display_resolutions_by_identity: dict[
+        tuple[Path, int], dict[str, dict[str, Any]]
+    ] = {}
+    for candidate in objects:
+        location = locations.get(candidate["object_id"])
+        if location is None or not isinstance(location.get("resolution"), dict):
+            continue
+        identity = source_identity(location)
+        if identity is None:
+            continue
+        resolution = location["resolution"]
+        display_resolutions_by_identity.setdefault(identity, {})[
+            display_resolution_identity(resolution)
+        ] = resolution
 
     visual_lines: list[list[dict[str, Any]]] = []
     for obj in sorted(
@@ -965,14 +983,10 @@ def _complete_compiler_source_locations(
             },
             "completion": "compiler-line-layout-v1",
         }
-        candidates = [
-            (candidate, candidate_identity)
-            for candidate in objects
-            if (location := locations.get(candidate["object_id"])) is not None
-            if (candidate_identity := source_identity(location)) is not None
-        ]
         resolution = display_resolution_for_identity(
-            identity, candidates, obj["exact_utf8_text"]
+            identity,
+            display_resolutions_by_identity.get(identity, {}),
+            obj["exact_utf8_text"],
         )
         if resolution is not None:
             completed["derivation"] = DISPLAY_MATH_DERIVATION

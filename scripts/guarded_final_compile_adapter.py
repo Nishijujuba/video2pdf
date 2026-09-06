@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from typing import Any
@@ -544,7 +545,20 @@ def compiler_source_locations(
         or not any(tool == root or root in tool.parents for root in runtime_roots)
     ):
         raise AdapterError("registered compiler source map extractor is unavailable")
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    worker_state = threading.local()
+
+    def initialize_query_worker() -> None:
+        log_directory = (
+            Path(runtime_environment["MIKTEX_USERLOGDIRECTORY"])
+            / f"synctex-worker-{threading.get_ident()}"
+        )
+        log_directory.mkdir(parents=True, exist_ok=True)
+        worker_state.environment = {
+            **runtime_environment,
+            "MIKTEX_USERLOGDIRECTORY": str(log_directory),
+        }
+
+    with ThreadPoolExecutor(max_workers=8, initializer=initialize_query_worker) as executor:
         mapped = list(
             executor.map(
                 lambda item: _synctex_source_location(
@@ -554,7 +568,7 @@ def compiler_source_locations(
                     item,
                     manifest_entries,
                     observed_declared_paths,
-                    runtime_environment,
+                    worker_state.environment,
                 ),
                 text_objects,
             )

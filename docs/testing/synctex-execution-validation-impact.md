@@ -21,6 +21,10 @@ The negative scenario changes only the subprocess outcome to `TimeoutExpired`.
 No authority or derived input is stale. The first failing boundary is source-map
 query completion. The test checks the stable local diagnostic identifier, page,
 90-second limit, preserved exception cause, and one invocation with no retry.
+The local `AdapterError` interface does not expose a structured error code; this
+is an explicit interface gap. The new test temporarily asserts only the stable
+message fragment `compiler_source_map_query_timeout` at this local boundary.
+It does not claim to assert the public provider's structured error code.
 It does not claim to exercise the operating system's timeout mechanism or to
 reproduce the real retained timeout. The public provider's failure/report gates
 remain owned by the independently qualified Issue #115 coverage.

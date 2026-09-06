@@ -23,7 +23,8 @@ class Issue116SyncTexExecutionTests(unittest.TestCase):
         # mutation_seam: registered SyncTeX subprocess completion
         # rematerialized_nodes: none; intentionally_stale_nodes: none
         # expected_first_gate: source-map query completion
-        # expected_error_code: compiler_source_map_query_timeout
+        # expected_error_code: unavailable (existing AdapterError text interface)
+        # expected_message_fragment: compiler_source_map_query_timeout
         # scenario_class: single_contradiction
         spec = importlib.util.spec_from_file_location("issue116_adapter", ADAPTER)
         if spec is None or spec.loader is None:

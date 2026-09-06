@@ -1037,15 +1037,16 @@ def _complete_compiler_source_locations(
             or current_y - previous_y > 25
         ):
             continue
-        previous_identities = {
+        pair_identities = {
             identity
-            for obj in previous
+            for obj in (*previous, *current)
             if (location := locations.get(obj["object_id"])) is not None
             if (identity := source_identity(location)) is not None
+            if source_line_supports(obj, identity, location)
         }
-        if len(previous_identities) != 1:
+        if len(pair_identities) != 1:
             continue
-        identity = next(iter(previous_identities))
+        identity = next(iter(pair_identities))
         rendered_wrap = presentation_text(
             "".join(
                 item["exact_utf8_text"]
@@ -1063,9 +1064,13 @@ def _complete_compiler_source_locations(
         ]
         if matching_wrap_lines != [identity[1]]:
             continue
-        for obj in current:
+        for obj in (*previous, *current):
             location = locations.get(obj["object_id"])
-            if location is None or not source_line_supports(obj, identity, location):
+            if (
+                location is None
+                or source_identity(location) != identity
+                or not source_line_supports(obj, identity, location)
+            ):
                 locations[obj["object_id"]] = completed_location(obj, identity)
 
 def _pixmap_identity(pixmap: fitz.Pixmap) -> tuple[int, int, str]:
